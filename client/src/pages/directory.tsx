@@ -19,6 +19,11 @@ import {
   ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
   Upload, CheckCheck, BarChart2,
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
 import { LoCsvImport } from "@/components/lo-csv-import";
@@ -538,11 +543,12 @@ function LOFormDialog({
 export default function Directory() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
   const [tierFilter, setTierFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [confirmDeleteLO, setConfirmDeleteLO] = useState<any | null>(null);
 
   const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const { data: algoSettings } = useQuery<any>({ queryKey: ["/api/settings/algorithm"] });
@@ -581,9 +587,10 @@ export default function Directory() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/loan-officers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
-      toast({ title: "Loan officer removed" });
+      setConfirmDeleteLO(null);
+      toast({ title: "Loan officer archived" });
     },
-    onError: () => toast({ title: "Error deleting LO", variant: "destructive" }),
+    onError: () => toast({ title: "Error removing LO", variant: "destructive" }),
   });
 
   const activeCount = los.filter((lo: any) => lo.internalStatus === "active").length;
@@ -692,7 +699,7 @@ export default function Directory() {
               lo={lo}
               score={lo.internalStatus === "active" ? computeScore(lo, weights) : null}
               onEdit={handleEdit}
-              onDelete={id => deleteMutation.mutate(id)}
+              onDelete={id => setConfirmDeleteLO(los.find((l: any) => l.id === id) ?? { id })}
             />
           ))}
         </div>
@@ -705,6 +712,28 @@ export default function Directory() {
         onSubmit={handleSubmit}
         isPending={isPending}
       />
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!confirmDeleteLO} onOpenChange={open => !open && setConfirmDeleteLO(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {confirmDeleteLO?.fullName ?? "this LO"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will archive the loan officer and remove them from active assignments and the leaderboard.
+              You can still find them by filtering for "Archived" status.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => confirmDeleteLO && deleteMutation.mutate(confirmDeleteLO.id)}
+            >
+              {deleteMutation.isPending ? "Removing…" : "Yes, remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* CSV Import */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
