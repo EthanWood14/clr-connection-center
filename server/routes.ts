@@ -439,8 +439,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
 
-    // Check what's already worked today
-    const existing = storage.getDailyAssignments(date);
+    // Check what's already worked today (existing is already fetched above; at this point it's empty)
     const workedToday = existing.filter(a => a.status === "worked").map(a => a.loId);
     const eligibleLOs = los.filter(lo => !workedToday.includes(lo.id));
 
