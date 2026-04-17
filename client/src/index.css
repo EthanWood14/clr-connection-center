@@ -1,0 +1,121 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Nexus teal palette adapted for shadcn */
+    --background: 45 24% 96%;
+    --foreground: 44 23% 14%;
+    --card: 45 25% 97%;
+    --card-foreground: 44 23% 14%;
+    --popover: 45 25% 97%;
+    --popover-foreground: 44 23% 14%;
+    --primary: 183 98% 22%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 36 18% 94%;
+    --secondary-foreground: 44 23% 14%;
+    --muted: 36 18% 94%;
+    --muted-foreground: 50 3% 47%;
+    --accent: 183 40% 90%;
+    --accent-foreground: 183 98% 18%;
+    --destructive: 320 57% 40%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 36 8% 81%;
+    --input: 36 8% 81%;
+    --ring: 183 98% 22%;
+    --radius: 0.5rem;
+
+    /* Chart colors */
+    --chart-1: 183 98% 22%;
+    --chart-2: 97 43% 47%;
+    --chart-3: 20 73% 34%;
+    --chart-4: 320 57% 40%;
+    --chart-5: 185 75% 35%;
+  }
+
+  .dark {
+    --background: 40 10% 8%;
+    --foreground: 40 3% 80%;
+    --card: 40 9% 10%;
+    --card-foreground: 40 3% 80%;
+    --popover: 40 9% 10%;
+    --popover-foreground: 40 3% 80%;
+    --primary: 188 35% 47%;
+    --primary-foreground: 40 10% 8%;
+    --secondary: 40 8% 12%;
+    --secondary-foreground: 40 3% 80%;
+    --muted: 40 8% 12%;
+    --muted-foreground: 40 2% 47%;
+    --accent: 40 8% 15%;
+    --accent-foreground: 188 35% 60%;
+    --destructive: 320 47% 60%;
+    --destructive-foreground: 40 10% 8%;
+    --border: 40 3% 22%;
+    --input: 40 3% 22%;
+    --ring: 188 35% 47%;
+
+    --chart-1: 188 35% 47%;
+    --chart-2: 97 43% 47%;
+    --chart-3: 20 53% 48%;
+    --chart-4: 320 47% 60%;
+    --chart-5: 185 45% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    text-wrap: balance;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* Sidebar width override */
+[data-sidebar="sidebar"] {
+  --sidebar-background: hsl(183, 98%, 18%);
+  --sidebar-foreground: hsl(183, 60%, 90%);
+  --sidebar-primary: hsl(183, 60%, 90%);
+  --sidebar-primary-foreground: hsl(183, 98%, 18%);
+  --sidebar-accent: hsl(183, 70%, 25%);
+  --sidebar-accent-foreground: hsl(183, 60%, 95%);
+  --sidebar-border: hsl(183, 70%, 20%);
+  --sidebar-ring: hsl(183, 60%, 90%);
+}
+.dark [data-sidebar="sidebar"] {
+  --sidebar-background: hsl(40, 9%, 8%);
+  --sidebar-foreground: hsl(40, 3%, 75%);
+  --sidebar-primary: hsl(188, 35%, 55%);
+  --sidebar-primary-foreground: hsl(40, 9%, 8%);
+  --sidebar-accent: hsl(40, 8%, 14%);
+  --sidebar-accent-foreground: hsl(40, 3%, 80%);
+  --sidebar-border: hsl(40, 3%, 18%);
+  --sidebar-ring: hsl(188, 35%, 47%);
+}
+
+/* Status badge variants */
+.badge-transfer { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400; }
+.badge-appointment { @apply bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400; }
+.badge-dnq { @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400; }
+.badge-no_answer { @apply bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400; }
+.badge-fell_through { @apply bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400; }
+.badge-callback_requested { @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400; }
+.badge-not_interested { @apply bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400; }
+.badge-wrong_number { @apply bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-400; }
+.badge-other { @apply bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400; }

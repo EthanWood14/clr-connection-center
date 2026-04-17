@@ -1,0 +1,171 @@
+import { Link, useLocation } from "wouter";
+import {
+  LayoutDashboard, Users, CalendarCheck, ClipboardList,
+  Trophy, Settings, Building2, MapPin, BedDouble,
+  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp,
+} from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Badge } from "@/components/ui/badge";
+import {
+  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
+  SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
+  SidebarHeader, SidebarFooter,
+} from "@/components/ui/sidebar";
+import { useAuth } from "@/lib/auth";
+
+const mainItems = [
+  { title: "Dashboard",         url: "/",            icon: LayoutDashboard },
+  { title: "LO Directory",      url: "/directory",   icon: Users },
+  { title: "Daily Assignments", url: "/assignments", icon: CalendarCheck },
+  { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
+  { title: "Follow-Up Queue",   url: "/followups",   icon: PhoneForwarded, badge: "followups" },
+  { title: "Leaderboard",       url: "/leaderboard", icon: Trophy },
+];
+
+const toolItems = [
+  { title: "State Lookup",      url: "/state-lookup",    icon: MapPin },
+  { title: "Snooze Manager",    url: "/snooze",          icon: BedDouble },
+  { title: "Reporting",         url: "/reporting",       icon: BarChart2 },
+  { title: "LO Performance",    url: "/lo-performance",  icon: TrendingUp },
+];
+
+const adminItems: { title: string; url: string; icon: any; badge?: string }[] = [
+  { title: "Settings",          url: "/settings",    icon: Settings },
+  { title: "Audit Log",         url: "/audit-log",   icon: ScrollText },
+];
+
+export function AppSidebar() {
+  const [location] = useLocation();
+  const { user, logout } = useAuth();
+
+  // Live follow-up count — outcomes with followUpDate <= today
+  const { data: outcomes = [] } = useQuery<any[]>({
+    queryKey: ["/api/outcomes"],
+    refetchInterval: 60000,
+    select: (data) => {
+      const today = new Date().toISOString().split("T")[0];
+      return data.filter((o) => o.followUpDate && o.followUpDate <= today);
+    },
+  });
+
+  // Unread notification count for bell badge
+  const userId = user?.id ?? 1;
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: [`/api/notifications/unread-count?userId=${userId}`],
+    refetchInterval: 30000,
+    enabled: !!user,
+  });
+
+  const followupCount = outcomes.length;
+
+  // Derive initials from user name
+  const initials = user
+    ? user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()
+    : "?";
+
+  const roleLabel = user
+    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+    : "";
+
+  function isActive(url: string) {
+    if (url === "/") return location === "/";
+    return location.startsWith(url);
+  }
+
+  function renderItems(items: typeof mainItems) {
+    return items.map((item) => {
+      const count = item.badge === "followups" ? followupCount : 0;
+      return (
+        <SidebarMenuItem key={item.title}>
+          <SidebarMenuButton asChild isActive={isActive(item.url)}>
+            <Link
+              href={item.url}
+              data-testid={`nav-${item.title.toLowerCase().replace(/ /g, "-")}`}
+              className="flex items-center justify-between w-full"
+            >
+              <span className="flex items-center gap-2">
+                <item.icon className="w-4 h-4 shrink-0" />
+                <span>{item.title}</span>
+              </span>
+              {count > 0 && (
+                <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">
+                  {count > 99 ? "99+" : count}
+                </Badge>
+              )}
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      );
+    });
+  }
+
+  return (
+    <Sidebar>
+      <SidebarHeader className="px-4 py-5 border-b border-sidebar-border">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0">
+            <Building2 className="w-4 h-4 text-sidebar-foreground" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-sidebar-foreground leading-tight">CLR Connection</p>
+            <p className="text-xs text-sidebar-foreground/60 leading-tight">West Capital Lending</p>
+          </div>
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Main
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems(mainItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Tools
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems(toolItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Admin
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems(adminItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="p-4 border-t border-sidebar-border">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full bg-sidebar-foreground/20 flex items-center justify-center text-xs font-bold text-sidebar-foreground flex-shrink-0">
+            {initials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-sidebar-foreground truncate">{user?.name ?? "—"}</p>
+            <p className="text-xs text-sidebar-foreground/50 truncate">{roleLabel}</p>
+          </div>
+          <button
+            onClick={logout}
+            title="Sign out"
+            className="ml-auto p-1.5 rounded hover:bg-sidebar-foreground/10 text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors flex-shrink-0"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
