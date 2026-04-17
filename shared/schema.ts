@@ -172,3 +172,47 @@ export const auditLogs = sqliteTable("audit_logs", {
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
+
+// ── Email Report Settings ──────────────────────────────────────────────────────
+export const emailSettings = sqliteTable("email_settings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  smtpHost: text("smtp_host").notNull().default(""),
+  smtpPort: integer("smtp_port").notNull().default(587),
+  smtpUser: text("smtp_user").notNull().default(""),
+  smtpPass: text("smtp_pass").notNull().default(""),
+  fromAddress: text("from_address").notNull().default(""),
+  managerEmails: text("manager_emails").notNull().default("[]"), // JSON array
+  dailyEnabled: integer("daily_enabled", { mode: "boolean" }).notNull().default(false),
+  weeklyEnabled: integer("weekly_enabled", { mode: "boolean" }).notNull().default(false),
+  monthlyEnabled: integer("monthly_enabled", { mode: "boolean" }).notNull().default(false),
+  dailyTime: text("daily_time").notNull().default("08:00"),   // HH:MM
+  weeklyDay: integer("weekly_day").notNull().default(1),       // 0=Sun..6=Sat
+  updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
+});
+export type EmailSettings = typeof emailSettings.$inferSelect;
+
+// ── Fixed Monthly Assignments ──────────────────────────────────────────────────
+// When round-robin is disabled, each CLR keeps the same LOs for a month.
+// Admin clicks "Shuffle" to regenerate for the next month.
+export const monthlyAssignments = sqliteTable("monthly_assignments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  monthKey: text("month_key").notNull(),   // e.g. "2026-04"
+  assistantId: integer("assistant_id").notNull().references(() => users.id),
+  loId: integer("lo_id").notNull().references(() => loanOfficers.id),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+export type MonthlyAssignment = typeof monthlyAssignments.$inferSelect;
+
+// ── Assignment Overrides (admin unlock log) ────────────────────────────────────
+export const assignmentOverrides = sqliteTable("assignment_overrides", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  assignmentId: integer("assignment_id").notNull(),
+  adminId: integer("admin_id").notNull().references(() => users.id),
+  adminName: text("admin_name").notNull(),
+  reason: text("reason").notNull(),
+  signature: text("signature").notNull(),
+  previousStatus: text("previous_status").notNull(),
+  newStatus: text("new_status").notNull(),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+export type AssignmentOverride = typeof assignmentOverrides.$inferSelect;

@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -263,6 +264,252 @@ function WeightSliderRow({
   );
 }
 
+// ── Email Reports Card ────────────────────────────────────────────────────────
+function EmailReportsCard() {
+  const { toast } = useToast();
+  const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
+    queryKey: ["/api/settings/email"],
+  });
+
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [fromAddress, setFromAddress] = useState("");
+  const [managerEmails, setManagerEmails] = useState<string[]>([]);
+  const [newManagerEmail, setNewManagerEmail] = useState("");
+  const [dailyEnabled, setDailyEnabled] = useState(false);
+  const [weeklyEnabled, setWeeklyEnabled] = useState(false);
+  const [monthlyEnabled, setMonthlyEnabled] = useState(false);
+  const [dailyTime, setDailyTime] = useState("08:00");
+  const [testLoading, setTestLoading] = useState(false);
+  const [sendLoading, setSendLoading] = useState(false);
+
+  // Populate form from fetched settings
+  useEffect(() => {
+    if (!emailSettings) return;
+    setSmtpHost(emailSettings.smtp_host ?? emailSettings.smtpHost ?? "");
+    setSmtpPort(String(emailSettings.smtp_port ?? emailSettings.smtpPort ?? 587));
+    setSmtpUser(emailSettings.smtp_user ?? emailSettings.smtpUser ?? "");
+    setSmtpPass(""); // never pre-fill password
+    setFromAddress(emailSettings.from_address ?? emailSettings.fromAddress ?? "");
+    try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
+    setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
+    setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
+    setMonthlyEnabled(!!(emailSettings.monthly_enabled ?? emailSettings.monthlyEnabled));
+    setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "08:00");
+  }, [emailSettings]);
+
+  const saveMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", "/api/settings/email", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/email"] });
+      toast({ title: "Email settings saved" });
+    },
+    onError: () => toast({ title: "Failed to save email settings", variant: "destructive" }),
+  });
+
+  function handleSave() {
+    const payload: any = {
+      smtpHost,
+      smtpPort: parseInt(smtpPort),
+      smtpUser,
+      fromAddress,
+      managerEmails: JSON.stringify(managerEmails),
+      dailyEnabled: dailyEnabled ? 1 : 0,
+      weeklyEnabled: weeklyEnabled ? 1 : 0,
+      monthlyEnabled: monthlyEnabled ? 1 : 0,
+      dailyTime,
+    };
+    if (smtpPass && smtpPass !== "••••••••") payload.smtpPass = smtpPass;
+    saveMutation.mutate(payload);
+  }
+
+  async function handleTest() {
+    setTestLoading(true);
+    try {
+      const res = await fetch("/api/settings/email/test", { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (res.ok) toast({ title: "SMTP connection verified" });
+      else toast({ title: "SMTP test failed", description: data.error, variant: "destructive" });
+    } catch {
+      toast({ title: "Test failed", variant: "destructive" });
+    } finally {
+      setTestLoading(false);
+    }
+  }
+
+  async function handleSendNow(type: "daily" | "weekly" | "monthly") {
+    setSendLoading(true);
+    try {
+      const res = await fetch("/api/settings/email/send-now", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      const data = await res.json();
+      if (res.ok) toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} report sent` });
+      else toast({ title: "Failed to send report", description: data.error, variant: "destructive" });
+    } catch {
+      toast({ title: "Send failed", variant: "destructive" });
+    } finally {
+      setSendLoading(false);
+    }
+  }
+
+  function addManagerEmail() {
+    const em = newManagerEmail.trim().toLowerCase();
+    if (!em || managerEmails.includes(em)) return;
+    setManagerEmails(prev => [...prev, em]);
+    setNewManagerEmail("");
+  }
+
+  function removeManagerEmail(em: string) {
+    setManagerEmails(prev => prev.filter(e => e !== em));
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Mail className="w-4 h-4 text-blue-600" />
+          Email Reports
+        </CardTitle>
+        <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
+          <span>Configure SMTP and schedule daily, weekly, or monthly reports to managers. Reports include leaderboard, transfer counts, and key stats.</span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {emailLoading ? (
+          <div className="space-y-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-9" />)}</div>
+        ) : (
+          <>
+            {/* SMTP Config */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">SMTP Configuration</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">SMTP Host</label>
+                  <Input placeholder="smtp.gmail.com" value={smtpHost} onChange={e => setSmtpHost(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Port</label>
+                  <Input placeholder="587" value={smtpPort} onChange={e => setSmtpPort(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Username / Email</label>
+                  <Input placeholder="noreply@westcapital.com" value={smtpUser} onChange={e => setSmtpUser(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Password</label>
+                  <Input type="password" placeholder="Leave blank to keep current" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground">From Address</label>
+                  <Input placeholder="CLR Connection Center <noreply@westcapital.com>" value={fromAddress} onChange={e => setFromAddress(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            {/* Manager emails */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Manager Recipients</p>
+              <div className="flex gap-2 mb-2">
+                <Input
+                  placeholder="manager@westcapital.com"
+                  value={newManagerEmail}
+                  onChange={e => setNewManagerEmail(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addManagerEmail()}
+                  className="flex-1"
+                />
+                <Button size="sm" variant="outline" onClick={addManagerEmail} type="button">Add</Button>
+              </div>
+              {managerEmails.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No recipients added yet.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {managerEmails.map(em => (
+                    <Badge key={em} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs">
+                      {em}
+                      <button
+                        type="button"
+                        onClick={() => removeManagerEmail(em)}
+                        className="ml-0.5 rounded-full hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label={`Remove ${em}`}
+                      >×</button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Schedule toggles */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Schedule</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Daily Report</p>
+                    <p className="text-xs text-muted-foreground">Sent each morning at the configured time</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {dailyEnabled && (
+                      <Input
+                        type="time"
+                        value={dailyTime}
+                        onChange={e => setDailyTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
+                    <Switch checked={dailyEnabled} onCheckedChange={setDailyEnabled} />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Weekly Report</p>
+                    <p className="text-xs text-muted-foreground">Sent every Monday morning</p>
+                  </div>
+                  <Switch checked={weeklyEnabled} onCheckedChange={setWeeklyEnabled} />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Monthly Report</p>
+                    <p className="text-xs text-muted-foreground">Sent on the 16th of each month</p>
+                  </div>
+                  <Switch checked={monthlyEnabled} onCheckedChange={setMonthlyEnabled} />
+                </div>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={handleTest} disabled={testLoading} className="gap-1.5">
+                <Mail className="w-3.5 h-3.5" />
+                {testLoading ? "Testing…" : "Test Connection"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleSendNow("daily")} disabled={sendLoading} className="gap-1.5">
+                {sendLoading ? "Sending…" : "Send Daily Now"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleSendNow("weekly")} disabled={sendLoading} className="gap-1.5">
+                {sendLoading ? "Sending…" : "Send Weekly Now"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleSendNow("monthly")} disabled={sendLoading} className="gap-1.5">
+                {sendLoading ? "Sending…" : "Send Monthly Now"}
+              </Button>
+              <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending} className="ml-auto gap-1.5">
+                <Save className="w-3.5 h-3.5" />
+                {saveMutation.isPending ? "Saving…" : "Save Email Settings"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const { user: authUser } = useAuth();
@@ -413,15 +660,69 @@ export default function Settings() {
               data-testid="input-max-los"
             />
           </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Round-Robin Distribution</p>
-              <p className="text-xs text-muted-foreground">Distribute LOs evenly across all active assistants</p>
+
+          {/* Algorithm Mode */}
+          <div className="rounded-lg border p-4 space-y-3">
+            <p className="text-sm font-semibold">Assignment Mode</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Round Robin */}
+              <button
+                type="button"
+                onClick={() => updateMutation.mutate({ ...currentWeights, maxLosPerAssistant: currentMax, roundRobinEnabled: true })}
+                className={`flex flex-col gap-1.5 p-3 rounded-lg border-2 text-left transition-all ${
+                  settings?.roundRobinEnabled !== false
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <RepeatIcon className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-semibold">Round Robin</span>
+                  {settings?.roundRobinEnabled !== false && <Badge className="text-[10px] px-1.5 py-0 bg-primary text-white ml-auto">Active</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground">CLRs take turns getting LOs in a snake pattern — no CLR gets back-to-back calls. Assignments regenerate daily based on algorithm scores.</p>
+              </button>
+              {/* Fixed Monthly */}
+              <button
+                type="button"
+                onClick={() => updateMutation.mutate({ ...currentWeights, maxLosPerAssistant: currentMax, roundRobinEnabled: false })}
+                className={`flex flex-col gap-1.5 p-3 rounded-lg border-2 text-left transition-all ${
+                  settings?.roundRobinEnabled === false
+                    ? "border-amber-500 bg-amber-50 dark:bg-amber-900/10"
+                    : "border-border hover:border-amber-400/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-amber-600" />
+                  <span className="text-sm font-semibold">Fixed Monthly</span>
+                  {settings?.roundRobinEnabled === false && <Badge className="text-[10px] px-1.5 py-0 bg-amber-500 text-white ml-auto">Active</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground">Each CLR keeps the same LOs for the entire month. Admin clicks Shuffle to randomize at the start of a new month.</p>
+              </button>
             </div>
-            <Badge variant="outline" className="text-xs text-green-600 border-green-300">Enabled</Badge>
+            {settings?.roundRobinEnabled === false && (
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-xs text-muted-foreground">Current month: <span className="font-mono font-medium">{new Date().toISOString().slice(0,7)}</span></p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 gap-1.5"
+                  onClick={async () => {
+                    await apiRequest("POST", "/api/monthly-assignments/shuffle", { month: new Date().toISOString().slice(0,7) });
+                    toast({ title: "Monthly assignments shuffled" });
+                  }}
+                >
+                  <Shuffle className="w-3 h-3" />
+                  Shuffle Now
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Email Reports */}
+      <EmailReportsCard />
 
       {/* Team Members */}
       <Card>

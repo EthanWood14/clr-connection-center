@@ -232,6 +232,7 @@ export interface IStorage {
   getDailyAssignments(date: string): DailyAssignment[];
   createDailyAssignments(assignments: InsertDailyAssignment[]): DailyAssignment[];
   updateAssignmentStatus(id: number, status: string, notes?: string): DailyAssignment | undefined;
+  getAssignmentById(id: number): DailyAssignment | undefined;
   clearDailyAssignments(date: string): void;
 
   // Lead Outcomes
@@ -320,6 +321,9 @@ export class Storage implements IStorage {
   }
   updateAssignmentStatus(id: number, status: string, notes?: string) {
     return db.update(dailyAssignments).set({ status, notes }).where(eq(dailyAssignments.id, id)).returning().get();
+  }
+  getAssignmentById(id: number) {
+    return db.select().from(dailyAssignments).where(eq(dailyAssignments.id, id)).get();
   }
   clearDailyAssignments(date: string) {
     db.delete(dailyAssignments).where(eq(dailyAssignments.assignmentDate, date)).run();
@@ -463,3 +467,120 @@ export class Storage implements IStorage {
 }
 
 export const storage = new Storage();
+
+// ── Migrations for new tables ──────────────────────────────────────────────────
+function runNewMigrations() {
+  // email_settings
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS email_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    smtp_host TEXT NOT NULL DEFAULT '',
+    smtp_port INTEGER NOT NULL DEFAULT 587,
+    smtp_user TEXT NOT NULL DEFAULT '',
+    smtp_pass TEXT NOT NULL DEFAULT '',
+    from_address TEXT NOT NULL DEFAULT '',
+    manager_emails TEXT NOT NULL DEFAULT '[]',
+    daily_enabled INTEGER NOT NULL DEFAULT 0,
+    weekly_enabled INTEGER NOT NULL DEFAULT 0,
+    monthly_enabled INTEGER NOT NULL DEFAULT 0,
+    daily_time TEXT NOT NULL DEFAULT '08:00',
+    weekly_day INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  // seed default row if empty
+  const emailRow = sqlite.prepare(`SELECT id FROM email_settings LIMIT 1`).get();
+  if (!emailRow) sqlite.exec(`INSERT INTO email_settings (id) VALUES (1)`);
+
+  // monthly_assignments
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    month_key TEXT NOT NULL,
+    assistant_id INTEGER NOT NULL,
+    lo_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // assignment_overrides
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS assignment_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assignment_id INTEGER NOT NULL,
+    admin_id INTEGER NOT NULL,
+    admin_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    previous_status TEXT NOT NULL,
+    new_status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // algorithm_settings: add fixedMonthly mode column if missing
+  try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN fixed_monthly_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // login rate limiting table
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS login_attempts (
+    ip TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT
+  )`);
+}
+runNewMigrations();
+
+
+// ── Email Settings storage ─────────────────────────────────────────────────────
+export function getEmailSettings() {
+  return sqlite.prepare(`SELECT * FROM email_settings WHERE id=1`).get() as any ?? {};
+}
+export function updateEmailSettings(data: any) {
+  const fields = Object.keys(data).map(k => {
+    const col = k.replace(/([A-Z])/g, '_$1').toLowerCase();
+    return `${col} = ?`;
+  }).join(', ');
+  const vals = Object.values(data);
+  sqlite.prepare(`UPDATE email_settings SET ${fields}, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(...vals);
+  return getEmailSettings();
+}
+
+// ── Monthly Assignments storage ────────────────────────────────────────────────
+export function getMonthlyAssignments(monthKey: string) {
+  return sqlite.prepare(`SELECT * FROM monthly_assignments WHERE month_key=?`).all(monthKey) as any[];
+}
+export function setMonthlyAssignments(monthKey: string, rows: {assistantId: number, loId: number}[]) {
+  sqlite.prepare(`DELETE FROM monthly_assignments WHERE month_key=?`).run(monthKey);
+  const ins = sqlite.prepare(`INSERT INTO monthly_assignments (month_key, assistant_id, lo_id) VALUES (?,?,?)`);
+  for (const r of rows) ins.run(monthKey, r.assistantId, r.loId);
+  return getMonthlyAssignments(monthKey);
+}
+
+// ── Assignment Override log ────────────────────────────────────────────────────
+export function createAssignmentOverride(data: {assignmentId:number,adminId:number,adminName:string,reason:string,signature:string,previousStatus:string,newStatus:string}) {
+  return sqlite.prepare(`
+    INSERT INTO assignment_overrides (assignment_id,admin_id,admin_name,reason,signature,previous_status,new_status)
+    VALUES (?,?,?,?,?,?,?)
+  `).run(data.assignmentId,data.adminId,data.adminName,data.reason,data.signature,data.previousStatus,data.newStatus);
+}
+export function getAssignmentOverrides(assignmentId?: number) {
+  if (assignmentId) return sqlite.prepare(`SELECT * FROM assignment_overrides WHERE assignment_id=? ORDER BY created_at DESC`).all(assignmentId) as any[];
+  return sqlite.prepare(`SELECT * FROM assignment_overrides ORDER BY created_at DESC LIMIT 100`).all() as any[];
+}
+
+// ── Login rate limiting ────────────────────────────────────────────────────────
+export function checkLoginRateLimit(ip: string): {allowed: boolean, remaining: number} {
+  const now = new Date().toISOString();
+  const row = sqlite.prepare(`SELECT * FROM login_attempts WHERE ip=?`).get(ip) as any;
+  if (!row) { sqlite.prepare(`INSERT INTO login_attempts(ip,attempts) VALUES(?,1)`).run(ip); return {allowed:true,remaining:4}; }
+  if (row.locked_until && row.locked_until > now) return {allowed:false,remaining:0};
+  if (row.locked_until && row.locked_until <= now) {
+    sqlite.prepare(`UPDATE login_attempts SET attempts=1,locked_until=NULL WHERE ip=?`).run(ip);
+    return {allowed:true,remaining:4};
+  }
+  const attempts = (row.attempts||0)+1;
+  if (attempts >= 5) {
+    const lockUntil = new Date(Date.now()+15*60*1000).toISOString();
+    sqlite.prepare(`UPDATE login_attempts SET attempts=?,locked_until=? WHERE ip=?`).run(attempts,lockUntil,ip);
+    return {allowed:false,remaining:0};
+  }
+  sqlite.prepare(`UPDATE login_attempts SET attempts=? WHERE ip=?`).run(attempts,ip);
+  return {allowed:true,remaining:5-attempts};
+}
+export function resetLoginAttempts(ip: string) {
+  sqlite.prepare(`UPDATE login_attempts SET attempts=0,locked_until=NULL WHERE ip=?`).run(ip);
+}
+

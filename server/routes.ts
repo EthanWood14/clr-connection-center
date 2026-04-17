@@ -1,10 +1,12 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
+import nodemailer from "nodemailer";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -78,6 +80,61 @@ function generateRankings(los: any[], settings: any, todayStr: string) {
     .sort((a, b) => b.score - a.score);
 }
 
+// ── Email report sender ───────────────────────────────────────────────────────
+async function sendReport(type: "daily" | "weekly" | "monthly") {
+  const settings = storageExtra.getEmailSettings() as any;
+  const managers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
+  if (!managers.length) return;
+  if (!settings.smtp_host || !settings.smtp_user) throw new Error("SMTP not configured");
+
+  const period = getDefaultPeriod();
+  const outcomes = storage.getLeadOutcomes({ startDate: period.startDate, endDate: period.endDate });
+  const los = storage.getLoanOfficers();
+  const users = storage.getUsers();
+  const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer" || o.outcomeType === "transfer");
+
+  // Build leaderboard
+  const tally: Record<number, number> = {};
+  for (const t of transfers) { const aid = t.assistantId || t.assistant_id; tally[aid] = (tally[aid] || 0) + 1; }
+  const leaderboard = Object.entries(tally)
+    .map(([id, count]) => { const u = users.find(u => u.id === parseInt(id)); return { name: u?.name ?? `User ${id}`, count }; })
+    .sort((a, b) => b.count - a.count);
+
+  const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  const html = `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+      <div style="background:#1A2B4A;padding:24px;border-radius:8px 8px 0 0">
+        <h1 style="color:white;margin:0;font-size:20px">CLR Connection Center</h1>
+        <p style="color:#94a3b8;margin:4px 0 0">${subject}</p>
+      </div>
+      <div style="background:#f8fafc;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
+        <h2 style="color:#1A2B4A;font-size:16px;margin-top:0">Reporting Period: ${period.startDate} → ${period.endDate}</h2>
+        <div style="display:flex;gap:16px;margin-bottom:24px">
+          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
+            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${transfers.length}</div>
+            <div style="color:#64748b;font-size:13px">Transfers</div>
+          </div>
+          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
+            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${outcomes.length}</div>
+            <div style="color:#64748b;font-size:13px">Total Outcomes</div>
+          </div>
+          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
+            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${los.filter((l: any) => l.internalStatus === "active").length}</div>
+            <div style="color:#64748b;font-size:13px">Active LOs</div>
+          </div>
+        </div>
+        <h3 style="color:#1A2B4A;font-size:14px">CLR Leaderboard</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#1A2B4A;color:white"><th style="padding:8px 12px;text-align:left">#</th><th style="padding:8px 12px;text-align:left">CLR</th><th style="padding:8px 12px;text-align:right">Transfers</th></tr></thead>
+          <tbody>${leaderboard.map((row, i) => `<tr style="background:${i%2===0?"white":"#f8fafc"}"><td style="padding:8px 12px">${i+1}</td><td style="padding:8px 12px">${row.name}</td><td style="padding:8px 12px;text-align:right;font-weight:600">${row.count}</td></tr>`).join("")}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  const transporter = nodemailer.createTransport({ host: settings.smtp_host, port: settings.smtp_port, secure: settings.smtp_port === 465, auth: { user: settings.smtp_user, pass: settings.smtp_pass } });
+  await transporter.sendMail({ from: settings.from_address || settings.smtp_user, to: managers.join(", "), subject, html });
+}
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -92,6 +149,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Auth routes (public) ───────────────────────────────────────────────────
   app.post("/api/auth/login", async (req, res) => {
+    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+    const rateCheck = storageExtra.checkLoginRateLimit(ip);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: "Too many failed attempts. Please wait 15 minutes before trying again." });
+    }
     const { email, password } = req.body ?? {};
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
@@ -100,7 +162,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!user) return res.status(401).json({ error: "Invalid email or password" });
     if (!user.password_hash) return res.status(401).json({ error: "Account has no password set" });
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: "Invalid email or password" });
+    if (!valid) return res.status(401).json({ error: `Invalid email or password${rateCheck.remaining <= 2 ? ` (${rateCheck.remaining} attempt${rateCheck.remaining === 1 ? "" : "s"} remaining)` : ""}` });
 
     const isProduction = process.env.NODE_ENV === "production";
     const payload = JSON.stringify({ userId: user.id, role: user.role });
@@ -112,6 +174,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
+    storageExtra.resetLoginAttempts(ip);
     return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   });
 
@@ -367,21 +430,59 @@ export function registerRoutes(httpServer: Server, app: Express) {
     // Clear existing recommended assignments for today
     storage.clearDailyAssignments(date);
 
-    // Distribute across assistants (round-robin)
     const assignments: any[] = [];
-    topRanked.forEach((item, index) => {
-      const assistantIndex = index % assistants.length;
-      const assistantRank = Math.floor(index / assistants.length) + 1;
-      assignments.push({
-        assignmentDate: date,
-        loId: item.lo.id,
-        assistantId: assistants[assistantIndex].id,
-        globalRank: index + 1,
-        assistantRank,
-        status: "recommended",
-        notes: null,
+
+    if (settings.roundRobinEnabled) {
+      // ── Spaced Round Robin: CLRs take turns, no CLR gets back-to-back same LO ──
+      // Interleave: slot 0→CLR0, slot 1→CLR1, slot 2→CLR2, slot 3→CLR0, ...
+      // This ensures max spacing between any CLR's consecutive LO assignments
+      const slots = assistants.length;
+      topRanked.forEach((item, index) => {
+        // Rotate starting CLR each "round" to distribute top-ranked LOs fairly
+        const round = Math.floor(index / slots);
+        const posInRound = index % slots;
+        // Even rounds go 0..N-1, odd rounds go N-1..0 (snake pattern for fairness)
+        const assistantIndex = round % 2 === 0 ? posInRound : (slots - 1 - posInRound);
+        const assistantRank = round + 1;
+        assignments.push({
+          assignmentDate: date,
+          loId: item.lo.id,
+          assistantId: assistants[assistantIndex].id,
+          globalRank: index + 1,
+          assistantRank,
+          status: "recommended",
+          notes: null,
+        });
       });
-    });
+    } else {
+      // ── Fixed Monthly mode: use monthly assignments table ──────────────────
+      const month = date.slice(0, 7);
+      const monthlyRows = storageExtra.getMonthlyAssignments(month);
+      if (monthlyRows.length === 0) {
+        // Auto-generate if empty
+        const shuffled = [...topRanked].sort(() => Math.random() - 0.5);
+        const rows = shuffled.map((item, i) => ({ assistantId: assistants[i % assistants.length].id, loId: item.lo.id }));
+        storageExtra.setMonthlyAssignments(month, rows);
+      }
+      const monthlyMap = storageExtra.getMonthlyAssignments(month);
+      // Use monthly assignment order, filter to top-ranked LOs that are eligible today
+      const eligibleIds = new Set(topRanked.map(r => r.lo.id));
+      const orderedRows = monthlyMap.filter((r: any) => eligibleIds.has(r.lo_id || r.loId));
+      orderedRows.forEach((r: any, index: number) => {
+        const assistantId = r.assistant_id || r.assistantId;
+        const loId = r.lo_id || r.loId;
+        const assistantRank = Math.floor(index / assistants.length) + 1;
+        assignments.push({
+          assignmentDate: date,
+          loId,
+          assistantId,
+          globalRank: index + 1,
+          assistantRank,
+          status: "recommended",
+          notes: null,
+        });
+      });
+    }
 
     const created = storage.createDailyAssignments(assignments);
     audit({ userId: 1, userName: "Ethan Wood", action: "generate", entityType: "assignment", entityId: null, entityLabel: `Assignments for ${date}`, details: JSON.stringify({ date, count: created.length }) });
@@ -399,7 +500,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.patch("/api/assignments/:id", (req, res) => {
+    // Block status changes unless user is admin (admins use /admin-override endpoint for full audit)
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    const session = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
+    const currentUser = session?.userId ? storage.getUserById(session.userId) : null;
+    // Non-admins can still log EOD status (worked/attempted/skipped) — that's normal workflow
+    // Only status changes BACK to 'recommended' are blocked for non-admins
     const { status, notes } = req.body;
+    if (status === "recommended" && currentUser?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can reset assignment status. Use the admin override process." });
+    }
     const assignment = storage.updateAssignmentStatus(parseInt(req.params.id), status, notes);
 
     // If marked worked, update LO's last worked date
@@ -595,6 +705,88 @@ export function registerRoutes(httpServer: Server, app: Express) {
       .map(([month, stats]) => ({ month, ...stats }));
 
     res.json({ lo, monthlyData, totalOutcomes: outcomes.length });
+  });
+
+  // ── Email Settings ────────────────────────────────────────────────────────────
+  app.get("/api/settings/email", requireAuth, (_req, res) => {
+    const s = storageExtra.getEmailSettings();
+    // Never expose SMTP password to frontend
+    res.json({ ...s, smtpPass: s.smtpPass ? "••••••••" : "" });
+  });
+
+  app.patch("/api/settings/email", requireAuth, (req, res) => {
+    const data = { ...req.body };
+    if (data.smtpPass === "••••••••") delete data.smtpPass; // don't overwrite with mask
+    storageExtra.updateEmailSettings(data);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/settings/email/test", requireAuth, async (req, res) => {
+    const s = storageExtra.getEmailSettings();
+    if (!s.smtpHost || !s.smtpUser) return res.status(400).json({ error: "SMTP not configured" });
+    try {
+      const transporter = nodemailer.createTransport({ host: s.smtpHost, port: s.smtpPort, secure: s.smtpPort === 465, auth: { user: s.smtpUser, pass: s.smtpPass } });
+      await transporter.verify();
+      res.json({ ok: true });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.post("/api/settings/email/send-now", requireAuth, async (req, res) => {
+    const { type } = req.body; // 'daily' | 'weekly' | 'monthly'
+    try {
+      await sendReport(type ?? "daily");
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Monthly Assignments (Fixed mode) ─────────────────────────────────────────
+  app.get("/api/monthly-assignments", requireAuth, (req, res) => {
+    const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+    const rows = storageExtra.getMonthlyAssignments(month);
+    const los = storage.getLoanOfficers();
+    const users = storage.getUsers();
+    const enriched = rows.map((r: any) => ({
+      ...r,
+      lo: los.find(l => l.id === r.lo_id),
+      assistant: users.find(u => u.id === r.assistant_id),
+    }));
+    res.json(enriched);
+  });
+
+  app.post("/api/monthly-assignments/shuffle", requireAuth, (req, res) => {
+    const month = (req.body.month as string) || new Date().toISOString().slice(0, 7);
+    const activeLos = storage.getLoanOfficers().filter(lo => lo.internalStatus === "active");
+    const assistants = storage.getUsers().filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive);
+    if (!assistants.length) return res.status(400).json({ error: "No active assistants" });
+    // Shuffle LOs randomly then distribute round-robin
+    const shuffled = [...activeLos].sort(() => Math.random() - 0.5);
+    const rows = shuffled.map((lo, i) => ({ assistantId: assistants[i % assistants.length].id, loId: lo.id }));
+    storageExtra.setMonthlyAssignments(month, rows);
+    audit({ userId: 1, userName: "Ethan Wood", action: "generate", entityType: "assignment", entityId: null, entityLabel: `Monthly shuffle for ${month}`, details: JSON.stringify({ month, count: rows.length }) });
+    res.json({ ok: true, count: rows.length });
+  });
+
+  // ── Assignment Override (admin triple-confirm) ────────────────────────────────
+  app.post("/api/assignments/:id/admin-override", requireAuth, (req, res) => {
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    const session = raw ? JSON.parse(raw) : null;
+    const user = session?.userId ? storage.getUserById(session.userId) : null;
+    if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const { reason, signature, newStatus, notes } = req.body;
+    if (!reason?.trim() || !signature?.trim() || !newStatus) return res.status(400).json({ error: "reason, signature, and newStatus required" });
+    const assignmentId = parseInt(req.params.id);
+    const existing = storage.getAssignmentById ? storage.getAssignmentById(assignmentId) : null;
+    const previousStatus = existing?.status ?? "unknown";
+    // Log the override
+    storageExtra.createAssignmentOverride({ assignmentId, adminId: user.id, adminName: user.name, reason, signature, previousStatus, newStatus });
+    // Apply the status change
+    const updated = storage.updateAssignmentStatus(assignmentId, newStatus, notes ?? null);
+    audit({ userId: user.id, userName: user.name, action: "admin-override", entityType: "assignment", entityId: assignmentId, entityLabel: `Assignment #${assignmentId}`, details: JSON.stringify({ reason, signature, previousStatus, newStatus }) });
+    res.json({ ok: true, assignment: updated });
+  });
+
+  app.get("/api/assignment-overrides", requireAuth, (_req, res) => {
+    res.json(storageExtra.getAssignmentOverrides());
   });
 
   // ── Hot-patch: pull latest dist from GitHub and overwrite local static files ──

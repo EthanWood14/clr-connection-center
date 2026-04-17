@@ -101,15 +101,14 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      <SidebarHeader className="px-4 py-5 border-b border-sidebar-border">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0">
-            <Building2 className="w-4 h-4 text-sidebar-foreground" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-sidebar-foreground leading-tight">CLR Connection</p>
-            <p className="text-xs text-sidebar-foreground/60 leading-tight">West Capital Lending</p>
-          </div>
+      <SidebarHeader className="px-4 py-4 border-b border-sidebar-border">
+        <div className="flex flex-col gap-2">
+          <img
+            src="/wcl-logo.png"
+            alt="West Capital Lending"
+            className="h-7 w-auto object-contain dark:brightness-0 dark:invert opacity-90"
+          />
+          <p className="text-[11px] font-semibold text-sidebar-foreground/70 uppercase tracking-widest leading-tight">CLR Connection Center</p>
         </div>
       </SidebarHeader>
 
