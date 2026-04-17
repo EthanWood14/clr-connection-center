@@ -505,6 +505,7 @@ export default function Assignments() {
 
   // When assignments are loaded for today, auto-lock the generate button
   const today = formatDate(new Date());
+  const isPastDate = currentDate < today;
   const isToday = currentDate === today;
   const alreadyGenerated = isToday && (assignments as any[]).length > 0;
 
@@ -642,13 +643,20 @@ export default function Assignments() {
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
-          {(alreadyGenerated || generateLocked) ? (
+          {isPastDate ? (
+            // Past date — no generate button at all, just a read-only label
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-muted-foreground/20 bg-muted/50 text-muted-foreground text-sm font-medium select-none">
+              <Lock className="w-3.5 h-3.5" />
+              Past date
+            </div>
+          ) : (alreadyGenerated || generateLocked) ? (
+            // Today — already generated, show lock + optional admin override
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-medium select-none">
                 <Lock className="w-3.5 h-3.5" />
                 Locked until tomorrow
               </div>
-              {user?.role === "admin" && isToday && (
+              {user?.role === "admin" && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -662,6 +670,7 @@ export default function Assignments() {
               )}
             </div>
           ) : (
+            // Today — not yet generated
             <Button
               onClick={() => generateMutation.mutate()}
               disabled={generateMutation.isPending}
