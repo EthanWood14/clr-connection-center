@@ -16,6 +16,13 @@ declare module "http" {
   }
 }
 
+// Ensure all /api/* responses are never cached by Railway's CDN
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.set("Surrogate-Control", "no-store");
+  next();
+});
+
 app.use(
   express.json({
     limit: "10mb",
