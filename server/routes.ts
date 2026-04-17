@@ -134,6 +134,40 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  app.post("/api/auth/change-password", async (req, res) => {
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    if (!raw) return res.status(401).json({ error: "Not authenticated" });
+    let userId: number;
+    try {
+      const session = JSON.parse(raw);
+      if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
+      userId = session.userId;
+    } catch {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current password and new password are required" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+
+    const user = storage.getUserByEmail(
+      (storage.getUserById(userId) as any)?.email ?? ""
+    );
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (!user.password_hash) return res.status(401).json({ error: "No password set for this account" });
+
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    storage.setUserPassword(userId, hash);
+    return res.json({ ok: true });
+  });
+
   // ── Auth guard for all /api/* routes except /api/auth/* ────────────────────
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
@@ -158,6 +192,75 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Loan Officers ────────────────────────────────────────────────────────────
   // Snoozed must be registered BEFORE /:id to avoid param capture
+  // ── Bulk CSV import — must be BEFORE /:id routes ────────────────────────────
+  app.post("/api/loan-officers/import", async (req, res) => {
+    try {
+      const { rows } = req.body ?? {};
+      if (!Array.isArray(rows)) {
+        return res.status(400).json({ error: "Request body must include a 'rows' array" });
+      }
+
+      const existingLOs = storage.getLoanOfficers();
+      const existingNmlsIds = new Set(existingLOs.map(lo => lo.nmlsId));
+
+      let imported = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowLabel = `Row ${i + 1}`;
+
+        if (!row.fullName || !row.nmlsId) {
+          errors.push(`${rowLabel}: Missing required fields (fullName, nmlsId)`);
+          continue;
+        }
+
+        if (existingNmlsIds.has(String(row.nmlsId))) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          storage.createLoanOfficer({
+            fullName: String(row.fullName),
+            nmlsId: String(row.nmlsId),
+            phone: row.phone ? String(row.phone) : undefined,
+            email: row.email ? String(row.email) : undefined,
+            licensedStates: row.licensedStates ? String(row.licensedStates) : "[]",
+            bonzoUsername: row.bonzoUsername ? String(row.bonzoUsername) : undefined,
+            bonzoPassword: row.bonzoPassword ? String(row.bonzoPassword) : undefined,
+            leadMailboxUsername: row.leadMailboxUsername ? String(row.leadMailboxUsername) : undefined,
+            leadMailboxPassword: row.leadMailboxPassword ? String(row.leadMailboxPassword) : undefined,
+            notes: row.notes ? String(row.notes) : undefined,
+            specialRequests: row.specialRequests ? String(row.specialRequests) : undefined,
+            boostScore: row.boostScore !== undefined && row.boostScore !== "" ? Number(row.boostScore) : 0,
+            priorityTier: row.priorityTier !== undefined && row.priorityTier !== "" ? Number(row.priorityTier) : 2,
+            internalStatus: row.internalStatus ? String(row.internalStatus) : "active",
+          });
+          existingNmlsIds.add(String(row.nmlsId));
+          imported++;
+        } catch (e: any) {
+          errors.push(`${rowLabel} (${row.fullName}): ${e.message}`);
+        }
+      }
+
+      audit({
+        userId: 1,
+        userName: "Ethan Wood",
+        action: "IMPORT_LOS",
+        entityType: "loan_officer",
+        entityId: null,
+        entityLabel: `Bulk import: ${imported} LOs`,
+        details: JSON.stringify({ imported, skipped, errors: errors.length }),
+      });
+
+      return res.json({ imported, skipped, errors });
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message });
+    }
+  });
+
   app.get("/api/loan-officers/snoozed", (req, res) => {
     const today = new Date().toISOString().split("T")[0];
     const snoozed = storage.getLoanOfficers().filter(

@@ -16,10 +16,11 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2,
-  ChevronDown, ChevronUp, Star, BedDouble, AlertCircle, CalendarDays
+  ChevronDown, ChevronUp, Star, BedDouble, AlertCircle, CalendarDays, Upload
 } from "lucide-react";
 import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
+import { LoCsvImport } from "@/components/lo-csv-import";
 
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
 const TIER_COLORS: Record<number, string> = {
@@ -423,6 +424,7 @@ export default function Directory() {
   const [tierFilter, setTierFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
@@ -486,9 +488,18 @@ export default function Directory() {
           <h1 className="text-xl font-bold">LO Directory</h1>
           <p className="text-sm text-muted-foreground">{los.length} loan officers total</p>
         </div>
-        <Button onClick={() => { setEditTarget(null); setDialogOpen(true); }} data-testid="button-add-lo">
-          <Plus className="w-4 h-4 mr-2" />Add LO
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setImportDialogOpen(true)}
+            data-testid="button-import-csv"
+          >
+            <Upload className="w-4 h-4 mr-2" />Import CSV
+          </Button>
+          <Button onClick={() => { setEditTarget(null); setDialogOpen(true); }} data-testid="button-add-lo">
+            <Plus className="w-4 h-4 mr-2" />Add LO
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -561,6 +572,20 @@ export default function Directory() {
         onSubmit={handleSubmit}
         isPending={isPending}
       />
+
+      {/* CSV Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Import Loan Officers from CSV</DialogTitle>
+          </DialogHeader>
+          <LoCsvImport
+            onImportComplete={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

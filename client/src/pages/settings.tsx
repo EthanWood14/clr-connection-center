@@ -8,10 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/lib/auth";
 
 const DEFAULT_WEIGHTS = {
   weightDaysSinceWorked: 0.35,
@@ -53,6 +54,180 @@ const WEIGHT_FIELDS = [
 
 type WeightKey = typeof WEIGHT_FIELDS[number]["key"];
 
+// Tier labels and colors (mirrored from directory.tsx)
+const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
+const TIER_COLORS: Record<number, string> = {
+  1: "bg-amber-100 text-amber-700 border-amber-300",
+  2: "bg-blue-50 text-blue-600 border-blue-200",
+  3: "bg-gray-100 text-gray-500 border-gray-300",
+};
+
+type ScoreWeights = {
+  weightDaysSinceWorked: number;
+  weightFrequency: number;
+  weightAvailability: number;
+  weightBoost: number;
+  weightPriorityTier: number;
+};
+
+function computeScore(lo: any, weights: ScoreWeights) {
+  const daysSince = lo.lastWorkedDate
+    ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86_400_000)
+    : 999;
+  const daysSinceNorm = Math.min(daysSince / 30, 1);
+  const freqScore = 1 - Math.min((lo.totalTimesWorked ?? 0) / 100, 1);
+  const availScore = 1;
+  const boostNorm = (lo.boostScore ?? 0) / 10;
+  const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
+
+  const score =
+    weights.weightDaysSinceWorked * daysSinceNorm +
+    weights.weightFrequency * freqScore +
+    weights.weightAvailability * availScore +
+    weights.weightBoost * boostNorm +
+    weights.weightPriorityTier * tierScore;
+
+  return {
+    score,
+    components: {
+      recency: weights.weightDaysSinceWorked * daysSinceNorm,
+      freq: weights.weightFrequency * freqScore,
+      avail: weights.weightAvailability * availScore,
+      boost: weights.weightBoost * boostNorm,
+      tier: weights.weightPriorityTier * tierScore,
+    },
+  };
+}
+
+const COMPONENT_COLORS = [
+  "bg-teal-100 text-teal-700",
+  "bg-purple-100 text-purple-700",
+  "bg-green-100 text-green-700",
+  "bg-orange-100 text-orange-700",
+  "bg-indigo-100 text-indigo-700",
+];
+
+function ScorePreview({ weights }: { weights: ScoreWeights }) {
+  const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
+
+  const activeLos = los.filter(
+    (lo) => lo.internalStatus === "active" && !lo.snoozeUntil
+  );
+
+  const ranked = activeLos
+    .map((lo) => ({ lo, ...computeScore(lo, weights) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Activity className="w-4 h-4 text-teal-600" />
+            Score Preview
+          </CardTitle>
+          <span className="text-xs text-muted-foreground italic">
+            Preview updates as you drag sliders. Save to apply.
+          </span>
+        </div>
+        <div className="flex items-start gap-2 mt-2 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
+          <span>
+            Top 10 active loan officers ranked by the current (unsaved) weights. Hover a row to see the score breakdown.
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-1 px-4 pb-4">
+        {isLoading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 py-2">
+              <div className="w-6 shrink-0" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 rounded bg-muted animate-pulse w-1/3" />
+                <div className="h-2 rounded bg-muted animate-pulse w-full" />
+              </div>
+            </div>
+          ))
+        ) : ranked.length === 0 ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">No active loan officers found.</p>
+        ) : (
+          ranked.map(({ lo, score, components }, idx) => (
+            <div
+              key={lo.id}
+              className="group rounded-lg px-3 py-2.5 hover:bg-muted/50 transition-colors"
+            >
+              {/* Main row */}
+              <div className="flex items-center gap-3">
+                {/* Rank */}
+                <span className="w-7 shrink-0 text-xs font-bold text-muted-foreground text-right">
+                  #{idx + 1}
+                </span>
+
+                {/* Name + tier badge */}
+                <div className="flex items-center gap-1.5 min-w-0 w-36 shrink-0">
+                  <span className="text-sm font-medium truncate">{lo.fullName}</span>
+                </div>
+
+                {/* Tier + boost */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] px-1.5 py-0 leading-4 ${TIER_COLORS[lo.priorityTier as number] ?? TIER_COLORS[2]}`}
+                  >
+                    {TIER_LABELS[lo.priorityTier as number] ?? "Standard"}
+                  </Badge>
+                  {lo.boostScore > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] px-1.5 py-0 leading-4 bg-orange-50 text-orange-600 border-orange-200"
+                    >
+                      +{lo.boostScore}
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Progress bar */}
+                <div className="flex-1 min-w-0">
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-teal-500 transition-all duration-300"
+                      style={{ width: `${Math.min(score * 100, 100).toFixed(1)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Numeric score */}
+                <span className="w-10 shrink-0 text-right text-xs font-mono font-semibold text-teal-700">
+                  {score.toFixed(2)}
+                </span>
+              </div>
+
+              {/* Breakdown chips — shown on hover */}
+              <div className="mt-1.5 ml-10 flex flex-wrap gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {([
+                  ["Recency", components.recency],
+                  ["Freq", components.freq],
+                  ["Avail", components.avail],
+                  ["Boost", components.boost],
+                  ["Tier", components.tier],
+                ] as [string, number][]).map(([label, val], ci) => (
+                  <span
+                    key={label}
+                    className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${COMPONENT_COLORS[ci]}`}
+                  >
+                    {label} {val.toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function WeightSliderRow({
   label,
   description,
@@ -90,10 +265,18 @@ function WeightSliderRow({
 
 export default function Settings() {
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
   const { data: settings, isLoading } = useQuery<any>({ queryKey: ["/api/settings/algorithm"] });
 
   const [weights, setWeights] = useState<Record<WeightKey, number> | null>(null);
   const [maxLOs, setMaxLOs] = useState<number | null>(null);
+
+  // Change password state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   const currentWeights = weights ?? (settings ? {
     weightDaysSinceWorked: settings.weightDaysSinceWorked,
@@ -205,6 +388,9 @@ export default function Settings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Score Preview */}
+      <ScorePreview weights={currentWeights} />
 
       {/* Distribution Settings */}
       <Card>
@@ -322,6 +508,105 @@ export default function Settings() {
         </div>
         <BroadcastNotifications />
       </div>
+
+      <Separator />
+
+      {/* Change Password */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Lock className="w-4 h-4 text-muted-foreground" />
+            Change Password
+          </CardTitle>
+          {authUser && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Changing password for: {authUser.email}
+            </p>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Current Password</label>
+              <Input
+                type="password"
+                value={currentPassword}
+                onChange={e => { setCurrentPassword(e.target.value); setPasswordError(null); }}
+                placeholder="Enter current password"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">New Password</label>
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={e => { setNewPassword(e.target.value); setPasswordError(null); }}
+                placeholder="At least 8 characters"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Confirm New Password</label>
+              <Input
+                type="password"
+                value={confirmPassword}
+                onChange={e => { setConfirmPassword(e.target.value); setPasswordError(null); }}
+                placeholder="Repeat new password"
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+
+          {passwordError && (
+            <p className="text-xs text-destructive">{passwordError}</p>
+          )}
+
+          <Button
+            className="w-full sm:w-auto"
+            disabled={passwordLoading}
+            onClick={async () => {
+              setPasswordError(null);
+              if (!currentPassword || !newPassword || !confirmPassword) {
+                setPasswordError("All fields are required.");
+                return;
+              }
+              if (newPassword.length < 8) {
+                setPasswordError("New password must be at least 8 characters.");
+                return;
+              }
+              if (newPassword !== confirmPassword) {
+                setPasswordError("New password and confirm password do not match.");
+                return;
+              }
+              setPasswordLoading(true);
+              try {
+                const res = await fetch("/api/auth/change-password", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ currentPassword, newPassword }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                  setPasswordError(data.error ?? "Failed to change password.");
+                } else {
+                  toast({ title: "Password updated" });
+                  setCurrentPassword("");
+                  setNewPassword("");
+                  setConfirmPassword("");
+                }
+              } catch {
+                setPasswordError("An unexpected error occurred. Please try again.");
+              } finally {
+                setPasswordLoading(false);
+              }
+            }}
+          >
+            {passwordLoading ? "Updating…" : "Update Password"}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
