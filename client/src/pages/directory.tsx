@@ -143,7 +143,7 @@ function CredBlock({
             >
               {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
             </button>
-            {showPass && <CopyBtn value={password} label="password" />}
+            <CopyBtn value={password} label="password" />
           </>
         ) : (
           <span className="text-xs text-muted-foreground italic">no password</span>
