@@ -596,6 +596,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     res.json({ lo, monthlyData, totalOutcomes: outcomes.length });
   });
+
+  // ── Hot-patch: write new static assets to disk (one-time use, admin only) ──
+  app.post("/api/admin/hotpatch", async (req, res) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const distPath = path.resolve(__dirname, "public");
+    const { files } = req.body ?? {};
+    if (!Array.isArray(files)) return res.status(400).json({ error: "files array required" });
+    try {
+      for (const f of files) {
+        const target = path.join(distPath, f.path);
+        const dir = path.dirname(target);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(target, f.content, f.encoding ?? "utf8");
+      }
+      res.json({ ok: true, written: files.map((f: any) => f.path) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
 
 export function createHttpServer(app: Express): Server {
