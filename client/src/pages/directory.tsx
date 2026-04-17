@@ -15,7 +15,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2,
+  Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2, RotateCcw,
   ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
   Upload, CheckCheck, BarChart2,
 } from "lucide-react";
@@ -208,11 +208,13 @@ function LOCard({
   score,
   onEdit,
   onDelete,
+  onRestore,
 }: {
   lo: any;
   score: number | null;
   onEdit: (lo: any) => void;
   onDelete: (id: number) => void;
+  onRestore: (id: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const states: string[] = (() => {
@@ -306,10 +308,18 @@ function LOCard({
               data-testid={`button-edit-lo-${lo.id}`}>
               <Edit2 className="w-3.5 h-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-destructive"
-              onClick={() => onDelete(lo.id)} data-testid={`button-delete-lo-${lo.id}`}>
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
+            {lo.internalStatus === "archived" ? (
+              <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-emerald-600"
+                onClick={() => onRestore(lo.id)} title="Restore to active"
+                data-testid={`button-restore-lo-${lo.id}`}>
+                <RotateCcw className="w-3.5 h-3.5" />
+              </Button>
+            ) : (
+              <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-destructive"
+                onClick={() => onDelete(lo.id)} data-testid={`button-delete-lo-${lo.id}`}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => setExpanded(e => !e)}
               data-testid={`button-expand-lo-${lo.id}`}>
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -648,6 +658,15 @@ export default function Directory() {
     onError: () => toast({ title: "Error removing LO", variant: "destructive" }),
   });
 
+  const restoreMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("PATCH", `/api/loan-officers/${id}`, { internalStatus: "active" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
+      toast({ title: "Loan officer restored to active" });
+    },
+    onError: () => toast({ title: "Error restoring LO", variant: "destructive" }),
+  });
+
   const activeCount = los.filter((lo: any) => lo.internalStatus === "active").length;
 
   const filtered = los.filter((lo: any) => {
@@ -755,6 +774,7 @@ export default function Directory() {
               score={lo.internalStatus === "active" ? computeScore(lo, weights) : null}
               onEdit={handleEdit}
               onDelete={id => setConfirmDeleteLO(los.find((l: any) => l.id === id) ?? { id })}
+              onRestore={id => restoreMutation.mutate(id)}
             />
           ))}
         </div>
