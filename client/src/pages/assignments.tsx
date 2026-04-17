@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,8 +14,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
-  Check, ArrowRight, X, MinusCircle, Lock
+  Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert
 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   recommended: { label: "Recommended", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: AlertCircle },
@@ -306,14 +307,178 @@ function BulkActionBar({ selectedCount, onMarkStatus, onDeselectAll, isBusy }: B
   );
 }
 
+// ── Admin Override Dialog ────────────────────────────────────────────────────────
+// Three steps: 1) Reason entry  2) "I understand" confirm  3) Final type-to-confirm
+const CONFIRM_PHRASE = "REGENERATE";
+
+function AdminRegenerateDialog({
+  open, onClose, onSuccess
+}: { open: boolean; onClose: () => void; onSuccess: () => void }) {
+  const { toast } = useToast();
+  const [step, setStep] = useState(1);
+  const [reason, setReason] = useState("");
+  const [typeConfirm, setTypeConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+
+  function reset() {
+    setStep(1);
+    setReason("");
+    setTypeConfirm("");
+    setLoading(false);
+  }
+
+  function handleClose() {
+    reset();
+    onClose();
+  }
+
+  async function handleSubmit() {
+    if (typeConfirm.trim().toUpperCase() !== CONFIRM_PHRASE) return;
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/assignments/regenerate-override", { reason });
+      toast({ title: "Assignments regenerated", description: `Override logged. Reason: ${reason}` });
+      reset();
+      onSuccess();
+    } catch (e: any) {
+      toast({ title: "Override failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const today = formatDate(new Date());
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) handleClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <ShieldAlert className="w-5 h-5" />
+            Admin Override — Regenerate Assignments
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Step indicator */}
+        <div className="flex items-center gap-2 mb-1">
+          {[1, 2, 3].map(s => (
+            <div key={s} className={`flex items-center gap-2 ${ s < 3 ? "flex-1" : "" }`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
+                step > s ? "bg-destructive text-white" :
+                step === s ? "bg-destructive/10 text-destructive border-2 border-destructive" :
+                "bg-muted text-muted-foreground"
+              }`}>{step > s ? <Check className="w-3 h-3" /> : s}</div>
+              {s < 3 && <div className={`h-px flex-1 transition-colors ${step > s ? "bg-destructive" : "bg-border"}`} />}
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground mb-4 px-0">
+          <span>Reason</span>
+          <span className="ml-6">Acknowledge</span>
+          <span>Confirm</span>
+        </div>
+
+        {/* Step 1: Reason */}
+        {step === 1 && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300 flex gap-2">
+              <TriangleAlert className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>This will <strong>wipe and regenerate</strong> all of today's ({today}) assignments. This action is permanent and will be recorded in the audit log.</span>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Reason for override <span className="text-destructive">*</span></label>
+              <Textarea
+                ref={reasonRef}
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                placeholder="Describe why today's assignments need to be regenerated..."
+                className="min-h-[90px] resize-none"
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">{reason.trim().length}/10 characters minimum</p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleClose}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={reason.trim().length < 10}
+                onClick={() => setStep(2)}
+              >Next</Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {/* Step 2: Acknowledge consequences */}
+        {step === 2 && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-2">
+              <p className="text-sm font-semibold text-destructive">By proceeding, you confirm:</p>
+              <ul className="text-sm text-muted-foreground space-y-1.5 list-none">
+                <li className="flex items-start gap-2"><Check className="w-4 h-4 text-destructive shrink-0 mt-0.5" />All existing assignments for today will be permanently deleted</li>
+                <li className="flex items-start gap-2"><Check className="w-4 h-4 text-destructive shrink-0 mt-0.5" />A new set will be generated fresh from the algorithm</li>
+                <li className="flex items-start gap-2"><Check className="w-4 h-4 text-destructive shrink-0 mt-0.5" />Your name, reason, and timestamp will be recorded in the audit log</li>
+                <li className="flex items-start gap-2"><Check className="w-4 h-4 text-destructive shrink-0 mt-0.5" />All team members will be notified</li>
+              </ul>
+            </div>
+            <div className="rounded-lg bg-muted/50 border px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium">Logged reason:</span> {reason}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+              <Button variant="destructive" onClick={() => setStep(3)}>I Understand, Continue</Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {/* Step 3: Type-to-confirm */}
+        {step === 3 && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm">Type <span className="font-mono font-bold text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">{CONFIRM_PHRASE}</span> to confirm the override:</p>
+              <Input
+                value={typeConfirm}
+                onChange={e => setTypeConfirm(e.target.value)}
+                placeholder={CONFIRM_PHRASE}
+                className={`font-mono ${
+                  typeConfirm.length > 0 && typeConfirm.toUpperCase() !== CONFIRM_PHRASE
+                    ? "border-destructive focus-visible:ring-destructive"
+                    : typeConfirm.toUpperCase() === CONFIRM_PHRASE
+                    ? "border-green-500 focus-visible:ring-green-500"
+                    : ""
+                }`}
+                autoFocus
+                onKeyDown={e => e.key === "Enter" && typeConfirm.toUpperCase() === CONFIRM_PHRASE && !loading && handleSubmit()}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStep(2)} disabled={loading}>Back</Button>
+              <Button
+                variant="destructive"
+                disabled={typeConfirm.trim().toUpperCase() !== CONFIRM_PHRASE || loading}
+                onClick={handleSubmit}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                {loading ? "Regenerating..." : "Regenerate Now"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Assignments() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [currentDate, setCurrentDate] = useState(formatDate(new Date()));
   const [statusDialog, setStatusDialog] = useState<any>(null);
   const [callInputs, setCallInputs] = useState<Record<number, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isBulkPending, setIsBulkPending] = useState(false);
   const [generateLocked, setGenerateLocked] = useState(false);
+  const [showOverrideDialog, setShowOverrideDialog] = useState(false);
 
   const { data: assignments = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/assignments", currentDate],
@@ -478,9 +643,23 @@ export default function Assignments() {
             </Button>
           </div>
           {(alreadyGenerated || generateLocked) ? (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-medium select-none">
-              <Lock className="w-3.5 h-3.5" />
-              Locked until tomorrow
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-medium select-none">
+                <Lock className="w-3.5 h-3.5" />
+                Locked until tomorrow
+              </div>
+              {user?.role === "admin" && isToday && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/5 hover:border-destructive text-xs"
+                  onClick={() => setShowOverrideDialog(true)}
+                  data-testid="button-admin-override"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  Override
+                </Button>
+              )}
             </div>
           ) : (
             <Button
@@ -625,6 +804,17 @@ export default function Assignments() {
         onMarkStatus={handleBulkMarkStatus}
         onDeselectAll={handleDeselectAll}
         isBusy={isBulkPending}
+      />
+
+      {/* Admin Regenerate Override Dialog */}
+      <AdminRegenerateDialog
+        open={showOverrideDialog}
+        onClose={() => setShowOverrideDialog(false)}
+        onSuccess={() => {
+          setShowOverrideDialog(false);
+          setGenerateLocked(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
+        }}
       />
     </div>
   );

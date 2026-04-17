@@ -799,6 +799,95 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true, assignment: updated });
   });
 
+  // ── Admin: unlock + regenerate today's assignments ─────────────────────────
+  app.post("/api/assignments/regenerate-override", requireAuth, async (req, res) => {
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    const session = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
+    const user = session?.userId ? storage.getUserById(session.userId) : null;
+    if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+    const { reason } = req.body;
+    if (!reason?.trim()) return res.status(400).json({ error: "A reason is required" });
+
+    const date = new Date().toISOString().split("T")[0];
+    const settings = storage.getAlgorithmSettings();
+    const los = storage.getLoanOfficers();
+    const assistants = storage.getUsers().filter(u => u.role === "assistant" && u.isActive);
+    if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
+
+    // Clear ALL of today's assignments (override wipes everything)
+    storage.clearDailyAssignments(date);
+
+    // Re-run the full generation logic
+    const ranked = generateRankings(los, settings, date);
+    const maxTotal = settings.maxLosPerAssistant * assistants.length;
+    const topRanked = ranked.slice(0, maxTotal);
+    const assignments: any[] = [];
+
+    if (settings.roundRobinEnabled) {
+      const slots = assistants.length;
+      topRanked.forEach((item, index) => {
+        const round = Math.floor(index / slots);
+        const posInRound = index % slots;
+        const assistantIndex = round % 2 === 0 ? posInRound : (slots - 1 - posInRound);
+        assignments.push({
+          assignmentDate: date,
+          loId: item.lo.id,
+          assistantId: assistants[assistantIndex].id,
+          globalRank: index + 1,
+          assistantRank: round + 1,
+          status: "recommended",
+          notes: null,
+        });
+      });
+    } else {
+      const month = date.slice(0, 7);
+      let monthlyRows = storageExtra.getMonthlyAssignments(month);
+      if (monthlyRows.length === 0) {
+        const shuffled = [...topRanked].sort(() => Math.random() - 0.5);
+        const rows = shuffled.map((item, i) => ({ assistantId: assistants[i % assistants.length].id, loId: item.lo.id }));
+        storageExtra.setMonthlyAssignments(month, rows);
+        monthlyRows = storageExtra.getMonthlyAssignments(month);
+      }
+      const eligibleIds = new Set(topRanked.map(r => r.lo.id));
+      const orderedRows = monthlyRows.filter((r: any) => eligibleIds.has(r.lo_id || r.loId));
+      orderedRows.forEach((r: any, index: number) => {
+        assignments.push({
+          assignmentDate: date,
+          loId: r.lo_id || r.loId,
+          assistantId: r.assistant_id || r.assistantId,
+          globalRank: index + 1,
+          assistantRank: Math.floor(index / assistants.length) + 1,
+          status: "recommended",
+          notes: null,
+        });
+      });
+    }
+
+    const created = storage.createDailyAssignments(assignments);
+
+    // Write a prominent audit log entry
+    audit({
+      userId: user.id,
+      userName: user.name,
+      action: "admin-regenerate-override",
+      entityType: "assignment",
+      entityId: null,
+      entityLabel: `Regenerated assignments for ${date}`,
+      details: JSON.stringify({ date, reason, count: created.length, overriddenBy: user.email }),
+    });
+
+    storage.createNotification({
+      userId: null,
+      type: "assignment_ready",
+      title: "Assignments Regenerated (Admin Override)",
+      message: `${user.name} regenerated today's assignments. Reason: ${reason}`,
+      isRead: false,
+    });
+
+    return res.json({ ok: true, generated: created.length, date, reason });
+  });
+
   app.get("/api/assignment-overrides", requireAuth, (_req, res) => {
     res.json(storageExtra.getAssignmentOverrides());
   });
