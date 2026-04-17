@@ -412,6 +412,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.post("/api/assignments/generate", (req, res) => {
     const date = (req.body.date as string) || new Date().toISOString().split("T")[0];
+    const today = new Date().toISOString().split("T")[0];
+
+    // ── One-per-day lock: block re-generation if assignments already exist for today ──
+    if (date === today) {
+      const existing = storage.getDailyAssignments(date);
+      if (existing.length > 0) {
+        return res.status(409).json({
+          error: "Assignments have already been generated for today. They are locked until tomorrow.",
+          locked: true,
+          date,
+        });
+      }
+    }
+
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
     const assistants = storage.getUsers().filter(u => u.role === "assistant" && u.isActive);

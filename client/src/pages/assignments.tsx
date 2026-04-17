@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
-  Check, ArrowRight, X, MinusCircle
+  Check, ArrowRight, X, MinusCircle, Lock
 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
@@ -313,6 +313,7 @@ export default function Assignments() {
   const [callInputs, setCallInputs] = useState<Record<number, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isBulkPending, setIsBulkPending] = useState(false);
+  const [generateLocked, setGenerateLocked] = useState(false);
 
   const { data: assignments = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/assignments", currentDate],
@@ -337,13 +338,26 @@ export default function Assignments() {
     onError: () => toast({ title: "Error saving call count", variant: "destructive" }),
   });
 
+  // When assignments are loaded for today, auto-lock the generate button
+  const today = formatDate(new Date());
+  const isToday = currentDate === today;
+  const alreadyGenerated = isToday && (assignments as any[]).length > 0;
+
   const generateMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/assignments/generate", { date: currentDate }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
       toast({ title: "Assignments generated" });
     },
-    onError: () => toast({ title: "Error generating assignments", variant: "destructive" }),
+    onError: (err: any) => {
+      const msg: string = err?.message ?? "";
+      if (msg.includes("locked") || msg.includes("already been generated")) {
+        setGenerateLocked(true);
+        toast({ title: "Already generated today", description: "Assignments are locked until tomorrow.", variant: "destructive" });
+      } else {
+        toast({ title: "Error generating assignments", variant: "destructive" });
+      }
+    },
   });
 
   const updateMutation = useMutation({
@@ -463,14 +477,21 @@ export default function Assignments() {
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
-          <Button
-            onClick={() => generateMutation.mutate()}
-            disabled={generateMutation.isPending}
-            data-testid="button-generate"
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${generateMutation.isPending ? "animate-spin" : ""}`} />
-            Generate
-          </Button>
+          {(alreadyGenerated || generateLocked) ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-medium select-none">
+              <Lock className="w-3.5 h-3.5" />
+              Locked until tomorrow
+            </div>
+          ) : (
+            <Button
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              data-testid="button-generate"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${generateMutation.isPending ? "animate-spin" : ""}`} />
+              Generate
+            </Button>
+          )}
         </div>
       </div>
 
