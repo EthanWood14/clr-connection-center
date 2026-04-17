@@ -328,7 +328,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.put("/api/loan-officers/:id/availability", (req, res) => {
     const loId = parseInt(req.params.id);
-    const days = (req.body as any[]).map((d: any) => ({ loId, dayOfWeek: d.dayOfWeek, isAvailable: d.isAvailable }));
+    const days = (req.body as any[]).map((d: any) => ({ loId, dayOfWeek: d.dayOfWeek, isAvailable: d.isAvailable, timeSlot: d.timeSlot ?? "all" }));
     storage.setLoAvailability(loId, days);
     res.json(storage.getLoAvailability(loId));
   });

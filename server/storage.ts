@@ -61,7 +61,8 @@ sqlite.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lo_id INTEGER NOT NULL REFERENCES loan_officers(id),
     day_of_week INTEGER NOT NULL,
-    is_available INTEGER NOT NULL DEFAULT 1
+    is_available INTEGER NOT NULL DEFAULT 1,
+    time_slot TEXT NOT NULL DEFAULT 'all'
   );
 
   CREATE TABLE IF NOT EXISTS daily_assignments (
@@ -139,6 +140,13 @@ sqlite.exec(`
 // ── Migration: add password_hash column if it doesn't exist ───────────────────
 try {
   sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT;`);
+} catch {
+  // Column already exists — ignore
+}
+
+// ── Migration: add time_slot to lo_availability if missing ────────────────────
+try {
+  sqlite.exec(`ALTER TABLE lo_availability ADD COLUMN time_slot TEXT NOT NULL DEFAULT 'all';`);
 } catch {
   // Column already exists — ignore
 }

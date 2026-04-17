@@ -55,6 +55,7 @@ export const loAvailability = sqliteTable("lo_availability", {
   loId: integer("lo_id").notNull().references(() => loanOfficers.id),
   dayOfWeek: integer("day_of_week").notNull(), // 0=Sun, 1=Mon ... 6=Sat
   isAvailable: integer("is_available", { mode: "boolean" }).notNull().default(true),
+  timeSlot: text("time_slot").notNull().default("all"), // "all" | "morning" | "afternoon"
 });
 
 export const insertLoAvailabilitySchema = createInsertSchema(loAvailability).omit({ id: true });

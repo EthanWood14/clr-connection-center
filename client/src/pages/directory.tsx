@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,12 +16,14 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2,
-  ChevronDown, ChevronUp, Star, BedDouble, AlertCircle, CalendarDays, Upload
+  ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
+  Upload, CheckCheck, BarChart2,
 } from "lucide-react";
 import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
 import { LoCsvImport } from "@/components/lo-csv-import";
 
+// ── Tier / Status display maps ────────────────────────────────────────────────
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
 const TIER_COLORS: Record<number, string> = {
   1: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
@@ -34,6 +36,264 @@ const STATUS_COLORS: Record<string, string> = {
   archived: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
 };
 
+// ── Algorithm score helper ────────────────────────────────────────────────────
+interface Weights {
+  weightDaysSinceWorked: number;
+  weightFrequency: number;
+  weightAvailability: number;
+  weightBoost: number;
+  weightPriorityTier: number;
+}
+function computeScore(lo: any, weights: Weights): number {
+  const daysSince = lo.lastWorkedDate
+    ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
+    : 999;
+  const daysSinceNorm = Math.min(daysSince / 30, 1);
+  const freqScore = 1 - Math.min((lo.totalTimesWorked ?? 0) / 100, 1);
+  const boostNorm = (lo.boostScore ?? 0) / 10;
+  const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
+  return (
+    weights.weightDaysSinceWorked * daysSinceNorm +
+    weights.weightFrequency * freqScore +
+    weights.weightAvailability * 1 +
+    weights.weightBoost * boostNorm +
+    weights.weightPriorityTier * tierScore
+  );
+}
+
+// ── Score badge ───────────────────────────────────────────────────────────────
+function ScorePip({ score }: { score: number }) {
+  // score is 0-1 scale; colour it green / amber / red
+  const pct = Math.round(score * 100);
+  const color =
+    pct >= 70 ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-900/20 dark:border-emerald-800"
+    : pct >= 40 ? "text-amber-700 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-900/20 dark:border-amber-800"
+    : "text-rose-700 bg-rose-50 border-rose-200 dark:text-rose-400 dark:bg-rose-900/20 dark:border-rose-800";
+  return (
+    <div title="Algorithm priority score" className={`flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border ${color}`}>
+      <BarChart2 className="w-3 h-3" />
+      <span>{pct}</span>
+    </div>
+  );
+}
+
+// ── Copy button ───────────────────────────────────────────────────────────────
+function CopyBtn({ value, label }: { value: string; label: string }) {
+  const { toast } = useToast();
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(value).then(() => {
+      setDone(true);
+      toast({ title: `${label} copied` });
+      setTimeout(() => setDone(false), 1500);
+    });
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`Copy ${label}`}
+      className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-all
+        text-muted-foreground border-border hover:border-primary hover:text-primary bg-background hover:bg-primary/5"
+    >
+      {done ? <CheckCheck className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {done ? "Copied" : label}
+    </button>
+  );
+}
+
+// ── Inline credential block ───────────────────────────────────────────────────
+function CredBlock({
+  system,
+  username,
+  password,
+}: {
+  system: string;
+  username?: string | null;
+  password?: string | null;
+}) {
+  const [showPass, setShowPass] = useState(false);
+  if (!username && !password) return null;
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{system}</span>
+      {username && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-mono text-xs text-foreground truncate max-w-[140px]" title={username}>{username}</span>
+          <CopyBtn value={username} label="username" />
+        </div>
+      )}
+      {password && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-mono text-xs text-foreground">
+            {showPass ? password : "••••••••"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowPass(s => !s)}
+            title={showPass ? "Hide password" : "Show password"}
+            className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+          </button>
+          {showPass && <CopyBtn value={password} label="password" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── LO Card ───────────────────────────────────────────────────────────────────
+function LOCard({
+  lo,
+  score,
+  onEdit,
+  onDelete,
+}: {
+  lo: any;
+  score: number | null;
+  onEdit: (lo: any) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const states: string[] = (() => {
+    try { return JSON.parse(lo.licensedStates || "[]"); } catch { return []; }
+  })();
+  const hasCredentials =
+    lo.bonzoUsername || lo.bonzoPassword || lo.leadMailboxUsername || lo.leadMailboxPassword;
+  const daysSince = lo.lastWorkedDate
+    ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
+    : null;
+
+  return (
+    <Card className="overflow-hidden" data-testid={`card-lo-${lo.id}`}>
+      <CardContent className="p-0">
+
+        {/* ── Main row ──────────────────────────────────────────────────── */}
+        <div className="p-4 flex items-start gap-3">
+          {/* Avatar */}
+          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-sm font-semibold text-primary">
+            {lo.fullName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            {/* Name + badges row */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-sm" data-testid={`text-lo-name-${lo.id}`}>
+                {lo.fullName}
+              </span>
+              <Badge className={`text-xs px-1.5 py-0 ${TIER_COLORS[lo.priorityTier]}`}>
+                {TIER_LABELS[lo.priorityTier]}
+              </Badge>
+              <Badge className={`text-xs px-1.5 py-0 ${STATUS_COLORS[lo.internalStatus]}`}>
+                {lo.internalStatus}
+              </Badge>
+              {lo.snoozeUntil && new Date(lo.snoozeUntil) > new Date() && (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 text-orange-600 border-orange-300">
+                  <BedDouble className="w-3 h-3 mr-1" />Snoozed
+                </Badge>
+              )}
+            </div>
+
+            {/* Sub-info */}
+            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground flex-wrap">
+              {lo.nmlsId && <span>NMLS: <span className="font-mono text-foreground">{lo.nmlsId}</span></span>}
+              {lo.phone && <span>{lo.phone}</span>}
+              {lo.email && <span className="truncate max-w-[200px]">{lo.email}</span>}
+              {daysSince !== null && (
+                <span className={daysSince > 14 ? "text-orange-500" : ""}>
+                  Last worked: {daysSince}d ago
+                </span>
+              )}
+            </div>
+
+            {/* State pills */}
+            {states.length > 0 && (
+              <div className="flex gap-1 flex-wrap mt-1.5">
+                {states.slice(0, 10).map((s: string) => (
+                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
+                    {s}
+                  </span>
+                ))}
+                {states.length > 10 && (
+                  <span className="text-[10px] text-muted-foreground">+{states.length - 10} more</span>
+                )}
+              </div>
+            )}
+
+            {/* ── Credentials (always visible if they exist) ─────────── */}
+            {hasCredentials && (
+              <div className="mt-2.5 pt-2.5 border-t flex flex-wrap gap-x-6 gap-y-2">
+                <CredBlock
+                  system="Bonzo"
+                  username={lo.bonzoUsername}
+                  password={lo.bonzoPassword}
+                />
+                <CredBlock
+                  system="Lead Mailbox"
+                  username={lo.leadMailboxUsername}
+                  password={lo.leadMailboxPassword}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Right side: score + action buttons */}
+          <div className="flex items-start gap-1 flex-shrink-0 ml-1">
+            {score !== null && <ScorePip score={score} />}
+            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => onEdit(lo)}
+              data-testid={`button-edit-lo-${lo.id}`}>
+              <Edit2 className="w-3.5 h-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-destructive"
+              onClick={() => onDelete(lo.id)} data-testid={`button-delete-lo-${lo.id}`}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => setExpanded(e => !e)}
+              data-testid={`button-expand-lo-${lo.id}`}>
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Expanded section: notes + special requests ─────────────── */}
+        {expanded && (
+          <div className="px-4 pb-4 pt-0 border-t bg-muted/30">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 text-xs">
+              {lo.notes && (
+                <div>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Notes</div>
+                  <p className="text-foreground">{lo.notes}</p>
+                </div>
+              )}
+              {lo.specialRequests && (
+                <div>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Special Requests</div>
+                  <p className="text-foreground flex items-start gap-1">
+                    <AlertCircle className="w-3 h-3 text-orange-500 mt-0.5 flex-shrink-0" />
+                    {lo.specialRequests}
+                  </p>
+                </div>
+              )}
+              {lo.snoozeUntil && (
+                <div>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Snoozed Until</div>
+                  <p className="text-foreground">{lo.snoozeUntil}{lo.snoozeReason ? ` — ${lo.snoozeReason}` : ""}</p>
+                </div>
+              )}
+              {!lo.notes && !lo.specialRequests && !lo.snoozeUntil && (
+                <p className="text-muted-foreground col-span-2">No additional notes.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── LO Form Dialog ────────────────────────────────────────────────────────────
 const loFormSchema = z.object({
   fullName: z.string().min(2, "Name required"),
   nmlsId: z.string().min(1, "NMLS ID required"),
@@ -53,155 +313,6 @@ const loFormSchema = z.object({
   snoozeReason: z.string().optional(),
 });
 type LoFormValues = z.infer<typeof loFormSchema>;
-
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const { toast } = useToast();
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      toast({ title: `${label} copied` });
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-  return (
-    <button
-      onClick={handleCopy}
-      className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-      title={`Copy ${label}`}
-      data-testid={`button-copy-${label.toLowerCase().replace(/ /g, "-")}`}
-    >
-      <Copy className="w-3 h-3" />
-    </button>
-  );
-}
-
-function CredentialRow({ label, username, password }: { label: string; username?: string | null; password?: string | null }) {
-  const [showPass, setShowPass] = useState(false);
-  if (!username && !password) return null;
-  return (
-    <div className="text-xs space-y-0.5">
-      <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">{label}</div>
-      {username && (
-        <div className="flex items-center gap-1">
-          <span className="text-foreground font-mono">{username}</span>
-          <CopyButton value={username} label={`${label} username`} />
-        </div>
-      )}
-      {password && (
-        <div className="flex items-center gap-1">
-          <span className="text-foreground font-mono">{showPass ? password : "••••••••"}</span>
-          <button
-            onClick={() => setShowPass(s => !s)}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-            data-testid={`button-toggle-${label.toLowerCase().replace(/ /g, "-")}-password`}
-          >
-            {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-          </button>
-          {showPass && <CopyButton value={password} label={`${label} password`} />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LOCard({ lo, onEdit, onDelete }: { lo: any; onEdit: (lo: any) => void; onDelete: (id: number) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const states: string[] = (() => { try { return JSON.parse(lo.licensedStates || "[]"); } catch { return []; } })();
-
-  const daysSince = lo.lastWorkedDate
-    ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
-    : null;
-
-  return (
-    <Card className="overflow-hidden" data-testid={`card-lo-${lo.id}`}>
-      <CardContent className="p-0">
-        {/* Main row */}
-        <div className="p-4 flex items-start gap-3">
-          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-sm font-semibold text-primary">
-            {lo.fullName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-sm" data-testid={`text-lo-name-${lo.id}`}>{lo.fullName}</span>
-              <Badge className={`text-xs px-1.5 py-0 ${TIER_COLORS[lo.priorityTier]}`}>{TIER_LABELS[lo.priorityTier]}</Badge>
-              <Badge className={`text-xs px-1.5 py-0 ${STATUS_COLORS[lo.internalStatus]}`}>{lo.internalStatus}</Badge>
-              {lo.snoozeUntil && new Date(lo.snoozeUntil) > new Date() && (
-                <Badge variant="outline" className="text-xs px-1.5 py-0 text-orange-600 border-orange-300">
-                  <BedDouble className="w-3 h-3 mr-1" />Snoozed
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground flex-wrap">
-              <span>NMLS: <span className="font-mono text-foreground">{lo.nmlsId}</span></span>
-              {lo.phone && <span>{lo.phone}</span>}
-              {lo.email && <span className="truncate max-w-[180px]">{lo.email}</span>}
-              {daysSince !== null && (
-                <span className={daysSince > 14 ? "text-orange-500" : ""}>
-                  Last worked: {daysSince}d ago
-                </span>
-              )}
-            </div>
-            {states.length > 0 && (
-              <div className="flex gap-1 flex-wrap mt-1.5">
-                {states.slice(0, 8).map((s: string) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">{s}</span>
-                ))}
-                {states.length > 8 && <span className="text-[10px] text-muted-foreground">+{states.length - 8}</span>}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {/* Boost score */}
-            <div className="flex items-center gap-0.5 text-xs text-muted-foreground mr-1">
-              <Star className="w-3 h-3 text-yellow-400" />
-              <span>{lo.boostScore.toFixed(1)}</span>
-            </div>
-            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => onEdit(lo)} data-testid={`button-edit-lo-${lo.id}`}>
-              <Edit2 className="w-3.5 h-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-destructive" onClick={() => onDelete(lo.id)} data-testid={`button-delete-lo-${lo.id}`}>
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => setExpanded(e => !e)} data-testid={`button-expand-lo-${lo.id}`}>
-              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </Button>
-          </div>
-        </div>
-
-        {/* Expanded credentials */}
-        {expanded && (
-          <div className="px-4 pb-4 pt-0 border-t bg-muted/30">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-3">
-              <CredentialRow label="Bonzo" username={lo.bonzoUsername} password={lo.bonzoPassword} />
-              <CredentialRow label="Lead Mailbox" username={lo.leadMailboxUsername} password={lo.leadMailboxPassword} />
-              {lo.notes && (
-                <div className="text-xs">
-                  <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px] mb-0.5">Notes</div>
-                  <p className="text-foreground">{lo.notes}</p>
-                </div>
-              )}
-              {lo.specialRequests && (
-                <div className="text-xs">
-                  <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px] mb-0.5">Special Requests</div>
-                  <p className="text-foreground flex items-start gap-1">
-                    <AlertCircle className="w-3 h-3 text-orange-500 mt-0.5 flex-shrink-0" />{lo.specialRequests}
-                  </p>
-                </div>
-              )}
-              {lo.snoozeUntil && (
-                <div className="text-xs">
-                  <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px] mb-0.5">Snoozed Until</div>
-                  <p className="text-foreground">{lo.snoozeUntil}{lo.snoozeReason ? ` — ${lo.snoozeReason}` : ""}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 function LOFormDialog({
   open,
@@ -226,7 +337,14 @@ function LOFormDialog({
       licensedStates: Array.isArray(initialValues?.licensedStates)
         ? (initialValues.licensedStates as unknown as string[]).join(", ")
         : typeof initialValues?.licensedStates === "string"
-        ? (() => { try { const p = JSON.parse(initialValues.licensedStates as string); return Array.isArray(p) ? p.join(", ") : initialValues.licensedStates as string; } catch { return initialValues.licensedStates as string ?? ""; } })()
+        ? (() => {
+            try {
+              const p = JSON.parse(initialValues.licensedStates as string);
+              return Array.isArray(p) ? p.join(", ") : (initialValues.licensedStates as string);
+            } catch {
+              return initialValues.licensedStates as string ?? "";
+            }
+          })()
         : "",
       bonzoUsername: initialValues?.bonzoUsername ?? "",
       bonzoPassword: initialValues?.bonzoPassword ?? "",
@@ -243,7 +361,6 @@ function LOFormDialog({
   });
 
   const handleSubmit = (values: LoFormValues) => {
-    // Convert licensedStates string to JSON array
     const states = values.licensedStates
       ? values.licensedStates.split(",").map(s => s.trim().toUpperCase()).filter(Boolean)
       : [];
@@ -388,7 +505,7 @@ function LOFormDialog({
                 <FormControl><Textarea {...field} rows={2} data-testid="textarea-special-requests" /></FormControl>
               </FormItem>
             )} />
-            {/* Availability section — only shown when editing an existing LO */}
+            {/* Availability — only when editing existing LO */}
             {initialValues && (initialValues as any).id && (
               <>
                 <Separator />
@@ -417,6 +534,7 @@ function LOFormDialog({
   );
 }
 
+// ── Directory page ────────────────────────────────────────────────────────────
 export default function Directory() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -427,6 +545,15 @@ export default function Directory() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
+  const { data: algoSettings } = useQuery<any>({ queryKey: ["/api/settings/algorithm"] });
+
+  const weights: Weights = algoSettings ?? {
+    weightDaysSinceWorked: 0.35,
+    weightFrequency: 0.25,
+    weightAvailability: 0.20,
+    weightBoost: 0.15,
+    weightPriorityTier: 0.05,
+  };
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/loan-officers", data),
@@ -439,7 +566,8 @@ export default function Directory() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => apiRequest("PATCH", `/api/loan-officers/${id}`, data),
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      apiRequest("PATCH", `/api/loan-officers/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
       setDialogOpen(false);
@@ -458,8 +586,13 @@ export default function Directory() {
     onError: () => toast({ title: "Error deleting LO", variant: "destructive" }),
   });
 
+  const activeCount = los.filter((lo: any) => lo.internalStatus === "active").length;
+
   const filtered = los.filter((lo: any) => {
-    const matchSearch = !search || lo.fullName.toLowerCase().includes(search.toLowerCase()) || lo.nmlsId.includes(search);
+    const matchSearch =
+      !search ||
+      lo.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      lo.nmlsId.includes(search);
     const matchStatus = statusFilter === "all" || lo.internalStatus === statusFilter;
     const matchTier = tierFilter === "all" || String(lo.priorityTier) === tierFilter;
     return matchSearch && matchStatus && matchTier;
@@ -481,19 +614,17 @@ export default function Directory() {
   const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 sm:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold">LO Directory</h1>
-          <p className="text-sm text-muted-foreground">{los.length} loan officers total</p>
+          <p className="text-sm text-muted-foreground">
+            {activeCount} active · {los.length} total
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setImportDialogOpen(true)}
-            data-testid="button-import-csv"
-          >
+          <Button variant="outline" onClick={() => setImportDialogOpen(true)} data-testid="button-import-csv">
             <Upload className="w-4 h-4 mr-2" />Import CSV
           </Button>
           <Button onClick={() => { setEditTarget(null); setDialogOpen(true); }} data-testid="button-add-lo">
@@ -508,16 +639,14 @@ export default function Directory() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
             className="pl-9"
-            placeholder="Search by name or NMLS ID…"
+            placeholder="Search by name or NMLS…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             data-testid="input-search-lo"
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-36" data-testid="select-filter-status">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
+          <SelectTrigger className="w-36" data-testid="select-filter-status"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="active">Active</SelectItem>
@@ -526,9 +655,7 @@ export default function Directory() {
           </SelectContent>
         </Select>
         <Select value={tierFilter} onValueChange={setTierFilter}>
-          <SelectTrigger className="w-36" data-testid="select-filter-tier">
-            <SelectValue placeholder="Tier" />
-          </SelectTrigger>
+          <SelectTrigger className="w-36" data-testid="select-filter-tier"><SelectValue placeholder="Tier" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Tiers</SelectItem>
             <SelectItem value="1">Tier 1 — VIP</SelectItem>
@@ -537,18 +664,18 @@ export default function Directory() {
           </SelectContent>
         </Select>
         {(search || statusFilter !== "all" || tierFilter !== "all") && (
-          <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setStatusFilter("all"); setTierFilter("all"); }}>
+          <Button variant="ghost" size="sm"
+            onClick={() => { setSearch(""); setStatusFilter("all"); setTierFilter("all"); }}>
             Clear filters
           </Button>
         )}
       </div>
 
-      {/* Results count */}
       {(search || statusFilter !== "all" || tierFilter !== "all") && (
         <p className="text-sm text-muted-foreground">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</p>
       )}
 
-      {/* LO List */}
+      {/* LO list */}
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
@@ -560,7 +687,13 @@ export default function Directory() {
       ) : (
         <div className="space-y-3">
           {filtered.map((lo: any) => (
-            <LOCard key={lo.id} lo={lo} onEdit={handleEdit} onDelete={id => deleteMutation.mutate(id)} />
+            <LOCard
+              key={lo.id}
+              lo={lo}
+              score={lo.internalStatus === "active" ? computeScore(lo, weights) : null}
+              onEdit={handleEdit}
+              onDelete={id => deleteMutation.mutate(id)}
+            />
           ))}
         </div>
       )}
@@ -573,7 +706,7 @@ export default function Directory() {
         isPending={isPending}
       />
 
-      {/* CSV Import Dialog */}
+      {/* CSV Import */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
