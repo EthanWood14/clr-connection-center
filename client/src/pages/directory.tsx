@@ -118,32 +118,37 @@ function CredBlock({
   password?: string | null;
 }) {
   const [showPass, setShowPass] = useState(false);
-  if (!username && !password) return null;
   return (
     <div className="flex flex-col gap-1 min-w-0">
       <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{system}</span>
-      {username && (
-        <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {username ? (
           <span className="font-mono text-xs text-foreground truncate max-w-[140px]" title={username}>{username}</span>
-          <CopyBtn value={username} label="username" />
-        </div>
-      )}
-      {password && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="font-mono text-xs text-foreground">
-            {showPass ? password : "••••••••"}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowPass(s => !s)}
-            title={showPass ? "Hide password" : "Show password"}
-            className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-          </button>
-          {showPass && <CopyBtn value={password} label="password" />}
-        </div>
-      )}
+        ) : (
+          <span className="text-xs text-muted-foreground italic">no username</span>
+        )}
+        {username && <CopyBtn value={username} label="username" />}
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {password ? (
+          <>
+            <span className="font-mono text-xs text-foreground">
+              {showPass ? password : "••••••••"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowPass(s => !s)}
+              title={showPass ? "Hide password" : "Show password"}
+              className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            </button>
+            {showPass && <CopyBtn value={password} label="password" />}
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">no password</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -164,8 +169,7 @@ function LOCard({
   const states: string[] = (() => {
     try { return JSON.parse(lo.licensedStates || "[]"); } catch { return []; }
   })();
-  const hasCredentials =
-    lo.bonzoUsername || lo.bonzoPassword || lo.leadMailboxUsername || lo.leadMailboxPassword;
+  const hasCredentials = true; // always show credential section
   const daysSince = lo.lastWorkedDate
     ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
     : null;
