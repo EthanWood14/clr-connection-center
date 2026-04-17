@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -429,6 +429,37 @@ function LOFormDialog({
       snoozeReason: initialValues?.snoozeReason ?? "",
     },
   });
+
+  // Reset form whenever the dialog opens with new data
+  useEffect(() => {
+    if (open) {
+      const licensedStates = (() => {
+        const v = initialValues?.licensedStates;
+        if (!v) return "";
+        if (Array.isArray(v)) return (v as unknown as string[]).join(", ");
+        try { const p = JSON.parse(v as string); return Array.isArray(p) ? p.join(", ") : (v as string); }
+        catch { return v as string; }
+      })();
+      form.reset({
+        fullName: initialValues?.fullName ?? "",
+        nmlsId: initialValues?.nmlsId ?? "",
+        phone: initialValues?.phone ?? "",
+        email: initialValues?.email ?? "",
+        licensedStates,
+        bonzoUsername: initialValues?.bonzoUsername ?? "",
+        bonzoPassword: initialValues?.bonzoPassword ?? "",
+        leadMailboxUsername: initialValues?.leadMailboxUsername ?? "",
+        leadMailboxPassword: initialValues?.leadMailboxPassword ?? "",
+        notes: initialValues?.notes ?? "",
+        specialRequests: initialValues?.specialRequests ?? "",
+        boostScore: initialValues?.boostScore ?? 0,
+        priorityTier: initialValues?.priorityTier ?? 2,
+        internalStatus: initialValues?.internalStatus ?? "active",
+        snoozeUntil: initialValues?.snoozeUntil ?? "",
+        snoozeReason: initialValues?.snoozeReason ?? "",
+      });
+    }
+  }, [open, initialValues]);
 
   const handleSubmit = (values: LoFormValues) => {
     const states = values.licensedStates
