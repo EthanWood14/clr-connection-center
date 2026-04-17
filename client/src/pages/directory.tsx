@@ -108,16 +108,54 @@ function CopyBtn({ value, label }: { value: string; label: string }) {
 }
 
 // ── Inline credential block ───────────────────────────────────────────────────
+// Fetches plaintext credentials on demand from /api/loan-officers/:id/credentials
 function CredBlock({
+  loId,
   system,
   username,
-  password,
+  hasPassword,
 }: {
+  loId: number;
   system: string;
   username?: string | null;
-  password?: string | null;
+  hasPassword: boolean;
 }) {
+  const { toast } = useToast();
   const [showPass, setShowPass] = useState(false);
+  const [plainPass, setPlainPass] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchPlaintext = async (): Promise<string | null> => {
+    if (plainPass) return plainPass;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/loan-officers/${loId}/credentials`, { credentials: "include" });
+      const data = await res.json();
+      const pass = system === "Bonzo" ? data.bonzoPassword : data.leadMailboxPassword;
+      setPlainPass(pass ?? null);
+      return pass ?? null;
+    } catch {
+      toast({ title: "Failed to load credentials", variant: "destructive" });
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleShow = async () => {
+    if (!showPass && !plainPass) await fetchPlaintext();
+    setShowPass(s => !s);
+  };
+
+  const handleCopy = async () => {
+    const pass = await fetchPlaintext();
+    if (pass) {
+      navigator.clipboard.writeText(pass).then(() => {
+        toast({ title: "password copied" });
+      });
+    }
+  };
+
   return (
     <div className="flex flex-col gap-1 min-w-0">
       <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{system}</span>
@@ -130,20 +168,31 @@ function CredBlock({
         {username && <CopyBtn value={username} label="username" />}
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        {password ? (
+        {hasPassword ? (
           <>
             <span className="font-mono text-xs text-foreground">
-              {showPass ? password : "••••••••"}
+              {showPass && plainPass ? plainPass : "••••••••"}
             </span>
             <button
               type="button"
-              onClick={() => setShowPass(s => !s)}
+              onClick={handleShow}
+              disabled={loading}
               title={showPass ? "Hide password" : "Show password"}
-              className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors"
+              className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             >
               {showPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
             </button>
-            <CopyBtn value={password} label="password" />
+            <button
+              type="button"
+              onClick={handleCopy}
+              disabled={loading}
+              title="Copy password"
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-all
+                text-muted-foreground border-border hover:border-primary hover:text-primary bg-background hover:bg-primary/5 disabled:opacity-50"
+            >
+              <Copy className="w-3 h-3" />
+              password
+            </button>
           </>
         ) : (
           <span className="text-xs text-muted-foreground italic">no password</span>
@@ -235,14 +284,16 @@ function LOCard({
             {hasCredentials && (
               <div className="mt-2.5 pt-2.5 border-t flex flex-wrap gap-x-6 gap-y-2">
                 <CredBlock
+                  loId={lo.id}
                   system="Bonzo"
                   username={lo.bonzoUsername}
-                  password={lo.bonzoPassword}
+                  hasPassword={!!lo.bonzoPassword}
                 />
                 <CredBlock
+                  loId={lo.id}
                   system="Lead Mailbox"
                   username={lo.leadMailboxUsername}
-                  password={lo.leadMailboxPassword}
+                  hasPassword={!!lo.leadMailboxPassword}
                 />
               </div>
             )}
