@@ -597,21 +597,61 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ lo, monthlyData, totalOutcomes: outcomes.length });
   });
 
-  // ── Hot-patch: write new static assets to disk (one-time use, admin only) ──
+  // ── Hot-patch: pull latest dist from GitHub and overwrite local static files ──
   app.post("/api/admin/hotpatch", async (req, res) => {
     const fs = await import("fs");
     const path = await import("path");
+    const https = await import("https");
     const distPath = path.resolve(__dirname, "public");
-    const { files } = req.body ?? {};
-    if (!Array.isArray(files)) return res.status(400).json({ error: "files array required" });
+
+    function fetchRaw(url: string): Promise<Buffer> {
+      return new Promise((resolve, reject) => {
+        const doReq = (u: string) => https.get(u, { headers: { "User-Agent": "clr-hotpatch" } }, (r) => {
+          if (r.statusCode === 302 || r.statusCode === 301) { doReq(r.headers.location!); return; }
+          const chunks: Buffer[] = [];
+          r.on("data", (c: Buffer) => chunks.push(c));
+          r.on("end", () => resolve(Buffer.concat(chunks)));
+          r.on("error", reject);
+        }).on("error", reject);
+        doReq(u);
+      });
+    }
+
+    const REPO = "EthanWood14/clr-connection-center";
+    const BRANCH = "main";
+    const RAW = `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
+
     try {
-      for (const f of files) {
-        const target = path.join(distPath, f.path);
-        const dir = path.dirname(target);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(target, f.content, f.encoding ?? "utf8");
+      // Fetch index.html first to discover asset filenames
+      const indexBuf = await fetchRaw(`${RAW}/dist/public/index.html`);
+      const indexHtml = indexBuf.toString("utf8");
+
+      // Parse asset filenames from index.html
+      const jsMatch = indexHtml.match(/assets\/(index-[^"']+\.js)/);
+      const cssMatch = indexHtml.match(/assets\/(index-[^"']+\.css)/);
+      if (!jsMatch || !cssMatch) return res.status(500).json({ error: "Could not parse asset filenames" });
+
+      const jsFile = jsMatch[1];
+      const cssFile = cssMatch[1];
+
+      // Download assets
+      const [jsBuf, cssBuf] = await Promise.all([
+        fetchRaw(`${RAW}/dist/public/assets/${jsFile}`),
+        fetchRaw(`${RAW}/dist/public/assets/${cssFile}`),
+      ]);
+
+      // Wipe old assets and write new ones
+      const assetsDir = path.join(distPath, "assets");
+      if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+      // Remove old index-*.js and index-*.css
+      for (const f of fs.readdirSync(assetsDir)) {
+        if (f.startsWith("index-")) fs.unlinkSync(path.join(assetsDir, f));
       }
-      res.json({ ok: true, written: files.map((f: any) => f.path) });
+      fs.writeFileSync(path.join(assetsDir, jsFile), jsBuf);
+      fs.writeFileSync(path.join(assetsDir, cssFile), cssBuf);
+      fs.writeFileSync(path.join(distPath, "index.html"), indexHtml, "utf8");
+
+      res.json({ ok: true, js: jsFile, css: cssFile });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
