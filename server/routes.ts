@@ -898,8 +898,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const apiKey = s.resend_api_key || "";
     if (!apiKey) return res.status(400).json({ error: "Resend API key not configured" });
     // Send a real test email to the logged-in user
-    const userEmail = req.session_user?.email;
-    if (!userEmail) return res.status(400).json({ error: "Could not determine your email address" });
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const sessionUser = storage.getUserById(userId) as any;
+    const userEmail = sessionUser?.email;
+    if (!userEmail) return res.status(400).json({ error: "No email address on your account" });
     try {
       const resend = new Resend(apiKey);
       const fromAddr = s.from_address_resend || "CLR Connection Center <onboarding@resend.dev>";
