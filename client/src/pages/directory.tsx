@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import { LoCsvImport } from "@/components/lo-csv-import";
 
 // ── Tier / Status display maps ────────────────────────────────────────────────
@@ -398,6 +399,79 @@ function LOCard({
   );
 }
 
+// ── US States for checkbox grid ─────────────────────────────────────────────
+const US_STATES = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+  "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY",
+];
+
+function StateCheckboxGrid({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (states: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const toggle = (st: string) =>
+    onChange(selected.includes(st) ? selected.filter(s => s !== st) : [...selected, st].sort());
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">
+          Licensed States
+          {selected.length > 0 && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+              {selected.length} selected
+            </span>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {open ? <><ChevronUp className="h-3.5 w-3.5" /> Hide</> : <><ChevronDown className="h-3.5 w-3.5" /> {selected.length > 0 ? selected.join(", ") : "Choose states"}</>}
+        </button>
+      </div>
+      {!open && selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 pt-0.5">
+          {selected.map(s => (
+            <span key={s} className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+              {s}
+              <button type="button" onClick={() => toggle(s)} className="hover:text-destructive leading-none">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      {open && (
+        <div className="rounded-md border bg-muted/30 p-3 space-y-3">
+          <div className="flex gap-2">
+            <button type="button" onClick={() => onChange([...US_STATES])} className="text-xs text-primary hover:underline">Select All</button>
+            <span className="text-muted-foreground text-xs">·</span>
+            <button type="button" onClick={() => onChange([])} className="text-xs text-muted-foreground hover:underline">Clear All</button>
+          </div>
+          <div className="grid grid-cols-5 gap-x-4 gap-y-2">
+            {US_STATES.map(st => (
+              <label key={st} className="flex items-center gap-1.5 cursor-pointer select-none">
+                <Checkbox
+                  checked={selected.includes(st)}
+                  onCheckedChange={() => toggle(st)}
+                  className="h-3.5 w-3.5"
+                />
+                <span className="text-xs font-mono">{st}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── LO Form Dialog ────────────────────────────────────────────────────────────
 const loFormSchema = z.object({
   fullName: z.string().min(2, "Name required"),
@@ -432,6 +506,18 @@ function LOFormDialog({
   onSubmit: (values: LoFormValues) => void;
   isPending: boolean;
 }) {
+  // Parse initial states from JSON string or array
+  const parseStates = (raw: string | string[] | undefined | null): string[] => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw as string[];
+    try { const p = JSON.parse(raw as string); return Array.isArray(p) ? p : []; }
+    catch { return (raw as string).split(",").map(s => s.trim().toUpperCase()).filter(Boolean); }
+  };
+
+  const [statesSelected, setStatesSelected] = useState<string[]>(
+    () => parseStates(initialValues?.licensedStates as string | string[] | undefined)
+  );
+
   const form = useForm<LoFormValues>({
     resolver: zodResolver(loFormSchema),
     defaultValues: {
@@ -439,18 +525,7 @@ function LOFormDialog({
       nmlsId: initialValues?.nmlsId ?? "",
       phone: initialValues?.phone ?? "",
       email: initialValues?.email ?? "",
-      licensedStates: Array.isArray(initialValues?.licensedStates)
-        ? (initialValues.licensedStates as unknown as string[]).join(", ")
-        : typeof initialValues?.licensedStates === "string"
-        ? (() => {
-            try {
-              const p = JSON.parse(initialValues.licensedStates as string);
-              return Array.isArray(p) ? p.join(", ") : (initialValues.licensedStates as string);
-            } catch {
-              return initialValues.licensedStates as string ?? "";
-            }
-          })()
-        : "",
+      licensedStates: "", // managed separately via statesSelected
       bonzoUsername: initialValues?.bonzoUsername ?? "",
       bonzoPassword: initialValues?.bonzoPassword ?? "",
       leadMailboxUsername: initialValues?.leadMailboxUsername ?? "",
@@ -465,22 +540,16 @@ function LOFormDialog({
     },
   });
 
-  // Reset form whenever the dialog opens with new data
+  // Reset form + states whenever the dialog opens with new data
   useEffect(() => {
     if (open) {
-      const licensedStates = (() => {
-        const v = initialValues?.licensedStates;
-        if (!v) return "";
-        if (Array.isArray(v)) return (v as unknown as string[]).join(", ");
-        try { const p = JSON.parse(v as string); return Array.isArray(p) ? p.join(", ") : (v as string); }
-        catch { return v as string; }
-      })();
+      setStatesSelected(parseStates(initialValues?.licensedStates as string | string[] | undefined));
       form.reset({
         fullName: initialValues?.fullName ?? "",
         nmlsId: initialValues?.nmlsId ?? "",
         phone: initialValues?.phone ?? "",
         email: initialValues?.email ?? "",
-        licensedStates,
+        licensedStates: "",
         bonzoUsername: initialValues?.bonzoUsername ?? "",
         bonzoPassword: initialValues?.bonzoPassword ?? "",
         leadMailboxUsername: initialValues?.leadMailboxUsername ?? "",
@@ -497,10 +566,7 @@ function LOFormDialog({
   }, [open, initialValues]);
 
   const handleSubmit = (values: LoFormValues) => {
-    const states = values.licensedStates
-      ? values.licensedStates.split(",").map(s => s.trim().toUpperCase()).filter(Boolean)
-      : [];
-    onSubmit({ ...values, licensedStates: JSON.stringify(states) as unknown as string });
+    onSubmit({ ...values, licensedStates: JSON.stringify(statesSelected) as unknown as string });
   };
 
   return (
@@ -541,13 +607,7 @@ function LOFormDialog({
                 </FormItem>
               )} />
             </div>
-            <FormField control={form.control} name="licensedStates" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Licensed States (comma-separated, e.g. CA, TX, FL)</FormLabel>
-                <FormControl><Input {...field} placeholder="CA, TX, FL, NY" data-testid="input-lo-states" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )} />
+            <StateCheckboxGrid selected={statesSelected} onChange={setStatesSelected} />
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-3">
                 <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Bonzo Credentials</div>
