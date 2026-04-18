@@ -506,9 +506,12 @@ function runNewMigrations() {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN welcome_email_enabled INTEGER NOT NULL DEFAULT 0`);
   }
   // Seed default SMTP credentials (always set if not already a Gmail address)
-  const emailKeyRow = sqlite.prepare(`SELECT smtp_user, manager_emails FROM email_settings WHERE id=1`).get() as any;
+  const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.smtp_user || !emailKeyRow.smtp_user.includes('@gmail.com')) {
     sqlite.exec(`UPDATE email_settings SET smtp_host='smtp.gmail.com', smtp_port=465, smtp_user='ewoodwestcap@gmail.com', smtp_pass='comp dgft hgol thwc' WHERE id=1`);
+  } else if (emailKeyRow.smtp_port !== 465) {
+    // Force-update port to 465 if still on old value
+    sqlite.exec(`UPDATE email_settings SET smtp_host='smtp.gmail.com', smtp_port=465 WHERE id=1`);
   }
   // Seed default manager emails if none set
   if (!emailKeyRow?.manager_emails || emailKeyRow.manager_emails === '[]' || emailKeyRow.manager_emails === '') {
