@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, Building2, MapPin, BedDouble,
-  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp,
+  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ const mainItems = [
   { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
   { title: "Appointments",   url: "/appointments",   icon: PhoneForwarded, badge: "appointments" },
   { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
+  { title: "Team Chat",         url: "/chat",        icon: MessageSquare, badge: "chat" },
 ];
 
 const toolItems = [
@@ -74,7 +75,7 @@ export function AppSidebar() {
 
   function renderItems(items: typeof mainItems) {
     return items.map((item) => {
-      const count = item.badge === "appointments" ? appointmentCount : 0;
+      const count = item.badge === "appointments" ? appointmentCount : 0;  // chat badge reserved for future unread tracking
       return (
         <SidebarMenuItem key={item.title}>
           <SidebarMenuButton asChild isActive={isActive(item.url)}>

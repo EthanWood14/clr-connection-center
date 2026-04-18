@@ -624,6 +624,15 @@ function runNewMigrations() {
   if (!nmlsCols.find(c => c.name === 'interval_months')) {
     sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN interval_months INTEGER NOT NULL DEFAULT 2`);
   }
+
+  // Chat messages table
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 }
 runNewMigrations();
 
@@ -729,4 +738,25 @@ export function getPendingNmlsChecks(olderThanDays: number) {
 }
 export function escalateNmlsCheck(id: number) {
   return sqlite.prepare(`UPDATE nmls_check_logs SET status='escalated' WHERE id=?`).run(id);
+}
+
+// ── Chat Messages storage ──────────────────────────────────────────────────────
+export function getChatMessages(limit = 100, beforeId?: number): any[] {
+  if (beforeId) {
+    return sqlite.prepare(
+      `SELECT * FROM chat_messages WHERE id < ? ORDER BY id DESC LIMIT ?`
+    ).all(beforeId, limit) as any[];
+  }
+  return sqlite.prepare(
+    `SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?`
+  ).all(limit) as any[];
+}
+export function postChatMessage(userId: number, userName: string, message: string): any {
+  const result = sqlite.prepare(
+    `INSERT INTO chat_messages (user_id, user_name, message) VALUES (?, ?, ?)`
+  ).run(userId, userName, message);
+  return sqlite.prepare(`SELECT * FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+}
+export function deleteChatMessage(id: number): void {
+  sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);
 }
