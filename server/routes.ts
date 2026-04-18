@@ -444,8 +444,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const id = parseInt(req.params.id);
     if (id === requesterId) return res.status(400).json({ error: "You cannot delete your own account" });
     if (id === 1) return res.status(400).json({ error: "The primary admin account cannot be deleted" });
-    storage.deleteUser(id);
-    res.json({ ok: true });
+    try {
+      storageExtra.deleteUserCascade(id);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message ?? "Delete failed" });
+    }
   });
 
   // ── Loan Officers ────────────────────────────────────────────────────────────

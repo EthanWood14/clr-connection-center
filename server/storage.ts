@@ -763,3 +763,16 @@ export function postChatMessage(userId: number, userName: string, message: strin
 export function deleteChatMessage(id: number): void {
   sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);
 }
+
+export function deleteUserCascade(id: number): void {
+  // Remove FK-linked rows first so SQLite constraints don't block the delete
+  sqlite.prepare(`DELETE FROM daily_assignments WHERE assistant_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM lead_outcomes WHERE assistant_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM daily_call_logs WHERE assistant_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM assignment_overrides WHERE admin_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM notifications WHERE user_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM audit_logs WHERE user_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM nmls_check_logs WHERE assigned_to = ?`).run(id);
+  sqlite.prepare(`DELETE FROM chat_messages WHERE user_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM users WHERE id = ?`).run(id);
+}
