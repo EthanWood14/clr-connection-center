@@ -422,9 +422,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(storage.createUser(parsed.data));
   });
 
-  app.patch("/api/users/:id", (req, res) => {
+  app.patch("/api/users/:id", requireAuth, async (req: any, res) => {
     const id = parseInt(req.params.id);
-    res.json(storage.updateUser(id, req.body));
+    const { newPassword, ...rest } = req.body;
+    // Only admins can edit other users
+    const requester = req.session_user;
+    if (requester.userId !== id && requester.role !== "admin") {
+      return res.status(403).json({ error: "Admins only" });
+    }
+    if (newPassword?.trim()) {
+      const hash = await bcrypt.hash(newPassword.trim(), 10);
+      storage.setUserPassword(id, hash);
+    }
+    res.json(storage.updateUser(id, rest));
+  });
+
+  app.delete("/api/users/:id", requireAuth, (req: any, res) => {
+    const requesterId = req.session_user?.userId;
+    const requesterRole = req.session_user?.role;
+    if (requesterRole !== "admin") return res.status(403).json({ error: "Admins only" });
+    const id = parseInt(req.params.id);
+    if (id === requesterId) return res.status(400).json({ error: "You cannot delete your own account" });
+    if (id === 1) return res.status(400).json({ error: "The primary admin account cannot be deleted" });
+    storage.deleteUser(id);
+    res.json({ ok: true });
   });
 
   // ── Loan Officers ────────────────────────────────────────────────────────────

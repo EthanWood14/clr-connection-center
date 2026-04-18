@@ -40,7 +40,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, UserPlus, Pencil } from "lucide-react";
+import { Users, UserPlus, Pencil, Trash2, KeyRound, ShieldAlert } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useAuth } from "@/lib/auth";
 
 const CURRENT_USER_ID = 1;
 
@@ -59,6 +70,7 @@ const userFormSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
   role: z.enum(["admin", "assistant", "viewer"]),
+  newPassword: z.string().optional(),
 });
 
 type UserFormValues = z.infer<typeof userFormSchema>;
@@ -84,8 +96,8 @@ function UserDialog({
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
     values: isEditing
-      ? { name: editUser.name, email: editUser.email, role: editUser.role }
-      : { name: "", email: "", role: "assistant" },
+      ? { name: editUser.name, email: editUser.email, role: editUser.role, newPassword: "" }
+      : { name: "", email: "", role: "assistant", newPassword: "" },
   });
 
   const createMutation = useMutation({
@@ -101,25 +113,25 @@ function UserDialog({
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: UserFormValues) =>
-      apiRequest("PATCH", `/api/users/${editUser!.id}`, data),
+    mutationFn: (data: UserFormValues) => {
+      const payload: any = { name: data.name, email: data.email, role: data.role };
+      if (data.newPassword?.trim()) payload.newPassword = data.newPassword.trim();
+      return apiRequest("PATCH", `/api/users/${editUser!.id}`, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "Team member updated successfully" });
+      toast({ title: "Team member updated" });
       onOpenChange(false);
     },
     onError: (err: Error) =>
-      toast({ title: "Failed to update team member", description: err.message, variant: "destructive" }),
+      toast({ title: "Failed to update", description: err.message, variant: "destructive" }),
   });
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
   function onSubmit(values: UserFormValues) {
-    if (isEditing) {
-      updateMutation.mutate(values);
-    } else {
-      createMutation.mutate(values);
-    }
+    if (isEditing) updateMutation.mutate(values);
+    else createMutation.mutate(values);
   }
 
   return (
@@ -178,6 +190,23 @@ function UserDialog({
                 </FormItem>
               )}
             />
+            {isEditing && (
+              <FormField
+                control={form.control}
+                name="newPassword"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5" /> Reset Password
+                    </FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="Leave blank to keep current password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <DialogFooter className="pt-2">
               <Button
                 type="button"
@@ -201,7 +230,9 @@ function UserDialog({
 export function TeamManagement() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
 
   const { data: users = [], isLoading } = useQuery<User[]>({
     queryKey: ["/api/users"],
@@ -215,6 +246,17 @@ export function TeamManagement() {
     },
     onError: (err: Error) =>
       toast({ title: "Failed to update status", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Account deleted", description: `${deleteTarget?.name}'s account has been permanently removed.` });
+      setDeleteTarget(null);
+    },
+    onError: (err: Error) =>
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
   function openAddDialog() {
@@ -231,6 +273,8 @@ export function TeamManagement() {
     if (user.id === CURRENT_USER_ID) return;
     toggleActiveMutation.mutate({ id: user.id, isActive: !user.isActive });
   }
+
+  const isAdmin = authUser?.role === "admin";
 
   return (
     <>
@@ -311,16 +355,30 @@ export function TeamManagement() {
                       />
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2"
-                        onClick={() => openEditDialog(user)}
-                        data-testid={`button-edit-user-${user.id}`}
-                      >
-                        <Pencil className="w-3.5 h-3.5 mr-1" />
-                        Edit
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          onClick={() => openEditDialog(user)}
+                          data-testid={`button-edit-user-${user.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5 mr-1" />
+                          Edit
+                        </Button>
+                        {isAdmin && user.id !== authUser?.id && user.id !== 1 && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => setDeleteTarget(user)}
+                            data-testid={`button-delete-user-${user.id}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 mr-1" />
+                            Delete
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -338,6 +396,36 @@ export function TeamManagement() {
         }}
         editUser={editUser}
       />
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <ShieldAlert className="w-5 h-5" /> Delete Account
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">
+                You are about to permanently delete <strong>{deleteTarget?.name}</strong>'s account
+                (<span className="font-mono text-xs">{deleteTarget?.email}</span>).
+              </span>
+              <span className="block text-destructive font-medium">
+                This cannot be undone. All of their assignments and data will be disassociated.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Yes, delete account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

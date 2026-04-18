@@ -285,6 +285,9 @@ export class Storage implements IStorage {
   updateUser(id: number, data: Partial<InsertUser>) {
     return db.update(users).set(data).where(eq(users.id, id)).returning().get();
   }
+  deleteUser(id: number) {
+    return db.delete(users).where(eq(users.id, id)).run();
+  }
 
   getLoanOfficers() {
     return db.select().from(loanOfficers).all();
