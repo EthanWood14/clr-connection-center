@@ -766,6 +766,7 @@ export default function Settings() {
           </CardContent>
         </Card>
       ) : (
+      <>
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold">Ranking Algorithm Weights</CardTitle>
@@ -818,8 +819,8 @@ export default function Settings() {
         </CardFooter>
       </Card>
 
-      {/* Score Preview — admin only */}
-      {authUser?.role === "admin" && <ScorePreview weights={currentWeights} />}
+      {/* Score Preview */}
+      <ScorePreview weights={currentWeights} />
 
       {/* Distribution Settings */}
       <Card>
@@ -902,6 +903,7 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
+      </>
       )} {/* end admin-only algorithm section */}
 
       {/* Email Reports */}
