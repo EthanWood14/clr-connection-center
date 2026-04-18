@@ -151,6 +151,13 @@ try {
   // Column already exists — ignore
 }
 
+// ── Migration: add has_seen_intro to users if missing ─────────────────────────
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0;`);
+} catch {
+  // Column already exists — ignore
+}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
@@ -643,8 +650,6 @@ function runNewMigrations() {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
-  // has_seen_intro migration
-  try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 }
 runNewMigrations();
 
