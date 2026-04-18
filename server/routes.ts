@@ -421,9 +421,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const newUser = storage.createUser(parsed.data);
 
-    // Send welcome email (non-blocking — don't fail the request if email fails)
+    // Send welcome email if enabled in settings (non-blocking — don't fail the request if email fails)
     try {
       const s = storage.getEmailSettings();
+      const welcomeEnabled = !!(s.welcome_email_enabled ?? s.welcomeEmailEnabled);
+      if (!welcomeEnabled) throw new Error("welcome_email_disabled");
       const apiKey = s.resend_api_key || s.resendApiKey || "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
       const fromAddr = s.from_address_resend || "CLR Connection Center <onboarding@resend.dev>";
       const resendClient = new Resend(apiKey);
@@ -465,9 +467,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
           body: welcomeBody,
         }),
       });
-    } catch (e) {
+    } catch (e: any) {
       // Email failure is non-fatal — user was still created
-      console.error("Welcome email failed:", e);
+      if (e?.message !== "welcome_email_disabled") console.error("Welcome email failed:", e);
     }
 
     res.json(newUser);

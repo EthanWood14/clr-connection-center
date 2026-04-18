@@ -502,6 +502,9 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'from_address_resend')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN from_address_resend TEXT NOT NULL DEFAULT ''`);
   }
+  if (!emailCols.find(c => c.name === 'welcome_email_enabled')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN welcome_email_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
   // Seed default Resend API key if not already set
   const emailKeyRow = sqlite.prepare(`SELECT resend_api_key, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.resend_api_key) {

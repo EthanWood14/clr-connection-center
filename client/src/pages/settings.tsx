@@ -370,6 +370,7 @@ function EmailReportsCard() {
   const [dailyEnabled, setDailyEnabled] = useState(false);
   const [weeklyEnabled, setWeeklyEnabled] = useState(false);
   const [monthlyEnabled, setMonthlyEnabled] = useState(false);
+  const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
   const [dailyTime, setDailyTime] = useState("08:00");
   const [testLoading, setTestLoading] = useState(false);
   const [sendLoading, setSendLoading] = useState(false);
@@ -383,6 +384,7 @@ function EmailReportsCard() {
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
     setMonthlyEnabled(!!(emailSettings.monthly_enabled ?? emailSettings.monthlyEnabled));
+    setWelcomeEmailEnabled(!!(emailSettings.welcome_email_enabled ?? emailSettings.welcomeEmailEnabled));
     setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "08:00");
   }, [emailSettings]);
 
@@ -402,6 +404,7 @@ function EmailReportsCard() {
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
       monthlyEnabled: monthlyEnabled ? 1 : 0,
+      welcomeEmailEnabled: welcomeEmailEnabled ? 1 : 0,
       dailyTime,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
@@ -593,6 +596,18 @@ function EmailReportsCard() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Welcome email toggle */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">User Onboarding</p>
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">Welcome Email</p>
+                  <p className="text-xs text-muted-foreground">Send a branded welcome email when a new user account is created</p>
+                </div>
+                <Switch checked={welcomeEmailEnabled} onCheckedChange={setWelcomeEmailEnabled} />
+              </div>
             </div>
 
             {/* Schedule toggles */}
