@@ -45,7 +45,33 @@ function ThemeToggle() {
   );
 }
 
+const PAGE_TITLES: Record<string, string> = {
+  "/":             "Dashboard",
+  "/directory":    "LO Directory",
+  "/assignments":  "Assignments",
+  "/outcomes":     "Outcomes",
+  "/appointments": "Appointments",
+  "/leaderboard":  "Team Stats",
+  "/state-lookup": "State Lookup",
+  "/snooze":       "Snooze Queue",
+  "/reporting":    "Reporting",
+  "/settings":     "Settings",
+  "/audit-log":    "Audit Log",
+  "/lo-performance": "LO Performance",
+  "/privacy-policy": "Privacy Policy",
+  "/terms-of-use": "Terms of Use",
+};
+
+function usePageTitle() {
+  const [location] = useLocation();
+  useEffect(() => {
+    const label = PAGE_TITLES[location] ?? "WCLCC";
+    document.title = label === "WCLCC" ? "WCLCC" : `${label} · WCLCC`;
+  }, [location]);
+}
+
 function AppRouter() {
+  usePageTitle();
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
