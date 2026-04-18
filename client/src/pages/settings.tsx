@@ -363,10 +363,6 @@ function EmailReportsCard() {
     queryKey: ["/api/settings/email"],
   });
 
-  const [smtpHost, setSmtpHost] = useState("");
-  const [smtpPort, setSmtpPort] = useState("587");
-  const [smtpUser, setSmtpUser] = useState("");
-  const [smtpPass, setSmtpPass] = useState("");
   const [fromAddress, setFromAddress] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
@@ -380,11 +376,7 @@ function EmailReportsCard() {
   // Populate form from fetched settings
   useEffect(() => {
     if (!emailSettings) return;
-    setSmtpHost(emailSettings.smtp_host ?? emailSettings.smtpHost ?? "");
-    setSmtpPort(String(emailSettings.smtp_port ?? emailSettings.smtpPort ?? 587));
-    setSmtpUser(emailSettings.smtp_user ?? emailSettings.smtpUser ?? "");
-    setSmtpPass(""); // never pre-fill password
-    setFromAddress(emailSettings.from_address ?? emailSettings.fromAddress ?? "");
+    setFromAddress(emailSettings.from_address_resend ?? emailSettings.fromAddressResend ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -403,17 +395,14 @@ function EmailReportsCard() {
 
   function handleSave() {
     const payload: any = {
-      smtpHost,
-      smtpPort: parseInt(smtpPort),
-      smtpUser,
-      fromAddress,
+      fromAddressResend: fromAddress,
       managerEmails: JSON.stringify(managerEmails),
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
       monthlyEnabled: monthlyEnabled ? 1 : 0,
       dailyTime,
     };
-    if (smtpPass && smtpPass !== "••••••••") payload.smtpPass = smtpPass;
+    if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
   }
 
@@ -426,7 +415,7 @@ function EmailReportsCard() {
       if (res.ok) {
         toast({
           title: "SMTP connection verified",
-          description: `Successfully connected to ${smtpHost || "SMTP server"}.`,
+          description: "A test email was sent to your account inbox.",
         });
       } else {
         toast({
@@ -437,8 +426,8 @@ function EmailReportsCard() {
       }
     } catch (e: any) {
       toast({
-        title: "SMTP test failed",
-        description: "Could not reach the server. Check your network connection.",
+        title: "Test failed",
+        description: "Could not reach the server.",
         variant: "destructive",
       });
     } finally {
