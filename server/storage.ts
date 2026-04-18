@@ -169,6 +169,33 @@ try {
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
+// Normalise algorithm weights: if existing row sums to >1.05 (old 5-weight row + new column),
+// reset all weights to the correct 6-weight defaults that sum to exactly 1.0
+try {
+  const row = sqlite.prepare(`SELECT weight_days_since_worked, weight_frequency, weight_availability, weight_boost, weight_priority_tier, weight_recent_transfers FROM algorithm_settings LIMIT 1`).get() as any;
+  if (row) {
+    const total =
+      (row.weight_days_since_worked ?? 0) +
+      (row.weight_frequency ?? 0) +
+      (row.weight_availability ?? 0) +
+      (row.weight_boost ?? 0) +
+      (row.weight_priority_tier ?? 0) +
+      (row.weight_recent_transfers ?? 0);
+    if (total > 1.05) {
+      sqlite.prepare(`
+        UPDATE algorithm_settings SET
+          weight_days_since_worked = 0.30,
+          weight_frequency         = 0.25,
+          weight_availability      = 0.20,
+          weight_boost             = 0.10,
+          weight_priority_tier     = 0.05,
+          weight_recent_transfers  = 0.10,
+          updated_at               = ?
+      `).run(new Date().toISOString());
+    }
+  }
+} catch {}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
@@ -200,10 +227,10 @@ if (existingUsers.length === 0) {
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
   db.insert(algorithmSettings).values({
-    weightDaysSinceWorked: 0.35,
+    weightDaysSinceWorked: 0.30,
     weightFrequency: 0.25,
     weightAvailability: 0.20,
-    weightBoost: 0.15,
+    weightBoost: 0.10,
     weightPriorityTier: 0.05,
     maxLosPerAssistant: 5,
     roundRobinEnabled: true,
