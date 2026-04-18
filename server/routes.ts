@@ -1647,6 +1647,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
       fs.writeFileSync(path.join(assetsDir, cssFile), cssBuf);
       fs.writeFileSync(path.join(distPath, "index.html"), indexHtml, "utf8");
 
+      // Also fetch and write manifest.json, sw.js, favicon-192.png if present
+      try {
+        const manifestBuf = await fetchRaw(`${RAW}/dist/public/manifest.json`);
+        fs.writeFileSync(path.join(distPath, "manifest.json"), manifestBuf);
+      } catch {}
+      try {
+        const swBuf = await fetchRaw(`${RAW}/dist/public/sw.js`);
+        fs.writeFileSync(path.join(distPath, "sw.js"), swBuf);
+      } catch {}
+      try {
+        const icon192Buf = await fetchRaw(`${RAW}/dist/public/favicon-192.png`);
+        fs.writeFileSync(path.join(distPath, "favicon-192.png"), icon192Buf);
+      } catch {}
+
       res.json({ ok: true, js: jsFile, css: cssFile });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
