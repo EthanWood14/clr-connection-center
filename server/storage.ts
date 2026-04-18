@@ -165,6 +165,9 @@ try {
   // Column already exists — ignore
 }
 
+// algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
+try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
@@ -568,8 +571,6 @@ function runNewMigrations() {
 
   // algorithm_settings: add fixedMonthly mode column if missing
   try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN fixed_monthly_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
-  // algorithm_settings: add 90-day transfer weight column if missing
-  try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
   // ── Migrate nmls_id to nullable (was NOT NULL UNIQUE) ──────────────────────
   // SQLite can't DROP NOT NULL via ALTER COLUMN, so recreate the table if needed
