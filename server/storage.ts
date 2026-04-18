@@ -642,6 +642,9 @@ function runNewMigrations() {
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // has_seen_intro migration
+  try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 }
 runNewMigrations();
 

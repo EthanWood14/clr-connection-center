@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -1046,6 +1046,80 @@ export default function Settings() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Intro Video */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <PlayCircle className="w-4 h-4" />
+            Intro Video
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Rewatch the CLR Connection Center introduction video, or reset it for another user so it plays on their next login.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                window.open("/intro.mp4", "_blank");
+              }}
+            >
+              <PlayCircle className="w-3.5 h-3.5 mr-1.5" />
+              Rewatch Intro
+            </Button>
+          </div>
+          {authUser?.role === "admin" && <IntroResetSection />}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function IntroResetSection() {
+  const { toast } = useToast();
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const [resetting, setResetting] = useState<number | null>(null);
+
+  const resetIntro = async (userId: number, userName: string) => {
+    setResetting(userId);
+    try {
+      await apiRequest("PATCH", `/api/users/${userId}/reset-intro`);
+      toast({ title: `Intro reset for ${userName}`, description: "They'll see the intro video on their next login." });
+    } catch {
+      toast({ title: "Error", description: "Could not reset intro.", variant: "destructive" });
+    } finally {
+      setResetting(null);
+    }
+  };
+
+  const activeUsers = users.filter((u) => u.isActive);
+
+  return (
+    <div className="pt-2 border-t">
+      <p className="text-xs font-medium text-muted-foreground mb-2">Admin: Reset intro for a team member</p>
+      <div className="flex flex-col gap-1.5">
+        {activeUsers.map((u) => (
+          <div key={u.id} className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium">{u.name}</span>
+              <span className="text-xs text-muted-foreground ml-2">{u.role}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => resetIntro(u.id, u.name)}
+              disabled={resetting === u.id}
+              className="h-7 text-xs"
+            >
+              <RefreshCw className="w-3 h-3 mr-1" />
+              {resetting === u.id ? "Resetting…" : "Reset Intro"}
+            </Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -6,18 +6,21 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  hasSeenIntro: boolean;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
   isLoading: boolean;
   logout: () => Promise<void>;
+  markIntroSeen: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   isLoading: true,
   logout: async () => {},
+  markIntroSeen: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -44,8 +47,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.hash = "#/login";
   }, []);
 
+  const markIntroSeen = useCallback(async () => {
+    await apiRequest("PATCH", "/api/users/me/seen-intro").catch(() => {});
+    setUser((u) => u ? { ...u, hasSeenIntro: true } : u);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen }}>
       {children}
     </AuthContext.Provider>
   );

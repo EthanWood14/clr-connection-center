@@ -11,6 +11,7 @@ import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { IntroModal } from "@/components/intro-modal";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { AppFooter } from "@/components/app-footer";
 
@@ -98,6 +99,7 @@ function AppRouter() {
 
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
+  const showIntro = !!user && !user.hasSeenIntro;
   const [, navigate] = useLocation();
 
   useEffect(() => {
@@ -126,6 +128,7 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
+      {showIntro && <IntroModal />}
       <DailyReportGate>
         <div className="flex h-screen w-full overflow-hidden">
           <AppSidebar />

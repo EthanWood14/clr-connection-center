@@ -358,7 +358,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, hasSeenIntro: !!(user as any).hasSeenIntro } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -374,10 +374,27 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, hasSeenIntro: !!(user as any).hasSeenIntro } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
+  });
+
+  // Mark intro video as seen for current user
+  app.patch("/api/users/me/seen-intro", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    storage.updateUser(userId, { hasSeenIntro: true } as any);
+    return res.json({ ok: true });
+  });
+
+  // Admin: reset intro for a specific user (so they see it again)
+  app.patch("/api/users/:id/reset-intro", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    storage.updateUser(id, { hasSeenIntro: false } as any);
+    return res.json({ ok: true });
   });
 
   app.post("/api/auth/change-password", async (req, res) => {
