@@ -318,6 +318,29 @@ cron.schedule("0 9 * * *", () => {
   try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
 });
 
+// Re-notify pending NMLS checks every morning at 8:30am so they surface daily
+cron.schedule("30 8 * * *", () => {
+  try {
+    const periodKey = getNmlsPeriodKey();
+    const allChecks = storageExtra.getNmlsChecksForPeriod(periodKey);
+    const los = storage.getLoanOfficers();
+    const pending = allChecks.filter((c: any) => c.status === "pending");
+    for (const check of pending) {
+      if (!check.assigned_to) continue;
+      const lo = los.find((l: any) => l.id === check.lo_id);
+      if (!lo) continue;
+      // Create a fresh unread notification so it appears daily
+      storage.createNotification({
+        userId: check.assigned_to,
+        type: "nmls_check",
+        title: "NMLS License Check Reminder",
+        message: `Reminder: Please verify ${lo.fullName}'s NMLS license is still active. Click here to confirm.`,
+        isRead: false,
+      });
+    }
+  } catch (e) { console.error("NMLS daily reminder error:", e); }
+});
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -1104,6 +1127,25 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ checks: enriched, periodKey });
   });
 
+  // My pending NMLS checks (for current user)
+  app.get("/api/nmls-checks/my-pending", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const periodKey = getNmlsPeriodKey();
+    const allChecks = storageExtra.getNmlsChecksForPeriod(periodKey);
+    const los = storage.getLoanOfficers();
+    const schedule = storageExtra.getNmlsSchedule();
+    const pending = allChecks
+      .filter((c: any) => c.assigned_to === userId && c.status === "pending")
+      .map((c: any) => {
+        const lo = los.find((l: any) => l.id === c.lo_id);
+        const assignedAt = new Date(c.assigned_at);
+        const daysOverdue = Math.floor((Date.now() - assignedAt.getTime()) / 86400000);
+        return { ...c, lo, daysOverdue };
+      });
+    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7 });
+  });
+
   // Confirm NMLS check for an LO
   app.post("/api/nmls-checks/:loId/confirm", requireAuth, (req: any, res) => {
     const loId = parseInt(req.params.loId);
@@ -1111,6 +1153,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const periodKey = getNmlsPeriodKey();
     storageExtra.confirmNmlsCheck(loId, periodKey, userId);
+    // Mark all nmls_check notifications for this user as read
+    const notifs = storage.getNotifications(userId);
+    for (const n of notifs) {
+      if ((n.type === "nmls_check" || n.type === "nmls_escalation") && !n.isRead) {
+        storage.markNotificationRead(n.id);
+      }
+    }
     audit({ userId, userName: req.session_user?.name ?? "User", action: "confirm", entityType: "nmls_check", entityId: loId, entityLabel: `NMLS check LO #${loId}`, details: JSON.stringify({ periodKey }) });
     res.json({ ok: true });
   });

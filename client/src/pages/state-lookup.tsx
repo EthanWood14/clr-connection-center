@@ -73,6 +73,15 @@ export default function StateLookup() {
     queryKey: ["/api/loan-officers"],
   });
 
+  // Only active, non-snoozed LOs for lookup
+  const today = new Date().toISOString().split("T")[0];
+  const activeLOs = useMemo(
+    () => allLOs.filter(
+      (lo) => lo.internalStatus === "active" && (!lo.snoozeUntil || lo.snoozeUntil < today)
+    ),
+    [allLOs, today]
+  );
+
   // Filter state list by search
   const filteredStates = useMemo(() => {
     const q = stateSearch.toLowerCase();
@@ -81,10 +90,10 @@ export default function StateLookup() {
     );
   }, [stateSearch]);
 
-  // LOs licensed in selected state
+  // LOs licensed in selected state (active + not snoozed only)
   const licensedLOs = useMemo(() => {
     if (!selectedState) return [];
-    return allLOs.filter((lo) => {
+    return activeLOs.filter((lo) => {
       try {
         const states: string[] = JSON.parse(lo.licensedStates || "[]");
         return states.some(
@@ -96,12 +105,12 @@ export default function StateLookup() {
         return false;
       }
     });
-  }, [allLOs, selectedState]);
+  }, [activeLOs, selectedState]);
 
-  // Build coverage count map for all states
+  // Build coverage count map — active LOs only
   const coverageMap = useMemo(() => {
     const map: Record<string, number> = {};
-    allLOs.forEach((lo) => {
+    activeLOs.forEach((lo) => {
       try {
         const states: string[] = JSON.parse(lo.licensedStates || "[]");
         states.forEach((s) => {

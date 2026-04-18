@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
+import { NmlsOverduePopup } from "@/components/nmls-overdue-popup";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { AppFooter } from "@/components/app-footer";
 
@@ -26,6 +27,7 @@ import Appointments from "@/pages/followups";
 import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
 import AuditLog from "@/pages/audit-log";
+import NmlsChecks from "@/pages/nmls-checks";
 import LoPerformance from "@/pages/lo-performance";
 import PrivacyPolicy from "@/pages/privacy-policy";
 import TermsOfUse from "@/pages/terms-of-use";
@@ -55,7 +57,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/appointments": "Appointments",
   "/leaderboard":  "Team Stats",
   "/state-lookup": "State Lookup",
-  "/snooze":       "Snooze Queue",
+  "/snooze":       "Snooze Manager",
+  "/nmls-checks":  "NMLS Checks",
   "/reporting":    "Reporting",
   "/settings":     "Settings",
   "/audit-log":    "Audit Log",
@@ -90,6 +93,7 @@ function AppRouter() {
       <Route path="/settings" component={Settings} />
       <Route path="/audit-log" component={AuditLog} />
       <Route path="/lo-performance" component={LoPerformance} />
+      <Route path="/nmls-checks" component={NmlsChecks} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />
       <Route component={NotFound} />
@@ -129,6 +133,7 @@ function AuthenticatedApp() {
   return (
     <SidebarProvider style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
+      <NmlsOverduePopup />
       <DailyReportGate>
         <div className="flex h-screen w-full overflow-hidden">
           <AppSidebar />

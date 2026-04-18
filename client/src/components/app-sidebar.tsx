@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, Building2, MapPin, BedDouble,
-  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare,
+  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ const mainItems = [
 const toolItems = [
   { title: "State Lookup",      url: "/state-lookup",    icon: MapPin },
   { title: "Snooze Manager",    url: "/snooze",          icon: BedDouble },
+  { title: "NMLS Checks",       url: "/nmls-checks",     icon: ShieldCheck, badge: "nmls" },
   { title: "Reporting",         url: "/reporting",       icon: BarChart2 },
   { title: "LO Performance",    url: "/lo-performance",  icon: TrendingUp },
 ];
@@ -49,6 +50,14 @@ export function AppSidebar() {
       return data.filter((o) => o.followUpDate && o.followUpDate <= today);
     },
   });
+
+  // Pending NMLS checks badge
+  const { data: nmlsData } = useQuery<any>({
+    queryKey: ["/api/nmls-checks/my-pending"],
+    refetchInterval: 60000,
+    enabled: !!user,
+  });
+  const nmslPendingCount = nmlsData?.checks?.length ?? 0;
 
   // Unread notification count for bell badge
   const userId = user?.id ?? 1;
@@ -107,7 +116,7 @@ export function AppSidebar() {
 
   function renderItems(items: typeof mainItems) {
     return items.map((item) => {
-      const count = item.badge === "appointments" ? appointmentCount : item.badge === "chat" ? unreadChatCount : 0;
+      const count = item.badge === "appointments" ? appointmentCount : item.badge === "chat" ? unreadChatCount : item.badge === "nmls" ? nmslPendingCount : 0;
       return (
         <SidebarMenuItem key={item.title}>
           <SidebarMenuButton asChild isActive={isActive(item.url)}>

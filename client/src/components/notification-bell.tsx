@@ -19,6 +19,8 @@ const typeRoutes: Record<string, string> = {
   eod_reminder: "/assignments",
   appointment: "/outcomes",
   announcement: "/",
+  nmls_check: "/nmls-checks",
+  nmls_escalation: "/nmls-checks",
 };
 
 const typeColors: Record<string, string> = {
@@ -27,7 +29,11 @@ const typeColors: Record<string, string> = {
   eod_reminder: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
   appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   announcement: "bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400",
+  nmls_check: "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
+  nmls_escalation: "bg-destructive/10 text-destructive",
 };
+
+const ACTION_REQUIRED_TYPES = ["nmls_check", "nmls_escalation"];
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -51,11 +57,10 @@ export function NotificationBell() {
   });
 
   function handleNotificationClick(n: any) {
-    // Mark as read (always, even if already read — idempotent on backend)
-    if (!n.isRead) {
-      markRead.mutate(n.id);
+    // For NMLS notifications: navigate but DON'T mark read — only completing the task does that
+    if (!ACTION_REQUIRED_TYPES.includes(n.type)) {
+      if (!n.isRead) markRead.mutate(n.id);
     }
-    // Navigate to the relevant page
     const route = typeRoutes[n.type] ?? "/";
     navigate(route);
     setOpen(false);
@@ -110,10 +115,16 @@ export function NotificationBell() {
                   <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeColors[n.type] || "bg-muted text-muted-foreground"}`}>
                     {n.type.replace(/_/g, " ")}
                   </span>
-                  {!n.isRead && <div className="w-2 h-2 rounded-full bg-primary mt-1 ml-auto flex-shrink-0" />}
+                  {ACTION_REQUIRED_TYPES.includes(n.type) && (
+                    <span className="ml-auto text-[10px] font-semibold text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5">ACTION REQUIRED</span>
+                  )}
+                  {!n.isRead && !ACTION_REQUIRED_TYPES.includes(n.type) && <div className="w-2 h-2 rounded-full bg-primary mt-1 ml-auto flex-shrink-0" />}
                 </div>
                 <p className="text-sm font-medium mt-1">{n.title}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
+                {ACTION_REQUIRED_TYPES.includes(n.type) && (
+                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 mt-1">→ Click to complete in NMLS Checks</p>
+                )}
                 <p className="text-xs text-muted-foreground/60 mt-1">
                   {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
                 </p>
