@@ -18,22 +18,22 @@ const OUTCOME_LABELS: Record<string, string> = {
 
 function StatCard({ title, value, icon: Icon, sub, color = "primary", href }: any) {
   const inner = (
-    <Card className={href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}>
-      <CardContent className="pt-5 pb-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">{title}</p>
-            <p className="text-2xl font-bold text-foreground" data-testid={`stat-${title.toLowerCase().replace(/ /g, "-")}`}>{value ?? "—"}</p>
-            {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
+    <Card className={`h-full ${href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}>
+      <CardContent className="pt-5 pb-5 h-full">
+        <div className="flex items-start justify-between h-full">
+          <div className="flex flex-col justify-between h-full">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{title}</p>
+            <p className="text-2xl font-bold text-foreground my-2" data-testid={`stat-${title.toLowerCase().replace(/ /g, "-")}`}>{value ?? "—"}</p>
+            <p className="text-xs text-muted-foreground">{sub ?? "\u00a0"}</p>
           </div>
-          <div className={`p-2 rounded-lg ${color === "primary" ? "bg-primary/10 text-primary" : color === "success" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : color === "warning" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400" : "bg-muted text-muted-foreground"}`}>
+          <div className={`p-2 rounded-lg shrink-0 ${color === "primary" ? "bg-primary/10 text-primary" : color === "success" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : color === "warning" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400" : "bg-muted text-muted-foreground"}`}>
             <Icon className="w-4 h-4" />
           </div>
         </div>
       </CardContent>
     </Card>
   );
-  if (href) return <Link href={href}>{inner}</Link>;
+  if (href) return <Link href={href} className="block h-full">{inner}</Link>;
   return inner;
 }
 
@@ -88,15 +88,16 @@ export default function Dashboard() {
       {/* KPI Row */}
       {isLoading ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[100px]" />)}
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
           <StatCard title="Appointments" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/outcomes" />
           <StatCard title="Total Activities" value={stats?.total} icon={PhoneCall} color="default" sub="all outcomes" href="/outcomes" />
-          <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" href="/outcomes" />
+          <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
           <StatCard title="Conversion Rate" value={`${stats?.conversionRate ?? 0}%`} icon={TrendingUp} color="success" sub="transfers / total" href="/outcomes" />
+          <StatCard title="Active LOs" value={(losData ?? []).filter((l: any) => l.internalStatus === "active").length} icon={Users} color="primary" sub="available to assign" href="/directory" />
         </div>
       )}
 
