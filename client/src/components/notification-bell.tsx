@@ -17,7 +17,7 @@ const typeRoutes: Record<string, string> = {
   assignment_ready: "/assignments",
   license_alert: "/directory",
   eod_reminder: "/assignments",
-  follow_up: "/outcomes",
+  appointment: "/outcomes",
   announcement: "/",
 };
 
@@ -25,7 +25,7 @@ const typeColors: Record<string, string> = {
   assignment_ready: "bg-primary/10 text-primary",
   license_alert: "bg-destructive/10 text-destructive",
   eod_reminder: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
-  follow_up: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
+  appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   announcement: "bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400",
 };
 

@@ -31,7 +31,7 @@ import { Megaphone, Send, Clock } from "lucide-react";
 type NotificationType =
   | "announcement"
   | "eod_reminder"
-  | "follow_up"
+  | "appointment"
   | "assignment_ready"
   | "license_alert";
 
@@ -56,7 +56,7 @@ interface User {
 const NOTIFICATION_TYPES: { value: NotificationType; label: string }[] = [
   { value: "announcement", label: "Announcement" },
   { value: "eod_reminder", label: "EOD Reminder" },
-  { value: "follow_up", label: "Follow Up" },
+  { value: "appointment", label: "Appointment" },
   { value: "assignment_ready", label: "Assignment Ready" },
   { value: "license_alert", label: "License Alert" },
 ];
@@ -64,13 +64,13 @@ const NOTIFICATION_TYPES: { value: NotificationType; label: string }[] = [
 const typeColors: Record<NotificationType, string> = {
   announcement: "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700",
   eod_reminder: "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-700",
-  follow_up: "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700",
+  appointment: "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700",
   assignment_ready: "bg-teal-100 text-teal-800 border-teal-300 dark:bg-teal-900/30 dark:text-teal-300 dark:border-teal-700",
   license_alert: "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700",
 };
 
 const broadcastSchema = z.object({
-  type: z.enum(["announcement", "eod_reminder", "follow_up", "assignment_ready", "license_alert"]),
+  type: z.enum(["announcement", "eod_reminder", "appointment", "assignment_ready", "license_alert"]),
   title: z.string().min(2, "Title must be at least 2 characters").max(120, "Title too long"),
   message: z.string().min(5, "Message must be at least 5 characters").max(500, "Message too long"),
   recipientId: z.string(), // "all" or stringified user ID

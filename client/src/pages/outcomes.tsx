@@ -161,7 +161,7 @@ function OutcomeFormDialog({
             <FormField control={form.control} name="followUpDate" render={({ field }) => (
               <FormItem>
                 <FormLabel>Follow-up Date (optional)</FormLabel>
-                <FormControl><Input type="date" {...field} data-testid="input-followup-date" /></FormControl>
+                <FormControl><Input type="date" {...field} data-testid="input-appointment-date" /></FormControl>
               </FormItem>
             )} />
             <FormField control={form.control} name="notes" render={({ field }) => (

@@ -542,6 +542,30 @@ function EmailReportsCard() {
             {/* Manager emails */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Manager Recipients</p>
+              {/* Quick-add WCL managers */}
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {[
+                  { name: "Chris Redoble", email: "credoble@westcapitallending.com" },
+                  { name: "Scott Petrie",  email: "spetries@westcapitallending.com" },
+                ].map(({ name, email }) => {
+                  const already = managerEmails.includes(email);
+                  return (
+                    <button
+                      key={email}
+                      type="button"
+                      disabled={already}
+                      onClick={() => !already && setManagerEmails(prev => [...prev, email])}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-colors
+                        ${already
+                          ? "bg-muted text-muted-foreground border-border cursor-default opacity-60"
+                          : "bg-primary/5 text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"}`}
+                    >
+                      <span className="font-medium">{name}</span>
+                      {already ? <span className="opacity-60">✓</span> : <span>+</span>}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex gap-2 mb-2">
                 <Input
                   placeholder="manager@westcapital.com"

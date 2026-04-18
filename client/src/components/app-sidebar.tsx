@@ -18,7 +18,7 @@ const mainItems = [
   { title: "LO Directory",      url: "/directory",   icon: Users },
   { title: "Daily Assignments", url: "/assignments", icon: CalendarCheck },
   { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
-  { title: "Follow-Up Queue",   url: "/followups",   icon: PhoneForwarded, badge: "followups" },
+  { title: "Appointments",   url: "/appointments",   icon: PhoneForwarded, badge: "appointments" },
   { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
 ];
 
@@ -38,7 +38,7 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  // Live follow-up count — outcomes with followUpDate <= today
+  // Live appointment count — outcomes with followUpDate <= today
   const { data: outcomes = [] } = useQuery<any[]>({
     queryKey: ["/api/outcomes"],
     refetchInterval: 60000,
@@ -56,7 +56,7 @@ export function AppSidebar() {
     enabled: !!user,
   });
 
-  const followupCount = outcomes.length;
+  const appointmentCount = outcomes.length;
 
   // Derive initials from user name
   const initials = user
@@ -74,7 +74,7 @@ export function AppSidebar() {
 
   function renderItems(items: typeof mainItems) {
     return items.map((item) => {
-      const count = item.badge === "followups" ? followupCount : 0;
+      const count = item.badge === "appointments" ? appointmentCount : 0;
       return (
         <SidebarMenuItem key={item.title}>
           <SidebarMenuButton asChild isActive={isActive(item.url)}>
