@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -749,19 +749,7 @@ export default function Settings() {
       {/* Algorithm Weights */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-semibold">Ranking Algorithm Weights</CardTitle>
-            <div className="flex items-center gap-2">
-              <Badge
-                variant={isWeightValid ? "outline" : "destructive"}
-                className="text-xs"
-                data-testid="badge-weight-total"
-              >
-                Total: {(totalWeight * 100).toFixed(0)}%
-                {!isWeightValid && " ⚠ must = 100%"}
-              </Badge>
-            </div>
-          </div>
+          <CardTitle className="text-sm font-semibold">Ranking Algorithm Weights</CardTitle>
           <div className="flex items-start gap-2 mt-2 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
             <span>
@@ -785,6 +773,30 @@ export default function Settings() {
             ))
           )}
         </CardContent>
+        <CardFooter className="flex items-center justify-between border-t pt-4">
+          <div className="flex items-center gap-2">
+            <Badge
+              variant={isWeightValid ? "outline" : "destructive"}
+              className="text-xs"
+            >
+              Total: {(totalWeight * 100).toFixed(0)}%
+              {!isWeightValid && " ⚠ must = 100%"}
+            </Badge>
+            <Button variant="ghost" size="sm" onClick={handleReset} className="text-xs h-7 gap-1.5 text-muted-foreground">
+              <RotateCcw className="w-3 h-3" />Reset
+            </Button>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={updateMutation.isPending || !isWeightValid}
+            data-testid="button-save-weights"
+            className="gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {updateMutation.isPending ? "Saving…" : "Save Weights"}
+          </Button>
+        </CardFooter>
       </Card>
 
       {/* Score Preview */}
@@ -928,7 +940,7 @@ export default function Settings() {
         </Button>
         <Button
           onClick={handleSave}
-          disabled={updateMutation.isPending || (!weights && maxLOs === null)}
+          disabled={updateMutation.isPending || !isWeightValid}
           data-testid="button-save-settings"
         >
           <Save className="w-4 h-4 mr-2" />
