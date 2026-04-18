@@ -118,7 +118,7 @@ export function AppSidebar() {
             >
               <span className="flex items-center gap-2">
                 <item.icon className="w-4 h-4 shrink-0" />
-                <span>{item.title}</span>
+                <span className={isActive(item.url) ? "font-bold" : ""}>{item.title}</span>
               </span>
               {count > 0 && (
                 <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">
