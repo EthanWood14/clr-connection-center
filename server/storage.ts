@@ -491,6 +491,14 @@ function runNewMigrations() {
   // seed default row if empty
   const emailRow = sqlite.prepare(`SELECT id FROM email_settings LIMIT 1`).get();
   if (!emailRow) sqlite.exec(`INSERT INTO email_settings (id) VALUES (1)`);
+  // Migrate: add resend_api_key column if missing
+  const emailCols = sqlite.prepare(`PRAGMA table_info(email_settings)`).all() as any[];
+  if (!emailCols.find(c => c.name === 'resend_api_key')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN resend_api_key TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!emailCols.find(c => c.name === 'from_address_resend')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN from_address_resend TEXT NOT NULL DEFAULT ''`);
+  }
 
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (

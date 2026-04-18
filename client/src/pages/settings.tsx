@@ -470,8 +470,8 @@ function EmailReportsCard() {
         const reason = data.error ?? `Server responded with status ${res.status}.`;
         toast({
           title: `Failed to send ${label.toLowerCase()} report`,
-          description: reason.includes("SMTP not configured")
-            ? "SMTP is not configured. Save your email settings first."
+          description: reason.includes("Resend API key not configured")
+            ? "Resend API key is not set. Add it in Email Settings and save."
             : reason.includes("No manager")
             ? "No recipient emails have been added. Add a manager email and save."
             : reason,
@@ -509,7 +509,7 @@ function EmailReportsCard() {
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Configure SMTP and schedule daily, weekly, or monthly reports to managers. Reports include leaderboard, transfer counts, and key stats.</span>
+          <span>Connect <a href="https://resend.com" target="_blank" className="underline">Resend</a> to send scheduled reports to managers. Get a free API key — no SMTP setup needed.</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -517,29 +517,29 @@ function EmailReportsCard() {
           <div className="space-y-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-9" />)}</div>
         ) : (
           <>
-            {/* SMTP Config */}
+            {/* Resend Config */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">SMTP Configuration</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Resend Configuration</p>
+              <div className="grid grid-cols-1 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">SMTP Host</label>
-                  <Input placeholder="smtp.gmail.com" value={smtpHost} onChange={e => setSmtpHost(e.target.value)} />
+                  <label className="text-xs font-medium text-muted-foreground">API Key</label>
+                  <Input
+                    type="password"
+                    placeholder="re_xxxxxxxxxxxxxxxxxxxx"
+                    value={resendApiKey}
+                    onChange={e => setResendApiKey(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Get yours free at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a></p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Port</label>
-                  <Input placeholder="587" value={smtpPort} onChange={e => setSmtpPort(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Username / Email</label>
-                  <Input placeholder="noreply@westcapital.com" value={smtpUser} onChange={e => setSmtpUser(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Password</label>
-                  <Input type="password" placeholder="Leave blank to keep current" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
-                </div>
-                <div className="space-y-1 sm:col-span-2">
-                  <label className="text-xs font-medium text-muted-foreground">From Address</label>
-                  <Input placeholder="CLR Connection Center <noreply@westcapital.com>" value={fromAddress} onChange={e => setFromAddress(e.target.value)} />
+                  <label className="text-xs font-medium text-muted-foreground">From Address <span className="font-normal">(optional)</span></label>
+                  <Input
+                    placeholder="CLR Connection Center <reports@yourdomain.com>"
+                    value={fromAddress}
+                    onChange={e => setFromAddress(e.target.value)}
+                  />
+                  <p className="text-[10px] text-muted-foreground">Leave blank to use Resend's default. Requires a verified domain for a custom address.</p>
                 </div>
               </div>
             </div>
