@@ -2,9 +2,9 @@ import { Link, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
-  Trophy, Settings, Building2, MapPin, BedDouble,
-  BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone,
+  Trophy, Settings, MapPin, BedDouble,
+  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
+  FileText, PlayCircle, Smartphone, BarChart,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -15,29 +15,39 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
 
+// ── Nav structure ────────────────────────────────────────────────────────────
+
 const mainItems = [
-  { title: "Dashboard",         url: "/",            icon: LayoutDashboard },
-  { title: "LO Directory",      url: "/directory",   icon: Users },
-  { title: "Daily Assignments", url: "/assignments", icon: CalendarCheck },
-  { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
-  { title: "Appointments",      url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
-  { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
-  { title: "Team Chat",         url: "/chat",        icon: MessageSquare, badge: "chat" },
-  { title: "EOD Reporting",     url: "/eod-report",  icon: FileText },
+  { title: "Dashboard",       url: "/",            icon: LayoutDashboard },
+  { title: "LO Management",   url: "/directory",   icon: Users },
+  { title: "Your Calling List", url: "/assignments", icon: CalendarCheck },
+];
+
+const teamItems = [
+  { title: "Team Stats",      url: "/leaderboard", icon: Trophy },
+  { title: "Team Chat",       url: "/chat",        icon: MessageSquare, badge: "chat" },
+];
+
+const reportItems = [
+  { title: "Call Reports",    url: "/outcomes",    icon: ClipboardList },
+  { title: "EOD Reports",     url: "/eod-report",  icon: FileText },
+  { title: "Upcoming Schedule", url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
+  { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp },
+  { title: "LO Breaks",       url: "/snooze",      icon: BedDouble },
 ];
 
 const toolItems = [
-  { title: "State Lookup",      url: "/state-lookup",    icon: MapPin },
-  { title: "Snooze Manager",    url: "/snooze",          icon: BedDouble },
-  { title: "NMLS Checks",       url: "/nmls-checks",     icon: ShieldCheck, badge: "nmls" },
-  { title: "Reporting",         url: "/reporting",       icon: BarChart2 },
-  { title: "LO Performance",    url: "/lo-performance",  icon: TrendingUp },
+  { title: "State Lookup",    url: "/state-lookup",  icon: MapPin },
+  { title: "NMLS Checks",     url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
+  { title: "Stats",           url: "/reporting",     icon: BarChart },
 ];
 
 const adminItems: { title: string; url: string; icon: any; badge?: string }[] = [
-  { title: "Settings",          url: "/settings",    icon: Settings },
-  { title: "Audit Log",         url: "/audit-log",   icon: ScrollText },
+  { title: "Settings",        url: "/settings",    icon: Settings },
+  { title: "History",         url: "/audit-log",   icon: ScrollText },
 ];
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export function AppSidebar() {
   const [location] = useLocation();
@@ -61,17 +71,9 @@ export function AppSidebar() {
   });
   const nmslPendingCount = nmlsData?.checks?.length ?? 0;
 
-  // Unread notification count for bell badge
-  const userId = user?.id ?? 1;
-  const { data: unreadData } = useQuery<{ count: number }>({
-    queryKey: [`/api/notifications/unread-count?userId=${userId}`],
-    refetchInterval: 30000,
-    enabled: !!user,
-  });
-
   const appointmentCount = outcomes.length;
 
-  // ── Chat unread badge ────────────────────────────────────────────────────────
+  // ── Chat unread badge ──────────────────────────────────────────────────────
   const storageKey = `lastSeenChatId_${user?.id ?? "guest"}`;
   const [lastSeenId, setLastSeenId] = useState<number>(() => {
     return parseInt(localStorage.getItem(storageKey) ?? "0") || 0;
@@ -87,14 +89,12 @@ export function AppSidebar() {
     ? Math.max(...chatData.messages.map((m: any) => m.id))
     : 0;
 
-  // Messages newer than lastSeenId, but not sent by current user
   const unreadChatCount = chatData?.messages
     ? chatData.messages.filter(
         (m: any) => m.id > lastSeenId && m.user_id !== user?.id
       ).length
     : 0;
 
-  // Clear badge when on /chat page
   useEffect(() => {
     if (location === "/chat" && latestChatId > 0) {
       setLastSeenId(latestChatId);
@@ -102,9 +102,9 @@ export function AppSidebar() {
     }
   }, [location, latestChatId, storageKey]);
 
-  // Derive initials from user name
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const initials = user
-    ? user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()
+    ? user.name.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
     : "?";
 
   const roleLabel = user
@@ -116,12 +116,20 @@ export function AppSidebar() {
     return location.startsWith(url);
   }
 
-  function renderItems(items: typeof mainItems) {
+  function getBadgeCount(badge?: string) {
+    if (badge === "appointments") return appointmentCount;
+    if (badge === "chat") return unreadChatCount;
+    if (badge === "nmls") return nmslPendingCount;
+    return 0;
+  }
+
+  function renderItems(items: { title: string; url: string; icon: any; badge?: string }[]) {
     return items.map((item) => {
-      const count = item.badge === "appointments" ? appointmentCount : item.badge === "chat" ? unreadChatCount : item.badge === "nmls" ? nmslPendingCount : 0;
+      const count = getBadgeCount(item.badge);
+      const active = isActive(item.url);
       return (
         <SidebarMenuItem key={item.title}>
-          <SidebarMenuButton asChild isActive={isActive(item.url)}>
+          <SidebarMenuButton asChild isActive={active}>
             <Link
               href={item.url}
               data-testid={`nav-${item.title.toLowerCase().replace(/ /g, "-")}`}
@@ -129,7 +137,7 @@ export function AppSidebar() {
             >
               <span className="flex items-center gap-2">
                 <item.icon className="w-4 h-4 shrink-0" />
-                <span className={isActive(item.url) ? "font-bold" : ""}>{item.title}</span>
+                <span className={active ? "font-bold" : ""}>{item.title}</span>
               </span>
               {count > 0 && (
                 <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">
@@ -143,6 +151,7 @@ export function AppSidebar() {
     });
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Sidebar>
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
@@ -157,40 +166,57 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
+        {/* MAIN */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Main
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderItems(mainItems)}
-            </SidebarMenu>
+            <SidebarMenu>{renderItems(mainItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* TEAM */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Team
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(teamItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* REPORTS */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Reports
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(reportItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* TOOLS */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Tools
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderItems(toolItems)}
-            </SidebarMenu>
+            <SidebarMenu>{renderItems(toolItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* ADMIN */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Admin
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {renderItems(adminItems)}
-            </SidebarMenu>
+            <SidebarMenu>{renderItems(adminItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Help section */}
+        {/* HELP */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Help
