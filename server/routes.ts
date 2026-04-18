@@ -868,7 +868,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.get("/api/chat", requireAuth, (req, res) => {
     const limit = parseInt((req.query.limit as string) || "80");
     const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
-    const messages = storage.getChatMessages(limit, beforeId).reverse();
+    const messages = storageExtra.getChatMessages(limit, beforeId).reverse();
     res.json({ messages });
   });
 
@@ -881,20 +881,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return res.status(400).json({ error: "Message too long (max 1000 chars)" });
     }
     const user = storage.getUserById(req.session_user!.userId) as any;
-    const msg = storage.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", message.trim());
+    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", message.trim());
     res.json({ message: msg });
   });
 
   app.delete("/api/chat/:id", requireAuth, (req, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user!;
-    const allMsgs = storage.getChatMessages(1000);
+    const allMsgs = storageExtra.getChatMessages(1000);
     const msg = allMsgs.find((m: any) => m.id === id);
     if (!msg) return res.status(404).json({ error: "Message not found" });
     if (msg.user_id !== user.userId && user.role !== "admin") {
       return res.status(403).json({ error: "Not authorized" });
     }
-    storage.deleteChatMessage(id);
+    storageExtra.deleteChatMessage(id);
     res.json({ ok: true });
   });
 
