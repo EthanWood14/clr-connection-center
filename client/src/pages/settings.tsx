@@ -366,7 +366,7 @@ function EmailReportsCard() {
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
-  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpPort, setSmtpPort] = useState("465");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
@@ -383,7 +383,7 @@ function EmailReportsCard() {
     setSmtpUser(emailSettings.smtp_user ?? "");
     setSmtpPass(emailSettings.smtp_pass ?? "");
     setSmtpHost(emailSettings.smtp_host || "smtp.gmail.com");
-    setSmtpPort(String(emailSettings.smtp_port || "587"));
+    setSmtpPort(String(emailSettings.smtp_port || "465"));
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -533,7 +533,7 @@ function EmailReportsCard() {
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">Port</label>
                     <Input
-                      placeholder="587"
+                      placeholder="465"
                       value={smtpPort}
                       onChange={e => setSmtpPort(e.target.value)}
                     />

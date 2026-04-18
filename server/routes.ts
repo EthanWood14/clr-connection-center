@@ -153,15 +153,19 @@ function buildEmail(opts: {
 function getTransporter() {
   const s = storageExtra.getEmailSettings() as any;
   const host = s.smtp_host || "smtp.gmail.com";
-  const port = parseInt(s.smtp_port) || 587;
+  const port = parseInt(s.smtp_port) || 465;
   const user = s.smtp_user || "";
   const pass = s.smtp_pass || "";
   if (!user || !pass) throw new Error("SMTP credentials not configured. Add them in Email Settings.");
   return nodemailer.createTransport({
     host,
     port,
-    secure: port === 465,
+    secure: true,
     auth: { user, pass },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 }
 
