@@ -44,7 +44,7 @@ export function IntroModal() {
         <div className="relative bg-black aspect-video">
           <video
             ref={videoRef}
-            src="/intro.mp4"
+            src="/videos/clr-intro-video.mp4"
             className="w-full h-full object-contain"
             controls
             playsInline

@@ -34,6 +34,8 @@ import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
 import InstallApp from "@/pages/install";
+import Support from "@/pages/support";
+import IntroVideo from "@/pages/intro-video";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 
@@ -100,6 +102,8 @@ function AppRouter() {
       <Route path="/nmls-checks" component={NmlsChecks} />
       <Route path="/eod-report" component={EodReport} />
       <Route path="/install" component={InstallApp} />
+      <Route path="/support" component={Support} />
+      <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />
       <Route component={NotFound} />

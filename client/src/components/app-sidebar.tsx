@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -223,18 +223,11 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <button
-                    className="flex items-center gap-2 w-full"
-                    onClick={() => window.open("/intro.mp4", "_blank")}
-                  >
-                    <PlayCircle className="w-4 h-4 shrink-0" />
-                    <span>Watch Intro Video</span>
-                  </button>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              {renderItems([{ title: "Install App", url: "/install", icon: Smartphone }])}
+              {renderItems([
+                { title: "Help & Support", url: "/support", icon: LifeBuoy },
+                { title: "Help Videos", url: "/support", icon: Video },
+                { title: "Install App", url: "/install", icon: Smartphone },
+              ])}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
