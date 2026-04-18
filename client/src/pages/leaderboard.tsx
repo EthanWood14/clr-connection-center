@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Trophy, Medal, TrendingUp, BarChart2, Users, ArrowUpRight,
 } from "lucide-react";
@@ -92,7 +94,7 @@ function LeaderboardRow({ entry, rank }: { entry: any; rank: number }) {
   );
 }
 
-// ── Custom tooltip for charts ─────────────────────────────────────────────────
+// ── Custom tooltip ────────────────────────────────────────────────────────────
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
@@ -108,24 +110,177 @@ function ChartTooltip({ active, payload, label }: any) {
   );
 }
 
+// ── Individual CLR stats card ─────────────────────────────────────────────────
+function IndividualStats({ clr, periods }: { clr: any; periods: any[] }) {
+  const initials = clr.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
+  const convTrend = periods.map((p: any) => ({
+    label: p.label,
+    "Conv. %": p.convRate,
+    Transfers: p.transfers,
+    Total: p.total,
+  }));
+  const totalTransfers = periods.reduce((s, p) => s + p.transfers, 0);
+  const totalOutcomes  = periods.reduce((s, p) => s + p.total, 0);
+  const avgConv = totalOutcomes > 0 ? Math.round((totalTransfers / totalOutcomes) * 100) : 0;
+  const bestPeriod = [...periods].sort((a, b) => b.transfers - a.transfers)[0];
+
+  return (
+    <div className="space-y-4">
+      {/* Profile header */}
+      <Card>
+        <CardContent className="pt-5 pb-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-lg">
+              {initials}
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold">{clr.name}</h2>
+              <p className="text-xs text-muted-foreground">{clr.role === "admin" ? "Admin / CLR" : "CLR Assistant"}</p>
+            </div>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold text-green-600 dark:text-green-400">{totalTransfers}</p>
+                <p className="text-xs text-muted-foreground">All-time Transfers</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{totalOutcomes}</p>
+                <p className="text-xs text-muted-foreground">Total Outcomes</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{avgConv}%</p>
+                <p className="text-xs text-muted-foreground">Avg Conv.</p>
+              </div>
+            </div>
+          </div>
+          {bestPeriod && bestPeriod.transfers > 0 && (
+            <div className="mt-3 px-3 py-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg text-xs text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
+              <Trophy className="w-3.5 h-3.5 flex-shrink-0" />
+              Best period: <span className="font-semibold">{bestPeriod.label}</span> — {bestPeriod.transfers} transfers ({bestPeriod.convRate}% conv.)
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Volume + conv area chart */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" /> Volume by Period
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+              <defs>
+                <linearGradient id="gT" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#01696f" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#01696f" stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="gTot" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#006494" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#006494" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="Total" name="Total Outcomes" stroke="#006494" fill="url(#gTot)" strokeWidth={2} dot={false} />
+              <Area type="monotone" dataKey="Transfers" name="Transfers" stroke="#01696f" fill="url(#gT)" strokeWidth={2} dot={{ r: 4 }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Conv rate line */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-primary" /> Conversion Rate Trend
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} domain={[0, 100]} />
+              <Tooltip content={<ChartTooltip />} />
+              <Line type="monotone" dataKey="Conv. %" stroke="#7a39bb" strokeWidth={2.5} dot={{ r: 5, fill: "#7a39bb" }} activeDot={{ r: 7 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Period breakdown table */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold">Period Breakdown</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 border-b">
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Period</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Transfers</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Appts</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Conv.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...periods].reverse().map((p: any, i: number) => (
+                  <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
+                    <td className="px-4 py-2.5 font-medium">{p.label}</td>
+                    <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{p.transfers}</td>
+                    <td className="px-4 py-2.5 text-right">{p.appointments}</td>
+                    <td className="px-4 py-2.5 text-right">{p.total}</td>
+                    <td className="px-4 py-2.5 text-right text-blue-600 dark:text-blue-400 font-semibold">{p.convRate}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function TeamStats() {
+  const [selectedClrId, setSelectedClrId] = useState<string>("all");
+
+  const { data: usersData } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const clrs = (usersData ?? []).filter((u: any) => (u.role === "assistant" || u.role === "admin") && u.isActive);
+
   const { data: leaderboardData, isLoading } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
-  const { data: historyData, isLoading: histLoading } = useQuery<any>({ queryKey: ["/api/analytics/history"] });
+  const { data: historyData, isLoading: histLoading } = useQuery<any>({
+    queryKey: ["/api/analytics/history", selectedClrId],
+    queryFn: () => fetch(`/api/analytics/history${selectedClrId !== "all" ? `?assistantId=${selectedClrId}` : ""}`).then(r => r.json()),
+  });
 
   const leaderboard: any[] = leaderboardData?.leaderboard ?? [];
   const startDate: string | undefined = leaderboardData?.startDate;
   const endDate: string | undefined = leaderboardData?.endDate;
   const periods: any[] = historyData?.periods ?? [];
 
-  const top3 = leaderboard.slice(0, 3);
-  const rest = leaderboard.slice(3);
+  // Filter current period leaderboard if a CLR is selected
+  const filteredLeaderboard = selectedClrId === "all"
+    ? leaderboard
+    : leaderboard.filter((e: any) => String(e.assistantId) === selectedClrId);
 
-  const totalTransfers = leaderboard.reduce((s: number, e: any) => s + e.transfers, 0);
-  const totalOutcomes  = leaderboard.reduce((s: number, e: any) => s + e.total, 0);
+  const selectedClr = clrs.find((c: any) => String(c.id) === selectedClrId);
+
+  const top3 = filteredLeaderboard.slice(0, 3);
+  const rest = filteredLeaderboard.slice(3);
+  const totalTransfers = filteredLeaderboard.reduce((s: number, e: any) => s + e.transfers, 0);
+  const totalOutcomes  = filteredLeaderboard.reduce((s: number, e: any) => s + e.total, 0);
   const teamConv = totalOutcomes > 0 ? Math.round((totalTransfers / totalOutcomes) * 100) : 0;
 
-  // Build trend data for multi-line CLR transfer chart
+  // Build trend data for multi-line CLR chart (team view only)
   const allCLRNames: string[] = [];
   for (const p of periods) {
     for (const c of p.clrStats ?? []) {
@@ -140,8 +295,6 @@ export default function TeamStats() {
     }
     return row;
   });
-
-  // Conv rate trend
   const convTrend = periods.map((p: any) => ({
     label: p.label,
     "Conv. %": p.convRate,
@@ -152,7 +305,7 @@ export default function TeamStats() {
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Trophy className="w-5 h-5 text-yellow-500" /> Team Stats
@@ -161,215 +314,227 @@ export default function TeamStats() {
             <p className="text-xs text-muted-foreground mt-0.5">Current period: {startDate} — {endDate}</p>
           )}
         </div>
-        <div className="flex gap-2">
-          <Badge variant="secondary" className="gap-1"><ArrowUpRight className="w-3 h-3" />{totalTransfers} transfers</Badge>
-          <Badge variant="outline" className="gap-1"><Users className="w-3 h-3" />{leaderboard.length} CLRs</Badge>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* CLR filter */}
+          <Select value={selectedClrId} onValueChange={setSelectedClrId}>
+            <SelectTrigger className="w-48 h-8 text-sm">
+              <SelectValue placeholder="All CLRs" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                <span className="flex items-center gap-2"><Users className="w-3.5 h-3.5" /> All CLRs</span>
+              </SelectItem>
+              {clrs.map((c: any) => (
+                <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedClrId === "all" && (
+            <>
+              <Badge variant="secondary" className="gap-1"><ArrowUpRight className="w-3 h-3" />{totalTransfers} transfers</Badge>
+              <Badge variant="outline" className="gap-1"><Users className="w-3 h-3" />{leaderboard.length} CLRs</Badge>
+            </>
+          )}
         </div>
       </div>
 
-      <Tabs defaultValue="current">
-        <TabsList className="mb-4">
-          <TabsTrigger value="current">Current Period</TabsTrigger>
-          <TabsTrigger value="history">Historical Charts</TabsTrigger>
-        </TabsList>
+      {/* Individual view */}
+      {selectedClrId !== "all" && selectedClr ? (
+        histLoading
+          ? <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
+          : <IndividualStats clr={selectedClr} periods={periods} />
+      ) : (
+        <Tabs defaultValue="current">
+          <TabsList className="mb-4">
+            <TabsTrigger value="current">Current Period</TabsTrigger>
+            <TabsTrigger value="history">Historical Charts</TabsTrigger>
+          </TabsList>
 
-        {/* ── CURRENT PERIOD ── */}
-        <TabsContent value="current" className="space-y-4">
-          {isLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {[0,1,2].map(i => <Skeleton key={i} className="h-40" />)}
-            </div>
-          ) : leaderboard.length === 0 ? (
-            <Card><CardContent className="py-16 text-center">
-              <Trophy className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No activity logged this period yet.</p>
-              <p className="text-xs text-muted-foreground mt-1">Log outcomes to see the leaderboard.</p>
-            </CardContent></Card>
-          ) : (
-            <>
-              {/* KPI row */}
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { label: "Transfers", value: totalTransfers, color: "text-green-600 dark:text-green-400" },
-                  { label: "Total Outcomes", value: totalOutcomes, color: "" },
-                  { label: "Team Conv.", value: `${teamConv}%`, color: "text-blue-600 dark:text-blue-400" },
-                ].map(k => (
-                  <Card key={k.label}><CardContent className="py-4 text-center">
-                    <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{k.label}</p>
-                  </CardContent></Card>
-                ))}
-              </div>
-
-              {/* Podium */}
+          {/* ── CURRENT PERIOD ── */}
+          <TabsContent value="current" className="space-y-4">
+            {isLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {top3.map((e, i) => <MedalCard key={e.assistantId} entry={e} rank={i + 1} />)}
+                {[0,1,2].map(i => <Skeleton key={i} className="h-40" />)}
               </div>
-
-              {/* Bar chart */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <BarChart2 className="w-4 h-4 text-primary" /> Transfer Comparison
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={leaderboard} margin={{ left: 0, right: 12, top: 4, bottom: 4 }}>
-                      <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={40} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Bar dataKey="transfers" name="Transfers" radius={[4,4,0,0]}>
-                        {leaderboard.map((_: any, i: number) => (
-                          <Cell key={i} fill={CLR_COLORS[i % CLR_COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              {/* Full table */}
-              {rest.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold">Full Rankings</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    {rest.map((e: any, i: number) => (
-                      <LeaderboardRow key={e.assistantId} entry={e} rank={i + 4} />
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-            </>
-          )}
-        </TabsContent>
-
-        {/* ── HISTORICAL CHARTS ── */}
-        <TabsContent value="history" className="space-y-5">
-          {histLoading ? (
-            <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
-          ) : periods.length === 0 ? (
-            <Card><CardContent className="py-16 text-center">
-              <TrendingUp className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No historical data yet.</p>
-            </CardContent></Card>
-          ) : (
-            <>
-              {/* Team volume + conv rate area chart */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-primary" /> Team Volume by Period
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
-                      <defs>
-                        <linearGradient id="gTransfers" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#01696f" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#01696f" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="gTotal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#006494" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#006494" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Area type="monotone" dataKey="Total" name="Total Outcomes" stroke="#006494" fill="url(#gTotal)" strokeWidth={2} dot={false} />
-                      <Area type="monotone" dataKey="Transfers" name="Transfers" stroke="#01696f" fill="url(#gTransfers)" strokeWidth={2} dot={{ r: 4 }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              {/* Conversion rate line */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <BarChart2 className="w-4 h-4 text-primary" /> Conversion Rate Trend
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} domain={[0, 100]} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Line type="monotone" dataKey="Conv. %" stroke="#7a39bb" strokeWidth={2.5} dot={{ r: 5, fill: "#7a39bb" }} activeDot={{ r: 7 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              {/* Per-CLR transfers over time */}
-              {allCLRNames.length > 0 && (
+            ) : leaderboard.length === 0 ? (
+              <Card><CardContent className="py-16 text-center">
+                <Trophy className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">No activity logged this period yet.</p>
+                <p className="text-xs text-muted-foreground mt-1">Log outcomes to see the leaderboard.</p>
+              </CardContent></Card>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: "Transfers", value: totalTransfers, color: "text-green-600 dark:text-green-400" },
+                    { label: "Total Outcomes", value: totalOutcomes, color: "" },
+                    { label: "Team Conv.", value: `${teamConv}%`, color: "text-blue-600 dark:text-blue-400" },
+                  ].map(k => (
+                    <Card key={k.label}><CardContent className="py-4 text-center">
+                      <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{k.label}</p>
+                    </CardContent></Card>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {top3.map((e: any, i: number) => <MedalCard key={e.assistantId} entry={e} rank={i + 1} />)}
+                </div>
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                      <Users className="w-4 h-4 text-primary" /> CLR Transfers by Period
+                      <BarChart2 className="w-4 h-4 text-primary" /> Transfer Comparison
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={trendData} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart data={leaderboard} margin={{ left: 0, right: 12, top: 4, bottom: 4 }}>
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={40} />
+                        <YAxis tick={{ fontSize: 11 }} />
+                        <Tooltip content={<ChartTooltip />} />
+                        <Bar dataKey="transfers" name="Transfers" radius={[4,4,0,0]}>
+                          {leaderboard.map((_: any, i: number) => (
+                            <Cell key={i} fill={CLR_COLORS[i % CLR_COLORS.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                {rest.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">Full Rankings</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {rest.map((e: any, i: number) => (
+                        <LeaderboardRow key={e.assistantId} entry={e} rank={i + 4} />
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
+          </TabsContent>
+
+          {/* ── HISTORICAL CHARTS ── */}
+          <TabsContent value="history" className="space-y-5">
+            {histLoading ? (
+              <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
+            ) : periods.length === 0 ? (
+              <Card><CardContent className="py-16 text-center">
+                <TrendingUp className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">No historical data yet.</p>
+              </CardContent></Card>
+            ) : (
+              <>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-primary" /> Team Volume by Period
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <AreaChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+                        <defs>
+                          <linearGradient id="gTransfers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#01696f" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#01696f" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="gTotal" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#006494" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#006494" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                         <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} />
                         <Tooltip content={<ChartTooltip />} />
                         <Legend wrapperStyle={{ fontSize: 11 }} />
-                        {allCLRNames.map((name, i) => (
-                          <Bar key={name} dataKey={name} stackId="a" fill={CLR_COLORS[i % CLR_COLORS.length]} radius={i === allCLRNames.length - 1 ? [4,4,0,0] : [0,0,0,0]} />
-                        ))}
-                      </BarChart>
+                        <Area type="monotone" dataKey="Total" name="Total Outcomes" stroke="#006494" fill="url(#gTotal)" strokeWidth={2} dot={false} />
+                        <Area type="monotone" dataKey="Transfers" name="Transfers" stroke="#01696f" fill="url(#gTransfers)" strokeWidth={2} dot={{ r: 4 }} />
+                      </AreaChart>
                     </ResponsiveContainer>
                   </CardContent>
                 </Card>
-              )}
-
-              {/* Period summary table */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold">Period Summary</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-muted/50 border-b">
-                          <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Period</th>
-                          <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Transfers</th>
-                          <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Appts</th>
-                          <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total</th>
-                          <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Conv.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...periods].reverse().map((p: any, i: number) => (
-                          <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
-                            <td className="px-4 py-2.5 font-medium">{p.label}</td>
-                            <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{p.transfers}</td>
-                            <td className="px-4 py-2.5 text-right">{p.appointments}</td>
-                            <td className="px-4 py-2.5 text-right">{p.total}</td>
-                            <td className="px-4 py-2.5 text-right text-blue-600 dark:text-blue-400 font-semibold">{p.convRate}%</td>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <BarChart2 className="w-4 h-4 text-primary" /> Conversion Rate Trend
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={convTrend} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                        <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} domain={[0, 100]} />
+                        <Tooltip content={<ChartTooltip />} />
+                        <Line type="monotone" dataKey="Conv. %" stroke="#7a39bb" strokeWidth={2.5} dot={{ r: 5, fill: "#7a39bb" }} activeDot={{ r: 7 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                {allCLRNames.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                        <Users className="w-4 h-4 text-primary" /> CLR Transfers by Period
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ResponsiveContainer width="100%" height={280}>
+                        <BarChart data={trendData} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 11 }} />
+                          <Tooltip content={<ChartTooltip />} />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          {allCLRNames.map((name, i) => (
+                            <Bar key={name} dataKey={name} stackId="a" fill={CLR_COLORS[i % CLR_COLORS.length]}
+                              radius={i === allCLRNames.length - 1 ? [4,4,0,0] : [0,0,0,0]} />
+                          ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                )}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold">Period Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted/50 border-b">
+                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Period</th>
+                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Transfers</th>
+                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Appts</th>
+                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total</th>
+                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Conv.</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </TabsContent>
-      </Tabs>
+                        </thead>
+                        <tbody>
+                          {[...periods].reverse().map((p: any, i: number) => (
+                            <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
+                              <td className="px-4 py-2.5 font-medium">{p.label}</td>
+                              <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{p.transfers}</td>
+                              <td className="px-4 py-2.5 text-right">{p.appointments}</td>
+                              <td className="px-4 py-2.5 text-right">{p.total}</td>
+                              <td className="px-4 py-2.5 text-right text-blue-600 dark:text-blue-400 font-semibold">{p.convRate}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }
