@@ -269,14 +269,12 @@ function WeightSliderRow({
 function NmlsScheduleCard() {
   const { toast } = useToast();
   const { data: schedule, isLoading } = useQuery<any>({ queryKey: ["/api/nmls-schedule"] });
-  const [checkDay1, setCheckDay1] = useState("1");
-  const [checkDay2, setCheckDay2] = useState("16");
+  const [intervalMonths, setIntervalMonths] = useState("2");
   const [escalationDays, setEscalationDays] = useState("7");
 
   useEffect(() => {
     if (!schedule) return;
-    setCheckDay1(String(schedule.check_day_1 ?? 1));
-    setCheckDay2(String(schedule.check_day_2 ?? 16));
+    setIntervalMonths(String(schedule.interval_months ?? 2));
     setEscalationDays(String(schedule.escalation_days ?? 7));
   }, [schedule]);
 
@@ -303,7 +301,7 @@ function NmlsScheduleCard() {
           NMLS License Check Schedule
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          On check days, a random CLR is assigned to verify each active LO's NMLS license on Consumer Access.
+          Every 2 months (or your configured interval), a random CLR is assigned to verify each active LO's NMLS license on Consumer Access.
           If not confirmed within the escalation window, all CLRs are notified.
         </p>
       </CardHeader>
@@ -312,24 +310,15 @@ function NmlsScheduleCard() {
           <Skeleton className="h-24" />
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">First check day</label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Check interval (months)</label>
                 <Input
-                  type="number" min={1} max={14} value={checkDay1}
-                  onChange={e => setCheckDay1(e.target.value)}
+                  type="number" min={1} max={12} value={intervalMonths}
+                  onChange={e => setIntervalMonths(e.target.value)}
                   className="h-8 text-sm"
                 />
-                <p className="text-[10px] text-muted-foreground">Day 1–14 (default: 1st)</p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Second check day</label>
-                <Input
-                  type="number" min={15} max={28} value={checkDay2}
-                  onChange={e => setCheckDay2(e.target.value)}
-                  className="h-8 text-sm"
-                />
-                <p className="text-[10px] text-muted-foreground">Day 15–28 (default: 16th)</p>
+                <p className="text-[10px] text-muted-foreground">How often checks run (default: every 2 months)</p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Escalation after (days)</label>
@@ -344,7 +333,7 @@ function NmlsScheduleCard() {
             <div className="flex items-center gap-2 pt-1">
               <Button
                 size="sm"
-                onClick={() => saveMutation.mutate({ checkDay1: parseInt(checkDay1), checkDay2: parseInt(checkDay2), escalationDays: parseInt(escalationDays) })}
+                onClick={() => saveMutation.mutate({ intervalMonths: parseInt(intervalMonths), escalationDays: parseInt(escalationDays) })}
                 disabled={saveMutation.isPending}
                 className="gap-1.5"
               >

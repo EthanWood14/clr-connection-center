@@ -601,6 +601,11 @@ function runNewMigrations() {
   )`);
   const nmlsRow = sqlite.prepare(`SELECT id FROM nmls_schedule WHERE id=1`).get();
   if (!nmlsRow) sqlite.exec(`INSERT INTO nmls_schedule(id) VALUES(1)`);
+  // Migrate: add interval_months if missing
+  const nmlsCols = sqlite.prepare(`PRAGMA table_info(nmls_schedule)`).all() as any[];
+  if (!nmlsCols.find(c => c.name === 'interval_months')) {
+    sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN interval_months INTEGER NOT NULL DEFAULT 2`);
+  }
 }
 runNewMigrations();
 
@@ -670,12 +675,13 @@ export function resetLoginAttempts(ip: string) {
 export function getNmlsSchedule() {
   return sqlite.prepare(`SELECT * FROM nmls_schedule WHERE id=1`).get() as any;
 }
-export function updateNmlsSchedule(data: { checkDay1?: number; checkDay2?: number; escalationDays?: number }) {
+export function updateNmlsSchedule(data: { checkDay1?: number; checkDay2?: number; escalationDays?: number; intervalMonths?: number }) {
   const fields: string[] = [];
   const vals: any[] = [];
   if (data.checkDay1 !== undefined) { fields.push("check_day_1=?"); vals.push(data.checkDay1); }
   if (data.checkDay2 !== undefined) { fields.push("check_day_2=?"); vals.push(data.checkDay2); }
   if (data.escalationDays !== undefined) { fields.push("escalation_days=?"); vals.push(data.escalationDays); }
+  if (data.intervalMonths !== undefined) { fields.push("interval_months=?"); vals.push(data.intervalMonths); }
   if (!fields.length) return getNmlsSchedule();
   fields.push("updated_at=?"); vals.push(new Date().toISOString());
   sqlite.prepare(`UPDATE nmls_schedule SET ${fields.join(",")} WHERE id=1`).run(...vals);

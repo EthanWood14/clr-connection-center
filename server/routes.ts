@@ -137,11 +137,17 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
 }
 
 // ── NMLS Check trigger + cron ────────────────────────────────────────────────
-function getNmlsPeriodKey(): string {
-  const now = new Date();
+// Period key: groups months into blocks of intervalMonths.
+// E.g. intervalMonths=2 → Jan+Feb = "2026-01", Mar+Apr = "2026-03", etc.
+function getNmlsPeriodKey(refDate?: Date): string {
+  const now = refDate ?? new Date();
   const schedule = storageExtra.getNmlsSchedule();
-  const half = now.getDate() < schedule.check_day_2 ? "a" : "b";
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+  const intervalMonths: number = schedule.interval_months ?? 2;
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  // Find the start month of the current block (0-indexed)
+  const blockStart = Math.floor(month / intervalMonths) * intervalMonths;
+  return `${year}-${String(blockStart + 1).padStart(2, "0")}`;
 }
 
 function triggerNmlsChecks() {
@@ -191,8 +197,9 @@ function runNmlsEscalations() {
   }
 }
 
-// Run NMLS checks on the 1st and 16th of each month at 8am
-cron.schedule("0 8 1,16 * *", () => {
+// Run NMLS checks on the 1st of every other month (Jan, Mar, May, Jul, Sep, Nov) at 8am UTC.
+// Default interval is 2 months; the period key logic handles other intervals automatically.
+cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
   try { triggerNmlsChecks(); } catch (e) { console.error("NMLS check trigger error:", e); }
 });
 
@@ -795,11 +802,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.patch("/api/nmls-schedule", requireAuth, (req, res) => {
-    const { checkDay1, checkDay2, escalationDays } = req.body;
+    const { checkDay1, checkDay2, escalationDays, intervalMonths } = req.body;
     const updated = storageExtra.updateNmlsSchedule({
       checkDay1: checkDay1 !== undefined ? parseInt(checkDay1) : undefined,
       checkDay2: checkDay2 !== undefined ? parseInt(checkDay2) : undefined,
       escalationDays: escalationDays !== undefined ? parseInt(escalationDays) : undefined,
+      intervalMonths: intervalMonths !== undefined ? parseInt(intervalMonths) : undefined,
     });
     res.json(updated);
   });
@@ -807,12 +815,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── NMLS Checks ───────────────────────────────────────────────────────────────
   // Get current period checks (enriched with LO + user info)
   app.get("/api/nmls-checks", requireAuth, (req, res) => {
-    const now = new Date();
-    const day = now.getDate();
-    const schedule = storageExtra.getNmlsSchedule();
-    // Current period key: which half of the month are we in?
-    const half = day < schedule.check_day_2 ? "a" : "b";
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+    const periodKey = getNmlsPeriodKey();
     const checks = storageExtra.getNmlsChecksForPeriod(periodKey);
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();
@@ -830,11 +833,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const loId = parseInt(req.params.loId);
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const now = new Date();
-    const day = now.getDate();
-    const schedule = storageExtra.getNmlsSchedule();
-    const half = day < schedule.check_day_2 ? "a" : "b";
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+    const periodKey = getNmlsPeriodKey();
     storageExtra.confirmNmlsCheck(loId, periodKey, userId);
     audit({ userId, userName: req.session_user?.name ?? "User", action: "confirm", entityType: "nmls_check", entityId: loId, entityLabel: `NMLS check LO #${loId}`, details: JSON.stringify({ periodKey }) });
     res.json({ ok: true });
