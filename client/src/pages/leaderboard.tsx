@@ -254,7 +254,7 @@ export default function TeamStats() {
   const [selectedClrId, setSelectedClrId] = useState<string>("all");
 
   const { data: usersData } = useQuery<any[]>({ queryKey: ["/api/users"] });
-  const clrs = (usersData ?? []).filter((u: any) => (u.role === "assistant" || u.role === "admin") && u.isActive);
+  const clrs = (usersData ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
   const { data: leaderboardData, isLoading } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
   const { data: historyData, isLoading: histLoading } = useQuery<any>({

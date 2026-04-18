@@ -158,6 +158,13 @@ try {
   // Column already exists — ignore
 }
 
+// ── Migration: add is_clr to users if missing ───────────────────────────
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1;`);
+} catch {
+  // Column already exists — ignore
+}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
@@ -656,6 +663,29 @@ function runNewMigrations() {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // EOD reports table
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT NOT NULL,
+    assistant_id INTEGER NOT NULL,
+    calls_made INTEGER NOT NULL DEFAULT 0,
+    transfers INTEGER NOT NULL DEFAULT 0,
+    appointments INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(report_date, assistant_id)
+  )`);
+
+  // EOD activities table (individual line items per report)
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT NOT NULL,
+    assistant_id INTEGER NOT NULL,
+    activity_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
 }
 runNewMigrations();
 
@@ -794,5 +824,46 @@ export function deleteUserCascade(id: number): void {
   sqlite.prepare(`DELETE FROM audit_logs WHERE user_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM nmls_check_logs WHERE assigned_to = ?`).run(id);
   sqlite.prepare(`DELETE FROM chat_messages WHERE user_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM eod_reports WHERE assistant_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM eod_activities WHERE assistant_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM users WHERE id = ?`).run(id);
+}
+
+// ── EOD Reports ───────────────────────────────────────────────────────────────
+export function getEodReport(reportDate: string, assistantId: number): any {
+  return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
+}
+
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; transfers: number; appointments: number; notes?: string | null }): any {
+  sqlite.prepare(`
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, transfers, appointments, notes, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(report_date, assistant_id) DO UPDATE SET
+      calls_made=excluded.calls_made, transfers=excluded.transfers,
+      appointments=excluded.appointments, notes=excluded.notes,
+      submitted_at=datetime('now')
+  `).run(data.reportDate, data.assistantId, data.callsMade, data.transfers, data.appointments, data.notes ?? null);
+  return getEodReport(data.reportDate, data.assistantId);
+}
+
+export function getEodActivities(reportDate: string, assistantId: number): any[] {
+  return sqlite.prepare(`SELECT * FROM eod_activities WHERE report_date=? AND assistant_id=? ORDER BY id ASC`).all(reportDate, assistantId) as any[];
+}
+
+export function addEodActivity(data: { reportDate: string; assistantId: number; activityType: string; description: string }): any {
+  const result = sqlite.prepare(`
+    INSERT INTO eod_activities (report_date, assistant_id, activity_type, description)
+    VALUES (?, ?, ?, ?)
+  `).run(data.reportDate, data.assistantId, data.activityType, data.description);
+  return sqlite.prepare(`SELECT * FROM eod_activities WHERE id=?`).get(result.lastInsertRowid) as any;
+}
+
+export function deleteEodActivity(id: number): void {
+  sqlite.prepare(`DELETE FROM eod_activities WHERE id=?`).run(id);
+}
+
+export function getEodReportsByRange(from: string, to: string): any[] {
+  const reports = sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date>=? AND report_date<=? ORDER BY report_date DESC`).all(from, to) as any[];
+  const users = sqlite.prepare(`SELECT id, name FROM users`).all() as any[];
+  return reports.map(r => ({ ...r, assistant: users.find(u => u.id === r.assistant_id) }));
 }

@@ -9,6 +9,7 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   role: text("role").notNull().default("assistant"), // admin | assistant | viewer
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  isClr: integer("is_clr", { mode: "boolean" }).notNull().default(true), // admins: true = also a CLR, included in assignments
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });

@@ -32,6 +32,7 @@ import LoPerformance from "@/pages/lo-performance";
 import PrivacyPolicy from "@/pages/privacy-policy";
 import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
+import EodReport from "@/pages/eod-report";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 
@@ -64,6 +65,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/audit-log":    "Audit Log",
   "/lo-performance": "LO Performance",
   "/chat":           "Team Chat",
+  "/eod-report":     "EOD Report",
   "/privacy-policy": "Privacy Policy",
   "/terms-of-use": "Terms of Use",
 };
@@ -94,6 +96,7 @@ function AppRouter() {
       <Route path="/audit-log" component={AuditLog} />
       <Route path="/lo-performance" component={LoPerformance} />
       <Route path="/nmls-checks" component={NmlsChecks} />
+      <Route path="/eod-report" component={EodReport} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />
       <Route component={NotFound} />

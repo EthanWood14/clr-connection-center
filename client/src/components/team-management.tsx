@@ -63,6 +63,7 @@ interface User {
   email: string;
   role: UserRole;
   isActive: boolean;
+  isClr: boolean;
   createdAt: string;
 }
 
@@ -93,6 +94,7 @@ function UserDialog({
   const { toast } = useToast();
   const isEditing = editUser !== null;
   const [sendWelcome, setSendWelcome] = useState(true);
+  const [isClr, setIsClr] = useState(editUser?.isClr ?? true);
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -101,14 +103,18 @@ function UserDialog({
       : { name: "", email: "", role: "assistant", newPassword: "" },
   });
 
+  // Sync isClr when editUser changes
+  const watchedRole = form.watch("role");
+
   const createMutation = useMutation({
-    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, sendWelcome }),
+    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, sendWelcome }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({ title: "Team member added successfully" });
       onOpenChange(false);
       form.reset();
       setSendWelcome(true);
+      setIsClr(true);
     },
     onError: (err: Error) =>
       toast({ title: "Failed to add team member", description: err.message, variant: "destructive" }),
@@ -116,7 +122,7 @@ function UserDialog({
 
   const updateMutation = useMutation({
     mutationFn: (data: UserFormValues) => {
-      const payload: any = { name: data.name, email: data.email, role: data.role };
+      const payload: any = { name: data.name, email: data.email, role: data.role, isClr };
       if (data.newPassword?.trim()) payload.newPassword = data.newPassword.trim();
       return apiRequest("PATCH", `/api/users/${editUser!.id}`, payload);
     },
@@ -208,6 +214,16 @@ function UserDialog({
                   </FormItem>
                 )}
               />
+            )}
+            {/* CLR toggle — only relevant for admin role */}
+            {watchedRole === "admin" && (
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
+                <div>
+                  <p className="text-sm font-medium">Also a CLR</p>
+                  <p className="text-xs text-muted-foreground">Include this admin in daily assignment generation</p>
+                </div>
+                <Switch checked={isClr} onCheckedChange={setIsClr} />
+              </div>
             )}
             {!isEditing && (
               <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
@@ -346,13 +362,15 @@ export function TeamManagement() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={`text-xs font-medium ${roleBadgeStyles[user.role]}`}
-                        data-testid={`badge-role-${user.id}`}
-                      >
-                        {user.role}
-                      </Badge>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs font-medium ${roleBadgeStyles[user.role]}`}
+                          data-testid={`badge-role-${user.id}`}
+                        >
+                          {user.role === "admin" ? (user.isClr ? "Admin (CLR)" : "Admin") : user.role}
+                        </Badge>
+                      </div>
                     </TableCell>
                     <TableCell className="text-center">
                       <Switch

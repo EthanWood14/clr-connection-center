@@ -263,7 +263,7 @@ function getNmlsPeriodKey(refDate?: Date): string {
 function triggerNmlsChecks() {
   const periodKey = getNmlsPeriodKey();
   const activeLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active" && lo.nmlsId);
-  const assistants = storage.getUsers().filter((u: any) => (u.role === "assistant" || u.role === "admin") && u.isActive);
+  const assistants = storage.getUsers().filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
   if (!assistants.length) return;
 
   for (const lo of activeLos) {
@@ -381,7 +381,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, hasSeenIntro: !!(user as any).hasSeenIntro } });
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -397,7 +397,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, hasSeenIntro: !!(user as any).hasSeenIntro } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -731,7 +731,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.role === "assistant" && u.isActive);
+    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
     if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
 
@@ -915,12 +915,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
-  app.get("/api/dashboard/stats", (req, res) => {
+  app.get("/api/dashboard/stats", (req: any, res) => {
     const period = getDefaultPeriod();
     const startDate = (req.query.startDate as string) || period.startDate;
     const endDate = (req.query.endDate as string) || period.endDate;
     const stats = storage.getDashboardStats(startDate, endDate);
-    res.json({ ...stats, startDate, endDate });
+    // Also return current user's personal call count for today
+    const userId = req.session_user?.userId;
+    const todayStr = new Date().toISOString().split("T")[0];
+    const myLog = userId ? storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId) : null;
+    const myCallsToday = myLog ? myLog.callsMade : null;
+    res.json({ ...stats, startDate, endDate, myCallsToday });
   });
 
   // ── Leaderboard ───────────────────────────────────────────────────────────────
@@ -1277,7 +1282,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/monthly-assignments/shuffle", requireAuth, (req, res) => {
     const month = (req.body.month as string) || new Date().toISOString().slice(0, 7);
     const activeLos = storage.getLoanOfficers().filter(lo => lo.internalStatus === "active");
-    const assistants = storage.getUsers().filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive);
+    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
     if (!assistants.length) return res.status(400).json({ error: "No active assistants" });
     // Shuffle LOs randomly then distribute round-robin
     const shuffled = [...activeLos].sort(() => Math.random() - 0.5);
@@ -1319,7 +1324,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const date = new Date().toISOString().split("T")[0];
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.role === "assistant" && u.isActive);
+    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
     if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
 
     // Clear ALL of today's assignments (override wipes everything)
@@ -1458,6 +1463,55 @@ export function registerRoutes(httpServer: Server, app: Express) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ── EOD Reports ───────────────────────────────────────────────────────────────────
+
+  app.get('/api/eod-reports', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    const user = storage.getUserById(userId);
+    const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+    if (req.session_user?.role === 'admin' && req.query.all === '1') {
+      // Admin can see all reports for a date
+      const from = (req.query.from as string) || date;
+      const to = (req.query.to as string) || date;
+      return res.json(storageExtra.getEodReportsByRange(from, to));
+    }
+    const report = storageExtra.getEodReport(date, userId);
+    const activities = storageExtra.getEodActivities(date, userId);
+    res.json({ report, activities });
+  });
+
+  app.post('/api/eod-reports', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    const { reportDate, callsMade, transfers, appointments, notes } = req.body;
+    if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
+    const report = storageExtra.upsertEodReport({
+      reportDate,
+      assistantId: userId,
+      callsMade: Number(callsMade ?? 0),
+      transfers: Number(transfers ?? 0),
+      appointments: Number(appointments ?? 0),
+      notes: notes ?? null,
+    });
+    // Also sync call log for the day
+    storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
+    queryClient: null; // side-effect only
+    res.json(report);
+  });
+
+  app.post('/api/eod-reports/activities', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    const { reportDate, activityType, description } = req.body;
+    if (!reportDate || !activityType || !description) return res.status(400).json({ error: 'reportDate, activityType, description required' });
+    const activity = storageExtra.addEodActivity({ reportDate, assistantId: userId, activityType, description });
+    res.json(activity);
+  });
+
+  app.delete('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
+    storageExtra.deleteEodActivity(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
 }
 
 export function createHttpServer(app: Express): Server {

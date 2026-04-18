@@ -107,54 +107,64 @@ function CallEntryWidget() {
     logMutation.mutate(n);
   }
 
+  const isLogged = myCallsToday !== null;
+
   return (
-    <Card className="border-dashed border-primary/30 bg-primary/5">
+    <Card className={`border-dashed ${isLogged ? "border-green-300 bg-green-50/40 dark:bg-green-900/10" : "border-orange-300 bg-orange-50/40 dark:bg-orange-900/10"}`}>
       <CardContent className="py-3 px-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10 text-primary">
+            <div className={`p-2 rounded-lg ${isLogged ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"}`}>
               <PhoneCall className="w-4 h-4" />
             </div>
             <div>
               <p className="text-xs font-semibold text-foreground">My Calls Today</p>
               <p className="text-xs text-muted-foreground">
-                {myCallsToday !== null ? (
-                  <span className="font-medium text-foreground">{myCallsToday} calls logged</span>
+                {isLogged ? (
+                  <span className="font-medium text-green-700 dark:text-green-400">{myCallsToday} calls logged — update anytime before EOD</span>
                 ) : (
-                  <span className="text-orange-500 font-medium">Not logged yet — enter your total calls made today</span>
+                  <span className="font-medium text-orange-600 dark:text-orange-400">Log your total calls at the end of the day</span>
                 )}
               </p>
             </div>
           </div>
 
-          {editing ? (
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min={0}
-                placeholder="e.g. 42"
-                value={callInput}
-                onChange={e => setCallInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") handleSubmit(); if (e.key === "Escape") setEditing(false); }}
-                className="w-28 h-8 text-sm"
-                autoFocus
-              />
-              <Button size="sm" className="h-8" onClick={handleSubmit} disabled={logMutation.isPending}>
-                {logMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Save"}
+          <div className="flex items-center gap-2">
+            {editing ? (
+              <>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="e.g. 42"
+                  value={callInput}
+                  onChange={e => setCallInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleSubmit(); if (e.key === "Escape") setEditing(false); }}
+                  className="w-28 h-8 text-sm"
+                  autoFocus
+                />
+                <Button size="sm" className="h-8" onClick={handleSubmit} disabled={logMutation.isPending}>
+                  {logMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5"
+                onClick={() => { setCallInput(myCallsToday !== null ? String(myCallsToday) : ""); setEditing(true); }}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                {isLogged ? "Update" : "Log Calls"}
               </Button>
-              <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5"
-              onClick={() => { setCallInput(myCallsToday !== null ? String(myCallsToday) : ""); setEditing(true); }}
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              {myCallsToday !== null ? "Update" : "Log Calls"}
-            </Button>
-          )}
+            )}
+            <Link href="/eod-report">
+              <Button size="sm" variant={isLogged ? "outline" : "default"} className="h-8 gap-1.5">
+                <CalendarClock className="w-3.5 h-3.5" />
+                EOD Report
+              </Button>
+            </Link>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -638,9 +648,9 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
             <StatCard title="Upcoming Appts" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/appointments" />
-            <StatCard title="Calls Today" value={stats?.totalCallsToday ?? 0} icon={PhoneCall} color="default" sub="all CLRs combined" />
+            <StatCard title="My Calls Today" value={stats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={stats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
             <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
-            <StatCard title="Transfer/Call %" value={stats?.callTransferRatio != null ? `${stats.callTransferRatio}%` : "—"} icon={TrendingUp} color="success" sub={stats?.callTransferRatio != null ? `${stats.transfers} xfers / ${stats.totalCallsToday} calls` : "Log calls to see ratio"} />
+            <StatCard title="Transfer/Call %" value={stats?.callTransferRatio != null ? `${stats.callTransferRatio}%` : "—"} icon={TrendingUp} color="success" sub={stats?.callTransferRatio != null ? `${stats.transfers} xfers / ${stats.totalCallsToday} calls (team)` : "log calls to see ratio"} />
             <StatCard title="Active LOs" value={(losData ?? []).filter((l: any) => l.internalStatus === "active").length} icon={Users} color="primary" sub="available to assign" href="/directory" />
           </div>
           <CallEntryWidget />

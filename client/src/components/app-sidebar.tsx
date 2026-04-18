@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, Building2, MapPin, BedDouble,
   BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
+  FileText, PlayCircle,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +20,10 @@ const mainItems = [
   { title: "LO Directory",      url: "/directory",   icon: Users },
   { title: "Daily Assignments", url: "/assignments", icon: CalendarCheck },
   { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
-  { title: "Appointments",   url: "/appointments",   icon: PhoneForwarded, badge: "appointments" },
+  { title: "Appointments",      url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
   { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
   { title: "Team Chat",         url: "/chat",        icon: MessageSquare, badge: "chat" },
+  { title: "EOD Report",        url: "/eod-report",  icon: FileText },
 ];
 
 const toolItems = [
@@ -184,6 +186,28 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {renderItems(adminItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Help section */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Help
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <button
+                    className="flex items-center gap-2 w-full"
+                    onClick={() => window.open("/intro.mp4", "_blank")}
+                  >
+                    <PlayCircle className="w-4 h-4 shrink-0" />
+                    <span>Watch Intro Video</span>
+                  </button>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
