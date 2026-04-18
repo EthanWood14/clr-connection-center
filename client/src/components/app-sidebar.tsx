@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, Building2, MapPin, BedDouble,
@@ -59,6 +60,37 @@ export function AppSidebar() {
 
   const appointmentCount = outcomes.length;
 
+  // ── Chat unread badge ────────────────────────────────────────────────────────
+  const storageKey = `lastSeenChatId_${user?.id ?? "guest"}`;
+  const [lastSeenId, setLastSeenId] = useState<number>(() => {
+    return parseInt(localStorage.getItem(storageKey) ?? "0") || 0;
+  });
+
+  const { data: chatData } = useQuery<{ messages: any[] }>({
+    queryKey: ["/api/chat"],
+    refetchInterval: 5000,
+    enabled: !!user,
+  });
+
+  const latestChatId = chatData?.messages?.length
+    ? Math.max(...chatData.messages.map((m: any) => m.id))
+    : 0;
+
+  // Messages newer than lastSeenId, but not sent by current user
+  const unreadChatCount = chatData?.messages
+    ? chatData.messages.filter(
+        (m: any) => m.id > lastSeenId && m.user_id !== user?.id
+      ).length
+    : 0;
+
+  // Clear badge when on /chat page
+  useEffect(() => {
+    if (location === "/chat" && latestChatId > 0) {
+      setLastSeenId(latestChatId);
+      localStorage.setItem(storageKey, String(latestChatId));
+    }
+  }, [location, latestChatId, storageKey]);
+
   // Derive initials from user name
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()
@@ -75,7 +107,7 @@ export function AppSidebar() {
 
   function renderItems(items: typeof mainItems) {
     return items.map((item) => {
-      const count = item.badge === "appointments" ? appointmentCount : 0;  // chat badge reserved for future unread tracking
+      const count = item.badge === "appointments" ? appointmentCount : item.badge === "chat" ? unreadChatCount : 0;
       return (
         <SidebarMenuItem key={item.title}>
           <SidebarMenuButton asChild isActive={isActive(item.url)}>
