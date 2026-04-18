@@ -363,6 +363,7 @@ function EmailReportsCard() {
     queryKey: ["/api/settings/email"],
   });
 
+  const [resendApiKey, setResendApiKey] = useState("");
   const [fromAddress, setFromAddress] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
@@ -376,6 +377,7 @@ function EmailReportsCard() {
   // Populate form from fetched settings
   useEffect(() => {
     if (!emailSettings) return;
+    setResendApiKey(emailSettings.resend_api_key ?? emailSettings.resendApiKey ?? "");
     setFromAddress(emailSettings.from_address_resend ?? emailSettings.fromAddressResend ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
