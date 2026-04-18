@@ -14,31 +14,41 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
-  CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send,
+  CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
 } from "lucide-react";
 import { format, subDays, addDays, parseISO } from "date-fns";
 
 const ACTIVITY_TYPES = [
-  { value: "follow_up", label: "Follow-Up Call" },
-  { value: "email_sent", label: "Email Sent" },
-  { value: "transfer_assisted", label: "Transfer Assisted" },
-  { value: "appointment_set", label: "Appointment Set" },
-  { value: "lo_contact", label: "LO Contact" },
-  { value: "training", label: "Training / Meeting" },
-  { value: "admin", label: "Admin Work" },
-  { value: "other", label: "Other" },
+  { value: "follow_up",          label: "Follow-Up Call" },
+  { value: "email_sent",         label: "Email Sent" },
+  { value: "transfer_assisted",  label: "Transfer Assisted" },
+  { value: "appointment_set",    label: "Appointment Set" },
+  { value: "lo_contact",         label: "LO Contact" },
+  { value: "training",           label: "Training / Meeting" },
+  { value: "admin",              label: "Admin Work" },
+  { value: "other",              label: "Other" },
 ];
 
 const ACTIVITY_COLORS: Record<string, string> = {
-  follow_up: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  email_sent: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+  follow_up:         "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  email_sent:        "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
   transfer_assisted: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  appointment_set: "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
-  lo_contact: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
-  training: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-  admin: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  other: "bg-muted text-muted-foreground",
+  appointment_set:   "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
+  lo_contact:        "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+  training:          "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+  admin:             "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  other:             "bg-muted text-muted-foreground",
 };
+
+function ReadOnlyStat({ icon: Icon, label, value, color }: { icon: any; label: string; value: number; color: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 p-3 rounded-lg bg-muted/50 border border-border/50 flex-1 min-w-[90px]">
+      <Icon className={`w-4 h-4 ${color}`} />
+      <span className={`text-xl font-bold ${color}`}>{value}</span>
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide text-center leading-tight">{label}</span>
+    </div>
+  );
+}
 
 export default function EodReport() {
   const { user } = useAuth();
@@ -46,37 +56,47 @@ export default function EodReport() {
   const todayStr = new Date().toISOString().split("T")[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
 
-  // Report form state
+  // Form state — calls + notes only
   const [callsMade, setCallsMade] = useState("");
-  const [transfers, setTransfers] = useState("");
-  const [appointments, setAppointments] = useState("");
-  const [notes, setNotes] = useState("");
-  const [dirty, setDirty] = useState(false);
+  const [notes, setNotes]         = useState("");
+  const [dirty, setDirty]         = useState(false);
 
   // Activity form state
   const [activityType, setActivityType] = useState("follow_up");
   const [activityDesc, setActivityDesc] = useState("");
 
+  // EOD report + activities
   const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[] }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
   });
 
-  const report = data?.report ?? null;
+  // Today's outcomes for this user — auto-tally transfers/appointments/fell-through
+  const { data: allOutcomes = [] } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
+  const dayOutcomes = useMemo(() =>
+    (allOutcomes as any[]).filter((o: any) => {
+      const oDate = (o.date || o.createdAt || "").slice(0, 10);
+      const uid   = o.assistantId || o.assistant_id;
+      return oDate === selectedDate && uid === user?.id;
+    }),
+    [allOutcomes, selectedDate, user?.id]
+  );
+
+  const autoTransfers    = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
+  const autoAppointments = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "appointment").length;
+  const autoFellThrough  = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
+
+  const report     = data?.report ?? null;
   const activities = data?.activities ?? [];
 
-  // Sync form when report loads for selected date
+  // Sync form when report/date changes
   const reportKey = `${selectedDate}-${report?.id}`;
   useMemo(() => {
     if (report) {
       setCallsMade(String(report.calls_made ?? report.callsMade ?? ""));
-      setTransfers(String(report.transfers ?? ""));
-      setAppointments(String(report.appointments ?? ""));
       setNotes(report.notes ?? "");
     } else {
       setCallsMade("");
-      setTransfers("");
-      setAppointments("");
       setNotes("");
     }
     setDirty(false);
@@ -86,11 +106,11 @@ export default function EodReport() {
   const saveMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/eod-reports", {
-        reportDate: selectedDate,
-        callsMade: parseInt(callsMade) || 0,
-        transfers: parseInt(transfers) || 0,
-        appointments: parseInt(appointments) || 0,
-        notes: notes.trim() || null,
+        reportDate:   selectedDate,
+        callsMade:    parseInt(callsMade) || 0,
+        transfers:    autoTransfers,
+        appointments: autoAppointments,
+        notes:        notes.trim() || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/eod-reports"] });
@@ -106,9 +126,9 @@ export default function EodReport() {
   const addActivityMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/eod-reports/activities", {
-        reportDate: selectedDate,
+        reportDate:   selectedDate,
         activityType,
-        description: activityDesc.trim(),
+        description:  activityDesc.trim(),
       }),
     onSuccess: () => {
       refetch();
@@ -125,15 +145,25 @@ export default function EodReport() {
 
   function navigateDate(dir: -1 | 1) {
     const d = parseISO(selectedDate);
-    setSelectedDate(dir === -1 ? subDays(d, 1).toISOString().split("T")[0] : addDays(d, 1).toISOString().split("T")[0]);
+    setSelectedDate(
+      dir === -1
+        ? subDays(d, 1).toISOString().split("T")[0]
+        : addDays(d, 1).toISOString().split("T")[0]
+    );
   }
 
-  const isToday = selectedDate === todayStr;
-  const isFuture = selectedDate > todayStr;
+  const isToday   = selectedDate === todayStr;
+  const isFuture  = selectedDate > todayStr;
   const displayDate = format(parseISO(selectedDate), "EEEE, MMMM d, yyyy");
 
+  const callsNum = parseInt(callsMade) || 0;
+  const ratioPreview = callsNum > 0
+    ? ((autoTransfers / callsNum) * 100).toFixed(1) + "%"
+    : null;
+
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-3xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto">
+
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -144,17 +174,18 @@ export default function EodReport() {
             {isToday ? "Complete before you log off for the day" : "Viewing a past report"}
           </p>
         </div>
+
         {/* Date navigator */}
-        <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
           <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => navigateDate(-1)}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="text-sm font-medium px-2 min-w-[180px] text-center">{displayDate}</span>
+          <span className="text-sm font-medium px-2 min-w-[190px] text-center">{displayDate}</span>
           <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => navigateDate(1)} disabled={isToday}>
             <ChevronRight className="w-4 h-4" />
           </Button>
           {!isToday && (
-            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDate(todayStr)}>
+            <Button size="sm" variant="ghost" className="h-8 text-xs px-2" onClick={() => setSelectedDate(todayStr)}>
               Today
             </Button>
           )}
@@ -172,12 +203,35 @@ export default function EodReport() {
         <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
         <>
-          {/* Summary card */}
+          {/* Auto-tallied stats from logged outcomes */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <ClipboardList className="w-4 h-4" /> Logged Outcomes Today
+                <span className="text-xs font-normal text-muted-foreground ml-1">— pulled from your Lead Outcomes entries</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-3 flex-wrap">
+                <ReadOnlyStat icon={TrendingUp}  label="Transfers"   value={autoTransfers}    color="text-green-600 dark:text-green-400" />
+                <ReadOnlyStat icon={Calendar}    label="Appointments" value={autoAppointments} color="text-blue-600 dark:text-blue-400" />
+                <ReadOnlyStat icon={XCircle}     label="Fell Through" value={autoFellThrough}  color="text-orange-500 dark:text-orange-400" />
+              </div>
+              {dayOutcomes.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  No outcomes logged for this date yet. Log them in Lead Outcomes and they'll appear here.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Summary card — calls + notes only */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4" /> Daily Summary
+                  <PhoneCall className="w-4 h-4" /> Daily Summary
                 </CardTitle>
                 {report && !dirty && (
                   <Badge className="text-xs bg-green-600 gap-1">
@@ -185,60 +239,34 @@ export default function EodReport() {
                   </Badge>
                 )}
                 {dirty && (
-                  <Badge variant="outline" className="text-xs text-orange-500 border-orange-300">Unsaved changes</Badge>
+                  <Badge variant="outline" className="text-xs text-orange-500 border-orange-300">
+                    Unsaved changes
+                  </Badge>
                 )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                    <PhoneCall className="w-3.5 h-3.5" /> Total Calls Made
-                  </label>
+
+              {/* Calls made — the one manual entry */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <PhoneCall className="w-3.5 h-3.5" /> Total Calls Made
+                </label>
+                <div className="flex items-center gap-3">
                   <Input
-                    type="number" min={0} placeholder="0"
+                    type="number" min={0} placeholder="Enter your total calls for the day"
                     value={callsMade}
                     onChange={e => { setCallsMade(e.target.value); setDirty(true); }}
-                    className="h-9"
+                    className="h-9 max-w-[200px]"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                    <TrendingUp className="w-3.5 h-3.5" /> Transfers
-                  </label>
-                  <Input
-                    type="number" min={0} placeholder="0"
-                    value={transfers}
-                    onChange={e => { setTransfers(e.target.value); setDirty(true); }}
-                    className="h-9"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5" /> Appointments Set
-                  </label>
-                  <Input
-                    type="number" min={0} placeholder="0"
-                    value={appointments}
-                    onChange={e => { setAppointments(e.target.value); setDirty(true); }}
-                    className="h-9"
-                  />
+                  {ratioPreview && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <TrendingUp className="w-3.5 h-3.5 text-primary" />
+                      Transfer/Call: <strong className="text-foreground ml-0.5">{ratioPreview}</strong>
+                    </span>
+                  )}
                 </div>
               </div>
-
-              {/* Transfer/Call ratio preview */}
-              {callsMade && parseInt(callsMade) > 0 && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50 text-xs text-muted-foreground">
-                  <TrendingUp className="w-3.5 h-3.5 text-primary" />
-                  <span>
-                    Transfer/Call ratio:{" "}
-                    <strong className="text-foreground">
-                      {((parseInt(transfers || "0") / parseInt(callsMade)) * 100).toFixed(1)}%
-                    </strong>
-                    {" "}({transfers || 0} transfers / {callsMade} calls)
-                  </span>
-                </div>
-              )}
 
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Notes / Comments</label>
@@ -270,12 +298,11 @@ export default function EodReport() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Plus className="w-4 h-4" /> Activity Log
-                <span className="text-xs font-normal text-muted-foreground ml-1">— any other notable work today</span>
+                <Plus className="w-4 h-4" /> Additional Activity Log
+                <span className="text-xs font-normal text-muted-foreground ml-1">— anything else worth noting</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Add activity form */}
               <div className="flex gap-2 flex-wrap">
                 <Select value={activityType} onValueChange={setActivityType}>
                   <SelectTrigger className="w-48 h-9 text-sm">
@@ -303,10 +330,9 @@ export default function EodReport() {
                 </Button>
               </div>
 
-              {/* Activity list */}
               {activities.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-4">
-                  No activities logged yet — add anything notable above.
+                  No additional activities logged yet.
                 </p>
               ) : (
                 <div className="space-y-1.5">
@@ -333,9 +359,8 @@ export default function EodReport() {
             </CardContent>
           </Card>
 
-          {/* Info callout */}
           <p className="text-xs text-muted-foreground text-center pb-2">
-            Your EOD report feeds the daily, weekly, and monthly performance analytics visible in Team Stats.
+            Your EOD report feeds the daily, weekly, and monthly performance analytics in Team Stats.
           </p>
         </>
       )}
