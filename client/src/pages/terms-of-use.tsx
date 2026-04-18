@@ -8,31 +8,43 @@ export default function TermsOfUse() {
 
       <p>
         These Terms of Use ("Terms") govern your access to and use of the CLR Connection Center ("the Application"),
-        a proprietary internal software platform owned by West Capital Lending and developed by Chris Redoble and
-        Ethan Wood. By accessing the Application, you agree to be bound by these Terms.
+        a proprietary internal software platform developed by Chris Redoble and Ethan Wood for the exclusive use of
+        the West Capital Lending Irvine branch team. The Application was built independently for internal branch
+        operations and is not an official product of, endorsed by, or affiliated with West Capital Lending corporate
+        or any of its other branches. By accessing the Application, you agree to be bound by these Terms.
       </p>
 
       <section className="space-y-2">
         <h2 className="text-base font-semibold">1. Authorized Use Only</h2>
         <p>
-          The Application is provided exclusively to authorized employees and contractors of West Capital Lending.
-          Access credentials are personal and non-transferable. You agree not to share your login credentials with
-          any other person or allow unauthorized individuals to access the Application on your behalf.
+          The Application is provided exclusively to authorized employees and contractors of the West Capital Lending
+          Irvine branch. Access credentials are personal and non-transferable. You agree not to share your login
+          credentials with any other person or allow unauthorized individuals to access the Application on your behalf.
         </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">2. Intellectual Property</h2>
+        <h2 className="text-base font-semibold">2. Scope of Deployment</h2>
+        <p>
+          This Application was developed independently by Chris Redoble and Ethan Wood specifically for the internal
+          operational needs of the West Capital Lending Irvine branch. It is not sanctioned, maintained, or
+          distributed by West Capital Lending corporate. Use of this Application outside the Irvine branch team
+          requires express written consent from the developers.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-base font-semibold">3. Intellectual Property</h2>
         <p>
           The CLR Connection Center, including all source code, design, data structures, logic, and documentation,
-          is proprietary software developed by Chris Redoble and Ethan Wood for West Capital Lending. All rights
-          are reserved. You may not copy, reproduce, modify, distribute, reverse-engineer, or create derivative
-          works of any part of the Application without the express written consent of the owners.
+          is proprietary software developed and owned by Chris Redoble and Ethan Wood. All rights are reserved.
+          You may not copy, reproduce, modify, distribute, reverse-engineer, or create derivative works of any
+          part of the Application without the express written consent of the developers.
         </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">3. Acceptable Use</h2>
+        <h2 className="text-base font-semibold">4. Acceptable Use</h2>
         <p>You agree to use the Application only for its intended business purposes and agree not to:</p>
         <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
           <li>Attempt to access accounts, data, or systems beyond your authorized permission level.</li>
@@ -44,7 +56,7 @@ export default function TermsOfUse() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">4. Data Accuracy & Reporting</h2>
+        <h2 className="text-base font-semibold">5. Data Accuracy & Reporting</h2>
         <p>
           Users are responsible for the accuracy of data they enter into the Application, including daily call
           logs, lead outcomes, and loan officer information. Knowingly entering false or misleading data may
@@ -53,7 +65,7 @@ export default function TermsOfUse() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">5. Administrator Authority</h2>
+        <h2 className="text-base font-semibold">6. Administrator Authority</h2>
         <p>
           Administrators reserve the right to access, modify, or delete any data within the Application;
           create, suspend, or remove user accounts; and override system-generated assignments when
@@ -62,35 +74,37 @@ export default function TermsOfUse() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">6. Confidentiality</h2>
+        <h2 className="text-base font-semibold">7. Confidentiality</h2>
         <p>
           All information accessible through the Application — including loan officer profiles, credential
           data, assignment records, performance metrics, and business workflows — is strictly confidential
           to West Capital Lending. You agree not to disclose any such information to unauthorized parties
-          during or after your employment or engagement with the Company.
+          during or after your employment or engagement with the Irvine branch team.
         </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">7. Disclaimer of Warranties</h2>
+        <h2 className="text-base font-semibold">8. Disclaimer of Warranties</h2>
         <p>
-          The Application is provided "as is" for internal operational use. West Capital Lending makes no
-          warranties, express or implied, regarding uptime, fitness for a particular purpose, or freedom from
-          errors. The developers will make reasonable efforts to maintain availability and correct issues promptly.
+          The Application is provided "as is" for internal operational use. The developers make no warranties,
+          express or implied, regarding uptime, fitness for a particular purpose, or freedom from errors, and
+          are not acting on behalf of West Capital Lending corporate in providing this software. Reasonable
+          efforts will be made to maintain availability and correct issues promptly.
         </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">8. Limitation of Liability</h2>
+        <h2 className="text-base font-semibold">9. Limitation of Liability</h2>
         <p>
-          To the maximum extent permitted by applicable law, West Capital Lending, Chris Redoble, and Ethan Wood
-          shall not be liable for any indirect, incidental, or consequential damages arising from your use of or
-          inability to use the Application.
+          To the maximum extent permitted by applicable law, Chris Redoble and Ethan Wood (the developers) shall
+          not be liable for any indirect, incidental, or consequential damages arising from your use of or
+          inability to use the Application. West Capital Lending corporate bears no liability for this software
+          as it was developed independently for branch-level use.
         </p>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">9. Termination</h2>
+        <h2 className="text-base font-semibold">10. Termination</h2>
         <p>
           Access to the Application may be suspended or terminated at any time, with or without notice, at
           the discretion of an administrator. Upon termination, you must immediately cease use of the Application.
@@ -98,7 +112,7 @@ export default function TermsOfUse() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">10. Governing Law</h2>
+        <h2 className="text-base font-semibold">11. Governing Law</h2>
         <p>
           These Terms shall be governed by and construed in accordance with the laws of the State of California,
           without regard to its conflict of law provisions.
@@ -106,7 +120,7 @@ export default function TermsOfUse() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold">11. Contact</h2>
+        <h2 className="text-base font-semibold">12. Contact</h2>
         <p>
           For questions regarding these Terms, contact:<br />
           <a href="mailto:ethan.anthony.wood@gmail.com" className="text-primary underline underline-offset-2">ethan.anthony.wood@gmail.com</a>
@@ -116,8 +130,8 @@ export default function TermsOfUse() {
       </section>
 
       <p className="text-xs text-muted-foreground border-t pt-4">
-        © 2026 West Capital Lending. All rights reserved. CLR Connection Center is proprietary software developed by Chris Redoble & Ethan Wood.
-        Unauthorized use, reproduction, or distribution is strictly prohibited.
+        © 2026 Chris Redoble & Ethan Wood. All rights reserved. CLR Connection Center is proprietary software developed independently for the West Capital Lending Irvine branch.
+        It is not an official product of West Capital Lending corporate. Unauthorized use, reproduction, or distribution is strictly prohibited.
       </p>
     </div>
   );
