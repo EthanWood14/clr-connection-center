@@ -415,7 +415,13 @@ export class Storage implements IStorage {
       outcomesByType[o.outcomeType] = (outcomesByType[o.outcomeType] || 0) + 1;
     });
 
-    return { total, transfers, appointments, fellThrough, noAnswer, conversionRate, outcomesByType };
+    // Today's call totals
+    const todayStr = new Date().toISOString().split("T")[0];
+    const todayLogs = db.select().from(dailyCallLogs).where(eq(dailyCallLogs.logDate, todayStr)).all();
+    const totalCallsToday = todayLogs.reduce((sum, l) => sum + l.callsMade, 0);
+    const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
+
+    return { total, transfers, appointments, fellThrough, noAnswer, conversionRate, outcomesByType, totalCallsToday, callTransferRatio };
   }
 
   getLeaderboard(startDate: string, endDate: string) {

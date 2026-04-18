@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,8 +11,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle,
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
-  ChevronRight, CalendarClock, Clock, AlertCircle, CheckCircle2,
+  ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, LineChart, Line, CartesianGrid,
@@ -68,6 +69,95 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       onClick={() => { navigator.clipboard.writeText(value).then(() => { setCopied(true); toast({ title: `${label} copied` }); setTimeout(() => setCopied(false), 1500); }); }}>
       <Copy className={`w-3 h-3 ${copied ? "text-green-500" : ""}`} />
     </Button>
+  );
+}
+
+// ── Call Entry Widget ────────────────────────────────────────────────────────
+function CallEntryWidget() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [editing, setEditing] = useState(false);
+  const [callInput, setCallInput] = useState("");
+
+  const { data: logsToday = [], refetch } = useQuery<any[]>({
+    queryKey: ["/api/call-logs", todayStr],
+    queryFn: () => fetch(`/api/call-logs?date=${todayStr}`).then(r => r.json()),
+  });
+
+  const myLog = (logsToday as any[]).find((l: any) => l.assistantId === user?.id || l.assistant_id === user?.id);
+  const myCallsToday = myLog?.callsMade ?? myLog?.calls_made ?? null;
+
+  const logMutation = useMutation({
+    mutationFn: (calls: number) =>
+      apiRequest("POST", "/api/call-logs", { logDate: todayStr, assistantId: user?.id, callsMade: calls }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/call-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      refetch();
+      setEditing(false);
+      toast({ title: "Call count saved", description: `${callInput} calls logged for today.` });
+    },
+    onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+  });
+
+  function handleSubmit() {
+    const n = parseInt(callInput, 10);
+    if (isNaN(n) || n < 0) { toast({ title: "Enter a valid number", variant: "destructive" }); return; }
+    logMutation.mutate(n);
+  }
+
+  return (
+    <Card className="border-dashed border-primary/30 bg-primary/5">
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10 text-primary">
+              <PhoneCall className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground">My Calls Today</p>
+              <p className="text-xs text-muted-foreground">
+                {myCallsToday !== null ? (
+                  <span className="font-medium text-foreground">{myCallsToday} calls logged</span>
+                ) : (
+                  <span className="text-orange-500 font-medium">Not logged yet — enter your total calls made today</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {editing ? (
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                placeholder="e.g. 42"
+                value={callInput}
+                onChange={e => setCallInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleSubmit(); if (e.key === "Escape") setEditing(false); }}
+                className="w-28 h-8 text-sm"
+                autoFocus
+              />
+              <Button size="sm" className="h-8" onClick={handleSubmit} disabled={logMutation.isPending}>
+                {logMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Save"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5"
+              onClick={() => { setCallInput(myCallsToday !== null ? String(myCallsToday) : ""); setEditing(true); }}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              {myCallsToday !== null ? "Update" : "Log Calls"}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -291,14 +381,20 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
   );
 }
 
-// ── Tab: Appointments ─────────────────────────────────────────────────────────
+// ── Tab: Upcoming Appointments ────────────────────────────────────────────────
 function TabAppointments() {
   const { data: outcomes = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
   const { data: losData = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const [search, setSearch] = useState("");
 
+  // Only keep future appointments: today OR not yet past
   const appointments = useMemo(() =>
-    outcomes.filter((o: any) => o.followUpDate || o.follow_up_date),
+    outcomes.filter((o: any) => {
+      const d = o.followUpDate || o.follow_up_date;
+      if (!d) return false;
+      const parsed = parseISO(d);
+      return isToday(parsed) || !isPast(parsed);
+    }),
     [outcomes]
   );
 
@@ -313,24 +409,13 @@ function TabAppointments() {
 
   const getLoName = (loId: number) => losData.find((l: any) => l.id === loId)?.fullName ?? `LO #${loId}`;
 
-  const overdue = filtered.filter((o: any) => {
-    const d = o.followUpDate || o.follow_up_date;
-    return d && isPast(parseISO(d)) && !isToday(parseISO(d));
-  });
-  const today_ = filtered.filter((o: any) => {
-    const d = o.followUpDate || o.follow_up_date;
-    return d && isToday(parseISO(d));
-  });
-  const upcoming = filtered.filter((o: any) => {
-    const d = o.followUpDate || o.follow_up_date;
-    return d && !isPast(parseISO(d));
-  });
+  const today_ = filtered.filter((o: any) => isToday(parseISO(o.followUpDate || o.follow_up_date)));
+  const upcoming = filtered.filter((o: any) => !isToday(parseISO(o.followUpDate || o.follow_up_date)));
 
   function ApptRow({ o }: { o: any }) {
     const fDate = o.followUpDate || o.follow_up_date;
     const label = fDate ? formatDistanceToNow(parseISO(fDate), { addSuffix: true }) : "";
     const exact = fDate ? format(parseISO(fDate), "MMM d, yyyy") : "";
-    const isOd = fDate && isPast(parseISO(fDate)) && !isToday(parseISO(fDate));
     const isTd = fDate && isToday(parseISO(fDate));
     return (
       <div className="flex items-start justify-between py-2.5 border-b last:border-0 gap-3">
@@ -345,7 +430,7 @@ function TabAppointments() {
           {o.notes && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{o.notes}</p>}
         </div>
         <div className="text-right shrink-0">
-          <p className={`text-xs font-medium ${isOd ? "text-red-500" : isTd ? "text-green-600" : "text-muted-foreground"}`}>{label}</p>
+          <p className={`text-xs font-medium ${isTd ? "text-green-600" : "text-muted-foreground"}`}>{label}</p>
           <p className="text-xs text-muted-foreground">{exact}</p>
         </div>
       </div>
@@ -354,28 +439,48 @@ function TabAppointments() {
 
   return (
     <div className="space-y-4">
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
-        <Input placeholder="Search appointments..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8" />
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Upcoming Appointments</h2>
+          <p className="text-xs text-muted-foreground">Showing today and future scheduled appointments only</p>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
+          <Input placeholder="Search appointments..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 w-64" />
+        </div>
       </div>
 
       {isLoading ? (
         <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-14" />)}</div>
-      ) : appointments.length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-sm text-muted-foreground"><CalendarClock className="w-8 h-8 mx-auto mb-2 opacity-30" />No appointments scheduled yet.</CardContent></Card>
+      ) : filtered.length === 0 ? (
+        <Card><CardContent className="py-12 text-center text-sm text-muted-foreground"><CalendarClock className="w-8 h-8 mx-auto mb-2 opacity-30" /><p>No upcoming appointments scheduled.</p></CardContent></Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="border-red-200 dark:border-red-900/40">
-            <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-600 dark:text-red-400"><AlertCircle className="w-4 h-4" /> Overdue <Badge variant="destructive" className="text-xs">{overdue.length}</Badge></CardTitle></CardHeader>
-            <CardContent>{overdue.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">None overdue</p> : overdue.map(o => <ApptRow key={o.id} o={o} />)}</CardContent>
-          </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="border-green-200 dark:border-green-900/40">
-            <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-700 dark:text-green-400"><CheckCircle2 className="w-4 h-4" /> Today <Badge className="text-xs bg-green-600">{today_.length}</Badge></CardTitle></CardHeader>
-            <CardContent>{today_.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Nothing today</p> : today_.map(o => <ApptRow key={o.id} o={o} />)}</CardContent>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-700 dark:text-green-400">
+                <CheckCircle2 className="w-4 h-4" /> Today
+                <Badge className="text-xs bg-green-600">{today_.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {today_.length === 0
+                ? <p className="text-xs text-muted-foreground py-4 text-center">Nothing scheduled today</p>
+                : today_.map(o => <ApptRow key={o.id} o={o} />)}
+            </CardContent>
           </Card>
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><Clock className="w-4 h-4" /> Upcoming <Badge variant="outline" className="text-xs">{upcoming.length}</Badge></CardTitle></CardHeader>
-            <CardContent>{upcoming.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">No upcoming</p> : upcoming.map(o => <ApptRow key={o.id} o={o} />)}</CardContent>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Clock className="w-4 h-4" /> Coming Up
+                <Badge variant="outline" className="text-xs">{upcoming.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {upcoming.length === 0
+                ? <p className="text-xs text-muted-foreground py-4 text-center">No future appointments yet</p>
+                : upcoming.map(o => <ApptRow key={o.id} o={o} />)}
+            </CardContent>
           </Card>
         </div>
       )}
@@ -529,14 +634,17 @@ export default function Dashboard() {
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[100px]" />)}
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
-          <StatCard title="Appointments" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/outcomes" />
-          <StatCard title="Total Activities" value={stats?.total} icon={PhoneCall} color="default" sub="all outcomes" href="/outcomes" />
-          <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
-          <StatCard title="Conversion Rate" value={`${stats?.conversionRate ?? 0}%`} icon={TrendingUp} color="success" sub="transfers / total" href="/outcomes" />
-          <StatCard title="Active LOs" value={(losData ?? []).filter((l: any) => l.internalStatus === "active").length} icon={Users} color="primary" sub="available to assign" href="/directory" />
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
+            <StatCard title="Upcoming Appts" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/appointments" />
+            <StatCard title="Calls Today" value={stats?.totalCallsToday ?? 0} icon={PhoneCall} color="default" sub="all CLRs combined" />
+            <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
+            <StatCard title="Transfer/Call %" value={stats?.callTransferRatio != null ? `${stats.callTransferRatio}%` : "—"} icon={TrendingUp} color="success" sub={stats?.callTransferRatio != null ? `${stats.transfers} xfers / ${stats.totalCallsToday} calls` : "Log calls to see ratio"} />
+            <StatCard title="Active LOs" value={(losData ?? []).filter((l: any) => l.internalStatus === "active").length} icon={Users} color="primary" sub="available to assign" href="/directory" />
+          </div>
+          <CallEntryWidget />
+        </>
       )}
 
       {/* Tabs */}
@@ -552,7 +660,7 @@ export default function Dashboard() {
           </TabsTrigger>
           <TabsTrigger value="appointments" className="flex items-center gap-1.5 text-xs sm:text-sm">
             <Calendar className="w-3.5 h-3.5" />
-            Appointments
+            <span className="hidden sm:inline">Upcoming </span>Appts
           </TabsTrigger>
           <TabsTrigger value="states" className="flex items-center gap-1.5 text-xs sm:text-sm">
             <MapPin className="w-3.5 h-3.5" />
