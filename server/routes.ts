@@ -51,9 +51,13 @@ function getDefaultPeriod() {
 }
 
 // Ranking algorithm
-function generateRankings(los: any[], settings: any, todayStr: string) {
+function generateRankings(los: any[], settings: any, todayStr: string, recentTransferCounts?: Map<number, number>) {
   const today = new Date(todayStr);
-  const dayOfWeek = today.getDay();
+
+  // Max transfers in the pool for normalization
+  const maxXfers = recentTransferCounts
+    ? Math.max(1, ...Array.from(recentTransferCounts.values()))
+    : 1;
 
   return los
     .filter(lo => lo.internalStatus === "active")
@@ -67,6 +71,11 @@ function generateRankings(los: any[], settings: any, todayStr: string) {
       const availScore = 1; // simplified - full availability check in prod
       const boostNorm = (lo.boostScore || 0) / 10;
       const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
+      // 90-day transfer score: more recent transfers = higher score (LO is "hot")
+      const recentXfers = recentTransferCounts ? (recentTransferCounts.get(lo.id) || 0) : 0;
+      const recentXferScore = recentXfers / maxXfers;
+
+      const weightRecentTransfers = settings.weightRecentTransfers ?? 0.10;
 
       const score =
         settings.weightDaysSinceWorked * daysSinceNorm +
@@ -74,6 +83,7 @@ function generateRankings(los: any[], settings: any, todayStr: string) {
         settings.weightAvailability * availScore +
         settings.weightBoost * boostNorm +
         settings.weightPriorityTier * tierScore +
+        weightRecentTransfers * recentXferScore +
         Math.random() * 0.01; // tiny tiebreak noise
 
       return { lo, score, daysSince };
@@ -190,6 +200,8 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     assigned: number;
     missed: number;
     ratio: string;
+    eodNotes: string[];
+    activityNotes: Array<{ date: string; type: string; description: string }>;
   }
 
   const clrStats: ClrStats[] = clrs.map((u: any) => {
@@ -214,6 +226,19 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
 
     const ratio = myCalls > 0 ? ((myTransfers / myCalls) * 100).toFixed(1) + "%" : "—";
 
+    // EOD report notes (one per day in period)
+    const myEodReports = storageExtra.getEodReportsByRange(startDate, endDate)
+      .filter((r: any) => r.assistant_id === uid && r.notes && r.notes.trim());
+    const eodNotes = myEodReports.map((r: any) => `[${r.report_date}] ${r.notes.trim()}`);
+
+    // Additional activity log entries
+    const myActivities = storageExtra.getEodActivitiesByRange(startDate, endDate, uid);
+    const activityNotes = myActivities.map((a: any) => ({
+      date: a.report_date,
+      type: a.activity_type,
+      description: a.description,
+    }));
+
     return {
       name: u.name,
       calls: myCalls,
@@ -223,6 +248,8 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       assigned: myAssigned,
       missed: myMissed,
       ratio,
+      eodNotes,
+      activityNotes,
     };
   }).sort((a, b) => b.transfers - a.transfers);
 
@@ -331,6 +358,35 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
         <strong>Active LOs this period:</strong> ${los.filter((l: any) => l.internalStatus === "active").length} loan officers available for assignment.
       </p>
     </div>
+
+    <!-- CLR EOD Notes & Activity Log -->
+    ${clrStats.some(r => r.eodNotes.length > 0 || r.activityNotes.length > 0) ? `
+    <div style="margin-top:28px">
+      <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Notes & Activity Log</h2>
+      ${clrStats.filter(r => r.eodNotes.length > 0 || r.activityNotes.length > 0).map(row => `
+      <div style="margin-bottom:18px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+        <div style="background:#0F182D;padding:9px 14px">
+          <span style="color:#e2e8f0;font-size:12px;font-weight:700">${row.name}</span>
+        </div>
+        <div style="padding:12px 14px;background:#ffffff">
+          ${row.eodNotes.length > 0 ? `
+          <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">EOD Notes</p>
+          ${row.eodNotes.map(n => `<p style="margin:0 0 6px;font-size:13px;color:#334155;padding:6px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid #1A2B4A">${n}</p>`).join('')}
+          ` : ''}
+          ${row.activityNotes.length > 0 ? `
+          <p style="margin:${row.eodNotes.length > 0 ? '10px' : '0'} 0 8px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Activity Log</p>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:12px">
+            ${row.activityNotes.map((a, ai) => `
+            <tr style="background:${ai % 2 === 0 ? '#f8fafc' : '#ffffff'}">
+              <td style="padding:5px 8px;color:#94a3b8;white-space:nowrap">${a.date}</td>
+              <td style="padding:5px 8px;color:#64748b;font-style:italic;white-space:nowrap">${a.type.replace(/_/g, ' ')}</td>
+              <td style="padding:5px 8px;color:#334155">${a.description}</td>
+            </tr>`).join('')}
+          </table>
+          ` : ''}
+        </div>
+      </div>`).join('')}
+    </div>` : ''}
   `;
 
   const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body });
@@ -830,7 +886,19 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const workedToday = existing.filter(a => a.status === "worked").map(a => a.loId);
     const eligibleLOs = los.filter(lo => !workedToday.includes(lo.id));
 
-    const ranked = generateRankings(eligibleLOs, settings, date);
+
+    // Compute 90-day transfer counts per LO for algorithm weighting
+    const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const xfer90Start = ninetyDaysAgo.toISOString().split("T")[0];
+    const recentOutcomes = storage.getLeadOutcomes({ startDate: xfer90Start, endDate: date });
+    const recentTransferCounts = new Map<number, number>();
+    for (const o of recentOutcomes) {
+      if ((o.outcomeType || (o as any).outcome_type) === "transfer") {
+        const loId = o.loId || (o as any).lo_id;
+        if (loId) recentTransferCounts.set(loId, (recentTransferCounts.get(loId) || 0) + 1);
+      }
+    }
+    const ranked = generateRankings(eligibleLOs, settings, date, recentTransferCounts);
     const maxTotal = settings.maxLosPerAssistant * assistants.length;
     const topRanked = ranked.slice(0, maxTotal);
 
@@ -1066,7 +1134,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const startDate = (req.query.startDate as string) || period.startDate;
     const endDate = (req.query.endDate as string) || period.endDate;
     const leaderboard = storage.getLeaderboard(startDate, endDate);
-    res.json({ leaderboard, startDate, endDate });
+
+    // Compute % of recommended LOs completed per CLR
+    const assignments = storage.getAssignmentsByRange(startDate, endDate);
+    const completionByUser: Record<number, { assigned: number; completed: number }> = {};
+    for (const a of assignments as any[]) {
+      const uid = a.assistantId || a.assistant_id;
+      if (!uid) continue;
+      if (!completionByUser[uid]) completionByUser[uid] = { assigned: 0, completed: 0 };
+      completionByUser[uid].assigned++;
+      if (a.status === "worked" || a.status === "skipped") completionByUser[uid].completed++;
+    }
+
+    const leaderboardWithCompletion = (leaderboard as any[]).map((entry: any) => {
+      const uid = entry.userId || entry.user_id;
+      const comp = completionByUser[uid] ?? { assigned: 0, completed: 0 };
+      const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
+      return { ...entry, assignedCount: comp.assigned, completedCount: comp.completed, completionPct };
+    });
+
+    res.json({ leaderboard: leaderboardWithCompletion, startDate, endDate });
   });
 
   // ── Algorithm Settings ────────────────────────────────────────────────────────
@@ -1422,7 +1509,18 @@ export function registerRoutes(httpServer: Server, app: Express) {
     storage.clearDailyAssignments(date);
 
     // Re-run the full generation logic
-    const ranked = generateRankings(los, settings, date);
+    // Compute 90-day transfer counts per LO for algorithm weighting
+    const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const xfer90Start = ninetyDaysAgo.toISOString().split("T")[0];
+    const recentOutcomes = storage.getLeadOutcomes({ startDate: xfer90Start, endDate: date });
+    const recentTransferCounts = new Map<number, number>();
+    for (const o of recentOutcomes) {
+      if ((o.outcomeType || (o as any).outcome_type) === "transfer") {
+        const loId = o.loId || (o as any).lo_id;
+        if (loId) recentTransferCounts.set(loId, (recentTransferCounts.get(loId) || 0) + 1);
+      }
+    }
+    const ranked = generateRankings(los, settings, date, recentTransferCounts);
     const maxTotal = settings.maxLosPerAssistant * assistants.length;
     const topRanked = ranked.slice(0, maxTotal);
     const assignments: any[] = [];

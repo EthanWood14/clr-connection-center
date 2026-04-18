@@ -168,7 +168,7 @@ export default function EodReport() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
-            <FileText className="w-5 h-5 text-primary" /> EOD Report
+            <FileText className="w-5 h-5 text-primary" /> EOD Reporting
           </h1>
           <p className="text-sm text-muted-foreground">
             {isToday ? "Complete before you log off for the day" : "Viewing a past report"}
@@ -299,7 +299,7 @@ export default function EodReport() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Plus className="w-4 h-4" /> Additional Activity Log
-                <span className="text-xs font-normal text-muted-foreground ml-1">— anything else worth noting</span>
+                <span className="text-xs font-normal text-muted-foreground ml-1">— any other notable work done today not mentioned</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">

@@ -42,7 +42,7 @@ function MedalCard({ entry, rank }: { entry: any; rank: number }) {
           </div>
           <Icon className={`w-6 h-6 ${medal?.color ?? "text-muted-foreground"}`} />
         </div>
-        <div className="grid grid-cols-3 gap-3 mt-4">
+        <div className="grid grid-cols-4 gap-2 mt-4">
           <div className="text-center">
             <p className="text-2xl font-bold text-green-600 dark:text-green-400">{entry.transfers}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Transfers</p>
@@ -54,6 +54,12 @@ function MedalCard({ entry, rank }: { entry: any; rank: number }) {
           <div className="text-center">
             <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{conv}%</p>
             <p className="text-xs text-muted-foreground mt-0.5">Conv.</p>
+          </div>
+          <div className="text-center">
+            <p className={`text-2xl font-bold ${entry.completionPct != null ? (entry.completionPct >= 80 ? 'text-emerald-600 dark:text-emerald-400' : entry.completionPct >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground'}`}>
+              {entry.completionPct != null ? `${entry.completionPct}%` : "—"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">LO Comp.</p>
           </div>
         </div>
       </CardContent>
@@ -76,18 +82,24 @@ function LeaderboardRow({ entry, rank }: { entry: any; rank: number }) {
         {initials}
       </div>
       <p className="flex-1 text-sm font-medium">{entry.name}</p>
-      <div className="flex items-center gap-6 text-sm text-right">
+      <div className="flex items-center gap-4 text-sm text-right">
         <div className="w-16">
           <p className="font-bold text-green-600 dark:text-green-400">{entry.transfers}</p>
           <p className="text-[10px] text-muted-foreground">transfers</p>
         </div>
-        <div className="w-14">
+        <div className="w-12">
           <p className="font-semibold">{entry.total}</p>
           <p className="text-[10px] text-muted-foreground">total</p>
         </div>
-        <div className="w-14">
+        <div className="w-12">
           <p className="font-semibold text-blue-600 dark:text-blue-400">{conv}%</p>
           <p className="text-[10px] text-muted-foreground">conv.</p>
+        </div>
+        <div className="w-14">
+          <p className={`font-semibold ${entry.completionPct != null ? (entry.completionPct >= 80 ? 'text-emerald-600 dark:text-emerald-400' : entry.completionPct >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground'}`}>
+            {entry.completionPct != null ? `${entry.completionPct}%` : "—"}
+          </p>
+          <p className="text-[10px] text-muted-foreground">LO comp.</p>
         </div>
       </div>
     </div>

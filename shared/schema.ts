@@ -144,11 +144,12 @@ export type Notification = typeof notifications.$inferSelect;
 // ── Algorithm Settings ─────────────────────────────────────────────────────────
 export const algorithmSettings = sqliteTable("algorithm_settings", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  weightDaysSinceWorked: real("weight_days_since_worked").notNull().default(0.35),
+  weightDaysSinceWorked: real("weight_days_since_worked").notNull().default(0.30),
   weightFrequency: real("weight_frequency").notNull().default(0.25),
   weightAvailability: real("weight_availability").notNull().default(0.20),
-  weightBoost: real("weight_boost").notNull().default(0.15),
+  weightBoost: real("weight_boost").notNull().default(0.10),
   weightPriorityTier: real("weight_priority_tier").notNull().default(0.05),
+  weightRecentTransfers: real("weight_recent_transfers").notNull().default(0.10),
   maxLosPerAssistant: integer("max_los_per_assistant").notNull().default(5),
   roundRobinEnabled: integer("round_robin_enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),

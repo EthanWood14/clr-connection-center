@@ -161,7 +161,7 @@ function CallEntryWidget() {
             <Link href="/eod-report">
               <Button size="sm" variant={isLogged ? "outline" : "default"} className="h-8 gap-1.5">
                 <CalendarClock className="w-3.5 h-3.5" />
-                EOD Report
+                EOD Reporting
               </Button>
             </Link>
           </div>

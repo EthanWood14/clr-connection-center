@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, Building2, MapPin, BedDouble,
   BarChart2, Bell, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle,
+  FileText, PlayCircle, Smartphone,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ const mainItems = [
   { title: "Appointments",      url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
   { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
   { title: "Team Chat",         url: "/chat",        icon: MessageSquare, badge: "chat" },
-  { title: "EOD Report",        url: "/eod-report",  icon: FileText },
+  { title: "EOD Reporting",     url: "/eod-report",  icon: FileText },
 ];
 
 const toolItems = [
@@ -208,6 +208,7 @@ export function AppSidebar() {
                   </button>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {renderItems([{ title: "Install App", url: "/install", icon: Smartphone }])}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

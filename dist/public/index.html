@@ -6,6 +6,13 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" sizes="180x180" href="./favicon-180.png" />
+    <!-- PWA -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#0F182D" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="WCLCC" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -13,10 +20,17 @@
       rel="stylesheet"
     />
     <title>WCLCC</title>
-    <script type="module" crossorigin src="./assets/index-CdoT7aqk.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Cn3cOKBz.css">
+    <script type="module" crossorigin src="./assets/index-C7765_iJ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-J6yN7waN.css">
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>

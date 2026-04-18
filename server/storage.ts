@@ -568,6 +568,8 @@ function runNewMigrations() {
 
   // algorithm_settings: add fixedMonthly mode column if missing
   try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN fixed_monthly_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // algorithm_settings: add 90-day transfer weight column if missing
+  try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
   // ── Migrate nmls_id to nullable (was NOT NULL UNIQUE) ──────────────────────
   // SQLite can't DROP NOT NULL via ALTER COLUMN, so recreate the table if needed
@@ -853,6 +855,10 @@ export function upsertEodReport(data: { reportDate: string; assistantId: number;
 
 export function getEodActivities(reportDate: string, assistantId: number): any[] {
   return sqlite.prepare(`SELECT * FROM eod_activities WHERE report_date=? AND assistant_id=? ORDER BY id ASC`).all(reportDate, assistantId) as any[];
+}
+
+export function getEodActivitiesByRange(from: string, to: string, assistantId: number): any[] {
+  return sqlite.prepare(`SELECT * FROM eod_activities WHERE report_date>=? AND report_date<=? AND assistant_id=? ORDER BY report_date ASC, id ASC`).all(from, to, assistantId) as any[];
 }
 
 export function addEodActivity(data: { reportDate: string; assistantId: number; activityType: string; description: string }): any {
