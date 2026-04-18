@@ -6,7 +6,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import cron from "node-cron";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
@@ -149,33 +149,18 @@ function buildEmail(opts: {
 </html>`;
 }
 
-// ── Shared SMTP send helper ───────────────────────────────────────────────────
-function getTransporter() {
-  const s = storageExtra.getEmailSettings() as any;
-  const host = s.smtp_host || "smtp.gmail.com";
-  const port = parseInt(s.smtp_port) || 465;
-  const user = s.smtp_user || "";
-  const pass = s.smtp_pass || "";
-  if (!user || !pass) throw new Error("SMTP credentials not configured. Add them in Email Settings.");
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: true,
-    auth: { user, pass },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
-}
+// ── Shared Resend send helper ─────────────────────────────────────────────────
+const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
+const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
 
 async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }) {
   const s = storageExtra.getEmailSettings() as any;
-  const fromName = "CLR Connection Center";
-  const fromAddr = s.smtp_user || "";
-  const from = `${fromName} <${fromAddr}>`;
-  const transporter = getTransporter();
-  await transporter.sendMail({ from, to, subject, html });
+  const apiKey = s.resend_api_key || DEFAULT_RESEND_KEY;
+  const from = s.from_address_resend || DEFAULT_FROM;
+  const resend = new Resend(apiKey);
+  const toArr = Array.isArray(to) ? to : [to];
+  const { error } = await resend.emails.send({ from, to: toArr, subject, html });
+  if (error) throw new Error(error.message ?? "Resend send failed");
 }
 
 async function sendReport(type: "daily" | "weekly" | "monthly") {
@@ -1150,16 +1135,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Email Settings ────────────────────────────────────────────────────────────
   app.get("/api/settings/email", requireAuth, (_req, res) => {
     const s = storageExtra.getEmailSettings() as any;
-    // Mask the SMTP password
-    const pass = s.smtp_pass || "";
-    res.json({ ...s, smtp_pass: pass ? "•".repeat(Math.min(pass.length, 16)) : "" });
+    // Mask the API key
+    const key = s.resend_api_key || "";
+    res.json({ ...s, resend_api_key: key ? `re_${"•".repeat(Math.max(0, key.length - 7))}${key.slice(-4)}` : "" });
   });
 
   app.patch("/api/settings/email", requireAuth, (req, res) => {
     const data = { ...req.body };
-    // Don't overwrite with masked password
-    if (data.smtpPass && data.smtpPass.includes("•")) delete data.smtpPass;
-    if (data.smtp_pass && data.smtp_pass.includes("•")) delete data.smtp_pass;
+    // Don't overwrite with masked key
+    if (data.resendApiKey && data.resendApiKey.includes("•")) delete data.resendApiKey;
+    if (data.resend_api_key && data.resend_api_key.includes("•")) delete data.resend_api_key;
     storageExtra.updateEmailSettings(data);
     res.json({ ok: true });
   });
@@ -1177,19 +1162,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
         subject: "CLR Connection Center — Test Email",
         html: buildEmail({
           subject: "Test Email — Everything's Working",
-          preheader: "Your SMTP integration is configured correctly.",
+          preheader: "Your Resend integration is configured correctly.",
           body: `
             <div style="text-align:center;padding:16px 0 28px">
               <div style="display:inline-block;background:#dcfce7;border-radius:50%;width:56px;height:56px;line-height:56px;font-size:28px;margin-bottom:16px">✓</div>
               <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#15803d">Email is working correctly</h2>
               <p style="margin:0;color:#475569;font-size:14px;line-height:1.6">
-                Your SMTP credentials are configured and emails are sending successfully.<br />
+                Resend is configured and emails are sending successfully.<br />
                 This test was sent to confirm your integration is set up correctly.
               </p>
             </div>
             <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-top:8px">
               <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7">
                 <strong style="color:#1e293b">Sent to:</strong> ${userEmail}<br />
+                <strong style="color:#1e293b">From:</strong> reports@wlc.it.com<br />
                 <strong style="color:#1e293b">Note:</strong> If managers aren't receiving emails, ask them to check their spam folder.
               </p>
             </div>

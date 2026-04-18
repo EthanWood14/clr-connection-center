@@ -363,10 +363,7 @@ function EmailReportsCard() {
     queryKey: ["/api/settings/email"],
   });
 
-  const [smtpUser, setSmtpUser] = useState("");
-  const [smtpPass, setSmtpPass] = useState("");
-  const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
-  const [smtpPort, setSmtpPort] = useState("465");
+  const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
@@ -380,10 +377,7 @@ function EmailReportsCard() {
   // Populate form from fetched settings
   useEffect(() => {
     if (!emailSettings) return;
-    setSmtpUser(emailSettings.smtp_user ?? "");
-    setSmtpPass(emailSettings.smtp_pass ?? "");
-    setSmtpHost(emailSettings.smtp_host || "smtp.gmail.com");
-    setSmtpPort(String(emailSettings.smtp_port || "465"));
+    setResendApiKey(emailSettings.resend_api_key ?? emailSettings.resendApiKey ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -403,9 +397,6 @@ function EmailReportsCard() {
 
   function handleSave() {
     const payload: any = {
-      smtpHost,
-      smtpPort: parseInt(smtpPort) || 587,
-      smtpUser,
       managerEmails: JSON.stringify(managerEmails),
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
@@ -413,7 +404,7 @@ function EmailReportsCard() {
       welcomeEmailEnabled: welcomeEmailEnabled ? 1 : 0,
       dailyTime,
     };
-    if (smtpPass && !smtpPass.includes("•")) payload.smtpPass = smtpPass;
+    if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
   }
 
@@ -470,8 +461,8 @@ function EmailReportsCard() {
         const reason = data.error ?? `Server responded with status ${res.status}.`;
         toast({
           title: `Failed to send ${label.toLowerCase()} report`,
-          description: reason.includes("SMTP credentials not configured")
-            ? "SMTP credentials are not set. Add your Gmail address and App Password in Email Settings."
+          description: reason.includes("Resend")
+            ? reason
             : reason.includes("No manager")
             ? "No recipient emails have been added. Add a manager email and save."
             : reason,
@@ -509,7 +500,7 @@ function EmailReportsCard() {
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Configure a Gmail account (or any SMTP provider) to send scheduled reports and welcome emails.</span>
+          <span>Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -517,53 +508,19 @@ function EmailReportsCard() {
           <div className="space-y-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-9" />)}</div>
         ) : (
           <>
-            {/* SMTP Config */}
+            {/* Resend Config */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">SMTP Configuration</p>
-              <div className="grid grid-cols-1 gap-3">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2 space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">SMTP Host</label>
-                    <Input
-                      placeholder="smtp.gmail.com"
-                      value={smtpHost}
-                      onChange={e => setSmtpHost(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">Port</label>
-                    <Input
-                      placeholder="465"
-                      value={smtpPort}
-                      onChange={e => setSmtpPort(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Gmail Address</label>
-                  <Input
-                    type="email"
-                    placeholder="youraddress@gmail.com"
-                    value={smtpUser}
-                    onChange={e => setSmtpUser(e.target.value)}
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">App Password</label>
-                  <Input
-                    type="password"
-                    placeholder="xxxx xxxx xxxx xxxx"
-                    value={smtpPass}
-                    onChange={e => setSmtpPass(e.target.value)}
-                    autoComplete="new-password"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Use a Gmail <a href="https://myaccount.google.com/apppasswords" target="_blank" className="underline">App Password</a>, not your regular password. Requires 2FA to be enabled on the Google account.</p>
-                </div>
-                <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-700 text-xs text-blue-800 dark:text-blue-200 space-y-1">
-                  <p className="font-semibold">Quick Setup (Gmail)</p>
-                  <p>1. Enable 2-Step Verification on your Google account · 2. Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" className="underline">myaccount.google.com/apppasswords</a> · 3. Create an App Password for "Mail" · 4. Paste it above and save.</p>
-                </div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Resend Configuration</p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">API Key <span className="font-normal">(optional — default key pre-configured)</span></label>
+                <Input
+                  type="password"
+                  placeholder="re_xxxxxxxxxxxxxxxxxxxx"
+                  value={resendApiKey}
+                  onChange={e => setResendApiKey(e.target.value)}
+                  autoComplete="off"
+                />
+                <p className="text-[10px] text-muted-foreground">Emails send from <span className="font-mono">reports@wlc.it.com</span>. To use a different API key, get one at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a>.</p>
               </div>
             </div>
 
