@@ -114,11 +114,12 @@ sqlite.exec(`
 
   CREATE TABLE IF NOT EXISTS algorithm_settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    weight_days_since_worked REAL NOT NULL DEFAULT 0.35,
+    weight_days_since_worked REAL NOT NULL DEFAULT 0.30,
     weight_frequency REAL NOT NULL DEFAULT 0.25,
     weight_availability REAL NOT NULL DEFAULT 0.20,
-    weight_boost REAL NOT NULL DEFAULT 0.15,
+    weight_boost REAL NOT NULL DEFAULT 0.10,
     weight_priority_tier REAL NOT NULL DEFAULT 0.05,
+    weight_recent_transfers REAL NOT NULL DEFAULT 0.10,
     max_los_per_assistant INTEGER NOT NULL DEFAULT 5,
     round_robin_enabled INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -404,14 +405,27 @@ export class Storage implements IStorage {
   }
 
   getAlgorithmSettings() {
-    return db.select().from(algorithmSettings).get()!;
+    const base = db.select().from(algorithmSettings).get()!;
+    // weightRecentTransfers added via migration — read via raw SQL to handle existing DBs
+    const raw = sqlite.prepare("SELECT weight_recent_transfers FROM algorithm_settings WHERE id = ?").get(base.id) as any;
+    return { ...base, weightRecentTransfers: raw?.weight_recent_transfers ?? 0.10 };
   }
   updateAlgorithmSettings(data: Partial<InsertAlgorithmSettings>) {
     const existing = db.select().from(algorithmSettings).get();
+    // Handle weightRecentTransfers separately via raw SQL
+    const { weightRecentTransfers, ...drizzleData } = data as any;
     if (existing) {
-      return db.update(algorithmSettings).set({ ...data, updatedAt: new Date().toISOString() }).where(eq(algorithmSettings.id, existing.id)).returning().get()!;
+      const updated = db.update(algorithmSettings).set({ ...drizzleData, updatedAt: new Date().toISOString() }).where(eq(algorithmSettings.id, existing.id)).returning().get()!;
+      if (weightRecentTransfers !== undefined) {
+        sqlite.prepare("UPDATE algorithm_settings SET weight_recent_transfers = ? WHERE id = ?").run(weightRecentTransfers, existing.id);
+      }
+      return this.getAlgorithmSettings();
     }
-    return db.insert(algorithmSettings).values({ ...data as any, updatedAt: new Date().toISOString() }).returning().get()!;
+    const inserted = db.insert(algorithmSettings).values({ ...drizzleData as any, updatedAt: new Date().toISOString() }).returning().get()!;
+    if (weightRecentTransfers !== undefined) {
+      sqlite.prepare("UPDATE algorithm_settings SET weight_recent_transfers = ? WHERE id = ?").run(weightRecentTransfers, inserted.id);
+    }
+    return this.getAlgorithmSettings();
   }
 
   getDashboardStats(startDate: string, endDate: string) {

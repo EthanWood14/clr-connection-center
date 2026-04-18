@@ -149,15 +149,15 @@ export const algorithmSettings = sqliteTable("algorithm_settings", {
   weightAvailability: real("weight_availability").notNull().default(0.20),
   weightBoost: real("weight_boost").notNull().default(0.10),
   weightPriorityTier: real("weight_priority_tier").notNull().default(0.05),
-  weightRecentTransfers: real("weight_recent_transfers").notNull().default(0.10),
+  // weightRecentTransfers added via migration — NOT in Drizzle schema to avoid startup crash on existing DBs
   maxLosPerAssistant: integer("max_los_per_assistant").notNull().default(5),
   roundRobinEnabled: integer("round_robin_enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
 });
 
 export const insertAlgorithmSettingsSchema = createInsertSchema(algorithmSettings).omit({ id: true, updatedAt: true });
-export type InsertAlgorithmSettings = z.infer<typeof insertAlgorithmSettingsSchema>;
-export type AlgorithmSettings = typeof algorithmSettings.$inferSelect;
+export type InsertAlgorithmSettings = z.infer<typeof insertAlgorithmSettingsSchema> & { weightRecentTransfers?: number };
+export type AlgorithmSettings = typeof algorithmSettings.$inferSelect & { weightRecentTransfers: number };
 
 // ── Audit Logs ─────────────────────────────────────────────────────────────────
 export const auditLogs = sqliteTable("audit_logs", {
