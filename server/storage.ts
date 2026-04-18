@@ -499,6 +499,11 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'from_address_resend')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN from_address_resend TEXT NOT NULL DEFAULT ''`);
   }
+  // Seed default Resend API key if not already set
+  const emailKeyRow = sqlite.prepare(`SELECT resend_api_key FROM email_settings WHERE id=1`).get() as any;
+  if (!emailKeyRow?.resend_api_key) {
+    sqlite.exec(`UPDATE email_settings SET resend_api_key='re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q' WHERE id=1`);
+  }
 
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
