@@ -108,7 +108,8 @@ export default function Leaderboard() {
   const { data: leaderboardData, isLoading } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
 
   const leaderboard: any[] = leaderboardData?.leaderboard ?? [];
-  const period = leaderboardData?.period ?? {};
+  const startDate: string | undefined = leaderboardData?.startDate;
+  const endDate: string | undefined = leaderboardData?.endDate;
 
   const top3 = leaderboard.slice(0, 3);
   const rest = leaderboard.slice(3);
@@ -125,9 +126,9 @@ export default function Leaderboard() {
             <Trophy className="w-5 h-5 text-yellow-500" />
             CLR Leaderboard
           </h1>
-          {period.startDate && period.endDate && (
+          {startDate && endDate && (
             <p className="text-sm text-muted-foreground mt-0.5">
-              Reporting period: {period.startDate} — {period.endDate}
+              Reporting period: {startDate} — {endDate}
             </p>
           )}
         </div>

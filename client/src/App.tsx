@@ -11,6 +11,8 @@ import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { DailyReportGate } from "@/components/daily-report-gate";
+import { AppFooter } from "@/components/app-footer";
 
 import Dashboard from "@/pages/dashboard";
 import Directory from "@/pages/directory";
@@ -24,6 +26,8 @@ import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
 import AuditLog from "@/pages/audit-log";
 import LoPerformance from "@/pages/lo-performance";
+import PrivacyPolicy from "@/pages/privacy-policy";
+import TermsOfUse from "@/pages/terms-of-use";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 
@@ -56,6 +60,8 @@ function AppRouter() {
       <Route path="/settings" component={Settings} />
       <Route path="/audit-log" component={AuditLog} />
       <Route path="/lo-performance" component={LoPerformance} />
+      <Route path="/privacy-policy" component={PrivacyPolicy} />
+      <Route path="/terms-of-use" component={TermsOfUse} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -91,21 +97,26 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full overflow-hidden">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0">
-          <header className="flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
-            <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
-            <div className="flex items-center gap-1">
-              <NotificationBell />
-              <ThemeToggle />
-            </div>
-          </header>
-          <main className="flex-1 overflow-auto">
-            <AppRouter />
-          </main>
+      <DailyReportGate>
+        <div className="flex h-screen w-full overflow-hidden">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 min-w-0">
+            <header className="flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
+              <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
+              <div className="flex items-center gap-1">
+                <NotificationBell />
+                <ThemeToggle />
+              </div>
+            </header>
+            <main className="flex-1 overflow-auto flex flex-col">
+              <div className="flex-1">
+                <AppRouter />
+              </div>
+              <AppFooter />
+            </main>
+          </div>
         </div>
-      </div>
+      </DailyReportGate>
     </SidebarProvider>
   );
 }

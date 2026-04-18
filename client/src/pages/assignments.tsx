@@ -65,7 +65,7 @@ function StatusDialog({ open, assignment, onClose, onConfirm, isPending }: Statu
         <div className="space-y-3">
           <div className="p-3 rounded-lg bg-muted/50 text-sm">
             <p className="font-medium">{assignment.lo?.fullName}</p>
-            <p className="text-muted-foreground text-xs">NMLS {assignment.lo?.nmlsId} · Assigned to {assignment.assistant?.name}</p>
+            <p className="text-muted-foreground text-xs">{assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId} · ` : ""}Assigned to {assignment.assistant?.name}</p>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {actions.map(({ status, label, icon: Icon, description }) => (
@@ -139,7 +139,7 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle }: Assign
           )}
         </div>
         <div className="text-xs text-muted-foreground">
-          NMLS {assignment.lo?.nmlsId}
+          {assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId}` : ""}
           {assignment.lo?.phone && ` · ${assignment.lo.phone}`}
           {assignment.notes && <span className="ml-2 italic">"{assignment.notes}"</span>}
         </div>

@@ -412,7 +412,9 @@ export class Storage implements IStorage {
     const outcomes = db.select().from(leadOutcomes)
       .where(and(gte(leadOutcomes.date, startDate), lte(leadOutcomes.date, endDate))).all();
 
-    const allUsers = db.select().from(users).where(eq(users.role, "assistant")).all();
+    const allUsers = db.select().from(users).where(
+      sql`(${users.role} = 'assistant' OR ${users.role} = 'admin') AND ${users.isActive} = 1`
+    ).all();
 
     const stats = allUsers.map(user => {
       const userOutcomes = outcomes.filter(o => o.assistantId === user.id);
@@ -514,12 +516,91 @@ function runNewMigrations() {
 
   // algorithm_settings: add fixedMonthly mode column if missing
   try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN fixed_monthly_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+  // ── Migrate nmls_id to nullable (was NOT NULL UNIQUE) ──────────────────────
+  // SQLite can't DROP NOT NULL via ALTER COLUMN, so recreate the table if needed
+  try {
+    const col = (sqlite.prepare(`PRAGMA table_info(loan_officers)`).all() as any[])
+      .find((c: any) => c.name === "nmls_id");
+    if (col && col.notnull === 1) {
+      // Recreate loan_officers with nmls_id as nullable TEXT UNIQUE
+      sqlite.exec(`
+        PRAGMA foreign_keys=OFF;
+        BEGIN;
+        CREATE TABLE loan_officers_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT NOT NULL,
+          nmls_id TEXT UNIQUE,
+          phone TEXT,
+          email TEXT,
+          licensed_states TEXT NOT NULL DEFAULT '[]',
+          bonzo_username TEXT,
+          bonzo_password TEXT,
+          lead_mailbox_username TEXT,
+          lead_mailbox_password TEXT,
+          other_credentials TEXT NOT NULL DEFAULT '{}',
+          notes TEXT,
+          special_requests TEXT,
+          tags TEXT NOT NULL DEFAULT '[]',
+          internal_status TEXT NOT NULL DEFAULT 'active',
+          boost_score REAL NOT NULL DEFAULT 0,
+          priority_tier INTEGER NOT NULL DEFAULT 2,
+          snooze_until TEXT,
+          snooze_reason TEXT,
+          last_worked_date TEXT,
+          total_times_worked INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO loan_officers_new SELECT * FROM loan_officers;
+        DROP TABLE loan_officers;
+        ALTER TABLE loan_officers_new RENAME TO loan_officers;
+        COMMIT;
+        PRAGMA foreign_keys=ON;
+      `);
+    }
+  } catch (e) {
+    console.warn("NMLS nullable migration skipped:", e);
+  }
+
+  // ── Null out non-numeric NMLS IDs ─────────────────────────────────────────
+  try {
+    sqlite.exec(`UPDATE loan_officers SET nmls_id = NULL WHERE nmls_id IS NOT NULL AND nmls_id NOT GLOB '[0-9]*'`);
+    // Also null out values that contain non-digit characters (e.g. 'BN-WCL', 'T456')
+    sqlite.exec(`UPDATE loan_officers SET nmls_id = NULL WHERE nmls_id IS NOT NULL AND CAST(nmls_id AS INTEGER) = 0 AND nmls_id != '0'`);
+  } catch (e) {
+    console.warn("NMLS cleanup migration skipped:", e);
+  }
+
   // login rate limiting table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS login_attempts (
     ip TEXT PRIMARY KEY,
     attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT
   )`);
+
+  // NMLS check logs
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS nmls_check_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lo_id INTEGER NOT NULL,
+    assigned_to INTEGER,
+    assigned_at TEXT NOT NULL,
+    confirmed_by INTEGER,
+    confirmed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    period_key TEXT NOT NULL
+  )`);
+
+  // NMLS schedule settings
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS nmls_schedule (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    check_day_1 INTEGER NOT NULL DEFAULT 1,
+    check_day_2 INTEGER NOT NULL DEFAULT 16,
+    escalation_days INTEGER NOT NULL DEFAULT 7,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  const nmlsRow = sqlite.prepare(`SELECT id FROM nmls_schedule WHERE id=1`).get();
+  if (!nmlsRow) sqlite.exec(`INSERT INTO nmls_schedule(id) VALUES(1)`);
 }
 runNewMigrations();
 
@@ -584,3 +665,44 @@ export function resetLoginAttempts(ip: string) {
   sqlite.prepare(`UPDATE login_attempts SET attempts=0,locked_until=NULL WHERE ip=?`).run(ip);
 }
 
+
+// ── NMLS Check Storage ─────────────────────────────────────────────────────────
+export function getNmlsSchedule() {
+  return sqlite.prepare(`SELECT * FROM nmls_schedule WHERE id=1`).get() as any;
+}
+export function updateNmlsSchedule(data: { checkDay1?: number; checkDay2?: number; escalationDays?: number }) {
+  const fields: string[] = [];
+  const vals: any[] = [];
+  if (data.checkDay1 !== undefined) { fields.push("check_day_1=?"); vals.push(data.checkDay1); }
+  if (data.checkDay2 !== undefined) { fields.push("check_day_2=?"); vals.push(data.checkDay2); }
+  if (data.escalationDays !== undefined) { fields.push("escalation_days=?"); vals.push(data.escalationDays); }
+  if (!fields.length) return getNmlsSchedule();
+  fields.push("updated_at=?"); vals.push(new Date().toISOString());
+  sqlite.prepare(`UPDATE nmls_schedule SET ${fields.join(",")} WHERE id=1`).run(...vals);
+  return getNmlsSchedule();
+}
+export function getNmlsChecksForPeriod(periodKey: string) {
+  return sqlite.prepare(`SELECT * FROM nmls_check_logs WHERE period_key=?`).all(periodKey) as any[];
+}
+export function getNmlsCheckForLo(loId: number, periodKey: string) {
+  return sqlite.prepare(`SELECT * FROM nmls_check_logs WHERE lo_id=? AND period_key=?`).get(loId, periodKey) as any | undefined;
+}
+export function createNmlsCheck(data: { loId: number; assignedTo: number; periodKey: string }) {
+  return sqlite.prepare(
+    `INSERT INTO nmls_check_logs(lo_id, assigned_to, assigned_at, period_key) VALUES(?,?,?,?)`
+  ).run(data.loId, data.assignedTo, new Date().toISOString(), data.periodKey);
+}
+export function confirmNmlsCheck(loId: number, periodKey: string, confirmedBy: number) {
+  return sqlite.prepare(
+    `UPDATE nmls_check_logs SET status='confirmed', confirmed_by=?, confirmed_at=? WHERE lo_id=? AND period_key=?`
+  ).run(confirmedBy, new Date().toISOString(), loId, periodKey);
+}
+export function getPendingNmlsChecks(olderThanDays: number) {
+  const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+  return sqlite.prepare(
+    `SELECT * FROM nmls_check_logs WHERE status='pending' AND assigned_at < ?`
+  ).all(cutoff) as any[];
+}
+export function escalateNmlsCheck(id: number) {
+  return sqlite.prepare(`UPDATE nmls_check_logs SET status='escalated' WHERE id=?`).run(id);
+}

@@ -113,7 +113,7 @@ export default function SnoozeDashboard() {
                             {TIER_LABELS[lo.priorityTier]}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">NMLS #{lo.nmlsId}</p>
+                        {lo.nmlsId && <p className="text-xs text-muted-foreground">NMLS #{lo.nmlsId}</p>}
                         <div className="flex items-center gap-1.5 text-xs mt-2">
                           <BedDouble className="w-3.5 h-3.5 text-muted-foreground" />
                           <span className="text-muted-foreground">Snoozed until</span>

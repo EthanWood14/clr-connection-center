@@ -7,6 +7,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import nodemailer from "nodemailer";
+import cron from "node-cron";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -84,8 +85,8 @@ function generateRankings(los: any[], settings: any, todayStr: string) {
 async function sendReport(type: "daily" | "weekly" | "monthly") {
   const settings = storageExtra.getEmailSettings() as any;
   const managers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
-  if (!managers.length) return;
-  if (!settings.smtp_host || !settings.smtp_user) throw new Error("SMTP not configured");
+  if (!settings.smtp_host || !settings.smtp_user) throw new Error("SMTP not configured. Enter your SMTP host and username in Email Settings.");
+  if (!managers.length) throw new Error("No recipient emails configured. Add at least one manager email in Email Settings.");
 
   const period = getDefaultPeriod();
   const outcomes = storage.getLeadOutcomes({ startDate: period.startDate, endDate: period.endDate });
@@ -134,6 +135,71 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   const transporter = nodemailer.createTransport({ host: settings.smtp_host, port: settings.smtp_port, secure: settings.smtp_port === 465, auth: { user: settings.smtp_user, pass: settings.smtp_pass } });
   await transporter.sendMail({ from: settings.from_address || settings.smtp_user, to: managers.join(", "), subject, html });
 }
+
+// ── NMLS Check trigger + cron ────────────────────────────────────────────────
+function getNmlsPeriodKey(): string {
+  const now = new Date();
+  const schedule = storageExtra.getNmlsSchedule();
+  const half = now.getDate() < schedule.check_day_2 ? "a" : "b";
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+}
+
+function triggerNmlsChecks() {
+  const periodKey = getNmlsPeriodKey();
+  const activeLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active" && lo.nmlsId);
+  const assistants = storage.getUsers().filter((u: any) => (u.role === "assistant" || u.role === "admin") && u.isActive);
+  if (!assistants.length) return;
+
+  for (const lo of activeLos) {
+    // Skip if already exists for this period
+    const existing = storageExtra.getNmlsCheckForLo(lo.id, periodKey);
+    if (existing) continue;
+
+    // Assign a random CLR
+    const assignee = assistants[Math.floor(Math.random() * assistants.length)];
+    storageExtra.createNmlsCheck({ loId: lo.id, assignedTo: assignee.id, periodKey });
+
+    // Notify the assigned CLR
+    storage.createNotification({
+      userId: assignee.id,
+      type: "nmls_check",
+      title: "NMLS License Check Due",
+      message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Go to Directory to confirm.`,
+      isRead: false,
+    });
+  }
+}
+
+function runNmlsEscalations() {
+  const schedule = storageExtra.getNmlsSchedule();
+  const overdue = storageExtra.getPendingNmlsChecks(schedule.escalation_days);
+  if (!overdue.length) return;
+
+  const los = storage.getLoanOfficers();
+  for (const check of overdue) {
+    const lo = los.find((l: any) => l.id === check.lo_id);
+    if (!lo) continue;
+    storageExtra.escalateNmlsCheck(check.id);
+    // Broadcast to ALL users (userId null = everyone)
+    storage.createNotification({
+      userId: null as any,
+      type: "nmls_escalation",
+      title: "NMLS Check Overdue ⚠️",
+      message: `${lo.fullName}'s NMLS license check has not been confirmed in ${schedule.escalation_days} days. Someone needs to verify it now.`,
+      isRead: false,
+    });
+  }
+}
+
+// Run NMLS checks on the 1st and 16th of each month at 8am
+cron.schedule("0 8 1,16 * *", () => {
+  try { triggerNmlsChecks(); } catch (e) { console.error("NMLS check trigger error:", e); }
+});
+
+// Check for escalations every morning at 9am
+cron.schedule("0 9 * * *", () => {
+  try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
+});
 
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
@@ -662,6 +728,28 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ── Daily Call Logs ────────────────────────────────────────────────────────────────
+
+  // Check if current user has a call log for the last business day
+  app.get("/api/call-logs/check-previous-day", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    // Compute the last business day (Mon-Fri), skipping weekends
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const prevBiz = new Date(today);
+    prevBiz.setDate(prevBiz.getDate() - 1);
+    // Skip Sunday (0) and Saturday (6)
+    while (prevBiz.getDay() === 0 || prevBiz.getDay() === 6) {
+      prevBiz.setDate(prevBiz.getDate() - 1);
+    }
+    const prevBizStr = prevBiz.toISOString().split("T")[0];
+
+    const logs = storage.getDailyCallLogs(prevBizStr);
+    const hasLog = logs.some(l => l.assistantId === userId);
+    res.json({ hasLog, date: prevBizStr });
+  });
+
   app.get("/api/call-logs", (req, res) => {
     const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
     const logs = storage.getDailyCallLogs(date);
@@ -699,6 +787,65 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Reporting period helper ───────────────────────────────────────────────────
   app.get("/api/reporting-period", (req, res) => {
     res.json(getDefaultPeriod());
+  });
+
+  // ── NMLS Schedule Settings ────────────────────────────────────────────────────
+  app.get("/api/nmls-schedule", requireAuth, (_req, res) => {
+    res.json(storageExtra.getNmlsSchedule());
+  });
+
+  app.patch("/api/nmls-schedule", requireAuth, (req, res) => {
+    const { checkDay1, checkDay2, escalationDays } = req.body;
+    const updated = storageExtra.updateNmlsSchedule({
+      checkDay1: checkDay1 !== undefined ? parseInt(checkDay1) : undefined,
+      checkDay2: checkDay2 !== undefined ? parseInt(checkDay2) : undefined,
+      escalationDays: escalationDays !== undefined ? parseInt(escalationDays) : undefined,
+    });
+    res.json(updated);
+  });
+
+  // ── NMLS Checks ───────────────────────────────────────────────────────────────
+  // Get current period checks (enriched with LO + user info)
+  app.get("/api/nmls-checks", requireAuth, (req, res) => {
+    const now = new Date();
+    const day = now.getDate();
+    const schedule = storageExtra.getNmlsSchedule();
+    // Current period key: which half of the month are we in?
+    const half = day < schedule.check_day_2 ? "a" : "b";
+    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+    const checks = storageExtra.getNmlsChecksForPeriod(periodKey);
+    const los = storage.getLoanOfficers();
+    const users = storage.getUsers();
+    const enriched = checks.map((c: any) => ({
+      ...c,
+      lo: los.find(l => l.id === c.lo_id),
+      assignedTo: users.find(u => u.id === c.assigned_to),
+      confirmedBy: users.find(u => u.id === c.confirmed_by),
+    }));
+    res.json({ checks: enriched, periodKey });
+  });
+
+  // Confirm NMLS check for an LO
+  app.post("/api/nmls-checks/:loId/confirm", requireAuth, (req: any, res) => {
+    const loId = parseInt(req.params.loId);
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const now = new Date();
+    const day = now.getDate();
+    const schedule = storageExtra.getNmlsSchedule();
+    const half = day < schedule.check_day_2 ? "a" : "b";
+    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${half}`;
+    storageExtra.confirmNmlsCheck(loId, periodKey, userId);
+    audit({ userId, userName: req.session_user?.name ?? "User", action: "confirm", entityType: "nmls_check", entityId: loId, entityLabel: `NMLS check LO #${loId}`, details: JSON.stringify({ periodKey }) });
+    res.json({ ok: true });
+  });
+
+  // Trigger NMLS checks manually (admin)
+  app.post("/api/nmls-checks/trigger", requireAuth, (req: any, res) => {
+    const user = req.session_user;
+    if (user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    triggerNmlsChecks();
+    res.json({ ok: true });
   });
 
   // ── LO Performance History ────────────────────────────────────────────────────

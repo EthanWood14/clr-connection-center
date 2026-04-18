@@ -252,9 +252,11 @@ export default function StateLookup() {
                                     </Badge>
                                   )}
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  NMLS #{lo.nmlsId}
-                                </p>
+                                {lo.nmlsId && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    NMLS #{lo.nmlsId}
+                                  </p>
+                                )}
                               </div>
                             </div>
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle, RefreshCw, Trophy } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { Link } from "wouter";
 
 const COLORS = ["#01696f", "#437a22", "#964219", "#a12c7b", "#006494", "#d19900", "#7a39bb", "#da7101", "#a13544"];
 
@@ -15,9 +16,9 @@ const OUTCOME_LABELS: Record<string, string> = {
   not_interested: "Not Interested", wrong_number: "Wrong Number", other: "Other",
 };
 
-function StatCard({ title, value, icon: Icon, sub, color = "primary" }: any) {
-  return (
-    <Card>
+function StatCard({ title, value, icon: Icon, sub, color = "primary", href }: any) {
+  const inner = (
+    <Card className={href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}>
       <CardContent className="pt-5 pb-4">
         <div className="flex items-start justify-between">
           <div>
@@ -32,6 +33,8 @@ function StatCard({ title, value, icon: Icon, sub, color = "primary" }: any) {
       </CardContent>
     </Card>
   );
+  if (href) return <Link href={href}>{inner}</Link>;
+  return inner;
 }
 
 export default function Dashboard() {
@@ -89,11 +92,11 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" />
-          <StatCard title="Appointments" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" />
-          <StatCard title="Total Activities" value={stats?.total} icon={PhoneCall} color="default" sub="all outcomes" />
-          <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" />
-          <StatCard title="Conversion Rate" value={`${stats?.conversionRate ?? 0}%`} icon={TrendingUp} color="success" sub="transfers / total" />
+          <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
+          <StatCard title="Appointments" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/outcomes" />
+          <StatCard title="Total Activities" value={stats?.total} icon={PhoneCall} color="default" sub="all outcomes" href="/outcomes" />
+          <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" href="/outcomes" />
+          <StatCard title="Conversion Rate" value={`${stats?.conversionRate ?? 0}%`} icon={TrendingUp} color="success" sub="transfers / total" href="/outcomes" />
         </div>
       )}
 
@@ -121,7 +124,8 @@ export default function Dashboard() {
         </Card>
 
         {/* Leaderboard Card */}
-        <Card>
+        <Link href="/leaderboard">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -145,11 +149,13 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+        </Link>
       </div>
 
       {/* Today's Assignments + Stale LOs */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
+        <Link href="/assignments">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold">Today's Assignments</CardTitle>
           </CardHeader>
@@ -178,8 +184,10 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+        </Link>
 
-        <Card>
+        <Link href="/directory">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="w-4 h-4" /> LOs Not Worked Recently
@@ -208,6 +216,7 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+        </Link>
       </div>
     </div>
   );

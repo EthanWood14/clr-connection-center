@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2, RotateCcw,
   ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
-  Upload, CheckCheck, BarChart2,
+  Upload, CheckCheck, BarChart2, ExternalLink, ShieldCheck, ShieldAlert, Clock,
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -209,12 +209,16 @@ function LOCard({
   onEdit,
   onDelete,
   onRestore,
+  nmlsCheck,
+  onConfirmNmls,
 }: {
   lo: any;
   score: number | null;
   onEdit: (lo: any) => void;
   onDelete: (id: number) => void;
   onRestore: (id: number) => void;
+  nmlsCheck?: any;
+  onConfirmNmls?: (loId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const states: string[] = (() => {
@@ -258,7 +262,27 @@ function LOCard({
 
             {/* Sub-info */}
             <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground flex-wrap">
-              {lo.nmlsId && <span>NMLS: <span className="font-mono text-foreground">{lo.nmlsId}</span></span>}
+              {lo.nmlsId && (
+                <span className="inline-flex items-center gap-1">
+                  NMLS:
+                  <a
+                    href={`https://www.nmlsconsumeraccess.org/TuringTestPage.aspx?ReturnUrl=/EntityDetails.aspx/INDIVIDUAL/${lo.nmlsId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-primary hover:underline inline-flex items-center gap-0.5"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {lo.nmlsId} <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                  {nmlsCheck && (
+                    nmlsCheck.status === "confirmed"
+                      ? <span className="inline-flex items-center gap-0.5 text-green-600 dark:text-green-400"><ShieldCheck className="w-3 h-3" /> Verified</span>
+                      : nmlsCheck.status === "escalated"
+                      ? <span className="inline-flex items-center gap-0.5 text-red-500"><ShieldAlert className="w-3 h-3" /> Overdue</span>
+                      : <span className="inline-flex items-center gap-0.5 text-yellow-600 dark:text-yellow-400"><Clock className="w-3 h-3" /> Pending</span>
+                  )}
+                </span>
+              )}
               {lo.phone && <span>{lo.phone}</span>}
               {lo.email && <span className="truncate max-w-[200px]">{lo.email}</span>}
               {daysSince !== null && (
@@ -304,6 +328,17 @@ function LOCard({
           {/* Right side: score + action buttons */}
           <div className="flex items-start gap-1 flex-shrink-0 ml-1">
             {score !== null && <ScorePip score={score} />}
+            {lo.nmlsId && nmlsCheck && nmlsCheck.status !== "confirmed" && onConfirmNmls && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-7 h-7 hover:text-green-600"
+                title="Mark NMLS as verified for this period"
+                onClick={() => onConfirmNmls(lo.id)}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => onEdit(lo)}
               data-testid={`button-edit-lo-${lo.id}`}>
               <Edit2 className="w-3.5 h-3.5" />
@@ -366,7 +401,7 @@ function LOCard({
 // ── LO Form Dialog ────────────────────────────────────────────────────────────
 const loFormSchema = z.object({
   fullName: z.string().min(2, "Name required"),
-  nmlsId: z.string().min(1, "NMLS ID required"),
+  nmlsId: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   licensedStates: z.string().optional(),
@@ -648,6 +683,20 @@ export default function Directory() {
 
   const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const { data: algoSettings } = useQuery<any>({ queryKey: ["/api/settings/algorithm"] });
+  const { data: nmlsData } = useQuery<any>({ queryKey: ["/api/nmls-checks"], refetchInterval: 60000 });
+
+  // Build a map of loId -> check for quick lookup
+  const nmlsCheckMap: Record<number, any> = {};
+  (nmlsData?.checks ?? []).forEach((c: any) => { nmlsCheckMap[c.lo_id] = c; });
+
+  const confirmNmlsMutation = useMutation({
+    mutationFn: (loId: number) => apiRequest("POST", `/api/nmls-checks/${loId}/confirm`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/nmls-checks"] });
+      toast({ title: "NMLS verified", description: "License marked as confirmed for this period." });
+    },
+    onError: () => toast({ title: "Failed to confirm NMLS check", variant: "destructive" }),
+  });
 
   const weights: Weights = algoSettings ?? {
     weightDaysSinceWorked: 0.35,
@@ -704,7 +753,7 @@ export default function Directory() {
     const matchSearch =
       !search ||
       lo.fullName.toLowerCase().includes(search.toLowerCase()) ||
-      lo.nmlsId.includes(search);
+      (lo.nmlsId ?? "").includes(search);
     const matchStatus = statusFilter === "all" || lo.internalStatus === statusFilter;
     const matchTier = tierFilter === "all" || String(lo.priorityTier) === tierFilter;
     return matchSearch && matchStatus && matchTier;
@@ -806,6 +855,8 @@ export default function Directory() {
               onEdit={handleEdit}
               onDelete={id => setConfirmDeleteLO(los.find((l: any) => l.id === id) ?? { id })}
               onRestore={id => restoreMutation.mutate(id)}
+              nmlsCheck={nmlsCheckMap[lo.id]}
+              onConfirmNmls={loId => confirmNmlsMutation.mutate(loId)}
             />
           ))}
         </div>

@@ -20,7 +20,7 @@ export type User = typeof users.$inferSelect;
 export const loanOfficers = sqliteTable("loan_officers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   fullName: text("full_name").notNull(),
-  nmlsId: text("nmls_id").notNull().unique(),
+  nmlsId: text("nmls_id").unique(),
   phone: text("phone"),
   email: text("email"),
   licensedStates: text("licensed_states").notNull().default("[]"), // JSON array

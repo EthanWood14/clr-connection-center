@@ -216,7 +216,7 @@ export default function LoPerformance() {
                       <SelectItem key={lo.id} value={String(lo.id)}>
                         {lo.fullName}
                         <span className="ml-1.5 text-xs text-muted-foreground font-mono">
-                          #{lo.nmlsId}
+                          {lo.nmlsId ? `#${lo.nmlsId}` : ""}
                         </span>
                       </SelectItem>
                     ))}
@@ -228,7 +228,7 @@ export default function LoPerformance() {
               <div className="text-sm text-muted-foreground pb-0.5">
                 <span className="font-medium text-foreground">{lo.fullName}</span>
                 {" · "}
-                <span className="font-mono">NMLS #{lo.nmlsId}</span>
+                {lo.nmlsId && <span className="font-mono">NMLS #{lo.nmlsId}</span>}
                 {lo.internalStatus !== "active" && (
                   <Badge variant="outline" className="ml-2 text-[10px]">
                     {lo.internalStatus}

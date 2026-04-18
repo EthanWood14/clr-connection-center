@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -265,6 +265,109 @@ function WeightSliderRow({
 }
 
 // ── Email Reports Card ────────────────────────────────────────────────────────
+// ── NMLS Schedule Card ───────────────────────────────────────────────────────
+function NmlsScheduleCard() {
+  const { toast } = useToast();
+  const { data: schedule, isLoading } = useQuery<any>({ queryKey: ["/api/nmls-schedule"] });
+  const [checkDay1, setCheckDay1] = useState("1");
+  const [checkDay2, setCheckDay2] = useState("16");
+  const [escalationDays, setEscalationDays] = useState("7");
+
+  useEffect(() => {
+    if (!schedule) return;
+    setCheckDay1(String(schedule.check_day_1 ?? 1));
+    setCheckDay2(String(schedule.check_day_2 ?? 16));
+    setEscalationDays(String(schedule.escalation_days ?? 7));
+  }, [schedule]);
+
+  const saveMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PATCH", "/api/nmls-schedule", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/nmls-schedule"] });
+      toast({ title: "NMLS schedule saved" });
+    },
+    onError: () => toast({ title: "Failed to save schedule", variant: "destructive" }),
+  });
+
+  const triggerMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/nmls-checks/trigger", {}),
+    onSuccess: () => toast({ title: "NMLS checks triggered", description: "Notifications sent to assigned CLRs." }),
+    onError: () => toast({ title: "Failed to trigger checks", variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-primary" />
+          NMLS License Check Schedule
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          On check days, a random CLR is assigned to verify each active LO's NMLS license on Consumer Access.
+          If not confirmed within the escalation window, all CLRs are notified.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <Skeleton className="h-24" />
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">First check day</label>
+                <Input
+                  type="number" min={1} max={14} value={checkDay1}
+                  onChange={e => setCheckDay1(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">Day 1–14 (default: 1st)</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Second check day</label>
+                <Input
+                  type="number" min={15} max={28} value={checkDay2}
+                  onChange={e => setCheckDay2(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">Day 15–28 (default: 16th)</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Escalation after (days)</label>
+                <Input
+                  type="number" min={1} max={30} value={escalationDays}
+                  onChange={e => setEscalationDays(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">Notify everyone if not confirmed</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={() => saveMutation.mutate({ checkDay1: parseInt(checkDay1), checkDay2: parseInt(checkDay2), escalationDays: parseInt(escalationDays) })}
+                disabled={saveMutation.isPending}
+                className="gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {saveMutation.isPending ? "Saving…" : "Save Schedule"}
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                onClick={() => triggerMutation.mutate()}
+                disabled={triggerMutation.isPending}
+                className="gap-1.5"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                {triggerMutation.isPending ? "Triggering…" : "Trigger Checks Now"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function EmailReportsCard() {
   const { toast } = useToast();
   const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
@@ -329,11 +432,26 @@ function EmailReportsCard() {
     setTestLoading(true);
     try {
       const res = await fetch("/api/settings/email/test", { method: "POST", credentials: "include" });
-      const data = await res.json();
-      if (res.ok) toast({ title: "SMTP connection verified" });
-      else toast({ title: "SMTP test failed", description: data.error, variant: "destructive" });
-    } catch {
-      toast({ title: "Test failed", variant: "destructive" });
+      let data: any = {};
+      try { data = await res.json(); } catch {}
+      if (res.ok) {
+        toast({
+          title: "SMTP connection verified",
+          description: `Successfully connected to ${smtpHost || "SMTP server"}.`,
+        });
+      } else {
+        toast({
+          title: "SMTP test failed",
+          description: data.error ?? `Server responded with status ${res.status}. Check your host, port, and credentials.`,
+          variant: "destructive",
+        });
+      }
+    } catch (e: any) {
+      toast({
+        title: "SMTP test failed",
+        description: "Could not reach the server. Check your network connection.",
+        variant: "destructive",
+      });
     } finally {
       setTestLoading(false);
     }
@@ -341,6 +459,7 @@ function EmailReportsCard() {
 
   async function handleSendNow(type: "daily" | "weekly" | "monthly") {
     setSendLoading(true);
+    const label = type.charAt(0).toUpperCase() + type.slice(1);
     try {
       const res = await fetch("/api/settings/email/send-now", {
         method: "POST",
@@ -348,11 +467,34 @@ function EmailReportsCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type }),
       });
-      const data = await res.json();
-      if (res.ok) toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} report sent` });
-      else toast({ title: "Failed to send report", description: data.error, variant: "destructive" });
-    } catch {
-      toast({ title: "Send failed", variant: "destructive" });
+      let data: any = {};
+      try { data = await res.json(); } catch {}
+      if (res.ok) {
+        const recipients = managerEmails.length
+          ? managerEmails.join(", ")
+          : "configured recipients";
+        toast({
+          title: `${label} report sent`,
+          description: `Delivered to: ${recipients}`,
+        });
+      } else {
+        const reason = data.error ?? `Server responded with status ${res.status}.`;
+        toast({
+          title: `Failed to send ${label.toLowerCase()} report`,
+          description: reason.includes("SMTP not configured")
+            ? "SMTP is not configured. Save your email settings first."
+            : reason.includes("No manager")
+            ? "No recipient emails have been added. Add a manager email and save."
+            : reason,
+          variant: "destructive",
+        });
+      }
+    } catch (e: any) {
+      toast({
+        title: `Failed to send ${label.toLowerCase()} report`,
+        description: "Could not reach the server. Check your network connection.",
+        variant: "destructive",
+      });
     } finally {
       setSendLoading(false);
     }
@@ -723,6 +865,9 @@ export default function Settings() {
 
       {/* Email Reports */}
       <EmailReportsCard />
+
+      {/* NMLS License Check Schedule */}
+      <NmlsScheduleCard />
 
       {/* Team Members */}
       <Card>
