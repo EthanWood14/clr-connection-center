@@ -82,6 +82,73 @@ function generateRankings(los: any[], settings: any, todayStr: string) {
 }
 
 // ── Email report sender ───────────────────────────────────────────────────────
+
+// ── Branded email template ────────────────────────────────────────────────────
+function buildEmail(opts: {
+  subject: string;
+  preheader?: string;
+  body: string;
+}): string {
+  const { subject, preheader = "", body } = opts;
+  const now = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>${subject}</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;-webkit-font-smoothing:antialiased">
+  ${preheader ? `<div style="display:none;max-height:0;overflow:hidden">${preheader}</div>` : ""}
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5f9;padding:32px 16px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%">
+        <!-- Header -->
+        <tr>
+          <td style="background:#0F182D;border-radius:12px 12px 0 0;padding:28px 36px">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td>
+                  <img src="https://westcapitallending.com/assets/WestCapitalLogo_dark-blue-f79872f0.png"
+                       alt="West Capital Lending" width="130"
+                       style="display:block;filter:brightness(0) invert(1);opacity:0.95" />
+                </td>
+                <td align="right" style="vertical-align:middle">
+                  <span style="background:rgba(255,255,255,0.12);color:#e2e8f0;font-size:11px;font-weight:bold;letter-spacing:0.5px;padding:4px 12px;border-radius:20px;text-transform:uppercase">CLR Connection Center</span>
+                </td>
+              </tr>
+            </table>
+            <div style="margin-top:20px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.12)">
+              <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">${subject}</h1>
+              <p style="margin:6px 0 0;color:#94a3b8;font-size:13px">${now}</p>
+            </div>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="background:#ffffff;padding:32px 36px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0">
+            ${body}
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:18px 36px">
+            <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.7">
+              <strong style="color:#64748b">CLR Connection Center</strong> &mdash; West Capital Lending<br />
+              Sent from <a href="mailto:onboarding@resend.dev" style="color:#1A2B4A;text-decoration:none">onboarding@resend.dev</a>.
+              If you didn't expect this, check your spam folder.<br />
+              To use a custom sender, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and configure your own domain.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 async function sendReport(type: "daily" | "weekly" | "monthly") {
   const settings = storageExtra.getEmailSettings() as any;
   const managers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
@@ -103,35 +170,66 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     .sort((a, b) => b.count - a.count);
 
   const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-  const html = `
-    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-      <div style="background:#1A2B4A;padding:24px;border-radius:8px 8px 0 0">
-        <h1 style="color:white;margin:0;font-size:20px">CLR Connection Center</h1>
-        <p style="color:#94a3b8;margin:4px 0 0">${subject}</p>
-      </div>
-      <div style="background:#f8fafc;padding:24px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
-        <h2 style="color:#1A2B4A;font-size:16px;margin-top:0">Reporting Period: ${period.startDate} → ${period.endDate}</h2>
-        <div style="display:flex;gap:16px;margin-bottom:24px">
-          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
-            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${transfers.length}</div>
-            <div style="color:#64748b;font-size:13px">Transfers</div>
-          </div>
-          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
-            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${outcomes.length}</div>
-            <div style="color:#64748b;font-size:13px">Total Outcomes</div>
-          </div>
-          <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:16px;flex:1;text-align:center">
-            <div style="font-size:28px;font-weight:700;color:#1A2B4A">${los.filter((l: any) => l.internalStatus === "active").length}</div>
-            <div style="color:#64748b;font-size:13px">Active LOs</div>
-          </div>
-        </div>
-        <h3 style="color:#1A2B4A;font-size:14px">CLR Leaderboard</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#1A2B4A;color:white"><th style="padding:8px 12px;text-align:left">#</th><th style="padding:8px 12px;text-align:left">CLR</th><th style="padding:8px 12px;text-align:right">Transfers</th></tr></thead>
-          <tbody>${leaderboard.map((row, i) => `<tr style="background:${i%2===0?"white":"#f8fafc"}"><td style="padding:8px 12px">${i+1}</td><td style="padding:8px 12px">${row.name}</td><td style="padding:8px 12px;text-align:right;font-weight:600">${row.count}</td></tr>`).join("")}</tbody>
-        </table>
-      </div>
-    </div>`;
+  const convRate = outcomes.length > 0 ? Math.round((transfers.length / outcomes.length) * 100) : 0;
+
+  const statCard = (value: string | number, label: string, color = "#1A2B4A") =>
+    `<td width="33%" style="padding:4px">
+       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 12px;text-align:center">
+         <div style="font-size:30px;font-weight:700;color:${color};line-height:1">${value}</div>
+         <div style="color:#64748b;font-size:12px;margin-top:6px;text-transform:uppercase;letter-spacing:0.5px">${label}</div>
+       </div>
+     </td>`;
+
+  const leaderboardRows = leaderboard.map((row, i) => {
+    const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
+    const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
+    return `<tr style="background:${bg}">
+      <td style="padding:10px 14px;font-size:14px">${medal}</td>
+      <td style="padding:10px 14px;font-size:14px;font-weight:500;color:#1e293b">${row.name}</td>
+      <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#1A2B4A;text-align:right">${row.count}</td>
+    </tr>`;
+  }).join("");
+
+  const body = `
+    <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6">
+      Here's the ${type} performance summary for the CLR Connection Center team.
+      Reporting period: <strong style="color:#1e293b">${period.startDate}</strong> &rarr; <strong style="color:#1e293b">${period.endDate}</strong>.
+    </p>
+
+    <!-- Stats row -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px">
+      <tr>
+        ${statCard(transfers.length, "Transfers", "#1A2B4A")}
+        ${statCard(outcomes.length, "Total Outcomes", "#0369a1")}
+        ${statCard(convRate + "%", "Conv. Rate", convRate >= 50 ? "#15803d" : convRate >= 25 ? "#b45309" : "#dc2626")}
+      </tr>
+    </table>
+
+    <!-- Divider -->
+    <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
+
+    <!-- Leaderboard -->
+    <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Team Stats</h2>
+    ${leaderboard.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:13px">
+      <thead>
+        <tr style="background:#0F182D">
+          <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Rank</th>
+          <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
+          <th style="padding:10px 14px;text-align:right;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+        </tr>
+      </thead>
+      <tbody>${leaderboardRows}</tbody>
+    </table>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No transfer data for this period.</p>`}
+
+    <div style="margin-top:28px;padding:14px 18px;background:#eff6ff;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
+      <p style="margin:0;font-size:13px;color:#1e40af">
+        <strong>Active LOs this period:</strong> ${los.filter((l: any) => l.internalStatus === "active").length} loan officers available for assignment.
+      </p>
+    </div>
+  `;
+
+  const html = buildEmail({ subject, preheader: `${transfers.length} transfers · ${convRate}% conversion rate this period`, body });
 
   const resend = new Resend(apiKey);
   const fromAddr = settings.from_address_resend || settings.fromAddressResend || "CLR Connection Center <onboarding@resend.dev>";
@@ -951,7 +1049,27 @@ export function registerRoutes(httpServer: Server, app: Express) {
         from: fromAddr,
         to: [userEmail],
         subject: "CLR Connection Center — Test Email",
-        html: `<div style="font-family:sans-serif;padding:24px"><h2 style="color:#1A2B4A">Test email successful ✓</h2><p>Your Resend integration is working correctly.</p></div>`,
+        html: buildEmail({
+          subject: "Test Email — Everything's Working",
+          preheader: "Your Resend integration is configured correctly.",
+          body: `
+            <div style="text-align:center;padding:16px 0 28px">
+              <div style="display:inline-block;background:#dcfce7;border-radius:50%;width:56px;height:56px;line-height:56px;font-size:28px;margin-bottom:16px">✓</div>
+              <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#15803d">Email is working correctly</h2>
+              <p style="margin:0;color:#475569;font-size:14px;line-height:1.6">
+                Your Resend API key is configured and emails are sending successfully.<br />
+                This test was sent to confirm your integration is set up correctly.
+              </p>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-top:8px">
+              <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7">
+                <strong style="color:#1e293b">From address:</strong> onboarding@resend.dev<br />
+                <strong style="color:#1e293b">Note:</strong> If managers aren't receiving emails, ask them to check their spam folder.
+                To use a custom sender address, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and verify your own domain.
+              </p>
+            </div>
+          `,
+        }),
       });
       if (error) return res.status(400).json({ error: error.message });
       res.json({ ok: true });
