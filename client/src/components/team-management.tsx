@@ -231,6 +231,7 @@ export function TeamManagement() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const { toast } = useToast();
   const { user: authUser } = useAuth();
 

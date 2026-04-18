@@ -416,10 +416,61 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(storage.getUsers());
   });
 
-  app.post("/api/users", (req, res) => {
+  app.post("/api/users", async (req, res) => {
     const parsed = insertUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    res.json(storage.createUser(parsed.data));
+    const newUser = storage.createUser(parsed.data);
+
+    // Send welcome email (non-blocking — don't fail the request if email fails)
+    try {
+      const s = storage.getEmailSettings();
+      const apiKey = s.resend_api_key || s.resendApiKey || "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
+      const fromAddr = s.from_address_resend || "CLR Connection Center <onboarding@resend.dev>";
+      const resendClient = new Resend(apiKey);
+      const roleLabel = (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
+      const welcomeBody = `
+        <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+          Hi <strong style="color:#1e293b">${newUser.name}</strong>,
+        </p>
+        <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+          Welcome to the <strong style="color:#1e293b">CLR Connection Center</strong> — the internal platform for the West Capital Lending Irvine branch team.
+          Your account has been created and you're ready to log in.
+        </p>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:24px">
+          <p style="margin:0 0 8px;font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Your Login Details</p>
+          <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#1e293b">
+            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Email</td><td style="font-weight:500">${newUser.email}</td></tr>
+            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Role</td><td style="font-weight:500">${roleLabel}</td></tr>
+            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Password</td><td style="font-weight:500">Set by your admin — ask them if you haven't received it.</td></tr>
+          </table>
+        </div>
+        <div style="text-align:center;margin-bottom:24px">
+          <a href="https://web-production-b6285.up.railway.app" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+            Log In to CLR Connection Center
+          </a>
+        </div>
+        <div style="border-top:1px solid #e2e8f0;padding-top:16px">
+          <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6">
+            If you have any questions, reach out to your team admin or reply to this email.
+          </p>
+        </div>
+      `;
+      await resendClient.emails.send({
+        from: fromAddr,
+        to: [newUser.email],
+        subject: `Welcome to CLR Connection Center, ${newUser.name}!`,
+        html: buildEmail({
+          subject: `Welcome to CLR Connection Center!`,
+          preheader: `Your account is ready — log in to get started.`,
+          body: welcomeBody,
+        }),
+      });
+    } catch (e) {
+      // Email failure is non-fatal — user was still created
+      console.error("Welcome email failed:", e);
+    }
+
+    res.json(newUser);
   });
 
   app.patch("/api/users/:id", requireAuth, async (req: any, res) => {
