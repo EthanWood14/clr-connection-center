@@ -6,7 +6,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import cron from "node-cron";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
@@ -149,11 +149,34 @@ function buildEmail(opts: {
 </html>`;
 }
 
+// ── Shared SMTP send helper ───────────────────────────────────────────────────
+function getTransporter() {
+  const s = storageExtra.getEmailSettings() as any;
+  const host = s.smtp_host || "smtp.gmail.com";
+  const port = parseInt(s.smtp_port) || 587;
+  const user = s.smtp_user || "";
+  const pass = s.smtp_pass || "";
+  if (!user || !pass) throw new Error("SMTP credentials not configured. Add them in Email Settings.");
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+}
+
+async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }) {
+  const s = storageExtra.getEmailSettings() as any;
+  const fromName = "CLR Connection Center";
+  const fromAddr = s.smtp_user || "";
+  const from = `${fromName} <${fromAddr}>`;
+  const transporter = getTransporter();
+  await transporter.sendMail({ from, to, subject, html });
+}
+
 async function sendReport(type: "daily" | "weekly" | "monthly") {
   const settings = storageExtra.getEmailSettings() as any;
   const managers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
-  const apiKey = settings.resend_api_key || settings.resendApiKey || "";
-  if (!apiKey) throw new Error("Resend API key not configured. Add it in Email Settings.");
   if (!managers.length) throw new Error("No recipient emails configured. Add at least one manager email in Email Settings.");
 
   const period = getDefaultPeriod();
@@ -231,10 +254,7 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
 
   const html = buildEmail({ subject, preheader: `${transfers.length} transfers · ${convRate}% conversion rate this period`, body });
 
-  const resend = new Resend(apiKey);
-  const fromAddr = settings.from_address_resend || settings.fromAddressResend || "CLR Connection Center <onboarding@resend.dev>";
-  const { error } = await resend.emails.send({ from: fromAddr, to: managers, subject, html });
-  if (error) throw new Error(error.message ?? "Resend send failed");
+  await sendEmail({ to: managers, subject, html });
 }
 
 // ── NMLS Check trigger + cron ────────────────────────────────────────────────
@@ -425,10 +445,6 @@ export function registerRoutes(httpServer: Server, app: Express) {
     try {
       const sendWelcome = !!(req.body?.sendWelcome ?? true);
       if (!sendWelcome) throw new Error("welcome_email_disabled");
-      const s = storage.getEmailSettings();
-      const apiKey = s.resend_api_key || s.resendApiKey || "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
-      const fromAddr = s.from_address_resend || "CLR Connection Center <onboarding@resend.dev>";
-      const resendClient = new Resend(apiKey);
       const roleLabel = (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
       const welcomeBody = `
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
@@ -457,9 +473,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
           </p>
         </div>
       `;
-      await resendClient.emails.send({
-        from: fromAddr,
-        to: [newUser.email],
+      await sendEmail({
+        to: newUser.email,
         subject: `Welcome to CLR Connection Center, ${newUser.name}!`,
         html: buildEmail({
           subject: `Welcome to CLR Connection Center!`,
@@ -1131,24 +1146,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Email Settings ────────────────────────────────────────────────────────────
   app.get("/api/settings/email", requireAuth, (_req, res) => {
     const s = storageExtra.getEmailSettings() as any;
-    // Mask the API key — only show last 4 chars
-    const key = s.resend_api_key || "";
-    res.json({ ...s, resend_api_key: key ? `re_${'•'.repeat(Math.max(0, key.length - 7))}${key.slice(-4)}` : "" });
+    // Mask the SMTP password
+    const pass = s.smtp_pass || "";
+    res.json({ ...s, smtp_pass: pass ? "•".repeat(Math.min(pass.length, 16)) : "" });
   });
 
   app.patch("/api/settings/email", requireAuth, (req, res) => {
     const data = { ...req.body };
-    // Don't overwrite with masked value
-    if (data.resendApiKey && data.resendApiKey.includes("•")) delete data.resendApiKey;
-    if (data.resend_api_key && data.resend_api_key.includes("•")) delete data.resend_api_key;
+    // Don't overwrite with masked password
+    if (data.smtpPass && data.smtpPass.includes("•")) delete data.smtpPass;
+    if (data.smtp_pass && data.smtp_pass.includes("•")) delete data.smtp_pass;
     storageExtra.updateEmailSettings(data);
     res.json({ ok: true });
   });
 
   app.post("/api/settings/email/test", requireAuth, async (req: any, res) => {
-    const s = storageExtra.getEmailSettings() as any;
-    const apiKey = s.resend_api_key || "";
-    if (!apiKey) return res.status(400).json({ error: "Resend API key not configured" });
     // Send a real test email to the logged-in user
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -1156,35 +1168,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const userEmail = sessionUser?.email;
     if (!userEmail) return res.status(400).json({ error: "No email address on your account" });
     try {
-      const resend = new Resend(apiKey);
-      const fromAddr = s.from_address_resend || "CLR Connection Center <onboarding@resend.dev>";
-      const { error } = await resend.emails.send({
-        from: fromAddr,
-        to: [userEmail],
+      await sendEmail({
+        to: userEmail,
         subject: "CLR Connection Center — Test Email",
         html: buildEmail({
           subject: "Test Email — Everything's Working",
-          preheader: "Your Resend integration is configured correctly.",
+          preheader: "Your SMTP integration is configured correctly.",
           body: `
             <div style="text-align:center;padding:16px 0 28px">
               <div style="display:inline-block;background:#dcfce7;border-radius:50%;width:56px;height:56px;line-height:56px;font-size:28px;margin-bottom:16px">✓</div>
               <h2 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#15803d">Email is working correctly</h2>
               <p style="margin:0;color:#475569;font-size:14px;line-height:1.6">
-                Your Resend API key is configured and emails are sending successfully.<br />
+                Your SMTP credentials are configured and emails are sending successfully.<br />
                 This test was sent to confirm your integration is set up correctly.
               </p>
             </div>
             <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-top:8px">
               <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7">
-                <strong style="color:#1e293b">From address:</strong> onboarding@resend.dev<br />
+                <strong style="color:#1e293b">Sent to:</strong> ${userEmail}<br />
                 <strong style="color:#1e293b">Note:</strong> If managers aren't receiving emails, ask them to check their spam folder.
-                To use a custom sender address, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and verify your own domain.
               </p>
             </div>
           `,
         }),
       });
-      if (error) return res.status(400).json({ error: error.message });
       res.json({ ok: true });
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });

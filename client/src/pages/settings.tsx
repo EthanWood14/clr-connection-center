@@ -363,8 +363,10 @@ function EmailReportsCard() {
     queryKey: ["/api/settings/email"],
   });
 
-  const [resendApiKey, setResendApiKey] = useState("");
-  const [fromAddress, setFromAddress] = useState("");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
+  const [smtpPort, setSmtpPort] = useState("587");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
@@ -378,8 +380,10 @@ function EmailReportsCard() {
   // Populate form from fetched settings
   useEffect(() => {
     if (!emailSettings) return;
-    setResendApiKey(emailSettings.resend_api_key ?? emailSettings.resendApiKey ?? "");
-    setFromAddress(emailSettings.from_address_resend ?? emailSettings.fromAddressResend ?? "");
+    setSmtpUser(emailSettings.smtp_user ?? "");
+    setSmtpPass(emailSettings.smtp_pass ?? "");
+    setSmtpHost(emailSettings.smtp_host || "smtp.gmail.com");
+    setSmtpPort(String(emailSettings.smtp_port || "587"));
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -399,7 +403,9 @@ function EmailReportsCard() {
 
   function handleSave() {
     const payload: any = {
-      fromAddressResend: fromAddress,
+      smtpHost,
+      smtpPort: parseInt(smtpPort) || 587,
+      smtpUser,
       managerEmails: JSON.stringify(managerEmails),
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
@@ -407,7 +413,7 @@ function EmailReportsCard() {
       welcomeEmailEnabled: welcomeEmailEnabled ? 1 : 0,
       dailyTime,
     };
-    if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
+    if (smtpPass && !smtpPass.includes("•")) payload.smtpPass = smtpPass;
     saveMutation.mutate(payload);
   }
 
@@ -464,8 +470,8 @@ function EmailReportsCard() {
         const reason = data.error ?? `Server responded with status ${res.status}.`;
         toast({
           title: `Failed to send ${label.toLowerCase()} report`,
-          description: reason.includes("Resend API key not configured")
-            ? "Resend API key is not set. Add it in Email Settings and save."
+          description: reason.includes("SMTP credentials not configured")
+            ? "SMTP credentials are not set. Add your Gmail address and App Password in Email Settings."
             : reason.includes("No manager")
             ? "No recipient emails have been added. Add a manager email and save."
             : reason,
@@ -503,7 +509,7 @@ function EmailReportsCard() {
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Connect <a href="https://resend.com" target="_blank" className="underline">Resend</a> to send scheduled reports to managers. Get a free API key — no SMTP setup needed.</span>
+          <span>Configure a Gmail account (or any SMTP provider) to send scheduled reports and welcome emails.</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -511,33 +517,52 @@ function EmailReportsCard() {
           <div className="space-y-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-9" />)}</div>
         ) : (
           <>
-            {/* Resend Config */}
+            {/* SMTP Config */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Resend Configuration</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">SMTP Configuration</p>
               <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2 space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">SMTP Host</label>
+                    <Input
+                      placeholder="smtp.gmail.com"
+                      value={smtpHost}
+                      onChange={e => setSmtpHost(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">Port</label>
+                    <Input
+                      placeholder="587"
+                      value={smtpPort}
+                      onChange={e => setSmtpPort(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">API Key</label>
+                  <label className="text-xs font-medium text-muted-foreground">Gmail Address</label>
                   <Input
-                    type="password"
-                    placeholder="re_xxxxxxxxxxxxxxxxxxxx"
-                    value={resendApiKey}
-                    onChange={e => setResendApiKey(e.target.value)}
+                    type="email"
+                    placeholder="youraddress@gmail.com"
+                    value={smtpUser}
+                    onChange={e => setSmtpUser(e.target.value)}
                     autoComplete="off"
                   />
-                  <p className="text-[10px] text-muted-foreground">Get yours free at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a></p>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">From Address <span className="font-normal">(optional)</span></label>
+                  <label className="text-xs font-medium text-muted-foreground">App Password</label>
                   <Input
-                    placeholder="CLR Connection Center <reports@yourdomain.com>"
-                    value={fromAddress}
-                    onChange={e => setFromAddress(e.target.value)}
+                    type="password"
+                    placeholder="xxxx xxxx xxxx xxxx"
+                    value={smtpPass}
+                    onChange={e => setSmtpPass(e.target.value)}
+                    autoComplete="new-password"
                   />
-                  <p className="text-[10px] text-muted-foreground">Leave blank to use Resend's default (<span className="font-mono">onboarding@resend.dev</span>). To use a custom address, you'll need to create your own Resend account and API key at <a href="https://resend.com" target="_blank" className="underline">resend.com</a>, then verify your domain there.</p>
+                  <p className="text-[10px] text-muted-foreground">Use a Gmail <a href="https://myaccount.google.com/apppasswords" target="_blank" className="underline">App Password</a>, not your regular password. Requires 2FA to be enabled on the Google account.</p>
                 </div>
-                <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 text-xs text-amber-800 dark:text-amber-200 space-y-1">
-                  <p className="font-semibold">📬 Heads up for managers</p>
-                  <p>Emails are sent from <span className="font-mono">onboarding@resend.dev</span> by default. If a report doesn't arrive, ask the manager to check their spam folder — some filters catch unfamiliar senders.</p>
+                <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-700 text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                  <p className="font-semibold">Quick Setup (Gmail)</p>
+                  <p>1. Enable 2-Step Verification on your Google account · 2. Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" className="underline">myaccount.google.com/apppasswords</a> · 3. Create an App Password for "Mail" · 4. Paste it above and save.</p>
                 </div>
               </div>
             </div>
