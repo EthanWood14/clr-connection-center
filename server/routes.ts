@@ -1595,79 +1595,102 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Hot-patch: pull latest dist from GitHub and overwrite local static files ──
   app.post("/api/admin/hotpatch", async (req, res) => {
+    const session = (req as any).signedCookies?.[COOKIE_NAME];
+    let sessionData: any = null;
+    try { sessionData = JSON.parse(session); } catch {}
+    if (!sessionData?.userId) return res.status(401).json({ error: "Unauthorized" });
+    const callerUser = storage.getUserById(sessionData.userId) as any;
+    if (!callerUser || callerUser.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
     const fs = await import("fs");
     const path = await import("path");
     const https = await import("https");
     const distPath = path.resolve(__dirname, "public");
 
+    // Accept optional GitHub token for private repo access
+    const ghToken: string | undefined = req.body?.token;
+
     function fetchRaw(url: string): Promise<Buffer> {
       return new Promise((resolve, reject) => {
-        const doReq = (u: string) => https.get(u, { headers: { "User-Agent": "clr-hotpatch" } }, (r) => {
+        const headers: Record<string, string> = { "User-Agent": "clr-hotpatch" };
+        if (ghToken) headers["Authorization"] = `token ${ghToken}`;
+        if (ghToken) headers["Accept"] = "application/vnd.github.raw";
+        const doReq = (rawUrl: string) => https.get(rawUrl, { headers }, (r) => {
           if (r.statusCode === 302 || r.statusCode === 301) { doReq(r.headers.location!); return; }
           const chunks: Buffer[] = [];
           r.on("data", (c: Buffer) => chunks.push(c));
           r.on("end", () => resolve(Buffer.concat(chunks)));
           r.on("error", reject);
         }).on("error", reject);
-        doReq(u);
+        doReq(url);
       });
     }
 
     const REPO = "EthanWood14/clr-connection-center";
     const BRANCH = "main";
-    const RAW = `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
+    // Use GitHub API if token provided (supports private repos), else raw.githubusercontent.com
+    const RAW = ghToken
+      ? `https://git-agent-proxy.perplexity.ai/api/v3/repos/${REPO}/contents`
+      : `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
+
+    function fileUrl(filePath: string): string {
+      if (ghToken) return `${RAW}/${filePath}?ref=${BRANCH}`;
+      return `${RAW}/${filePath}`;
+    }
 
     try {
       // Fetch index.html first to discover asset filenames
-      const indexBuf = await fetchRaw(`${RAW}/dist/public/index.html`);
+      const indexBuf = await fetchRaw(fileUrl("dist/public/index.html"));
       const indexHtml = indexBuf.toString("utf8");
 
       // Parse asset filenames from index.html
       const jsMatch = indexHtml.match(/assets\/(index-[^"']+\.js)/);
       const cssMatch = indexHtml.match(/assets\/(index-[^"']+\.css)/);
-      if (!jsMatch || !cssMatch) return res.status(500).json({ error: "Could not parse asset filenames" });
+      if (!jsMatch || !cssMatch) return res.status(500).json({ error: "Could not parse asset filenames from index.html. Content starts: " + indexHtml.slice(0, 200) });
 
       const jsFile = jsMatch[1];
       const cssFile = cssMatch[1];
 
-      // Download assets
+      // Download assets in parallel
       const [jsBuf, cssBuf] = await Promise.all([
-        fetchRaw(`${RAW}/dist/public/assets/${jsFile}`),
-        fetchRaw(`${RAW}/dist/public/assets/${cssFile}`),
+        fetchRaw(fileUrl(`dist/public/assets/${jsFile}`)),
+        fetchRaw(fileUrl(`dist/public/assets/${cssFile}`)),
       ]);
 
       // Wipe old assets and write new ones
       const assetsDir = path.join(distPath, "assets");
       if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-      // Remove old index-*.js and index-*.css
-      for (const f of fs.readdirSync(assetsDir)) {
-        if (f.startsWith("index-")) fs.unlinkSync(path.join(assetsDir, f));
+      for (const fname of fs.readdirSync(assetsDir)) {
+        if (fname.startsWith("index-")) fs.unlinkSync(path.join(assetsDir, fname));
       }
       fs.writeFileSync(path.join(assetsDir, jsFile), jsBuf);
       fs.writeFileSync(path.join(assetsDir, cssFile), cssBuf);
       fs.writeFileSync(path.join(distPath, "index.html"), indexHtml, "utf8");
 
-      // Also fetch and write manifest.json, sw.js, favicon-192.png if present
-      try {
-        const manifestBuf = await fetchRaw(`${RAW}/dist/public/manifest.json`);
-        fs.writeFileSync(path.join(distPath, "manifest.json"), manifestBuf);
-      } catch {}
-      try {
-        const swBuf = await fetchRaw(`${RAW}/dist/public/sw.js`);
-        fs.writeFileSync(path.join(distPath, "sw.js"), swBuf);
-      } catch {}
-      try {
-        const icon192Buf = await fetchRaw(`${RAW}/dist/public/favicon-192.png`);
-        fs.writeFileSync(path.join(distPath, "favicon-192.png"), icon192Buf);
-      } catch {}
+      // Also fetch manifest.json, sw.js, favicon-192.png
+      const extras: Array<[string, string]> = [
+        ["dist/public/manifest.json", "manifest.json"],
+        ["dist/public/sw.js", "sw.js"],
+        ["dist/public/favicon-192.png", "favicon-192.png"],
+      ];
+      const extraResults: string[] = [];
+      for (const [src, dest] of extras) {
+        try {
+          const buf = await fetchRaw(fileUrl(src));
+          fs.writeFileSync(path.join(distPath, dest), buf);
+          extraResults.push(dest);
+        } catch (ex: any) {
+          extraResults.push(`${dest}:SKIP(${ex.message})`);
+        }
+      }
 
-      res.json({ ok: true, js: jsFile, css: cssFile });
+      res.json({ ok: true, js: jsFile, css: cssFile, extras: extraResults });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ── EOD Reports ───────────────────────────────────────────────────────────────────
+    // ── EOD Reports ───────────────────────────────────────────────────────────────────
 
   app.get('/api/eod-reports', requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
