@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { parseISO, isToday, isFuture, format } from "date-fns";
 import {
   CheckCircle2,
   CalendarClock,
@@ -15,6 +23,8 @@ import {
   AlertCircle,
   RefreshCw,
   X,
+  ArrowUpRight,
+  XCircle,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -40,45 +50,85 @@ interface LoanOfficer {
   internalStatus?: string;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Complete Dialog ──────────────────────────────────────────────────────────
 
-const OUTCOME_LABELS: Record<string, string> = {
-  transfer: "Transfer",
-  appointment: "Appointment",
-  fell_through: "Fell Through",
-  no_answer: "No Answer",
-  callback_requested: "Callback",
-  not_interested: "Not Interested",
-  wrong_number: "Wrong Number",
-  other: "Other",
-};
+function CompleteDialog({
+  outcome,
+  loName,
+  open,
+  onClose,
+  onComplete,
+  isPending,
+}: {
+  outcome: Outcome;
+  loName: string;
+  open: boolean;
+  onClose: () => void;
+  onComplete: (id: number, type: "transfer" | "fell_through") => void;
+  isPending: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            Complete Appointment
+          </DialogTitle>
+          <DialogDescription className="text-sm">
+            <span className="font-medium text-foreground">{outcome.borrowerName || "Unknown Borrower"}</span>
+            {" · "}LO: {loName}
+            <br />
+            How did this appointment end up?
+          </DialogDescription>
+        </DialogHeader>
 
-const OUTCOME_COLORS: Record<string, string> = {
-  transfer: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  fell_through: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  callback_requested: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-  no_answer: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  not_interested: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-  wrong_number: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-  other: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-};
+        <div className="grid grid-cols-2 gap-3 py-2">
+          <button
+            onClick={() => onComplete(outcome.id, "transfer")}
+            disabled={isPending}
+            className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-green-200 bg-green-50 hover:border-green-400 hover:bg-green-100 dark:bg-green-900/10 dark:border-green-800 dark:hover:border-green-600 transition-all group"
+          >
+            <ArrowUpRight className="w-6 h-6 text-green-600 dark:text-green-400" />
+            <span className="text-sm font-semibold text-green-700 dark:text-green-400">Transfer</span>
+            <span className="text-xs text-muted-foreground text-center">Converted successfully</span>
+          </button>
+          <button
+            onClick={() => onComplete(outcome.id, "fell_through")}
+            disabled={isPending}
+            className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-red-200 bg-red-50 hover:border-red-400 hover:bg-red-100 dark:bg-red-900/10 dark:border-red-800 dark:hover:border-red-600 transition-all group"
+          >
+            <XCircle className="w-6 h-6 text-red-500 dark:text-red-400" />
+            <span className="text-sm font-semibold text-red-600 dark:text-red-400">Fell Through</span>
+            <span className="text-xs text-muted-foreground text-center">Did not convert</span>
+          </button>
+        </div>
 
-// ─── Follow-up Card ───────────────────────────────────────────────────────────
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Appointment Card ─────────────────────────────────────────────────────────
 
 function AppointmentCard({
   outcome,
   loName,
-  onMarkContacted,
+  onComplete,
   onReschedule,
-  isPendingMark,
+  isPendingComplete,
   isPendingReschedule,
 }: {
   outcome: Outcome;
   loName: string;
-  onMarkContacted: (id: number) => void;
+  onComplete: (outcome: Outcome) => void;
   onReschedule: (id: number, date: string) => void;
-  isPendingMark: boolean;
+  isPendingComplete: boolean;
   isPendingReschedule: boolean;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
@@ -92,60 +142,52 @@ function AppointmentCard({
   };
 
   const followUpParsed = outcome.followUpDate ? parseISO(outcome.followUpDate) : null;
-  const overdueDays = followUpParsed
-    ? Math.floor((new Date().setHours(0, 0, 0, 0) - followUpParsed.setHours(0, 0, 0, 0)) / 86400000)
-    : 0;
+  const dateStr = outcome.followUpDate ?? "";
+  const todayStr = new Date().toISOString().split("T")[0];
+  const isOverdue = dateStr < todayStr;
+  const isUpcoming = dateStr > todayStr;
+  const isTodayAppt = dateStr === todayStr;
 
   return (
-    <Card
-      className="border border-border hover:border-primary/30 transition-colors"
-      data-testid={`card-appointment-${outcome.id}`}
-    >
+    <Card className="border border-border hover:border-primary/30 transition-colors">
       <CardContent className="p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          {/* Left: Info */}
+          {/* Left */}
           <div className="flex-1 min-w-0 space-y-2">
-            {/* Top row: borrower + outcome badge */}
             <div className="flex flex-wrap items-center gap-2">
-              <span
-                className="text-sm font-semibold text-foreground truncate"
-                data-testid={`text-borrower-${outcome.id}`}
-              >
-                {outcome.borrowerName || "Unknown Borrower"}
-              </span>
-              <Badge
-                className={`text-xs px-2 py-0.5 border-0 ${OUTCOME_COLORS[outcome.outcomeType] ?? OUTCOME_COLORS.other}`}
-              >
-                {OUTCOME_LABELS[outcome.outcomeType] ?? outcome.outcomeType}
-              </Badge>
+              <span className="text-sm font-semibold truncate">{outcome.borrowerName || "Unknown Borrower"}</span>
+              {isOverdue && (
+                <Badge className="text-xs px-1.5 py-0 bg-red-100 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400">
+                  Overdue
+                </Badge>
+              )}
+              {isTodayAppt && (
+                <Badge className="text-xs px-1.5 py-0 bg-primary/10 text-primary border-primary/30">
+                  Today
+                </Badge>
+              )}
+              {isUpcoming && (
+                <Badge className="text-xs px-1.5 py-0 bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400">
+                  Upcoming
+                </Badge>
+              )}
             </div>
 
-            {/* LO name + original date */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>
-                <span className="font-medium text-foreground/70">LO:</span>{" "}
-                {loName}
-              </span>
-              <span>
-                <span className="font-medium text-foreground/70">Logged:</span>{" "}
-                {outcome.date ? format(parseISO(outcome.date), "MMM d, yyyy") : "—"}
-              </span>
+              <span><span className="font-medium text-foreground/70">LO:</span> {loName}</span>
+              <span><span className="font-medium text-foreground/70">Logged:</span> {outcome.date ? format(parseISO(outcome.date), "MMM d, yyyy") : "—"}</span>
               {outcome.followUpDate && (
                 <span>
-                  <span className="font-medium text-foreground/70">Follow-up:</span>{" "}
+                  <span className="font-medium text-foreground/70">Scheduled:</span>{" "}
                   {format(parseISO(outcome.followUpDate), "MMM d, yyyy")}
                 </span>
               )}
             </div>
 
-            {/* Notes */}
             {outcome.notes && (
-              <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                {outcome.notes}
-              </p>
+              <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{outcome.notes}</p>
             )}
 
-            {/* Reschedule inline input */}
             {rescheduling && (
               <div className="flex items-center gap-2 mt-1">
                 <Input
@@ -154,27 +196,11 @@ function AppointmentCard({
                   onChange={(e) => setNewDate(e.target.value)}
                   className="h-8 text-xs w-40"
                   min={new Date().toISOString().split("T")[0]}
-                  data-testid={`input-reschedule-${outcome.id}`}
                 />
-                <Button
-                  size="sm"
-                  className="h-8 text-xs px-3"
-                  onClick={handleReschedule}
-                  disabled={!newDate || isPendingReschedule}
-                  data-testid={`button-confirm-reschedule-${outcome.id}`}
-                >
-                  {isPendingReschedule ? (
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                  ) : (
-                    "Save"
-                  )}
+                <Button size="sm" className="h-8 text-xs px-3" onClick={handleReschedule} disabled={!newDate || isPendingReschedule}>
+                  {isPendingReschedule ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Save"}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 text-xs px-2"
-                  onClick={() => { setRescheduling(false); setNewDate(""); }}
-                >
+                <Button size="sm" variant="ghost" className="h-8 text-xs px-2" onClick={() => { setRescheduling(false); setNewDate(""); }}>
                   <X className="w-3 h-3" />
                 </Button>
               </div>
@@ -187,25 +213,14 @@ function AppointmentCard({
               size="sm"
               variant="default"
               className="h-8 text-xs gap-1.5"
-              onClick={() => onMarkContacted(outcome.id)}
-              disabled={isPendingMark}
-              data-testid={`button-mark-contacted-${outcome.id}`}
+              onClick={() => onComplete(outcome)}
+              disabled={isPendingComplete}
             >
-              {isPendingMark ? (
-                <RefreshCw className="w-3 h-3 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-3 h-3" />
-              )}
-              Mark Contacted
+              {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+              Complete
             </Button>
             {!rescheduling && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 text-xs gap-1.5"
-                onClick={() => setRescheduling(true)}
-                data-testid={`button-reschedule-${outcome.id}`}
-              >
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={() => setRescheduling(true)}>
                 <CalendarClock className="w-3 h-3" />
                 Reschedule
               </Button>
@@ -219,99 +234,20 @@ function AppointmentCard({
 
 // ─── Section Header ───────────────────────────────────────────────────────────
 
-function SectionHeader({
-  label,
-  count,
-  overdue,
-}: {
-  label: string;
-  count: number;
-  overdue?: boolean;
-}) {
+function SectionHeader({ label, count, overdue, upcoming }: { label: string; count: number; overdue?: boolean; upcoming?: boolean }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      {overdue ? (
-        <AlertCircle className="w-4 h-4 text-red-500" />
-      ) : (
-        <Clock className="w-4 h-4 text-primary" />
-      )}
-      <h2
-        className={`text-sm font-semibold tracking-wide ${
-          overdue ? "text-red-600 dark:text-red-400" : "text-primary"
-        }`}
-      >
+      {overdue
+        ? <AlertCircle className="w-4 h-4 text-red-500" />
+        : upcoming
+        ? <CalendarClock className="w-4 h-4 text-blue-500" />
+        : <Clock className="w-4 h-4 text-primary" />}
+      <h2 className={`text-sm font-semibold tracking-wide ${overdue ? "text-red-600 dark:text-red-400" : upcoming ? "text-blue-600 dark:text-blue-400" : "text-primary"}`}>
         {label}
       </h2>
-      <Badge
-        variant="outline"
-        className={`text-xs px-1.5 py-0 ${
-          overdue
-            ? "border-red-300 text-red-600 dark:border-red-700 dark:text-red-400"
-            : "border-primary/40 text-primary"
-        }`}
-      >
+      <Badge variant="outline" className={`text-xs px-1.5 py-0 ${overdue ? "border-red-300 text-red-600 dark:border-red-700 dark:text-red-400" : upcoming ? "border-blue-300 text-blue-600 dark:border-blue-700 dark:text-blue-400" : "border-primary/40 text-primary"}`}>
         {count}
       </Badge>
-    </div>
-  );
-}
-
-// ─── Date Group ───────────────────────────────────────────────────────────────
-
-function DateGroup({
-  date,
-  outcomes,
-  loMap,
-  onMarkContacted,
-  onReschedule,
-  pendingMarkId,
-  pendingRescheduleId,
-}: {
-  date: string;
-  outcomes: Outcome[];
-  loMap: Map<number, string>;
-  onMarkContacted: (id: number) => void;
-  onReschedule: (id: number, date: string) => void;
-  pendingMarkId: number | null;
-  pendingRescheduleId: number | null;
-}) {
-  const parsed = parseISO(date);
-  const today = isToday(parsed);
-  const daysDiff = today
-    ? 0
-    : Math.floor((new Date().setHours(0, 0, 0, 0) - parsed.setHours(0, 0, 0, 0)) / 86400000);
-
-  return (
-    <div className="mb-6">
-      {/* Date sub-header */}
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-mono text-muted-foreground">
-          {format(parsed, "EEEE, MMM d")}
-        </span>
-        {today ? (
-          <Badge className="text-[10px] px-1.5 py-0 bg-primary/10 text-primary border border-primary/30">
-            Today
-          </Badge>
-        ) : (
-          <Badge className="text-[10px] px-1.5 py-0 bg-red-50 text-red-600 border border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700">
-            {daysDiff === 1 ? "1 day overdue" : `${daysDiff} days overdue`}
-          </Badge>
-        )}
-      </div>
-
-      <div className="space-y-2">
-        {outcomes.map((o) => (
-          <AppointmentCard
-            key={o.id}
-            outcome={o}
-            loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-            onMarkContacted={onMarkContacted}
-            onReschedule={onReschedule}
-            isPendingMark={pendingMarkId === o.id}
-            isPendingReschedule={pendingRescheduleId === o.id}
-          />
-        ))}
-      </div>
     </div>
   );
 }
@@ -320,8 +256,9 @@ function DateGroup({
 
 export default function Appointments() {
   const { toast } = useToast();
-  const [pendingMarkId, setPendingMarkId] = useState<number | null>(null);
+  const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
+  const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
 
   const { data: outcomes = [], isLoading: loadingOutcomes } = useQuery<Outcome[]>({
     queryKey: ["/api/outcomes"],
@@ -332,46 +269,38 @@ export default function Appointments() {
   });
 
   const isLoading = loadingOutcomes || loadingLos;
-
-  // Build LO name map
   const loMap = new Map<number, string>(los.map((lo) => [lo.id, lo.fullName]));
 
-  // Filter: followUpDate not null AND followUpDate <= today
   const todayStr = new Date().toISOString().split("T")[0];
 
-  const dueOutcomes = outcomes.filter(
-    (o) => o.followUpDate != null && o.followUpDate <= todayStr
+  // All uncompleted appointments: outcomeType === "appointment" AND followUpDate is set
+  const allAppointments = outcomes.filter(
+    (o) => o.outcomeType === "appointment" && o.followUpDate != null && o.followUpDate !== ""
   );
 
-  // Separate today vs overdue
-  const todayOutcomes = dueOutcomes.filter((o) => o.followUpDate === todayStr);
-  const overdueOutcomes = dueOutcomes.filter((o) => o.followUpDate! < todayStr);
+  const overdueList = allAppointments.filter((o) => o.followUpDate! < todayStr)
+    .sort((a, b) => a.followUpDate!.localeCompare(b.followUpDate!));
+  const todayList = allAppointments.filter((o) => o.followUpDate === todayStr);
+  const upcomingList = allAppointments.filter((o) => o.followUpDate! > todayStr)
+    .sort((a, b) => a.followUpDate!.localeCompare(b.followUpDate!));
 
-  // Group overdue by date, oldest first
-  const overdueByDate = overdueOutcomes.reduce<Map<string, Outcome[]>>((acc, o) => {
-    const key = o.followUpDate!;
-    if (!acc.has(key)) acc.set(key, []);
-    acc.get(key)!.push(o);
-    return acc;
-  }, new Map());
+  const totalCount = allAppointments.length;
 
-  // Sort dates oldest first
-  const sortedOverdueDates = Array.from(overdueByDate.keys()).sort();
-
-  // Mutations
-  const markContactedMutation = useMutation({
-    mutationFn: (id: number) => {
-      setPendingMarkId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { followUpDate: null });
+  // Complete mutation — updates outcomeType to transfer or fell_through, clears followUpDate
+  const completeMutation = useMutation({
+    mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
+      setPendingCompleteId(id);
+      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: type, followUpDate: null });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      setPendingMarkId(null);
-      toast({ title: "Marked as contacted" });
+      setPendingCompleteId(null);
+      setCompleteTarget(null);
+      toast({ title: "Appointment completed" });
     },
     onError: () => {
-      setPendingMarkId(null);
-      toast({ title: "Error updating appointment", variant: "destructive" });
+      setPendingCompleteId(null);
+      toast({ title: "Error completing appointment", variant: "destructive" });
     },
   });
 
@@ -383,51 +312,41 @@ export default function Appointments() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       setPendingRescheduleId(null);
-      toast({ title: "Follow-up rescheduled" });
+      toast({ title: "Appointment rescheduled" });
     },
     onError: () => {
       setPendingRescheduleId(null);
-      toast({ title: "Error rescheduling appointment", variant: "destructive" });
+      toast({ title: "Error rescheduling", variant: "destructive" });
     },
   });
 
-  const handleMarkContacted = (id: number) => {
-    markContactedMutation.mutate(id);
+  const handleComplete = (outcome: Outcome) => setCompleteTarget(outcome);
+  const handleConfirmComplete = (id: number, type: "transfer" | "fell_through") => {
+    completeMutation.mutate({ id, type });
   };
-
-  const handleReschedule = (id: number, date: string) => {
-    rescheduleMutation.mutate({ id, date });
-  };
-
-  const totalCount = dueOutcomes.length;
+  const handleReschedule = (id: number, date: string) => rescheduleMutation.mutate({ id, date });
 
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
-      {/* Page header */}
+      {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-foreground">
-          Appointments{" "}
-          {!isLoading && (
-            <span className="text-muted-foreground font-normal">
-              ({totalCount})
-            </span>
-          )}
+          Upcoming Schedule{" "}
+          {!isLoading && <span className="text-muted-foreground font-normal">({totalCount})</span>}
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Leads that need a appointment call today or are overdue
+          All pending appointments — overdue, today, and upcoming
         </p>
       </div>
 
-      {/* Loading state */}
+      {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 w-full rounded-xl" />
-          ))}
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty */}
       {!isLoading && totalCount === 0 && (
         <Card className="border-dashed">
           <CardContent className="py-16 flex flex-col items-center gap-3 text-center">
@@ -435,56 +354,74 @@ export default function Appointments() {
               <CheckCircle2 className="w-8 h-8 text-primary" />
             </div>
             <div>
-              <p className="font-semibold text-foreground">All caught up!</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                No appointments are due today. Check back tomorrow.
-              </p>
+              <p className="font-semibold text-foreground">All clear!</p>
+              <p className="text-sm text-muted-foreground mt-1">No pending appointments right now.</p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Overdue section */}
-      {!isLoading && sortedOverdueDates.length > 0 && (
+      {/* Overdue */}
+      {!isLoading && overdueList.length > 0 && (
         <section>
-          <SectionHeader
-            label="Overdue"
-            count={overdueOutcomes.length}
-            overdue
-          />
-          {sortedOverdueDates.map((date) => (
-            <DateGroup
-              key={date}
-              date={date}
-              outcomes={overdueByDate.get(date)!}
-              loMap={loMap}
-              onMarkContacted={handleMarkContacted}
-              onReschedule={handleReschedule}
-              pendingMarkId={pendingMarkId}
-              pendingRescheduleId={pendingRescheduleId}
-            />
-          ))}
-        </section>
-      )}
-
-      {/* Today section */}
-      {!isLoading && todayOutcomes.length > 0 && (
-        <section>
-          <SectionHeader label="Due Today" count={todayOutcomes.length} />
+          <SectionHeader label="Overdue" count={overdueList.length} overdue />
           <div className="space-y-2">
-            {todayOutcomes.map((o) => (
+            {overdueList.map((o) => (
               <AppointmentCard
-                key={o.id}
-                outcome={o}
-                loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-                onMarkContacted={handleMarkContacted}
-                onReschedule={handleReschedule}
-                isPendingMark={pendingMarkId === o.id}
+                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                onComplete={handleComplete} onReschedule={handleReschedule}
+                isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
               />
             ))}
           </div>
         </section>
+      )}
+
+      {/* Today */}
+      {!isLoading && todayList.length > 0 && (
+        <section>
+          <SectionHeader label="Today" count={todayList.length} />
+          <div className="space-y-2">
+            {todayList.map((o) => (
+              <AppointmentCard
+                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                onComplete={handleComplete} onReschedule={handleReschedule}
+                isPendingComplete={pendingCompleteId === o.id}
+                isPendingReschedule={pendingRescheduleId === o.id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Upcoming */}
+      {!isLoading && upcomingList.length > 0 && (
+        <section>
+          <SectionHeader label="Upcoming" count={upcomingList.length} upcoming />
+          <div className="space-y-2">
+            {upcomingList.map((o) => (
+              <AppointmentCard
+                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                onComplete={handleComplete} onReschedule={handleReschedule}
+                isPendingComplete={pendingCompleteId === o.id}
+                isPendingReschedule={pendingRescheduleId === o.id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Complete Dialog */}
+      {completeTarget && (
+        <CompleteDialog
+          outcome={completeTarget}
+          loName={loMap.get(completeTarget.loId) ?? `LO #${completeTarget.loId}`}
+          open={!!completeTarget}
+          onClose={() => setCompleteTarget(null)}
+          onComplete={handleConfirmComplete}
+          isPending={completeMutation.isPending}
+        />
       )}
     </div>
   );

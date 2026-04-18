@@ -477,7 +477,13 @@ export class Storage implements IStorage {
     const totalCallsToday = todayLogs.reduce((sum, l) => sum + l.callsMade, 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
 
-    return { total, transfers, appointments, fellThrough, noAnswer, conversionRate, outcomesByType, totalCallsToday, callTransferRatio };
+    // Count upcoming appointments: outcomeType='appointment' with followUpDate >= today
+    const allOutcomes = db.select().from(leadOutcomes).all();
+    const upcomingAppointments = allOutcomes.filter(
+      o => o.outcomeType === "appointment" && o.followUpDate != null && o.followUpDate >= todayStr
+    ).length;
+
+    return { total, transfers, appointments, fellThrough, noAnswer, conversionRate, outcomesByType, totalCallsToday, callTransferRatio, upcomingAppointments };
   }
 
   getLeaderboard(startDate: string, endDate: string) {

@@ -647,7 +647,7 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
-            <StatCard title="Upcoming Appts" value={stats?.appointments} icon={Calendar} color="primary" sub="this period" href="/appointments" />
+            <StatCard title="Upcoming Appts" value={stats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" sub="scheduled ahead" href="/appointments" />
             <StatCard title="My Calls Today" value={stats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={stats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
             <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
             <StatCard title="Transfer/Call %" value={stats?.callTransferRatio != null ? `${stats.callTransferRatio}%` : "—"} icon={TrendingUp} color="success" sub={stats?.callTransferRatio != null ? `${stats.transfers} xfers / ${stats.totalCallsToday} calls (team)` : "log calls to see ratio"} />

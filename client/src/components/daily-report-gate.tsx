@@ -84,6 +84,9 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   // While loading auth or check, just show children (no flash)
   if (authLoading || checkLoading || !user) return <>{children}</>;
 
+  // Skip the gate entirely for brand-new users (they've never seen the intro yet)
+  if (!user.hasSeenIntro) return <>{children}</>;
+
   // If already has log, or was just submitted, show app normally
   const gated = !submitted && checkData !== undefined && !checkData.hasLog;
 
