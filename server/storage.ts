@@ -500,9 +500,14 @@ function runNewMigrations() {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN from_address_resend TEXT NOT NULL DEFAULT ''`);
   }
   // Seed default Resend API key if not already set
-  const emailKeyRow = sqlite.prepare(`SELECT resend_api_key FROM email_settings WHERE id=1`).get() as any;
+  const emailKeyRow = sqlite.prepare(`SELECT resend_api_key, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.resend_api_key) {
     sqlite.exec(`UPDATE email_settings SET resend_api_key='re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q' WHERE id=1`);
+  }
+  // Seed default manager emails if none set
+  if (!emailKeyRow?.manager_emails || emailKeyRow.manager_emails === '[]' || emailKeyRow.manager_emails === '') {
+    const defaultManagers = JSON.stringify(["credoble@westcapitallending.com", "spetries@westcapitallending.com"]);
+    sqlite.exec(`UPDATE email_settings SET manager_emails='${defaultManagers}' WHERE id=1`);
   }
 
   // monthly_assignments
