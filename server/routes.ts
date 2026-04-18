@@ -488,6 +488,36 @@ cron.schedule("30 8 * * *", () => {
   } catch (e) { console.error("NMLS daily reminder error:", e); }
 });
 
+// ── Incomplete LO profile notifications ─────────────────────────────────────
+// Runs every 3 days at 9am UTC. For each active LO missing nmlsId, phone, or
+// email, broadcast a notification to ALL users until the field is filled in.
+cron.schedule("0 9 */3 * *", () => {
+  try {
+    const allLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active");
+    const incomplete = allLos.filter((lo: any) =>
+      !lo.nmlsId?.trim() || !lo.phone?.trim() || !lo.email?.trim()
+    );
+    if (!incomplete.length) return;
+
+    for (const lo of incomplete) {
+      const missing: string[] = [];
+      if (!lo.nmlsId?.trim()) missing.push("NMLS ID");
+      if (!lo.phone?.trim()) missing.push("phone number");
+      if (!lo.email?.trim()) missing.push("email");
+      const missingStr = missing.join(", ");
+
+      // userId null = broadcast to everyone
+      storage.createNotification({
+        userId: null as any,
+        type: "announcement",
+        title: `⚠️ Incomplete LO Profile: ${lo.fullName}`,
+        message: `${lo.fullName} is missing required info: ${missingStr}. Please update their profile in LO Management.`,
+        isRead: false,
+      });
+    }
+  } catch (e) { console.error("Incomplete LO notification error:", e); }
+});
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
