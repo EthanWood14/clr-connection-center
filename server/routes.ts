@@ -704,6 +704,47 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ── Leaderboard ───────────────────────────────────────────────────────────────
+  // ── Analytics History (last N periods) ─────────────────────────────────────
+  app.get("/api/analytics/history", (req, res) => {
+    const periodsBack = parseInt((req.query.periods as string) || "6");
+    const results: any[] = [];
+    const now = new Date();
+
+    for (let i = 0; i < periodsBack; i++) {
+      // Each period = 16th of prev month to 15th of current, going back
+      const periodEnd = new Date(now.getFullYear(), now.getMonth() - i, 15);
+      const periodStart = new Date(now.getFullYear(), now.getMonth() - i - 1, 16);
+      const startDate = periodStart.toISOString().split("T")[0];
+      const endDate = periodEnd.toISOString().split("T")[0];
+      const label = periodEnd.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+      const outcomes = storage.getLeadOutcomes({ startDate, endDate });
+      const users = storage.getUsers();
+
+      const transfers = outcomes.filter((o: any) => o.outcomeType === "transfer" || o.outcome_type === "transfer").length;
+      const appointments = outcomes.filter((o: any) => o.outcomeType === "appointment" || o.outcome_type === "appointment").length;
+      const total = outcomes.length;
+      const convRate = total > 0 ? Math.round((transfers / total) * 100) : 0;
+
+      // Per-CLR breakdown
+      const tally: Record<number, { transfers: number; total: number; name: string }> = {};
+      for (const o of outcomes) {
+        const aid = o.assistantId || o.assistant_id;
+        if (!tally[aid]) {
+          const u = users.find((u: any) => u.id === aid);
+          tally[aid] = { transfers: 0, total: 0, name: u?.name ?? `User ${aid}` };
+        }
+        tally[aid].total++;
+        if (o.outcomeType === "transfer" || o.outcome_type === "transfer") tally[aid].transfers++;
+      }
+      const clrStats = Object.values(tally).sort((a, b) => b.transfers - a.transfers);
+
+      results.push({ label, startDate, endDate, transfers, appointments, total, convRate, clrStats });
+    }
+
+    res.json({ periods: results.reverse() }); // oldest first
+  });
+
   app.get("/api/leaderboard", (req, res) => {
     const period = getDefaultPeriod();
     const startDate = (req.query.startDate as string) || period.startDate;

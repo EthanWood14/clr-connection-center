@@ -129,7 +129,7 @@ export default function Dashboard() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-yellow-500" /> CLR Leaderboard
+                <Trophy className="w-4 h-4 text-yellow-500" /> Team Stats
               </CardTitle>
               <Badge variant="outline" className="text-xs">This Period</Badge>
             </div>

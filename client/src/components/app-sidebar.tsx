@@ -19,7 +19,7 @@ const mainItems = [
   { title: "Daily Assignments", url: "/assignments", icon: CalendarCheck },
   { title: "Lead Outcomes",     url: "/outcomes",    icon: ClipboardList },
   { title: "Follow-Up Queue",   url: "/followups",   icon: PhoneForwarded, badge: "followups" },
-  { title: "Leaderboard",       url: "/leaderboard", icon: Trophy },
+  { title: "Team Stats",        url: "/leaderboard", icon: Trophy },
 ];
 
 const toolItems = [

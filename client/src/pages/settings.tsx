@@ -530,7 +530,11 @@ function EmailReportsCard() {
                     value={fromAddress}
                     onChange={e => setFromAddress(e.target.value)}
                   />
-                  <p className="text-[10px] text-muted-foreground">Leave blank to use Resend's default. Requires a verified domain for a custom address.</p>
+                  <p className="text-[10px] text-muted-foreground">Leave blank to use Resend's default (<span className="font-mono">onboarding@resend.dev</span>). To use a custom address, you'll need to create your own Resend account and API key at <a href="https://resend.com" target="_blank" className="underline">resend.com</a>, then verify your domain there.</p>
+                </div>
+                <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 text-xs text-amber-800 dark:text-amber-200 space-y-1">
+                  <p className="font-semibold">📬 Heads up for managers</p>
+                  <p>Emails are sent from <span className="font-mono">onboarding@resend.dev</span> by default. If a report doesn't arrive, ask the manager to check their spam folder — some filters catch unfamiliar senders.</p>
                 </div>
               </div>
             </div>

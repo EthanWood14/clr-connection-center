@@ -5,7 +5,7 @@ const NAV_LINKS = [
   { label: "Dashboard", href: "/" },
   { label: "Assignments", href: "/assignments" },
   { label: "Directory", href: "/directory" },
-  { label: "Leaderboard", href: "/leaderboard" },
+  { label: "Team Stats", href: "/leaderboard" },
   { label: "Outcomes", href: "/outcomes" },
   { label: "Reporting", href: "/reporting" },
   { label: "Settings", href: "/settings" },
