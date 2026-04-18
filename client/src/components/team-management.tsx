@@ -92,6 +92,7 @@ function UserDialog({
 }) {
   const { toast } = useToast();
   const isEditing = editUser !== null;
+  const [sendWelcome, setSendWelcome] = useState(true);
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -101,12 +102,13 @@ function UserDialog({
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", data),
+    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, sendWelcome }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({ title: "Team member added successfully" });
       onOpenChange(false);
       form.reset();
+      setSendWelcome(true);
     },
     onError: (err: Error) =>
       toast({ title: "Failed to add team member", description: err.message, variant: "destructive" }),
@@ -206,6 +208,15 @@ function UserDialog({
                   </FormItem>
                 )}
               />
+            )}
+            {!isEditing && (
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
+                <div>
+                  <p className="text-sm font-medium">Send Welcome Email</p>
+                  <p className="text-xs text-muted-foreground">Email login details to this user on creation</p>
+                </div>
+                <Switch checked={sendWelcome} onCheckedChange={setSendWelcome} />
+              </div>
             )}
             <DialogFooter className="pt-2">
               <Button

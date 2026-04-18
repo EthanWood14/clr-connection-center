@@ -598,18 +598,6 @@ function EmailReportsCard() {
               )}
             </div>
 
-            {/* Welcome email toggle */}
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">User Onboarding</p>
-              <div className="flex items-center justify-between rounded-lg border px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium">Welcome Email</p>
-                  <p className="text-xs text-muted-foreground">Send a branded welcome email when a new user account is created</p>
-                </div>
-                <Switch checked={welcomeEmailEnabled} onCheckedChange={setWelcomeEmailEnabled} />
-              </div>
-            </div>
-
             {/* Schedule toggles */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Schedule</p>
