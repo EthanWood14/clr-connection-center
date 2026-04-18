@@ -169,71 +169,163 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   if (!managers.length) throw new Error("No recipient emails configured. Add at least one manager email in Email Settings.");
 
   const period = getDefaultPeriod();
-  const outcomes = storage.getLeadOutcomes({ startDate: period.startDate, endDate: period.endDate });
-  const los = storage.getLoanOfficers();
-  const users = storage.getUsers();
-  const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer" || o.outcomeType === "transfer");
+  const { startDate, endDate } = period;
 
-  // Build leaderboard
-  const tally: Record<number, number> = {};
-  for (const t of transfers) { const aid = t.assistantId || t.assistant_id; tally[aid] = (tally[aid] || 0) + 1; }
-  const leaderboard = Object.entries(tally)
-    .map(([id, count]) => { const u = users.find(u => u.id === parseInt(id)); return { name: u?.name ?? `User ${id}`, count }; })
-    .sort((a, b) => b.count - a.count);
+  const outcomes   = storage.getLeadOutcomes({ startDate, endDate });
+  const los        = storage.getLoanOfficers();
+  const users      = storage.getUsers();
+  const callLogs   = storage.getCallLogsByRange(startDate, endDate);
+  const assignments = storage.getAssignmentsByRange(startDate, endDate);
+
+  // CLR list — assistants + admin-CLRs
+  const clrs = users.filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+
+  // Per-CLR aggregates
+  interface ClrStats {
+    name: string;
+    calls: number;
+    transfers: number;
+    appointments: number;
+    fellThrough: number;
+    assigned: number;
+    missed: number;
+    ratio: string;
+  }
+
+  const clrStats: ClrStats[] = clrs.map((u: any) => {
+    const uid = u.id;
+
+    // Calls from call logs
+    const myCalls = callLogs
+      .filter((l: any) => l.assistantId === uid)
+      .reduce((sum: number, l: any) => sum + (l.callsMade || 0), 0);
+
+    // Outcomes
+    const myOutcomes = outcomes.filter((o: any) => (o.assistantId || o.assistant_id) === uid);
+    const myTransfers    = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
+    const myAppointments = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "appointment").length;
+    const myFellThrough  = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
+
+    // Assignments
+    const myAssignments = assignments.filter((a: any) => (a.assistantId || a.assistant_id) === uid);
+    const myAssigned = myAssignments.length;
+    // "Missed" = assigned but never marked worked or skipped (still "recommended")
+    const myMissed = myAssignments.filter((a: any) => a.status === "recommended").length;
+
+    const ratio = myCalls > 0 ? ((myTransfers / myCalls) * 100).toFixed(1) + "%" : "—";
+
+    return {
+      name: u.name,
+      calls: myCalls,
+      transfers: myTransfers,
+      appointments: myAppointments,
+      fellThrough: myFellThrough,
+      assigned: myAssigned,
+      missed: myMissed,
+      ratio,
+    };
+  }).sort((a, b) => b.transfers - a.transfers);
+
+  // Team totals
+  const teamCalls       = clrStats.reduce((s, r) => s + r.calls, 0);
+  const teamTransfers   = clrStats.reduce((s, r) => s + r.transfers, 0);
+  const teamAppointments = clrStats.reduce((s, r) => s + r.appointments, 0);
+  const teamFellThrough = clrStats.reduce((s, r) => s + r.fellThrough, 0);
+  const teamAssigned    = clrStats.reduce((s, r) => s + r.assigned, 0);
+  const teamMissed      = clrStats.reduce((s, r) => s + r.missed, 0);
+  const teamRatio       = teamCalls > 0 ? ((teamTransfers / teamCalls) * 100).toFixed(1) + "%" : "—";
 
   const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-  const convRate = outcomes.length > 0 ? Math.round((transfers.length / outcomes.length) * 100) : 0;
 
+  // Stat card helper — 25% wide (4 cards)
   const statCard = (value: string | number, label: string, color = "#1A2B4A") =>
-    `<td width="33%" style="padding:4px">
-       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 12px;text-align:center">
-         <div style="font-size:30px;font-weight:700;color:${color};line-height:1">${value}</div>
-         <div style="color:#64748b;font-size:12px;margin-top:6px;text-transform:uppercase;letter-spacing:0.5px">${label}</div>
+    `<td width="25%" style="padding:4px">
+       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 10px;text-align:center">
+         <div style="font-size:28px;font-weight:700;color:${color};line-height:1">${value}</div>
+         <div style="color:#64748b;font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:0.5px">${label}</div>
        </div>
      </td>`;
 
-  const leaderboardRows = leaderboard.map((row, i) => {
+  // Per-CLR detail rows
+  const clrRows = clrStats.map((row, i) => {
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
     const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
+    const missedStyle = row.missed > 0 ? "color:#dc2626;font-weight:600" : "color:#64748b";
+    const ratioColor  = row.ratio === "—" ? "#94a3b8" : parseFloat(row.ratio) >= 10 ? "#15803d" : parseFloat(row.ratio) >= 5 ? "#b45309" : "#dc2626";
     return `<tr style="background:${bg}">
-      <td style="padding:10px 14px;font-size:14px">${medal}</td>
-      <td style="padding:10px 14px;font-size:14px;font-weight:500;color:#1e293b">${row.name}</td>
-      <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#1A2B4A;text-align:right">${row.count}</td>
+      <td style="padding:10px 12px;font-size:13px">${medal}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#1e293b">${row.name}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${row.transfers}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0369a1">${row.calls}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;font-weight:600;color:${ratioColor}">${row.ratio}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0f766e">${row.appointments}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;color:#b45309">${row.fellThrough}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center">${row.assigned}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;${missedStyle}">${row.missed}</td>
     </tr>`;
   }).join("");
 
+  // Totals row
+  const teamRatioColor = teamCalls > 0 ? (parseFloat(teamRatio) >= 10 ? "#15803d" : parseFloat(teamRatio) >= 5 ? "#b45309" : "#dc2626") : "#94a3b8";
+  const teamMissedStyle = teamMissed > 0 ? "color:#dc2626;font-weight:700" : "color:#64748b;font-weight:700";
+  const totalsRow = `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
+    <td style="padding:10px 12px;font-size:12px;color:#94a3b8"></td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Total</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${teamTransfers}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0369a1;text-align:center">${teamCalls}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;text-align:center;color:${teamRatioColor}">${teamRatio}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0f766e;text-align:center">${teamAppointments}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#b45309;text-align:center">${teamFellThrough}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;text-align:center">${teamAssigned}</td>
+    <td style="padding:10px 12px;font-size:13px;text-align:center;${teamMissedStyle}">${teamMissed}</td>
+  </tr>`;
+
   const body = `
     <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6">
-      Here's the ${type} performance summary for the CLR Connection Center team.
-      Reporting period: <strong style="color:#1e293b">${period.startDate}</strong> &rarr; <strong style="color:#1e293b">${period.endDate}</strong>.
+      Here is the ${type} performance summary for the CLR Connection Center team.
+      Reporting period: <strong style="color:#1e293b">${startDate}</strong> &rarr; <strong style="color:#1e293b">${endDate}</strong>.
     </p>
 
-    <!-- Stats row -->
+    <!-- Team summary stat cards -->
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px">
       <tr>
-        ${statCard(transfers.length, "Transfers", "#1A2B4A")}
-        ${statCard(outcomes.length, "Total Outcomes", "#0369a1")}
-        ${statCard(convRate + "%", "Conv. Rate", convRate >= 50 ? "#15803d" : convRate >= 25 ? "#b45309" : "#dc2626")}
+        ${statCard(teamTransfers, "Transfers", "#1A2B4A")}
+        ${statCard(teamCalls, "Total Calls", "#0369a1")}
+        ${statCard(teamRatio, "Transfer / Call %", teamRatioColor)}
+        ${statCard(teamMissed > 0 ? "⚠ " + teamMissed : teamMissed, "LOs Missed", teamMissed > 0 ? "#dc2626" : "#15803d")}
       </tr>
     </table>
 
     <!-- Divider -->
     <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
 
-    <!-- Leaderboard -->
-    <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Team Stats</h2>
-    ${leaderboard.length > 0 ? `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:13px">
+    <!-- Per-CLR breakdown table -->
+    <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Breakdown</h2>
+    ${clrStats.length > 0 ? `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:12px">
       <thead>
         <tr style="background:#0F182D">
-          <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Rank</th>
-          <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
-          <th style="padding:10px 14px;text-align:right;color:#94a3b8;font-size:11px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+          <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase"></th>
+          <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Xfers</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Xfer/Call%</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Thru</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Assigned</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Missed</th>
         </tr>
       </thead>
-      <tbody>${leaderboardRows}</tbody>
-    </table>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No transfer data for this period.</p>`}
+      <tbody>
+        ${clrRows}
+        ${totalsRow}
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0;font-size:11px;color:#94a3b8">
+      * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
+    </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
 
+    <!-- Active LOs callout -->
     <div style="margin-top:28px;padding:14px 18px;background:#eff6ff;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
       <p style="margin:0;font-size:13px;color:#1e40af">
         <strong>Active LOs this period:</strong> ${los.filter((l: any) => l.internalStatus === "active").length} loan officers available for assignment.
@@ -241,8 +333,7 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     </div>
   `;
 
-  const html = buildEmail({ subject, preheader: `${transfers.length} transfers · ${convRate}% conversion rate this period`, body });
-
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body });
   await sendEmail({ to: managers, subject, html });
 }
 

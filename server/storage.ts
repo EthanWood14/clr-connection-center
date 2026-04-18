@@ -332,6 +332,11 @@ export class Storage implements IStorage {
   getDailyAssignments(date: string) {
     return db.select().from(dailyAssignments).where(eq(dailyAssignments.assignmentDate, date)).all();
   }
+  getAssignmentsByRange(from: string, to: string) {
+    return db.select().from(dailyAssignments)
+      .where(and(gte(dailyAssignments.assignmentDate, from), lte(dailyAssignments.assignmentDate, to)))
+      .all();
+  }
   createDailyAssignments(assignments: InsertDailyAssignment[]) {
     if (assignments.length === 0) return [];
     return db.insert(dailyAssignments).values(assignments.map(a => ({ ...a, createdAt: new Date().toISOString() }))).returning().all();
