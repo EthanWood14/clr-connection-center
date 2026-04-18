@@ -16,11 +16,12 @@ import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/lib/auth";
 
 const DEFAULT_WEIGHTS = {
-  weightDaysSinceWorked: 0.35,
+  weightDaysSinceWorked: 0.30,
   weightFrequency: 0.25,
   weightAvailability: 0.20,
-  weightBoost: 0.15,
+  weightBoost: 0.10,
   weightPriorityTier: 0.05,
+  weightRecentTransfers: 0.10,
   maxLosPerAssistant: 5,
   roundRobinEnabled: true,
 };
@@ -51,9 +52,15 @@ const WEIGHT_FIELDS = [
     label: "Priority Tier",
     description: "Tier 1 (VIP) LOs get a slight automatic bump.",
   },
+  {
+    key: "weightRecentTransfers" as const,
+    label: "90-Day Transfer Volume",
+    description: "Boosts LOs with more transfers in the last 90 days — rewards recent production momentum.",
+  },
 ];
 
 type WeightKey = typeof WEIGHT_FIELDS[number]["key"];
+
 
 // Tier labels and colors (mirrored from directory.tsx)
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
@@ -69,6 +76,7 @@ type ScoreWeights = {
   weightAvailability: number;
   weightBoost: number;
   weightPriorityTier: number;
+  weightRecentTransfers: number;
 };
 
 function computeScore(lo: any, weights: ScoreWeights) {
@@ -80,13 +88,15 @@ function computeScore(lo: any, weights: ScoreWeights) {
   const availScore = 1;
   const boostNorm = (lo.boostScore ?? 0) / 10;
   const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
+  const transferScore = Math.min((lo.recentTransfers ?? lo.transfers90d ?? 0) / 10, 1);
 
   const score =
     weights.weightDaysSinceWorked * daysSinceNorm +
     weights.weightFrequency * freqScore +
     weights.weightAvailability * availScore +
     weights.weightBoost * boostNorm +
-    weights.weightPriorityTier * tierScore;
+    weights.weightPriorityTier * tierScore +
+    weights.weightRecentTransfers * transferScore;
 
   return {
     score,
@@ -96,6 +106,7 @@ function computeScore(lo: any, weights: ScoreWeights) {
       avail: weights.weightAvailability * availScore,
       boost: weights.weightBoost * boostNorm,
       tier: weights.weightPriorityTier * tierScore,
+      transfers: weights.weightRecentTransfers * transferScore,
     },
   };
 }
@@ -106,6 +117,7 @@ const COMPONENT_COLORS = [
   "bg-green-100 text-green-700",
   "bg-orange-100 text-orange-700",
   "bg-indigo-100 text-indigo-700",
+  "bg-rose-100 text-rose-700",
 ];
 
 function ScorePreview({ weights }: { weights: ScoreWeights }) {
@@ -212,6 +224,7 @@ function ScorePreview({ weights }: { weights: ScoreWeights }) {
                   ["Avail", components.avail],
                   ["Boost", components.boost],
                   ["Tier", components.tier],
+                  ["Transfers", components.transfers],
                 ] as [string, number][]).map(([label, val], ci) => (
                   <span
                     key={label}
@@ -666,12 +679,14 @@ export default function Settings() {
     weightAvailability: settings.weightAvailability,
     weightBoost: settings.weightBoost,
     weightPriorityTier: settings.weightPriorityTier,
+    weightRecentTransfers: settings.weightRecentTransfers ?? 0.10,
   } : {
-    weightDaysSinceWorked: 0.35,
+    weightDaysSinceWorked: 0.30,
     weightFrequency: 0.25,
     weightAvailability: 0.20,
-    weightBoost: 0.15,
+    weightBoost: 0.10,
     weightPriorityTier: 0.05,
+    weightRecentTransfers: 0.10,
   });
 
   const currentMax = maxLOs ?? settings?.maxLosPerAssistant ?? 5;
@@ -707,6 +722,7 @@ export default function Settings() {
       weightAvailability: DEFAULT_WEIGHTS.weightAvailability,
       weightBoost: DEFAULT_WEIGHTS.weightBoost,
       weightPriorityTier: DEFAULT_WEIGHTS.weightPriorityTier,
+      weightRecentTransfers: DEFAULT_WEIGHTS.weightRecentTransfers,
     });
     setMaxLOs(DEFAULT_WEIGHTS.maxLosPerAssistant);
   };
