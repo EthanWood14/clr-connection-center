@@ -173,6 +173,18 @@ try {
   // Column already exists — ignore
 }
 
+// ── Migration: add reset_token columns to users if missing ──────────────
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token TEXT;`);
+} catch {
+  // Column already exists — ignore
+}
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER;`);
+} catch {
+  // Column already exists — ignore
+}
+
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
@@ -334,6 +346,17 @@ export class Storage implements IStorage {
   }
   setMustChangePassword(id: number, value: boolean) {
     sqlite.prepare(`UPDATE users SET must_change_password = ? WHERE id = ?`).run(value ? 1 : 0, id);
+  }
+  setResetToken(id: number, token: string, expiry: number) {
+    sqlite.prepare(`UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?`).run(token, expiry, id);
+  }
+  clearResetToken(id: number) {
+    sqlite.prepare(`UPDATE users SET reset_token = NULL, reset_token_expiry = NULL WHERE id = ?`).run(id);
+  }
+  getUserByResetToken(token: string) {
+    return sqlite.prepare(
+      `SELECT *, password_hash, reset_token, reset_token_expiry FROM users WHERE reset_token = ? LIMIT 1`
+    ).get(token) as (User & { password_hash: string | null; reset_token: string | null; reset_token_expiry: number | null }) | undefined;
   }
   createUser(data: InsertUser) {
     return db.insert(users).values({ ...data, createdAt: new Date().toISOString() }).returning().get();

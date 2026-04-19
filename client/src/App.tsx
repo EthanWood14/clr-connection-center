@@ -39,6 +39,8 @@ import IntroVideo from "@/pages/intro-video";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() =>
@@ -189,6 +191,8 @@ export default function App() {
             <Switch>
               <Route path="/login" component={Login} />
               <Route path="/change-password" component={ChangePassword} />
+              <Route path="/forgot-password" component={ForgotPassword} />
+              <Route path="/reset-password" component={ResetPassword} />
               <Route>
                 <AuthenticatedApp />
               </Route>

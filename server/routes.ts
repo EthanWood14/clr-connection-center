@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
+import crypto from "crypto";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -673,6 +674,92 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const hash = await bcrypt.hash(newPassword, 10);
     storage.setUserPassword(userId, hash);
     storage.setMustChangePassword(userId, false);
+    return res.json({ ok: true });
+  });
+
+  // ── Forgot password: send reset link ──────────────────────────────────────
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const { email } = req.body ?? {};
+    const genericResponse = { message: "If an account exists, a reset link was sent." };
+    if (!email || typeof email !== "string") {
+      return res.json(genericResponse);
+    }
+
+    const user = storage.getUserByEmail(email);
+    if (!user) {
+      return res.json(genericResponse);
+    }
+
+    try {
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiry = Date.now() + 60 * 60 * 1000; // 1 hour
+      (storage as any).setResetToken(user.id, token, expiry);
+
+      const resetUrl = `https://www.wlc.it.com/#/reset-password?token=${token}`;
+      const resetBody = `
+        <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+          Hi <strong style="color:#1e293b">${user.name}</strong>,
+        </p>
+        <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+          We received a request to reset your <strong style="color:#1e293b">CLR Connection Center</strong> password.
+          Click the button below to choose a new password.
+        </p>
+        <div style="text-align:center;margin:24px 0">
+          <a href="${resetUrl}" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+            Reset My Password
+          </a>
+        </div>
+        <p style="margin:0 0 12px;color:#64748b;font-size:12px;line-height:1.7">
+          Or copy &amp; paste this link into your browser:<br />
+          <a href="${resetUrl}" style="color:#1A2B4A;word-break:break-all">${resetUrl}</a>
+        </p>
+        <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin:20px 0">
+          <p style="margin:0;font-size:12px;color:#92400e">
+            <strong>Heads up:</strong> This link expires in <strong>1 hour</strong>. If you didn't request a password reset, you can safely ignore this email.
+          </p>
+        </div>
+      `;
+
+      await sendEmail({
+        to: user.email,
+        subject: "Reset your CLR Connection Center password",
+        html: buildEmail({
+          subject: "Reset your password",
+          preheader: "Click the link to reset your CLR Connection Center password. Expires in 1 hour.",
+          body: resetBody,
+        }),
+      });
+    } catch (e) {
+      console.error("Forgot password flow failed:", e);
+      // Still return generic response to avoid leaking info
+    }
+
+    return res.json(genericResponse);
+  });
+
+  // ── Reset password: consume token and set new password ────────────────────
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const { token, newPassword, confirmPassword } = req.body ?? {};
+    if (!token || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: "Passwords do not match" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
+    }
+
+    const user = (storage as any).getUserByResetToken(token);
+    if (!user || !user.reset_token_expiry || user.reset_token_expiry < Date.now()) {
+      return res.status(400).json({ error: "This reset link is invalid or has expired." });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    storage.setUserPassword(user.id, hash);
+    storage.setMustChangePassword(user.id, false);
+    (storage as any).clearResetToken(user.id);
+
     return res.json({ ok: true });
   });
 
