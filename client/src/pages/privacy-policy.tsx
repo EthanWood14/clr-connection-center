@@ -46,11 +46,12 @@ export default function PrivacyPolicy() {
       <section className="space-y-2">
         <h2 className="text-base font-semibold">4. Data Storage & Security</h2>
         <p>
-          All data is stored on secured servers hosted via Railway (railway.app). Access is restricted to
-          authenticated users via signed session cookies. We implement rate limiting and audit logging to
-          detect and prevent unauthorized access. Credentials stored within the Application (e.g., Bonzo,
-          Lead Mailbox) are accessible only to authenticated users and are not encrypted at rest beyond
-          standard database security — users are advised not to store highly sensitive credentials in free-text fields.
+          All data is stored on servers hosted via Railway (railway.app) with security precautions in place.
+          Access is restricted to authenticated users via signed session cookies. We implement rate limiting
+          and audit logging to help detect and deter unauthorized access. Credentials stored within the
+          Application (e.g., Bonzo, Lead Mailbox) are accessible only to authenticated users and are not
+          encrypted at rest beyond standard database storage — users are advised not to store highly
+          sensitive credentials in free-text fields.
         </p>
       </section>
 

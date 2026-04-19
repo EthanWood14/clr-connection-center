@@ -199,7 +199,7 @@ export default function Login() {
           <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-3 gap-2 text-center">
             {[
               { label: "CLR Assistants", value: "Active" },
-              { label: "Platform", value: "Secure" },
+              { label: "Platform", value: "Internal" },
               { label: "Updates", value: "Live" },
             ].map(item => (
               <div key={item.label}>
