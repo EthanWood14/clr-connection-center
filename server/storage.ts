@@ -166,6 +166,13 @@ try {
   // Column already exists — ignore
 }
 
+// ── Migration: add must_change_password to users if missing ─────────────
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;`);
+} catch {
+  // Column already exists — ignore
+}
+
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
@@ -259,6 +266,7 @@ export interface IStorage {
   getUserById(id: number): User | undefined;
   getUserByEmail(email: string): (User & { password_hash: string | null }) | undefined;
   setUserPassword(id: number, hash: string): void;
+  setMustChangePassword(id: number, value: boolean): void;
   createUser(data: InsertUser): User;
   updateUser(id: number, data: Partial<InsertUser>): User | undefined;
 
@@ -323,6 +331,9 @@ export class Storage implements IStorage {
   }
   setUserPassword(id: number, hash: string) {
     sqlite.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(hash, id);
+  }
+  setMustChangePassword(id: number, value: boolean) {
+    sqlite.prepare(`UPDATE users SET must_change_password = ? WHERE id = ?`).run(value ? 1 : 0, id);
   }
   createUser(data: InsertUser) {
     return db.insert(users).values({ ...data, createdAt: new Date().toISOString() }).returning().get();

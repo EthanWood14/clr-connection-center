@@ -8,6 +8,7 @@ export interface AuthUser {
   role: string;
   isClr: boolean;
   hasSeenIntro: boolean;
+  mustChangePassword: boolean;
 }
 
 interface AuthContextValue {
@@ -15,6 +16,7 @@ interface AuthContextValue {
   isLoading: boolean;
   logout: () => Promise<void>;
   markIntroSeen: () => Promise<void>;
+  clearMustChangePassword: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -22,6 +24,7 @@ const AuthContext = createContext<AuthContextValue>({
   isLoading: true,
   logout: async () => {},
   markIntroSeen: async () => {},
+  clearMustChangePassword: () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -53,8 +56,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((u) => u ? { ...u, hasSeenIntro: true } : u);
   }, []);
 
+  const clearMustChangePassword = useCallback(() => {
+    setUser((u) => u ? { ...u, mustChangePassword: false } : u);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, clearMustChangePassword }}>
       {children}
     </AuthContext.Provider>
   );

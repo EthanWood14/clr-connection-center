@@ -558,7 +558,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro } });
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -574,7 +574,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -631,6 +631,51 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json({ ok: true });
   });
 
+  // ── Update own password (supports forced first-login change) ───────────────
+  app.put("/api/users/me/password", async (req, res) => {
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    if (!raw) return res.status(401).json({ error: "Not authenticated" });
+    let userId: number;
+    try {
+      const session = JSON.parse(raw);
+      if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
+      userId = session.userId;
+    } catch {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const { currentPassword, newPassword, confirmPassword, forced } = req.body ?? {};
+    if (!newPassword || !confirmPassword) {
+      return res.status(400).json({ error: "New password and confirmation are required" });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: "New password and confirmation do not match" });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+
+    const userRow = storage.getUserById(userId) as any;
+    if (!userRow) return res.status(401).json({ error: "User not found" });
+    const user = storage.getUserByEmail(userRow.email);
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (!user.password_hash) return res.status(401).json({ error: "No password set for this account" });
+
+    const skipCurrentCheck = !!forced && !!(user as any).mustChangePassword;
+    if (!skipCurrentCheck) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: "Current password is required" });
+      }
+      const valid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    storage.setUserPassword(userId, hash);
+    storage.setMustChangePassword(userId, false);
+    return res.json({ ok: true });
+  });
+
   // ── Auth guard for all /api/* routes except /api/auth/* ────────────────────
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
@@ -646,6 +691,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const parsed = insertUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const newUser = storage.createUser(parsed.data);
+
+    // Generate WCL-themed temp password, hash + store, flag must_change_password
+    const WCL_WORDS = ["Lending", "Capital", "Realty", "Connect", "Bridge", "Funded", "Closed"];
+    const WCL_SPECIALS = ["!", "@", "#", "$"];
+    const digits = String(Math.floor(1000 + Math.random() * 9000));
+    const special = WCL_SPECIALS[Math.floor(Math.random() * WCL_SPECIALS.length)];
+    const word = WCL_WORDS[Math.floor(Math.random() * WCL_WORDS.length)];
+    const tempPassword = `WCL${digits}${special}${word}`;
+    try {
+      const hash = await bcrypt.hash(tempPassword, 10);
+      storage.setUserPassword(newUser.id, hash);
+      storage.setMustChangePassword(newUser.id, true);
+    } catch (e) {
+      console.error("Failed to set temp password for new user:", e);
+    }
 
     // Send welcome email if requested (non-blocking — don't fail the request if email fails)
     try {
@@ -665,11 +725,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
           <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#1e293b">
             <tr><td style="padding:3px 12px 3px 0;color:#64748b">Email</td><td style="font-weight:500">${newUser.email}</td></tr>
             <tr><td style="padding:3px 12px 3px 0;color:#64748b">Role</td><td style="font-weight:500">${roleLabel}</td></tr>
-            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Password</td><td style="font-weight:500">Set by your admin — ask them if you haven't received it.</td></tr>
+            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Temporary Password</td><td style="font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">${tempPassword}</td></tr>
           </table>
+          <p style="margin:12px 0 0;font-size:12px;color:#475569;line-height:1.6">
+            You will be prompted to change your password on first login.
+          </p>
         </div>
         <div style="text-align:center;margin-bottom:24px">
-          <a href="https://web-production-b6285.up.railway.app" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+          <a href="https://www.wlc.it.com" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
             Log In to CLR Connection Center
           </a>
         </div>

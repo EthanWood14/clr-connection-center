@@ -38,6 +38,7 @@ import Support from "@/pages/support";
 import IntroVideo from "@/pages/intro-video";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
+import ChangePassword from "@/pages/change-password";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() =>
@@ -113,14 +114,20 @@ function AppRouter() {
 
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
-  const showIntro = !!user && !user.hasSeenIntro;
-  const [, navigate] = useLocation();
+  const showIntro = !!user && !user.hasSeenIntro && !user.mustChangePassword;
+  const [location, navigate] = useLocation();
 
   useEffect(() => {
     if (!isLoading && !user) {
       navigate("/login");
     }
   }, [isLoading, user, navigate]);
+
+  useEffect(() => {
+    if (!isLoading && user?.mustChangePassword && location !== "/change-password") {
+      navigate("/change-password");
+    }
+  }, [isLoading, user, location, navigate]);
 
   if (isLoading) {
     return (
@@ -131,6 +138,11 @@ function AuthenticatedApp() {
   }
 
   if (!user) {
+    // Will be redirected by the effect above; show nothing while redirecting
+    return null;
+  }
+
+  if (user.mustChangePassword) {
     // Will be redirected by the effect above; show nothing while redirecting
     return null;
   }
@@ -176,6 +188,7 @@ export default function App() {
           <AuthProvider>
             <Switch>
               <Route path="/login" component={Login} />
+              <Route path="/change-password" component={ChangePassword} />
               <Route>
                 <AuthenticatedApp />
               </Route>

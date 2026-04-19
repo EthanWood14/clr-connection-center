@@ -1072,11 +1072,11 @@ export default function Settings() {
               }
               setPasswordLoading(true);
               try {
-                const res = await fetch("/api/auth/change-password", {
-                  method: "POST",
+                const res = await fetch("/api/users/me/password", {
+                  method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   credentials: "include",
-                  body: JSON.stringify({ currentPassword, newPassword }),
+                  body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
                 });
                 const data = await res.json();
                 if (!res.ok) {
