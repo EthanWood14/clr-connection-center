@@ -590,9 +590,15 @@ function runNewMigrations() {
   }
   // Seed default manager emails if none set
   if (!emailKeyRow?.manager_emails || emailKeyRow.manager_emails === '[]' || emailKeyRow.manager_emails === '') {
-    const defaultManagers = JSON.stringify(["credoble@westcapitallending.com", "spetries@westcapitallending.com"]);
+    const defaultManagers = JSON.stringify(["scott.petrie@westcapitallending.com", "chris.redoble@westcapitallending.com"]);
     sqlite.exec(`UPDATE email_settings SET manager_emails='${defaultManagers}' WHERE id=1`);
   }
+  // Fix stale from_address_resend from info@wlc.it.com -> reports@wlc.it.com
+  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@wlc.it.com' WHERE from_address_resend = 'info@wlc.it.com'`); } catch {}
+  // Seed default from_address_resend if empty
+  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@wlc.it.com' WHERE from_address_resend IS NULL OR from_address_resend = ''`); } catch {}
+  // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
+  try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"])}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (

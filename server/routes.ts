@@ -1737,9 +1737,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ report, activities });
   });
 
-  app.post('/api/eod-reports', requireAuth, (req: any, res) => {
+  app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, transfers, appointments, notes } = req.body;
+    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
     const report = storageExtra.upsertEodReport({
       reportDate,
@@ -1751,7 +1751,68 @@ export function registerRoutes(httpServer: Server, app: Express) {
     });
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
-    queryClient: null; // side-effect only
+
+    // ── Send EOD summary email to managers (non-blocking on failure) ──────────
+    try {
+      const settings = storageExtra.getEmailSettings() as any;
+      const managers: string[] = (() => {
+        try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; }
+      })();
+      if (managers.length > 0) {
+        const user = storage.getUserById(userId) as any;
+        const clrName = user?.name ?? `User #${userId}`;
+        const vm = Number(voicemails ?? 0);
+        const tx = Number(textsSent ?? 0);
+        const em = Number(emailsSent ?? 0);
+        const loc = Number(loConnections ?? 0);
+        const calls = Number(callsMade ?? 0);
+        const xfers = Number(transfers ?? 0);
+        const appts = Number(appointments ?? 0);
+        const totalContacts = calls + vm + tx + em;
+
+        const rowHtml = (label: string, val: string | number) => `
+          <tr>
+            <td style="padding:10px 14px;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f0;width:180px">${label}</td>
+            <td style="padding:10px 14px;font-size:14px;color:#0F182D;font-weight:600;border-bottom:1px solid #e2e8f0">${val}</td>
+          </tr>`;
+
+        const safeNotes = (notes ?? "").toString().trim();
+        const reportDateDisplay = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+        const body = `
+          <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6">
+            <strong style="color:#1e293b">${clrName}</strong> just submitted an EOD report for <strong style="color:#1e293b">${reportDateDisplay}</strong>.
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:20px">
+            ${rowHtml("CLR", clrName)}
+            ${rowHtml("Report Date", reportDate)}
+            ${rowHtml("Calls Made", calls)}
+            ${rowHtml("Voicemails Left", vm)}
+            ${rowHtml("Texts Sent", tx)}
+            ${rowHtml("Emails Sent", em)}
+            ${rowHtml("LO Connections", loc)}
+            ${rowHtml("Transfers", xfers)}
+            ${rowHtml("Appointments", appts)}
+            ${rowHtml("Total Contacts", totalContacts)}
+          </table>
+          ${safeNotes ? `
+          <div style="margin-top:20px;padding:14px 18px;background:#f8fafc;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
+            <p style="margin:0 0 6px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Notes</p>
+            <p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${safeNotes.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+          </div>` : ""}
+        `;
+        const subject = `EOD Report — ${clrName} — ${reportDate}`;
+        const html = buildEmail({
+          subject,
+          preheader: `${calls} calls · ${xfers} transfers · ${appts} appointments`,
+          body,
+        });
+        await sendEmail({ to: managers, subject, html });
+      }
+    } catch (e: any) {
+      console.error("EOD email send failed:", e?.message ?? e);
+    }
+
     res.json(report);
   });
 
