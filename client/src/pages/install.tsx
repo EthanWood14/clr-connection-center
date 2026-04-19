@@ -91,7 +91,7 @@ export default function InstallPage() {
             <img
               src="/wcl-logo.png"
               alt="WCL"
-              className="w-10 h-10 object-contain brightness-0 invert"
+              className="w-10 h-10 object-contain dark:brightness-0 dark:invert"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           </div>
