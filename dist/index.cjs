@@ -347,7 +347,7 @@ return fn.apply(this, arguments)
           <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:18px 36px">
             <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.7">
               <strong style="color:#64748b">CLR Connection Center</strong> &mdash; West Capital Lending<br />
-              Sent from <a href="mailto:onboarding@resend.dev" style="color:#1A2B4A;text-decoration:none">onboarding@resend.dev</a>.
+              Sent from <a href="mailto:reports@wlc.it.com" style="color:#1A2B4A;text-decoration:none">reports@wlc.it.com</a>.
               If you didn't expect this, check your spam folder.<br />
               To use a custom sender, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and configure your own domain.
             </p>
