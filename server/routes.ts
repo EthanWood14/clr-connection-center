@@ -1770,41 +1770,63 @@ export function registerRoutes(httpServer: Server, app: Express) {
         const appts = Number(appointments ?? 0);
         const totalContacts = calls + vm + tx + em;
 
-        const rowHtml = (label: string, val: string | number) => `
+        const safeNotes = (notes ?? "").toString().trim();
+        const reportDateLong = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+        const reportDateShort = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+        const metricRow = (label: string, val: string | number, desc: string) => `
           <tr>
-            <td style="padding:10px 14px;font-size:13px;color:#64748b;border-bottom:1px solid #e2e8f0;width:180px">${label}</td>
-            <td style="padding:10px 14px;font-size:14px;color:#0F182D;font-weight:600;border-bottom:1px solid #e2e8f0">${val}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #e2e8f0;vertical-align:top">
+              <div style="font-size:14px;color:#0F182D;font-weight:600;margin-bottom:4px">${label}</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.5">${desc}</div>
+            </td>
+            <td align="right" style="padding:14px 16px;border-bottom:1px solid #e2e8f0;vertical-align:top;width:90px">
+              <div style="font-size:22px;color:#1A2B4A;font-weight:700;line-height:1">${val}</div>
+            </td>
           </tr>`;
 
-        const safeNotes = (notes ?? "").toString().trim();
-        const reportDateDisplay = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-
         const body = `
+          <div style="background:#1A2B4A;border-radius:10px;padding:22px 24px;margin-bottom:24px;color:#ffffff">
+            <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">Daily Summary</p>
+            <h2 style="margin:0;font-size:20px;color:#ffffff;font-weight:700;line-height:1.3">Here's ${clrName}'s end-of-day summary for ${reportDateLong}.</h2>
+          </div>
+
           <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6">
-            <strong style="color:#1e293b">${clrName}</strong> just submitted an EOD report for <strong style="color:#1e293b">${reportDateDisplay}</strong>.
+            This is a personal recap of <strong style="color:#1e293b">${clrName}</strong>'s activity today. Each number below reflects work they completed as an individual CLR.
           </p>
+
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:20px">
-            ${rowHtml("CLR", clrName)}
-            ${rowHtml("Report Date", reportDate)}
-            ${rowHtml("Calls Made", calls)}
-            ${rowHtml("Voicemails Left", vm)}
-            ${rowHtml("Texts Sent", tx)}
-            ${rowHtml("Emails Sent", em)}
-            ${rowHtml("LO Connections", loc)}
-            ${rowHtml("Transfers", xfers)}
-            ${rowHtml("Appointments", appts)}
-            ${rowHtml("Total Contacts", totalContacts)}
+            ${metricRow("Calls Made", calls, "Outbound calls placed to leads or referral partners")}
+            ${metricRow("Voicemails Left", vm, "Voicemails left when calls went unanswered")}
+            ${metricRow("Texts Sent", tx, "Text messages sent to leads or partners")}
+            ${metricRow("Emails Sent", em, "Emails sent to leads or partners")}
+            ${metricRow("Loan Officer Connections", loc, "Number of successful contacts made with Loan Officers")}
+            ${metricRow("Transfers", xfers, "Leads transferred to a Loan Officer for further conversation")}
+            ${metricRow("Appointments Set", appts, "Appointments scheduled with a lead or partner")}
+            <tr>
+              <td style="padding:16px;background:#f8fafc;vertical-align:top">
+                <div style="font-size:14px;color:#0F182D;font-weight:700;margin-bottom:4px">Total People Reached</div>
+                <div style="font-size:12px;color:#64748b;line-height:1.5">Combined unique contacts made across all channels</div>
+              </td>
+              <td align="right" style="padding:16px;background:#f8fafc;vertical-align:top;width:90px">
+                <div style="font-size:24px;color:#1A2B4A;font-weight:800;line-height:1">${totalContacts}</div>
+              </td>
+            </tr>
           </table>
+
           ${safeNotes ? `
-          <div style="margin-top:20px;padding:14px 18px;background:#f8fafc;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
-            <p style="margin:0 0 6px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Notes</p>
+          <div style="margin-top:24px;padding:18px 20px;background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0">
+            <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#713f12">Additional Notes</p>
+            <p style="margin:0 0 10px;font-size:12px;color:#854d0e;line-height:1.5">Other notable work done today not mentioned above.</p>
             <p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${safeNotes.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
           </div>` : ""}
+
+          <p style="margin:28px 0 0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.5">© 2026 West Capital Lending · CLR Connection Center</p>
         `;
-        const subject = `EOD Report — ${clrName} — ${reportDate}`;
+        const subject = `${clrName}'s EOD Report — ${reportDateShort}`;
         const html = buildEmail({
           subject,
-          preheader: `${calls} calls · ${xfers} transfers · ${appts} appointments`,
+          preheader: `${clrName}'s daily summary · ${calls} calls · ${xfers} transfers · ${appts} appointments`,
           body,
         });
         await sendEmail({ to: managers, subject, html });
