@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft } from "lucide-react";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
+import { Link } from "wouter";
 
 function formatTime(iso: string) {
   try {
@@ -109,9 +110,24 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] max-w-3xl mx-auto p-4 sm:p-6">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
+    <div className="flex flex-col h-[calc(100vh-48px)]">
+      {/* Mobile sticky header with back button */}
+      <div className="md:hidden sticky top-0 z-20 flex items-center justify-between h-12 px-3 border-b bg-sidebar text-sidebar-foreground flex-shrink-0">
+        <Link
+          href="/"
+          data-testid="chat-mobile-back"
+          className="flex items-center gap-1 text-sm font-medium px-2 py-1 -ml-1 rounded hover:bg-sidebar-foreground/10 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Home</span>
+        </Link>
+        <h1 className="absolute left-1/2 -translate-x-1/2 text-sm font-semibold">Team Chat</h1>
+        <div className="w-16" aria-hidden />
+      </div>
+
+      <div className="flex flex-col flex-1 min-h-0 max-w-3xl w-full mx-auto p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      {/* Header (desktop) */}
+      <div className="hidden md:flex items-center gap-3 mb-4">
         <div className="p-2 rounded-lg bg-primary/10 text-primary">
           <MessageSquare className="w-5 h-5" />
         </div>
@@ -248,6 +264,7 @@ export default function Chat() {
       <p className="text-[10px] text-muted-foreground text-center mt-1.5">
         Press Enter to send · {draft.length}/1000
       </p>
+      </div>
     </div>
   );
 }
