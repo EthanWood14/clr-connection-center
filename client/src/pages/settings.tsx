@@ -665,6 +665,7 @@ export default function Settings() {
 
   const [weights, setWeights] = useState<Record<WeightKey, number> | null>(null);
   const [maxLOs, setMaxLOs] = useState<number | null>(null);
+  const [transferPreference, setTransferPreference] = useState<"fewer" | "more" | "none" | null>(null);
 
   // Change password state
   const [currentPassword, setCurrentPassword] = useState("");
@@ -690,6 +691,8 @@ export default function Settings() {
   });
 
   const currentMax = maxLOs ?? settings?.maxLosPerAssistant ?? 5;
+  const currentTransferPreference: "fewer" | "more" | "none" =
+    transferPreference ?? (settings?.transferPreference === "more" || settings?.transferPreference === "none" ? settings.transferPreference : "fewer");
   const totalWeight = Object.values(currentWeights).reduce((a, b) => a + b, 0);
   const isWeightValid = Math.abs(totalWeight - 1.0) < 0.01;
 
@@ -699,6 +702,7 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/algorithm"] });
       setWeights(null);
       setMaxLOs(null);
+      setTransferPreference(null);
       toast({ title: "Settings saved" });
     },
     onError: () => toast({ title: "Error saving settings", variant: "destructive" }),
@@ -712,6 +716,7 @@ export default function Settings() {
     updateMutation.mutate({
       ...currentWeights,
       maxLosPerAssistant: currentMax,
+      transferPreference: currentTransferPreference,
     });
   };
 
@@ -817,6 +822,51 @@ export default function Settings() {
             {updateMutation.isPending ? "Saving…" : "Save Weights"}
           </Button>
         </CardFooter>
+      </Card>
+
+      {/* Transfer Preference */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold">Transfer Preference</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Controls how an LO's recent transfer count (last 90 days) affects their assignment priority.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Transfer preference">
+            {([
+              { value: "fewer", label: "Favor fewer transfers", desc: "LOs with fewer recent transfers get priority." },
+              { value: "more", label: "Favor more transfers", desc: "LOs with more recent transfers get priority." },
+              { value: "none", label: "No preference", desc: "Transfer count has no effect on scoring." },
+            ] as const).map(opt => {
+              const selected = currentTransferPreference === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setTransferPreference(opt.value)}
+                  data-testid={`button-transfer-pref-${opt.value}`}
+                  className={`flex flex-col gap-1 p-3 rounded-lg border-2 text-left transition-all ${
+                    selected
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">{opt.label}</span>
+                    {selected && <Badge className="text-[10px] px-1.5 py-0 bg-primary text-white ml-auto">Active</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{opt.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-3">
+            Applied with the <span className="font-medium">90-Day Transfer Volume</span> weight above. Click <span className="font-medium">Save Weights</span> to apply.
+          </p>
+        </CardContent>
       </Card>
 
       {/* Score Preview */}

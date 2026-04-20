@@ -72,9 +72,25 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
       const availScore = 1; // simplified - full availability check in prod
       const boostNorm = (lo.boostScore || 0) / 10;
       const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
-      // 90-day transfer score: fewer recent transfers = higher score (spread leads to LOs who need them)
+      // 90-day transfer score: direction is controlled by settings.transferPreference
+      // 'fewer' → fewer transfers = higher score (spread leads to quieter LOs)
+      // 'more'  → more transfers = higher score (reward recent producers)
+      // 'none'  → neutral 0.5, weight still applied but has no effect on ranking order
       const recentXfers = recentTransferCounts ? (recentTransferCounts.get(lo.id) || 0) : 0;
-      const recentXferScore = 1 - (recentXfers / maxXfers);
+      const pref: "fewer" | "more" | "none" =
+        settings.transferPreference === "more" || settings.transferPreference === "none"
+          ? settings.transferPreference
+          : "fewer";
+      let recentXferScore: number;
+      if (maxXfers <= 0) {
+        recentXferScore = 0.5;
+      } else if (pref === "more") {
+        recentXferScore = recentXfers / maxXfers;
+      } else if (pref === "none") {
+        recentXferScore = 0.5;
+      } else {
+        recentXferScore = 1 - (recentXfers / maxXfers);
+      }
 
       const weightRecentTransfers = settings.weightRecentTransfers ?? 0.10;
 

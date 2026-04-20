@@ -188,6 +188,9 @@ try {
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
+// algorithm_settings: add transfer_preference column if missing — values: 'fewer' | 'more' | 'none'
+try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN transfer_preference TEXT NOT NULL DEFAULT 'fewer'`); } catch {}
+
 // Normalise algorithm weights: if existing row sums to >1.05 (old 5-weight row + new column),
 // reset all weights to the correct 6-weight defaults that sum to exactly 1.0
 try {
@@ -467,24 +470,41 @@ export class Storage implements IStorage {
 
   getAlgorithmSettings() {
     const base = db.select().from(algorithmSettings).get()!;
-    // weightRecentTransfers added via migration — read via raw SQL to handle existing DBs
-    const raw = sqlite.prepare("SELECT weight_recent_transfers FROM algorithm_settings WHERE id = ?").get(base.id) as any;
-    return { ...base, weightRecentTransfers: raw?.weight_recent_transfers ?? 0.10 };
+    // weightRecentTransfers and transferPreference added via migration — read via raw SQL to handle existing DBs
+    const raw = sqlite.prepare("SELECT weight_recent_transfers, transfer_preference FROM algorithm_settings WHERE id = ?").get(base.id) as any;
+    const pref = raw?.transfer_preference;
+    const transferPreference: "fewer" | "more" | "none" =
+      pref === "more" || pref === "none" ? pref : "fewer";
+    return {
+      ...base,
+      weightRecentTransfers: raw?.weight_recent_transfers ?? 0.10,
+      transferPreference,
+    };
   }
   updateAlgorithmSettings(data: Partial<InsertAlgorithmSettings>) {
     const existing = db.select().from(algorithmSettings).get();
-    // Handle weightRecentTransfers separately via raw SQL
-    const { weightRecentTransfers, ...drizzleData } = data as any;
+    // Handle non-Drizzle fields (weightRecentTransfers, transferPreference) separately via raw SQL
+    const { weightRecentTransfers, transferPreference, ...drizzleData } = data as any;
+    const normalizedPref =
+      transferPreference === "fewer" || transferPreference === "more" || transferPreference === "none"
+        ? transferPreference
+        : undefined;
     if (existing) {
-      const updated = db.update(algorithmSettings).set({ ...drizzleData, updatedAt: new Date().toISOString() }).where(eq(algorithmSettings.id, existing.id)).returning().get()!;
+      db.update(algorithmSettings).set({ ...drizzleData, updatedAt: new Date().toISOString() }).where(eq(algorithmSettings.id, existing.id)).returning().get()!;
       if (weightRecentTransfers !== undefined) {
         sqlite.prepare("UPDATE algorithm_settings SET weight_recent_transfers = ? WHERE id = ?").run(weightRecentTransfers, existing.id);
+      }
+      if (normalizedPref !== undefined) {
+        sqlite.prepare("UPDATE algorithm_settings SET transfer_preference = ? WHERE id = ?").run(normalizedPref, existing.id);
       }
       return this.getAlgorithmSettings();
     }
     const inserted = db.insert(algorithmSettings).values({ ...drizzleData as any, updatedAt: new Date().toISOString() }).returning().get()!;
     if (weightRecentTransfers !== undefined) {
       sqlite.prepare("UPDATE algorithm_settings SET weight_recent_transfers = ? WHERE id = ?").run(weightRecentTransfers, inserted.id);
+    }
+    if (normalizedPref !== undefined) {
+      sqlite.prepare("UPDATE algorithm_settings SET transfer_preference = ? WHERE id = ?").run(normalizedPref, inserted.id);
     }
     return this.getAlgorithmSettings();
   }
