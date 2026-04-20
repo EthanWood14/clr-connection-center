@@ -520,23 +520,23 @@ export default function Outcomes() {
                 <Badge className={`text-xs w-fit px-2 py-0.5 ${OUTCOME_COLORS[o.outcomeType]}`}>
                   {OUTCOME_LABELS[o.outcomeType]}
                 </Badge>
-                <span className="text-sm font-medium truncate" data-testid={`text-outcome-lo-${o.id}`}>
+                <span className="text-sm text-muted-foreground truncate" data-testid={`text-outcome-lo-${o.id}`}>
                   {o.lo?.fullName ?? `LO #${o.loId}`}
                 </span>
                 <span className="text-sm text-muted-foreground truncate">
                   {o.assistant?.name ?? `Assistant #${o.assistantId}`}
                 </span>
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm text-muted-foreground truncate min-w-0 flex-1">
-                    {o.borrowerName || <span className="text-muted-foreground/50">—</span>}
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-semibold truncate min-w-0">
+                    {o.borrowerName || <span className="text-muted-foreground/50 font-normal">—</span>}
                   </span>
-                </div>
-                <div className="flex items-center gap-1 justify-end min-w-0">
                   {o.followUpDate && (
-                    <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0 text-purple-600 border-purple-300">
+                    <Badge variant="outline" className="w-fit text-[10px] px-1 py-0 text-purple-600 border-purple-300">
                       Follow-up {o.followUpDate}
                     </Badge>
                   )}
+                </div>
+                <div className="flex items-center gap-1 justify-end min-w-0">
                   <Button
                     variant="ghost"
                     size="icon"
