@@ -249,7 +249,7 @@ function EditOutcomeDialog({
   const [bonzoLogged, setBonzoLogged] = useState(false);
   const watchedType = form.watch("outcomeType");
   const isTransfer = watchedType === "transfer";
-  const showFollowUp = FOLLOWUP_TYPES.has(watchedType);
+  const showFollowUp = FOLLOWUP_TYPES.has(watchedType) || !!(outcome?.followUpDate);
 
   useEffect(() => {
     if (open && outcome) {
@@ -385,7 +385,7 @@ export default function Outcomes() {
         loId: data.loId,
         borrowerName: data.borrowerName ?? "",
         notes: data.notes ?? "",
-        followUpDate: FOLLOWUP_TYPES.has(data.outcomeType) ? (data.followUpDate || null) : null,
+        followUpDate: data.followUpDate || null,
       };
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
