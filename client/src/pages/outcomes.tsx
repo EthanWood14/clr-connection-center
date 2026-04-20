@@ -15,7 +15,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Filter, ClipboardList } from "lucide-react";
+import { Plus, Trash2, Filter, ClipboardList, Pencil } from "lucide-react";
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "fell_through",
@@ -209,9 +209,155 @@ function OutcomeFormDialog({
   );
 }
 
+const editOutcomeSchema = z.object({
+  outcomeType: z.enum(OUTCOME_TYPES),
+  loId: z.coerce.number().min(1, "Select a loan officer"),
+  borrowerName: z.string().optional(),
+  followUpDate: z.string().optional(),
+  notes: z.string().optional(),
+});
+type EditOutcomeValues = z.infer<typeof editOutcomeSchema>;
+
+const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested"]);
+
+function EditOutcomeDialog({
+  outcome,
+  open,
+  onClose,
+  onSubmit,
+  isPending,
+  los,
+}: {
+  outcome: any | null;
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (values: EditOutcomeValues) => void;
+  isPending: boolean;
+  los: any[];
+}) {
+  const form = useForm<EditOutcomeValues>({
+    resolver: zodResolver(editOutcomeSchema),
+    defaultValues: {
+      outcomeType: "transfer",
+      loId: 0,
+      borrowerName: "",
+      followUpDate: "",
+      notes: "",
+    },
+  });
+
+  const [bonzoLogged, setBonzoLogged] = useState(false);
+  const watchedType = form.watch("outcomeType");
+  const isTransfer = watchedType === "transfer";
+  const showFollowUp = FOLLOWUP_TYPES.has(watchedType);
+
+  useEffect(() => {
+    if (open && outcome) {
+      form.reset({
+        outcomeType: outcome.outcomeType,
+        loId: outcome.loId,
+        borrowerName: outcome.borrowerName ?? "",
+        followUpDate: outcome.followUpDate ?? "",
+        notes: outcome.notes ?? "",
+      });
+      setBonzoLogged(false);
+    }
+  }, [open, outcome, form]);
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit Outcome</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField control={form.control} name="outcomeType" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Outcome</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger data-testid="select-edit-outcome-type"><SelectValue /></SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {OUTCOME_TYPES.map(t => (
+                      <SelectItem key={t} value={t}>{OUTCOME_LABELS[t] ?? t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="loId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Loan Officer</FormLabel>
+                <Select value={String(field.value || "")} onValueChange={v => field.onChange(Number(v))}>
+                  <FormControl>
+                    <SelectTrigger data-testid="select-edit-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
+                      <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="borrowerName" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Borrower Name</FormLabel>
+                <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-borrower-name" /></FormControl>
+              </FormItem>
+            )} />
+            {showFollowUp && (
+              <FormField control={form.control} name="followUpDate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Follow-up Date</FormLabel>
+                  <FormControl><Input type="date" {...field} data-testid="input-edit-followup-date" /></FormControl>
+                </FormItem>
+              )} />
+            )}
+            <FormField control={form.control} name="notes" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes</FormLabel>
+                <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-edit-notes" /></FormControl>
+              </FormItem>
+            )} />
+            {isTransfer && (
+              <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3">
+                <Checkbox
+                  id="edit-bonzo-logged"
+                  checked={bonzoLogged}
+                  onCheckedChange={v => setBonzoLogged(v === true)}
+                  data-testid="checkbox-edit-bonzo-logged"
+                />
+                <label htmlFor="edit-bonzo-logged" className="text-sm leading-snug cursor-pointer select-none">
+                  I have recorded this transfer in Bonzo using the appropriate notation.
+                </label>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+              <Button
+                type="submit"
+                disabled={isPending || (isTransfer && !bonzoLogged)}
+                data-testid="button-save-edit-outcome"
+              >
+                {isPending ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Outcomes() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<any | null>(null);
   const [filterType, setFilterType] = useState("all");
   const [filterAssistant, setFilterAssistant] = useState("all");
   const [search, setSearch] = useState("");
@@ -230,6 +376,27 @@ export default function Outcomes() {
       toast({ title: "Outcome logged" });
     },
     onError: () => toast({ title: "Error logging outcome", variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: EditOutcomeValues }) => {
+      const payload: Record<string, unknown> = {
+        outcomeType: data.outcomeType,
+        loId: data.loId,
+        borrowerName: data.borrowerName ?? "",
+        notes: data.notes ?? "",
+        followUpDate: FOLLOWUP_TYPES.has(data.outcomeType) ? (data.followUpDate || null) : null,
+      };
+      return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      setEditTarget(null);
+      toast({ title: "Outcome updated" });
+    },
+    onError: () => toast({ title: "Error updating outcome", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -373,6 +540,15 @@ export default function Outcomes() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground"
+                    onClick={() => setEditTarget(o)}
+                    data-testid={`button-edit-outcome-${o.id}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
                     onClick={() => deleteMutation.mutate(o.id)}
                     data-testid={`button-delete-outcome-${o.id}`}
@@ -398,6 +574,15 @@ export default function Outcomes() {
         onSubmit={values => createMutation.mutate(values)}
         isPending={createMutation.isPending}
         users={users}
+        los={los}
+      />
+
+      <EditOutcomeDialog
+        outcome={editTarget}
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        onSubmit={values => editTarget && updateMutation.mutate({ id: editTarget.id, data: values })}
+        isPending={updateMutation.isPending}
         los={los}
       />
     </div>
