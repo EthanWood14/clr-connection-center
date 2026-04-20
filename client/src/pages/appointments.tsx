@@ -273,9 +273,9 @@ export default function Appointments() {
 
   const todayStr = new Date().toISOString().split("T")[0];
 
-  // All uncompleted appointments: outcomeType === "appointment" AND followUpDate is set
+  // All uncompleted appointments: any outcome with a followUpDate set (appointment, transfer follow-up, etc.)
   const allAppointments = outcomes.filter(
-    (o) => o.outcomeType === "appointment" && o.followUpDate != null && o.followUpDate !== ""
+    (o) => o.followUpDate != null && o.followUpDate !== ""
   );
 
   const overdueList = allAppointments.filter((o) => o.followUpDate! < todayStr)
