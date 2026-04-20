@@ -420,7 +420,13 @@ function TabAppointments() {
   const getLoName = (loId: number) => losData.find((l: any) => l.id === loId)?.fullName ?? `LO #${loId}`;
 
   const today_ = filtered.filter((o: any) => isToday(parseISO(o.followUpDate || o.follow_up_date)));
-  const upcoming = filtered.filter((o: any) => !isToday(parseISO(o.followUpDate || o.follow_up_date)));
+  const upcoming = filtered
+    .filter((o: any) => !isToday(parseISO(o.followUpDate || o.follow_up_date)))
+    .sort((a: any, b: any) => {
+      const aDate = a.followUpDate || a.follow_up_date || '';
+      const bDate = b.followUpDate || b.follow_up_date || '';
+      return aDate.localeCompare(bDate);
+    });
 
   function ApptRow({ o }: { o: any }) {
     const fDate = o.followUpDate || o.follow_up_date;
