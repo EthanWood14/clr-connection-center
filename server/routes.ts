@@ -559,7 +559,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword } });
+    const u = user as any;
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password) } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -662,7 +663,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!user) return res.status(401).json({ error: "User not found" });
     if (!user.password_hash) return res.status(401).json({ error: "No password set for this account" });
 
-    const skipCurrentCheck = !!forced && !!(user as any).mustChangePassword;
+    const mustChange = !!((user as any).mustChangePassword ?? (user as any).must_change_password);
+    const skipCurrentCheck = !!forced && mustChange;
     if (!skipCurrentCheck) {
       if (!currentPassword) {
         return res.status(400).json({ error: "Current password is required" });
@@ -674,7 +676,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const hash = await bcrypt.hash(newPassword, 10);
     storage.setUserPassword(userId, hash);
     storage.setMustChangePassword(userId, false);
-    return res.json({ ok: true });
+    return res.json({ success: true, ok: true });
   });
 
   // ── Forgot password: send reset link ──────────────────────────────────────

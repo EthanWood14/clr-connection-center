@@ -17,6 +17,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   markIntroSeen: () => Promise<void>;
   clearMustChangePassword: () => void;
+  refetchUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthContextValue>({
   logout: async () => {},
   markIntroSeen: async () => {},
   clearMustChangePassword: () => {},
+  refetchUser: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -60,8 +62,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((u) => u ? { ...u, mustChangePassword: false } : u);
   }, []);
 
+  const refetchUser = useCallback(async () => {
+    try {
+      const data: any = await apiRequest("GET", "/api/auth/me");
+      setUser(data.user ?? null);
+    } catch {
+      setUser(null);
+    }
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, clearMustChangePassword }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, clearMustChangePassword, refetchUser }}>
       {children}
     </AuthContext.Provider>
   );

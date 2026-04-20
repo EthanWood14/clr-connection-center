@@ -4,7 +4,7 @@ import { Lock, ArrowRight, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 export default function ChangePassword() {
-  const { user, isLoading, clearMustChangePassword } = useAuth();
+  const { user, isLoading, clearMustChangePassword, refetchUser } = useAuth();
   const [, navigate] = useLocation();
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -61,6 +61,7 @@ export default function ChangePassword() {
       } else {
         setSuccess(true);
         clearMustChangePassword();
+        await refetchUser();
         setTimeout(() => {
           navigate("/");
         }, 800);
