@@ -23,7 +23,7 @@ import Outcomes from "@/pages/outcomes";
 import Leaderboard from "@/pages/leaderboard";
 import Settings from "@/pages/settings";
 import StateLookup from "@/pages/state-lookup";
-import Appointments from "@/pages/followups";
+import Appointments from "@/pages/appointments";
 import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
 import AuditLog from "@/pages/audit-log";
