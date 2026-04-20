@@ -30,19 +30,19 @@ const videos: VideoCard[] = [
   },
   {
     title: "CLR Walkthrough",
-    badge: "CLRs · 10 min · Coming Soon",
+    badge: "CLRs · 10 min · Ask for Development",
     description:
       "A complete step-by-step walkthrough of every tab and feature a CLR uses daily.",
     disabled: true,
-    buttonLabel: "Coming Soon",
+    buttonLabel: "Ask for Development",
   },
   {
     title: "Full System Guide",
-    badge: "Admins · 20 min · Coming Soon",
+    badge: "Admins · 20 min · Ask for Development",
     description:
       "An in-depth video covering the entire platform including backend configuration, the algorithm, and admin controls.",
     disabled: true,
-    buttonLabel: "Coming Soon",
+    buttonLabel: "Ask for Development",
   },
 ];
 
