@@ -988,8 +988,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.get("/api/loan-officers", (req, res) => {
     const los = storage.getLoanOfficers();
-    // Strip passwords from list view
-    const safe = los.map(lo => ({ ...lo, bonzoPassword: lo.bonzoPassword ? "••••••••" : null, leadMailboxPassword: lo.leadMailboxPassword ? "••••••••" : null }));
+    // Compute 90-day transfer counts for score preview
+    const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const xfer90Start = ninetyDaysAgo.toISOString().split("T")[0];
+    const today = new Date().toISOString().split("T")[0];
+    const recentOutcomes = storage.getLeadOutcomes({ startDate: xfer90Start, endDate: today });
+    const recentTransferCounts = new Map<number, number>();
+    for (const o of recentOutcomes) {
+      if ((o.outcomeType || (o as any).outcome_type) === "transfer") {
+        const loId = o.loId || (o as any).lo_id;
+        if (loId) recentTransferCounts.set(loId, (recentTransferCounts.get(loId) || 0) + 1);
+      }
+    }
+    // Strip passwords from list view and attach transfer count
+    const safe = los.map(lo => ({ ...lo, bonzoPassword: lo.bonzoPassword ? "••••••••" : null, leadMailboxPassword: lo.leadMailboxPassword ? "••••••••" : null, recentTransfers: recentTransferCounts.get(lo.id) || 0 }));
     res.json(safe);
   });
 
