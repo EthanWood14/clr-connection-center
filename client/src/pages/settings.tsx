@@ -79,7 +79,11 @@ type ScoreWeights = {
   weightRecentTransfers: number;
 };
 
-function computeScore(lo: any, weights: ScoreWeights) {
+function computeScore(
+  lo: any,
+  weights: ScoreWeights,
+  opts: { maxXfers: number; transferPreference: "fewer" | "more" | "none" }
+) {
   const daysSince = lo.lastWorkedDate
     ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86_400_000)
     : 999;
@@ -88,7 +92,16 @@ function computeScore(lo: any, weights: ScoreWeights) {
   const availScore = 1;
   const boostNorm = (lo.boostScore ?? 0) / 10;
   const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
-  const transferScore = Math.min((lo.recentTransfers ?? lo.transfers90d ?? 0) / 10, 1);
+  const recentXfers = lo.recentTransfers ?? lo.transfers90d ?? 0;
+  const maxXfers = Math.max(opts.maxXfers, 1);
+  let transferScore: number;
+  if (opts.transferPreference === "more") {
+    transferScore = recentXfers / maxXfers;
+  } else if (opts.transferPreference === "none") {
+    transferScore = 0.5;
+  } else {
+    transferScore = 1 - (recentXfers / maxXfers);
+  }
 
   const score =
     weights.weightDaysSinceWorked * daysSinceNorm +
@@ -120,17 +133,35 @@ const COMPONENT_COLORS = [
   "bg-rose-100 text-rose-700",
 ];
 
-function ScorePreview({ weights }: { weights: ScoreWeights }) {
+function ScorePreview({
+  weights,
+  transferPreference,
+}: {
+  weights: ScoreWeights;
+  transferPreference: "fewer" | "more" | "none";
+}) {
   const { data: los = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
   const activeLos = los.filter(
     (lo) => lo.internalStatus === "active" && !lo.snoozeUntil
   );
 
+  const maxXfers = activeLos.reduce(
+    (m, lo) => Math.max(m, lo.recentTransfers ?? lo.transfers90d ?? 0),
+    0
+  );
+
   const ranked = activeLos
-    .map((lo) => ({ lo, ...computeScore(lo, weights) }))
+    .map((lo) => ({ lo, ...computeScore(lo, weights, { maxXfers, transferPreference }) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 10);
+
+  const transferDirLabel =
+    transferPreference === "more"
+      ? "more = higher"
+      : transferPreference === "none"
+      ? "neutral"
+      : "fewer = higher";
 
   return (
     <Card>
@@ -224,7 +255,7 @@ function ScorePreview({ weights }: { weights: ScoreWeights }) {
                   ["Avail", components.avail],
                   ["Boost", components.boost],
                   ["Tier", components.tier],
-                  ["Transfers", components.transfers],
+                  [`Transfers (${transferDirLabel}, wt ${(weights.weightRecentTransfers * 100).toFixed(0)}%)`, components.transfers],
                 ] as [string, number][]).map(([label, val], ci) => (
                   <span
                     key={label}
@@ -870,7 +901,7 @@ export default function Settings() {
       </Card>
 
       {/* Score Preview */}
-      <ScorePreview weights={currentWeights} />
+      <ScorePreview weights={currentWeights} transferPreference={currentTransferPreference} />
 
       {/* Distribution Settings */}
       <Card>

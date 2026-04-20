@@ -246,6 +246,22 @@ if (existingUsers.length === 0) {
   }
 }
 
+// ── One-time admin password reset (live DB has a stale/wrong hash) ─────────────
+// Force-resets ethan.anthony.wood@gmail.com to a known bcrypt hash of "WCL2026!".
+// Uses a dedicated migrations_applied table so it only runs once per database.
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'admin_pw_reset_v1'`).get();
+  if (!done) {
+    sqlite.prepare(`UPDATE users SET password_hash = ?, must_change_password = 0 WHERE email = ?`)
+      .run("$2b$10$WgepzdNbwEzTSAQW11xE5e.NWwkYjstTBIDf8UlE.gitFxnwnMNMK", "ethan.anthony.wood@gmail.com");
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+      .run("admin_pw_reset_v1", new Date().toISOString());
+  }
+} catch (e) {
+  console.error("admin pw reset migration failed:", e);
+}
+
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
   db.insert(algorithmSettings).values({
