@@ -72,9 +72,9 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
       const availScore = 1; // simplified - full availability check in prod
       const boostNorm = (lo.boostScore || 0) / 10;
       const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
-      // 90-day transfer score: more recent transfers = higher score (LO is "hot")
+      // 90-day transfer score: fewer recent transfers = higher score (spread leads to LOs who need them)
       const recentXfers = recentTransferCounts ? (recentTransferCounts.get(lo.id) || 0) : 0;
-      const recentXferScore = recentXfers / maxXfers;
+      const recentXferScore = 1 - (recentXfers / maxXfers);
 
       const weightRecentTransfers = settings.weightRecentTransfers ?? 0.10;
 
