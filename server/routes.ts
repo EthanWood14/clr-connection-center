@@ -795,8 +795,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
 
     // Send welcome email if requested (non-blocking — don't fail the request if email fails)
+    let emailSent = false;
+    let emailError: string | null = null;
+    let welcomeRequested = false;
     try {
       const sendWelcome = !!(req.body?.sendWelcome ?? true);
+      welcomeRequested = sendWelcome;
       if (!sendWelcome) throw new Error("welcome_email_disabled");
       const roleLabel = (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
       const welcomeBody = `
@@ -838,12 +842,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
           body: welcomeBody,
         }),
       });
+      emailSent = true;
     } catch (e: any) {
       // Email failure is non-fatal — user was still created
-      if (e?.message !== "welcome_email_disabled") console.error("Welcome email failed:", e);
+      if (e?.message !== "welcome_email_disabled") {
+        console.error("Welcome email failed:", e);
+        emailError = e?.message || "Unknown error";
+      }
     }
 
-    res.json(newUser);
+    res.json({ ...newUser, emailRequested: welcomeRequested, emailSent, emailError });
   });
 
   app.patch("/api/users/:id", requireAuth, async (req: any, res) => {

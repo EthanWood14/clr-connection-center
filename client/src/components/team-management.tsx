@@ -108,9 +108,21 @@ function UserDialog({
 
   const createMutation = useMutation({
     mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, sendWelcome }),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "Team member added successfully" });
+      if (res?.emailRequested) {
+        if (res.emailSent) {
+          toast({ title: "User created. Welcome email sent." });
+        } else {
+          toast({
+            title: "User created. Welcome email failed",
+            description: res.emailError || "Unknown error",
+            variant: "destructive",
+          });
+        }
+      } else {
+        toast({ title: "User created." });
+      }
       onOpenChange(false);
       form.reset();
       setSendWelcome(true);
