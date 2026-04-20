@@ -45,7 +45,7 @@ export default function Login() {
     setError(null);
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/auth/login", { email, password });
+      await apiRequest("POST", "/api/auth/login", { email: email.trim(), password: password.trim() });
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       window.location.hash = "#/";
       window.location.reload();

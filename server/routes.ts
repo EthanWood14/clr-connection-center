@@ -542,10 +542,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
     }
-    const user = storage.getUserByEmail(email);
+    const trimmedEmail = typeof email === "string" ? email.trim() : email;
+    const trimmedPassword = typeof password === "string" ? password.trim() : password;
+    const user = storage.getUserByEmail(trimmedEmail);
     if (!user) return res.status(401).json({ error: "Invalid email or password" });
     if (!user.password_hash) return res.status(401).json({ error: "Account has no password set" });
-    const valid = await bcrypt.compare(password, user.password_hash);
+    const valid = await bcrypt.compare(trimmedPassword, user.password_hash);
     if (!valid) return res.status(401).json({ error: `Invalid email or password${rateCheck.remaining <= 2 ? ` (${rateCheck.remaining} attempt${rateCheck.remaining === 1 ? "" : "s"} remaining)` : ""}` });
 
     const isProduction = process.env.NODE_ENV === "production";
@@ -650,10 +652,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!newPassword || !confirmPassword) {
       return res.status(400).json({ error: "New password and confirmation are required" });
     }
-    if (newPassword !== confirmPassword) {
+    const trimmedCurrent = typeof currentPassword === "string" ? currentPassword.trim() : currentPassword;
+    const trimmedNew = typeof newPassword === "string" ? newPassword.trim() : newPassword;
+    const trimmedConfirm = typeof confirmPassword === "string" ? confirmPassword.trim() : confirmPassword;
+    if (trimmedNew !== trimmedConfirm) {
       return res.status(400).json({ error: "New password and confirmation do not match" });
     }
-    if (newPassword.length < 8) {
+    if (trimmedNew.length < 8) {
       return res.status(400).json({ error: "New password must be at least 8 characters" });
     }
 
@@ -666,14 +671,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const mustChange = !!((user as any).mustChangePassword ?? (user as any).must_change_password);
     const skipCurrentCheck = !!forced && mustChange;
     if (!skipCurrentCheck) {
-      if (!currentPassword) {
+      if (!trimmedCurrent) {
         return res.status(400).json({ error: "Current password is required" });
       }
-      const valid = await bcrypt.compare(currentPassword, user.password_hash);
+      const valid = await bcrypt.compare(trimmedCurrent, user.password_hash);
       if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
     }
 
-    const hash = await bcrypt.hash(newPassword, 10);
+    const hash = await bcrypt.hash(trimmedNew, 10);
     storage.setUserPassword(userId, hash);
     storage.setMustChangePassword(userId, false);
     return res.json({ success: true, ok: true });

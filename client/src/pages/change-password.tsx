@@ -39,11 +39,13 @@ export default function ChangePassword() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword.length < 8) {
+    const trimmedNew = newPassword.trim();
+    const trimmedConfirm = confirmPassword.trim();
+    if (trimmedNew.length < 8) {
       setError("New password must be at least 8 characters.");
       return;
     }
-    if (newPassword !== confirmPassword) {
+    if (trimmedNew !== trimmedConfirm) {
       setError("Passwords do not match.");
       return;
     }
@@ -53,7 +55,7 @@ export default function ChangePassword() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ newPassword, confirmPassword, forced: true }),
+        body: JSON.stringify({ newPassword: trimmedNew, confirmPassword: trimmedConfirm, forced: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
