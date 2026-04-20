@@ -510,7 +510,7 @@ export default function Outcomes() {
             <div className="hidden md:grid grid-cols-[80px_1fr_1fr_1fr_120px_80px] gap-3 px-4 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
               <span>Date</span><span>Outcome</span><span>LO</span><span>Assistant</span><span>Borrower</span><span></span>
             </div>
-            {filtered.slice().reverse().map((o: any) => (
+            {filtered.map((o: any) => (
               <div
                 key={o.id}
                 className="grid grid-cols-1 md:grid-cols-[80px_1fr_1fr_1fr_120px_80px] gap-3 px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors items-center group"
