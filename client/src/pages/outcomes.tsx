@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -78,6 +79,14 @@ function OutcomeFormDialog({
       followUpDate: "",
     },
   });
+
+  const [bonzoLogged, setBonzoLogged] = useState(false);
+  const watchedType = form.watch("outcomeType");
+  const isTransfer = watchedType === "transfer";
+
+  useEffect(() => {
+    if (open) setBonzoLogged(false);
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
@@ -170,9 +179,26 @@ function OutcomeFormDialog({
                 <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-outcome-notes" /></FormControl>
               </FormItem>
             )} />
+            {isTransfer && (
+              <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3">
+                <Checkbox
+                  id="bonzo-logged"
+                  checked={bonzoLogged}
+                  onCheckedChange={v => setBonzoLogged(v === true)}
+                  data-testid="checkbox-bonzo-logged"
+                />
+                <label htmlFor="bonzo-logged" className="text-sm leading-snug cursor-pointer select-none">
+                  I have recorded this transfer in Bonzo using the appropriate notation.
+                </label>
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-              <Button type="submit" disabled={isPending} data-testid="button-save-outcome">
+              <Button
+                type="submit"
+                disabled={isPending || (isTransfer && !bonzoLogged)}
+                data-testid="button-save-outcome"
+              >
                 {isPending ? "Saving…" : "Log Outcome"}
               </Button>
             </DialogFooter>
@@ -333,12 +359,14 @@ export default function Outcomes() {
                 <span className="text-sm text-muted-foreground truncate">
                   {o.assistant?.name ?? `Assistant #${o.assistantId}`}
                 </span>
-                <span className="text-sm text-muted-foreground truncate">
-                  {o.borrowerName || <span className="text-muted-foreground/50">—</span>}
-                </span>
-                <div className="flex items-center gap-1 justify-end">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm text-muted-foreground truncate min-w-0 flex-1">
+                    {o.borrowerName || <span className="text-muted-foreground/50">—</span>}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 justify-end min-w-0">
                   {o.followUpDate && (
-                    <Badge variant="outline" className="text-[10px] px-1 py-0 text-purple-600 border-purple-300">
+                    <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0 text-purple-600 border-purple-300">
                       Follow-up {o.followUpDate}
                     </Badge>
                   )}
