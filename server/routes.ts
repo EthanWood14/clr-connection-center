@@ -51,6 +51,29 @@ function getDefaultPeriod() {
   };
 }
 
+// Resolve a named period ("today" | "week" | "period") to date range.
+function resolveNamedPeriod(name: string): { startDate: string; endDate: string } {
+  const now = new Date();
+  const todayStr = now.toISOString().split("T")[0];
+  if (name === "today") {
+    return { startDate: todayStr, endDate: todayStr };
+  }
+  if (name === "week") {
+    // Sunday–Saturday containing today
+    const dow = now.getDay(); // 0=Sun ... 6=Sat
+    const sunday = new Date(now);
+    sunday.setDate(now.getDate() - dow);
+    const saturday = new Date(sunday);
+    saturday.setDate(sunday.getDate() + 6);
+    return {
+      startDate: sunday.toISOString().split("T")[0],
+      endDate: saturday.toISOString().split("T")[0],
+    };
+  }
+  // default: "period"
+  return getDefaultPeriod();
+}
+
 // Ranking algorithm
 function generateRankings(los: any[], settings: any, todayStr: string, recentTransferCounts?: Map<number, number>) {
   const today = new Date(todayStr);
@@ -1503,16 +1526,41 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
   app.get("/api/dashboard/stats", (req: any, res) => {
-    const period = getDefaultPeriod();
-    const startDate = (req.query.startDate as string) || period.startDate;
-    const endDate = (req.query.endDate as string) || period.endDate;
+    const periodName = (req.query.period as string) || "period";
+    const resolved = resolveNamedPeriod(periodName);
+    const startDate = (req.query.startDate as string) || resolved.startDate;
+    const endDate = (req.query.endDate as string) || resolved.endDate;
     const stats = storage.getDashboardStats(startDate, endDate);
-    // Also return current user's personal call count for today
+
     const userId = req.session_user?.userId;
     const todayStr = new Date().toISOString().split("T")[0];
+
+    // Current user's personal call count for today (unchanged, for existing card)
     const myLog = userId ? storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId) : null;
     const myCallsToday = myLog ? myLog.callsMade : null;
-    res.json({ ...stats, startDate, endDate, myCallsToday });
+
+    // Future Contacts count for the current user in the selected range
+    let futureContactsCount = 0;
+    // My Calls in the selected range (sum of my daily call logs)
+    let myCallsInPeriod = 0;
+    if (userId) {
+      const userOutcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[];
+      futureContactsCount = userOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "future_contact").length;
+      const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
+      myCallsInPeriod = callLogs
+        .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId)
+        .reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+    }
+
+    res.json({
+      ...stats,
+      startDate,
+      endDate,
+      period: periodName,
+      myCallsToday,
+      futureContactsCount,
+      myCallsInPeriod,
+    });
   });
 
   // ── Leaderboard ───────────────────────────────────────────────────────────────

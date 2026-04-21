@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle,
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
-  ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil,
+  ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
@@ -620,9 +620,53 @@ function TabStateLookup() {
   );
 }
 
+// ── Period Selector ───────────────────────────────────────────────────────────
+type PeriodKey = "today" | "week" | "period";
+const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "week", label: "This Week" },
+  { key: "period", label: "This Period" },
+];
+const PERIOD_SUBLABEL: Record<PeriodKey, string> = {
+  today: "today",
+  week: "this week",
+  period: "this period",
+};
+
+function PeriodSelector({ value, onChange }: { value: PeriodKey; onChange: (p: PeriodKey) => void }) {
+  return (
+    <div className="inline-flex items-center rounded-md border border-border bg-muted/40 p-0.5">
+      {PERIOD_OPTIONS.map(opt => (
+        <button
+          key={opt.key}
+          onClick={() => onChange(opt.key)}
+          data-testid={`period-${opt.key}`}
+          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+            value === opt.key
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { data: stats, isLoading } = useQuery<any>({ queryKey: ["/api/dashboard/stats"] });
+  const [period, setPeriod] = useState<PeriodKey>(() => {
+    if (typeof window === "undefined") return "week";
+    const saved = window.localStorage.getItem("dashboard.period");
+    return saved === "today" || saved === "week" || saved === "period" ? saved : "week";
+  });
+
+  useEffect(() => {
+    try { window.localStorage.setItem("dashboard.period", period); } catch {}
+  }, [period]);
+
+  const { data: stats, isLoading } = useQuery<any>({ queryKey: [`/api/dashboard/stats?period=${period}`] });
   const { data: leaderboardData } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
   const { data: losData } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
@@ -634,6 +678,10 @@ export default function Dashboard() {
   const todayDate = new Date().toISOString().split("T")[0];
   const { data: todayAssignments = [] } = useQuery<any[]>({ queryKey: [`/api/assignments?date=${todayDate}`] });
 
+  const subLabel = PERIOD_SUBLABEL[period];
+  const callsTitle =
+    period === "today" ? "Calls Today" : period === "week" ? "Calls This Week" : "Calls This Period";
+
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1400px] mx-auto">
       {/* Header */}
@@ -644,6 +692,7 @@ export default function Dashboard() {
             {stats?.startDate && stats?.endDate ? `${stats.startDate} — ${stats.endDate}` : "Current period"}
           </p>
         </div>
+        <PeriodSelector value={period} onChange={setPeriod} />
       </div>
 
       {/* KPI Row — always visible */}
@@ -654,12 +703,12 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub="this period" href="/outcomes" />
+            <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub={subLabel} href="/outcomes" />
             <StatCard title="Upcoming Appts" value={stats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" sub="scheduled ahead" href="/appointments" />
             <StatCard title="My Calls Today" value={stats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={stats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
-            <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub="this period" href="/outcomes" />
-            <StatCard title="Transfer/Call %" value={stats?.callTransferRatio != null ? `${stats.callTransferRatio}%` : "—"} icon={TrendingUp} color="success" sub={stats?.callTransferRatio != null ? `${stats.transfers} xfers / ${stats.totalCallsToday} calls (team)` : "log calls to see ratio"} />
-            <StatCard title="Active LOs" value={(losData ?? []).filter((l: any) => l.internalStatus === "active").length} icon={Users} color="primary" sub="available to assign" href="/directory" />
+            <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub={subLabel} href="/outcomes" />
+            <StatCard title="Future Contacts" value={stats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" sub={subLabel} href="/outcomes" />
+            <StatCard title={callsTitle} value={stats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" sub={`my calls ${subLabel}`} href="/eod-report" />
           </div>
           <CallEntryWidget />
         </>
