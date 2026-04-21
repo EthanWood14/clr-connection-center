@@ -416,7 +416,19 @@ function ScheduledReportRecipientsCard() {
   useEffect(() => {
     if (!schedules || schedules.length === 0) return;
     const next: Record<ReportType, string[]> = { daily: [], weekly: [], monthly: [] };
-    for (const s of schedules) next[s.report_type] = s.recipients ?? [];
+    for (const s of schedules) {
+      const seen = new Set<string>();
+      const list: string[] = [];
+      for (const e of s.recipients ?? []) {
+        const trimmed = String(e || "").trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push(trimmed);
+      }
+      next[s.report_type] = list;
+    }
     setLocal(next);
   }, [schedules]);
 
@@ -438,7 +450,8 @@ function ScheduledReportRecipientsCard() {
 
   function addRecipient(type: ReportType) {
     const em = (draft[type] || "").trim().toLowerCase();
-    if (!em || local[type].includes(em)) return;
+    if (!em) return;
+    if (local[type].some(e => e.trim().toLowerCase() === em)) return;
     setLocal(prev => ({ ...prev, [type]: [...prev[type], em] }));
     setDraft(prev => ({ ...prev, [type]: "" }));
   }

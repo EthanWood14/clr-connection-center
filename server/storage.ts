@@ -694,25 +694,27 @@ function runNewMigrations() {
     insertDefault.run("monthly", defaults);
   } catch (e) { console.error("report_schedule_settings seed failed:", e); }
 
-  // One-time cleanup: dedupe existing recipient lists case-insensitively.
-  // Safe to run on every boot — idempotent.
+  // Cleanup: dedupe existing recipient lists case-insensitively. Runs every boot.
+  // Always writes back so stored JSON is always canonical (no stale dupes carried over).
   try {
     const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
     const updateStmt = sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`);
     for (const row of rows) {
-      let parsed: string[] = [];
+      let parsed: unknown = [];
       try { parsed = JSON.parse(row.recipients || "[]"); } catch { parsed = []; }
-      if (!Array.isArray(parsed)) parsed = [];
+      const list = Array.isArray(parsed) ? parsed : [];
       const seen = new Set<string>();
       const deduped: string[] = [];
-      for (const e of parsed) {
-        const trimmed = String(e || "").trim();
+      for (const e of list) {
+        if (typeof e !== "string") continue;
+        const trimmed = e.trim();
         if (!trimmed) continue;
         const key = trimmed.toLowerCase();
         if (!seen.has(key)) { seen.add(key); deduped.push(trimmed); }
       }
-      if (deduped.length !== parsed.length) {
-        updateStmt.run(JSON.stringify(deduped), row.report_type);
+      const nextJson = JSON.stringify(deduped);
+      if (nextJson !== row.recipients) {
+        updateStmt.run(nextJson, row.report_type);
       }
     }
   } catch (e) { console.error("report_schedule_settings dedupe cleanup failed:", e); }
@@ -885,12 +887,27 @@ export function updateEmailSettings(data: any) {
 // ── Report schedule recipients (per report_type) ─────────────────────────────
 export type ReportType = "daily" | "weekly" | "monthly";
 
+function dedupeRecipientList(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of list) {
+    if (typeof e !== "string") continue;
+    const trimmed = e.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 export function getReportScheduleRecipients(type: ReportType): string[] {
   const row = sqlite.prepare(`SELECT recipients FROM report_schedule_settings WHERE report_type=?`).get(type) as any;
   if (!row?.recipients) return [];
   try {
-    const parsed = JSON.parse(row.recipients);
-    return Array.isArray(parsed) ? parsed.filter((e: unknown) => typeof e === "string" && e.trim()) : [];
+    return dedupeRecipientList(JSON.parse(row.recipients));
   } catch { return []; }
 }
 
@@ -899,8 +916,7 @@ export function getAllReportSchedules(): { report_type: ReportType; recipients: 
   const byType = new Map<string, string[]>();
   for (const r of rows) {
     try {
-      const parsed = JSON.parse(r.recipients || "[]");
-      byType.set(r.report_type, Array.isArray(parsed) ? parsed : []);
+      byType.set(r.report_type, dedupeRecipientList(JSON.parse(r.recipients || "[]")));
     } catch { byType.set(r.report_type, []); }
   }
   return (["daily", "weekly", "monthly"] as ReportType[]).map(t => ({
