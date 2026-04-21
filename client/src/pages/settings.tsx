@@ -401,163 +401,11 @@ function NmlsScheduleCard() {
   );
 }
 
-type ReportType = "daily" | "weekly" | "monthly";
-interface ReportSchedule { report_type: ReportType; recipients: string[] }
-
-function ScheduledReportRecipientsCard() {
-  const { toast } = useToast();
-  const { data: schedules = [], isLoading } = useQuery<ReportSchedule[]>({
-    queryKey: ["/api/report-schedules"],
-  });
-
-  const [local, setLocal] = useState<Record<ReportType, string[]>>({ daily: [], weekly: [], monthly: [] });
-  const [draft, setDraft] = useState<Record<ReportType, string>>({ daily: "", weekly: "", monthly: "" });
-
-  useEffect(() => {
-    if (!schedules || schedules.length === 0) return;
-    const next: Record<ReportType, string[]> = { daily: [], weekly: [], monthly: [] };
-    for (const s of schedules) {
-      const seen = new Set<string>();
-      const list: string[] = [];
-      for (const e of s.recipients ?? []) {
-        const trimmed = String(e || "").trim();
-        if (!trimmed) continue;
-        const key = trimmed.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        list.push(trimmed);
-      }
-      next[s.report_type] = list;
-    }
-    setLocal(next);
-  }, [schedules]);
-
-  const saveMutation = useMutation({
-    mutationFn: ({ type, recipients }: { type: ReportType; recipients: string[] }) =>
-      apiRequest("PUT", `/api/report-schedules/${type}`, { recipients }),
-    onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] });
-      toast({ title: `${vars.type.charAt(0).toUpperCase() + vars.type.slice(1)} recipients saved` });
-    },
-    onError: () => toast({ title: "Failed to save recipients", variant: "destructive" }),
-  });
-
-  const labels: Record<ReportType, string> = {
-    daily: "Daily Report",
-    weekly: "Weekly Report",
-    monthly: "Monthly Report",
-  };
-
-  function addRecipient(type: ReportType) {
-    const em = (draft[type] || "").trim().toLowerCase();
-    if (!em) return;
-    if (local[type].some(e => e.trim().toLowerCase() === em)) return;
-    setLocal(prev => ({ ...prev, [type]: [...prev[type], em] }));
-    setDraft(prev => ({ ...prev, [type]: "" }));
-  }
-
-  function removeRecipient(type: ReportType, em: string) {
-    setLocal(prev => ({ ...prev, [type]: prev[type].filter(e => e !== em) }));
-  }
-
-  function persistedFor(type: ReportType): string[] {
-    const row = schedules.find(s => s.report_type === type);
-    return (row?.recipients ?? []).map(e => String(e || "").trim()).filter(Boolean);
-  }
-  function isUnsaved(type: ReportType): boolean {
-    const a = [...local[type]].map(e => e.toLowerCase()).sort();
-    const b = persistedFor(type).map(e => e.toLowerCase()).sort();
-    if (a.length !== b.length) return true;
-    return a.some((v, i) => v !== b[i]);
-  }
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Send className="w-4 h-4 text-blue-600" />
-          Scheduled Report Recipients
-        </CardTitle>
-        <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
-          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Configure who receives each scheduled report type. These lists override the global Manager Recipients for scheduled sends. EOD reports are unaffected.</span>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {isLoading ? (
-          <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
-        ) : (
-          (["daily", "weekly", "monthly"] as ReportType[]).map(type => (
-            <div key={type} className="rounded-lg border px-4 py-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium">{labels[type]}</p>
-                  {isUnsaved(type) && (
-                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                      Unsaved — click Save to apply
-                    </span>
-                  )}
-                </div>
-                <Button
-                  size="sm"
-                  variant={isUnsaved(type) ? "default" : "outline"}
-                  onClick={() => saveMutation.mutate({ type, recipients: local[type] })}
-                  disabled={saveMutation.isPending}
-                  className="gap-1.5"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {saveMutation.isPending && saveMutation.variables?.type === type ? "Saving…" : "Save"}
-                </Button>
-              </div>
-              <div className="flex gap-2 mb-2">
-                <Input
-                  placeholder="recipient@westcapital.com"
-                  value={draft[type]}
-                  onChange={e => setDraft(prev => ({ ...prev, [type]: e.target.value }))}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addRecipient(type); } }}
-                  className="flex-1"
-                />
-                <Button size="sm" variant="outline" onClick={() => addRecipient(type)} type="button">Add</Button>
-              </div>
-              {local[type].length === 0 ? (
-                <p className="text-xs text-muted-foreground italic">No recipients — this report won't send.</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {local[type].map(em => (
-                    <Badge key={em} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs">
-                      {em}
-                      <button
-                        type="button"
-                        onClick={() => removeRecipient(type, em)}
-                        className="ml-0.5 rounded-full hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
-                        aria-label={`Remove ${em}`}
-                      >×</button>
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function EmailReportsCard() {
   const { toast } = useToast();
   const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
     queryKey: ["/api/settings/email"],
   });
-  const { data: schedules = [] } = useQuery<ReportSchedule[]>({
-    queryKey: ["/api/report-schedules"],
-  });
-  const recipientsByType: Record<ReportType, string[]> = { daily: [], weekly: [], monthly: [] };
-  for (const s of schedules) {
-    if (s.report_type in recipientsByType) {
-      recipientsByType[s.report_type] = (s.recipients ?? []).map(e => String(e || "").trim()).filter(Boolean);
-    }
-  }
 
   const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
@@ -635,11 +483,14 @@ function EmailReportsCard() {
 
   async function handleSendNow(type: "daily" | "weekly" | "monthly") {
     const label = type.charAt(0).toUpperCase() + type.slice(1);
-    const recipients = recipientsByType[type];
-    if (!recipients.length) {
+    const persisted: string[] = (() => {
+      try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]"); }
+      catch { return []; }
+    })();
+    if (!persisted.length) {
       toast({
-        title: `No saved recipients for ${label.toLowerCase()} report`,
-        description: `Add recipients in Scheduled Report Recipients → ${label} Report, click Save, then try again.`,
+        title: `No saved recipients`,
+        description: `Add recipients under Report Recipients and click Save Email Settings, then try again.`,
         variant: "destructive",
       });
       return;
@@ -699,15 +550,11 @@ function EmailReportsCard() {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Mail className="w-4 h-4 text-blue-600" />
-          Email — Resend Config & Send Now
+          Email Reports
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>
-            Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.
-            <br />
-            <strong>Send Now</strong> buttons deliver to recipients from <em>Scheduled Report Recipients</em> above. The <em>EOD Report Recipients</em> list on this card is used only for per-CLR end-of-day notifications.
-          </span>
+          <span>Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -731,10 +578,10 @@ function EmailReportsCard() {
               </div>
             </div>
 
-            {/* EOD manager emails (NOT used for daily/weekly/monthly scheduled reports) */}
+            {/* Unified recipient list — EOD + daily + weekly + monthly all send here */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">EOD Report Recipients</p>
-              <p className="text-[11px] text-muted-foreground mb-2">Receives end-of-day summaries when a CLR submits their shift recap. <strong>Does not affect</strong> daily/weekly/monthly scheduled reports — use <em>Scheduled Report Recipients</em> for those.</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Report Recipients</p>
+              <p className="text-[11px] text-muted-foreground mb-2">These recipients receive <strong>all</strong> reports — EOD submissions plus daily, weekly, and monthly scheduled reports. Click <em>Save Email Settings</em> below after editing.</p>
               {/* Quick-add WCL managers */}
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {[
@@ -833,7 +680,10 @@ function EmailReportsCard() {
                 {testLoading ? "Testing…" : "Test Connection"}
               </Button>
               {(["daily", "weekly", "monthly"] as const).map(type => {
-                const count = recipientsByType[type].length;
+                const persistedCount: number = (() => {
+                  try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]").length; }
+                  catch { return 0; }
+                })();
                 const label = type.charAt(0).toUpperCase() + type.slice(1);
                 return (
                   <Button
@@ -841,11 +691,11 @@ function EmailReportsCard() {
                     size="sm"
                     variant="outline"
                     onClick={() => handleSendNow(type)}
-                    disabled={sendLoading || count === 0}
-                    title={count === 0 ? `Add and save recipients in Scheduled Report Recipients → ${label} Report` : `Sends to ${count} recipient${count === 1 ? "" : "s"}`}
+                    disabled={sendLoading || persistedCount === 0}
+                    title={persistedCount === 0 ? `Add and save recipients in Report Recipients` : `Sends to ${persistedCount} recipient${persistedCount === 1 ? "" : "s"}`}
                     className="gap-1.5"
                   >
-                    {sendLoading ? "Sending…" : `Send ${label} Now (${count})`}
+                    {sendLoading ? "Sending…" : `Send ${label} Now (${persistedCount})`}
                   </Button>
                 );
               })}
@@ -1272,11 +1122,7 @@ export default function Settings() {
       </>
       )} {/* end admin-only algorithm section */}
 
-      {/* Scheduled Report Recipients (admin-only) — rendered FIRST so admins see
-          the list that drives daily/weekly/monthly sends before the EOD-only settings. */}
-      {authUser?.role === "admin" && <ScheduledReportRecipientsCard />}
-
-      {/* Email Reports (Resend config + EOD recipient list + Send Now buttons) */}
+      {/* Email Reports — unified recipient list + Resend config + Send Now */}
       <EmailReportsCard />
 
       {/* NMLS License Check Schedule */}

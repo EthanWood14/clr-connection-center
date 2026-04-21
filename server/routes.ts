@@ -243,19 +243,22 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
 }
 
 async function sendReport(type: "daily" | "weekly" | "monthly") {
-  // Recipients come EXCLUSIVELY from report_schedule_settings[type]. No fallback
-  // to email_settings.manager_emails — that list is for EOD reports only.
-  const perTypeRecipients = storageExtra.getReportScheduleRecipients(type);
+  // Single source of truth for every report (EOD + daily + weekly + monthly):
+  // email_settings.manager_emails. This is the list the admin edits in the
+  // "Report Recipients" card on the Settings page.
+  const settings = storageExtra.getEmailSettings() as any;
+  let rawManagers: string[] = [];
+  try { rawManagers = JSON.parse(settings.manager_emails || "[]"); } catch { rawManagers = []; }
   const seenManagers = new Set<string>();
   const managers: string[] = [];
-  for (const e of perTypeRecipients) {
+  for (const e of rawManagers) {
     const trimmed = String(e || "").trim();
     if (!trimmed) continue;
     const key = trimmed.toLowerCase();
     if (!seenManagers.has(key)) { seenManagers.add(key); managers.push(trimmed); }
   }
-  console.log(`[sendReport] type=${type} resolved-recipients=${JSON.stringify(managers)} (source=report_schedule_settings)`);
-  if (!managers.length) throw new Error(`No recipients configured for ${type} report. Add recipients in Settings → Scheduled Report Recipients.`);
+  console.log(`[sendReport] type=${type} resolved-recipients=${JSON.stringify(managers)} (source=email_settings.manager_emails)`);
+  if (!managers.length) throw new Error(`No recipients configured. Add recipients in Settings → Report Recipients.`);
 
   // Choose the reporting window that matches the report type.
   // daily   → today only
@@ -1119,8 +1122,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const isManager = !!req.body?.is_manager;
     const updated = storage.updateUser(id, { isManager } as any);
     if (user.email) {
-      if (isManager) storageExtra.addEmailToAllReportSchedules(user.email);
-      else storageExtra.removeEmailFromAllReportSchedules(user.email);
+      // Sync the single unified recipient list (email_settings.manager_emails).
+      const settings = storageExtra.getEmailSettings() as any;
+      let list: string[] = [];
+      try { list = JSON.parse(settings.manager_emails || "[]"); } catch { list = []; }
+      const lower = String(user.email).trim().toLowerCase();
+      const filtered = list.filter(e => String(e || "").trim().toLowerCase() !== lower);
+      const next = isManager ? [...filtered, user.email] : filtered;
+      storageExtra.updateEmailSettings({ manager_emails: JSON.stringify(next) } as any);
     }
     res.json(updated);
   });
