@@ -2156,16 +2156,25 @@ export function registerRoutes(httpServer: Server, app: Express) {
         `).all() as any[]
       : sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId) as any[];
 
-    // For each report, fetch transfer prospect names from lead_outcomes
+    // For each report, fetch transfer prospect names + LO names from lead_outcomes
     const enriched = reports.map((r: any) => {
-      const transferProspects: string[] = (sqlite.prepare(`
-        SELECT borrower_name FROM lead_outcomes
-        WHERE assistant_id=? AND date=? AND outcome_type='transfer'
-        ORDER BY id ASC
-      `).all(r.assistant_id, r.report_date) as any[])
+      const rows = sqlite.prepare(`
+        SELECT o.borrower_name, lo.full_name as lo_full_name
+        FROM lead_outcomes o
+        LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+        WHERE o.assistant_id=? AND o.date=? AND o.outcome_type='transfer'
+        ORDER BY o.id ASC
+      `).all(r.assistant_id, r.report_date) as any[];
+      const transferProspects: string[] = rows
         .map((o: any) => (o.borrower_name || '').trim())
         .filter((n: string) => n.length > 0);
-      return { ...r, transferProspects };
+      const transferProspectsWithLo: Array<{ name: string; loName: string | null }> = rows
+        .map((o: any) => ({
+          name: (o.borrower_name || '').trim(),
+          loName: (o.lo_full_name || '').trim() || null,
+        }))
+        .filter((p) => p.name.length > 0);
+      return { ...r, transferProspects, transferProspectsWithLo };
     });
 
     res.json(enriched);
@@ -2206,31 +2215,27 @@ export function registerRoutes(httpServer: Server, app: Express) {
         const appts = Number(appointments ?? 0);
         const safeNotes = (notes ?? "").toString().trim();
 
-        // Fetch today's outcomes for this user to get transfer prospect names + fell through count
-        const todayOutcomes = (storage as any).db?.prepare(
-          `SELECT * FROM outcomes WHERE assistant_id=? AND date=?`
-        )?.all(userId, reportDate) as any[] ?? [];
-
-        // Fallback: query via storage
-        let allOutcomesForDay: any[] = [];
-        try {
-          allOutcomesForDay = (storageExtra as any).getOutcomesForDay
-            ? (storageExtra as any).getOutcomesForDay(userId, reportDate)
-            : [];
-        } catch {}
-
-        // Use direct sqlite query for outcomes
+        // Fetch today's outcomes for this user to get transfer prospect names + LO names + fell through count
         const sqlite2 = (storageExtra as any).getSqlite ? (storageExtra as any).getSqlite() : null;
-        let transferProspects: string[] = [];
+        let transferProspects: Array<{ name: string; loName: string | null }> = [];
         let fellThroughCount = 0;
         if (sqlite2) {
           try {
-            const dayRows = sqlite2.prepare(`SELECT * FROM outcomes WHERE assistant_id=? AND date=?`).all(userId, reportDate) as any[];
+            const dayRows = sqlite2.prepare(`
+              SELECT o.*, lo.full_name as lo_full_name
+              FROM lead_outcomes o
+              LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+              WHERE o.assistant_id=? AND o.date=?
+              ORDER BY o.id ASC
+            `).all(userId, reportDate) as any[];
             transferProspects = dayRows
-              .filter((o: any) => o.outcome_type === 'transfer' || o.outcomeType === 'transfer')
-              .map((o: any) => (o.borrower_name || o.borrowerName || '').trim())
-              .filter((n: string) => n.length > 0);
-            fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through' || o.outcomeType === 'fell_through').length;
+              .filter((o: any) => o.outcome_type === 'transfer')
+              .map((o: any) => ({
+                name: (o.borrower_name || '').trim(),
+                loName: (o.lo_full_name || '').trim() || null,
+              }))
+              .filter((p: any) => p.name.length > 0);
+            fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
           } catch {}
         }
 
@@ -2266,12 +2271,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
             <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfer Prospects (${xfers})</p>
             ${transferProspects.length > 0
-              ? transferProspects.map((name, i) =>
-                  `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
+              ? transferProspects.map((p, i) => {
+                  const safeName = p.name.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  const safeLo = p.loName ? p.loName.replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
+                  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
                     <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
-                    <span style="font-size:13px;font-weight:600;color:#14532d">${name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
-                  </div>`
-                ).join('')
+                    <span style="font-size:13px;font-weight:600;color:#14532d">${safeName}</span>
+                    ${safeLo ? `<span style="font-size:13px;color:#15803d">&rarr;</span><span style="font-size:13px;font-weight:600;color:#166534">${safeLo}</span>` : ''}
+                  </div>`;
+                }).join('')
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
             }
           </div>` : ""}

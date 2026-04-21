@@ -358,6 +358,7 @@ export function TeamManagement() {
               <p className="text-xs text-muted-foreground/70">Add your first team member to get started.</p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -457,6 +458,7 @@ export function TeamManagement() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

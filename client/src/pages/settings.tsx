@@ -801,6 +801,40 @@ function EmailReportsCard() {
   );
 }
 
+// ── Manager toggle button (admin-only, shown inline on each user row) ──────
+function ManagerToggleButton({ user }: { user: any }) {
+  const { toast } = useToast();
+  const isManager = !!(user.isManager ?? user.is_manager);
+  const mut = useMutation({
+    mutationFn: (next: boolean) =>
+      apiRequest("PATCH", `/api/users/${user.id}/manager`, { is_manager: next }),
+    onSuccess: (_, next) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] });
+      toast({
+        title: next ? `${user.name} is now a manager` : `${user.name} is no longer a manager`,
+        description: next
+          ? "Added to daily, weekly, and monthly report recipients."
+          : "Removed from scheduled report recipients.",
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to update manager flag", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Button
+      size="sm"
+      variant={isManager ? "default" : "outline"}
+      className={`text-xs h-7 px-2 ${isManager ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-500" : ""}`}
+      onClick={() => mut.mutate(!isManager)}
+      disabled={mut.isPending}
+      data-testid={`button-manager-${user.id}`}
+    >
+      {isManager ? "★ Manager" : "Make Manager"}
+    </Button>
+  );
+}
+
 // ── Resend Intro Emails component ───────────────────────────────────────────
 function ResendIntroEmails({ users }: { users: any[] }) {
   const { toast } = useToast();
@@ -1223,6 +1257,9 @@ export default function Settings() {
                   >
                     {u.isActive ? "Active" : "Inactive"}
                   </Badge>
+                  {authUser?.role === "admin" && (
+                    <ManagerToggleButton user={u} />
+                  )}
                 </div>
               </div>
             ))
