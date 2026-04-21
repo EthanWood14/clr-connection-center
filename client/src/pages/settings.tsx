@@ -460,6 +460,17 @@ function ScheduledReportRecipientsCard() {
     setLocal(prev => ({ ...prev, [type]: prev[type].filter(e => e !== em) }));
   }
 
+  function persistedFor(type: ReportType): string[] {
+    const row = schedules.find(s => s.report_type === type);
+    return (row?.recipients ?? []).map(e => String(e || "").trim()).filter(Boolean);
+  }
+  function isUnsaved(type: ReportType): boolean {
+    const a = [...local[type]].map(e => e.toLowerCase()).sort();
+    const b = persistedFor(type).map(e => e.toLowerCase()).sort();
+    if (a.length !== b.length) return true;
+    return a.some((v, i) => v !== b[i]);
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -479,10 +490,17 @@ function ScheduledReportRecipientsCard() {
           (["daily", "weekly", "monthly"] as ReportType[]).map(type => (
             <div key={type} className="rounded-lg border px-4 py-3">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium">{labels[type]}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{labels[type]}</p>
+                  {isUnsaved(type) && (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                      Unsaved — click Save to apply
+                    </span>
+                  )}
+                </div>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant={isUnsaved(type) ? "default" : "outline"}
                   onClick={() => saveMutation.mutate({ type, recipients: local[type] })}
                   disabled={saveMutation.isPending}
                   className="gap-1.5"
@@ -531,6 +549,15 @@ function EmailReportsCard() {
   const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
     queryKey: ["/api/settings/email"],
   });
+  const { data: schedules = [] } = useQuery<ReportSchedule[]>({
+    queryKey: ["/api/report-schedules"],
+  });
+  const recipientsByType: Record<ReportType, string[]> = { daily: [], weekly: [], monthly: [] };
+  for (const s of schedules) {
+    if (s.report_type in recipientsByType) {
+      recipientsByType[s.report_type] = (s.recipients ?? []).map(e => String(e || "").trim()).filter(Boolean);
+    }
+  }
 
   const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
@@ -607,8 +634,17 @@ function EmailReportsCard() {
   }
 
   async function handleSendNow(type: "daily" | "weekly" | "monthly") {
-    setSendLoading(true);
     const label = type.charAt(0).toUpperCase() + type.slice(1);
+    const recipients = recipientsByType[type];
+    if (!recipients.length) {
+      toast({
+        title: `No saved recipients for ${label.toLowerCase()} report`,
+        description: `Add recipients in Scheduled Report Recipients → ${label} Report, click Save, then try again.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setSendLoading(true);
     try {
       const res = await fetch("/api/settings/email/send-now", {
         method: "POST",
@@ -791,15 +827,23 @@ function EmailReportsCard() {
                 <Mail className="w-3.5 h-3.5" />
                 {testLoading ? "Testing…" : "Test Connection"}
               </Button>
-              <Button size="sm" variant="outline" onClick={() => handleSendNow("daily")} disabled={sendLoading} className="gap-1.5">
-                {sendLoading ? "Sending…" : "Send Daily Now"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => handleSendNow("weekly")} disabled={sendLoading} className="gap-1.5">
-                {sendLoading ? "Sending…" : "Send Weekly Now"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => handleSendNow("monthly")} disabled={sendLoading} className="gap-1.5">
-                {sendLoading ? "Sending…" : "Send Monthly Now"}
-              </Button>
+              {(["daily", "weekly", "monthly"] as const).map(type => {
+                const count = recipientsByType[type].length;
+                const label = type.charAt(0).toUpperCase() + type.slice(1);
+                return (
+                  <Button
+                    key={type}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleSendNow(type)}
+                    disabled={sendLoading || count === 0}
+                    title={count === 0 ? `Add and save recipients in Scheduled Report Recipients → ${label} Report` : `Sends to ${count} recipient${count === 1 ? "" : "s"}`}
+                    className="gap-1.5"
+                  >
+                    {sendLoading ? "Sending…" : `Send ${label} Now (${count})`}
+                  </Button>
+                );
+              })}
               <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending} className="ml-auto gap-1.5">
                 <Save className="w-3.5 h-3.5" />
                 {saveMutation.isPending ? "Saving…" : "Save Email Settings"}
