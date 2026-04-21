@@ -36,6 +36,7 @@ import EodReport from "@/pages/eod-report";
 import InstallApp from "@/pages/install";
 import Support from "@/pages/support";
 import IntroVideo from "@/pages/intro-video";
+import CallScript from "@/pages/call-script";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -71,6 +72,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/audit-log":    "Audit Log",
   "/lo-performance": "LO Performance",
   "/chat":           "Team Chat",
+  "/call-script":    "Call Script",
   "/eod-report":     "EOD Reporting",
   "/install":         "Install App",
   "/privacy-policy": "Privacy Policy",
@@ -106,6 +108,7 @@ function AppRouter() {
       <Route path="/eod-report" component={EodReport} />
       <Route path="/install" component={InstallApp} />
       <Route path="/support" component={Support} />
+      <Route path="/call-script" component={CallScript} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />

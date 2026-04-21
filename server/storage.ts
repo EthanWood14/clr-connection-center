@@ -1002,3 +1002,209 @@ export function getEodReportsByRange(from: string, to: string): any[] {
   const users = sqlite.prepare(`SELECT id, name FROM users`).all() as any[];
   return reports.map(r => ({ ...r, assistant: users.find(u => u.id === r.assistant_id) }));
 }
+
+// ── Call Scripts ──────────────────────────────────────────────────────────────
+// Tables created inline here (no Drizzle schema needed for this feature)
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS call_scripts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS script_nodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      script_id INTEGER NOT NULL REFERENCES call_scripts(id) ON DELETE CASCADE,
+      parent_node_id INTEGER REFERENCES script_nodes(id) ON DELETE CASCADE,
+      parent_response_id INTEGER,
+      text TEXT NOT NULL,
+      hint TEXT,
+      node_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS script_responses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      node_id INTEGER NOT NULL REFERENCES script_nodes(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT 'default',
+      next_node_id INTEGER REFERENCES script_nodes(id) ON DELETE SET NULL,
+      response_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+} catch {}
+
+// Seed default WCL script if none exist
+function seedDefaultScript() {
+  const existing = sqlite.prepare(`SELECT id FROM call_scripts LIMIT 1`).get();
+  if (existing) return;
+
+  const scriptResult = sqlite.prepare(
+    `INSERT INTO call_scripts (name, description, created_by) VALUES (?, ?, ?)`
+  ).run("WCL Cold Call Script", "Standard West Capital Lending cold call flow for new borrower leads.", 1);
+  const scriptId = scriptResult.lastInsertRowid as number;
+
+  // Node 1 — Opening
+  const n1 = sqlite.prepare(`INSERT INTO script_nodes (script_id, text, hint, node_order) VALUES (?,?,?,?)`).run(
+    scriptId,
+    "Hi, is this [Borrower Name]? Great — my name is [Your Name] with West Capital Lending. I'm reaching out because you recently inquired about a home loan. Do you have just a couple of minutes?",
+    "Speak slowly and warmly. Pause after their name.",
+    1
+  );
+  // Node 2 — Interested
+  const n2 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n1.lastInsertRowid,
+    "Perfect! We specialize in getting people into homes with the best rates available. To point you in the right direction, what's your current situation — are you looking to purchase or refinance?",
+    "Keep energy upbeat. Let them talk.",
+    1
+  );
+  // Node 3 — Not interested
+  const n3 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n1.lastInsertRowid,
+    "Totally understand — I'll be quick, I promise. You had expressed interest in a home loan and I just want to make sure you have all your options. Can I ask what changed?",
+    "Don't be pushy. Empathize first.",
+    2
+  );
+  // Node 4 — Bad time
+  const n4 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n1.lastInsertRowid,
+    "No problem at all! When would be a better time to reach you — later today or sometime this week?",
+    "Get a specific time commitment.",
+    3
+  );
+  // Node 5 — Purchase path
+  const n5 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n2.lastInsertRowid,
+    "Great — purchasing! Are you currently pre-approved, or is that something you're still working on?",
+    "This qualifies their readiness.",
+    1
+  );
+  // Node 6 — Refinance path
+  const n6 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n2.lastInsertRowid,
+    "Got it — refinancing. What's driving the timing on that — lower rate, cash out, or something else?",
+    "Understanding their goal helps with LO match.",
+    2
+  );
+  // Node 7 — Not pre-approved
+  const n7 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n5.lastInsertRowid,
+    "Perfect, that's exactly where we can help. I'd love to connect you with one of our loan officers who can walk you through pre-approval in about 10 minutes. Does that sound good?",
+    "This is your transfer moment — be confident.",
+    1
+  );
+  // Node 8 — Already pre-approved
+  const n8 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n5.lastInsertRowid,
+    "Awesome — you're ahead of the game! Let me connect you with a loan officer who can review your approval and make sure you're getting the best rate available. One moment!",
+    "Transfer immediately — they're hot.",
+    2
+  );
+  // Node 9 — Transfer confirmed
+  const n9 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n7.lastInsertRowid,
+    "Excellent! I'm transferring you to [LO Name] right now. They'll take great care of you. Have a great day! 🎉",
+    "Log transfer in Bonzo immediately after.",
+    1
+  );
+  // Node 10 — Not ready yet
+  const n10 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
+    scriptId, n7.lastInsertRowid,
+    "Totally fine! When do you think you might be ready to move forward? I can set a follow-up appointment so you're first in line when you're ready.",
+    "Set a specific date — don't leave it open.",
+    2
+  );
+
+  // ── Responses for Node 1 (opening)
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Yes, I have a minute", "green", n2.lastInsertRowid, 1);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Not interested", "red", n3.lastInsertRowid, 2);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Bad time right now", "yellow", n4.lastInsertRowid, 3);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Hung up / No answer", "gray", null, 4);
+
+  // ── Responses for Node 2 (interested)
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Looking to purchase", "green", n5.lastInsertRowid, 1);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Want to refinance", "blue", n6.lastInsertRowid, 2);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Not sure yet", "yellow", n6.lastInsertRowid, 3);
+
+  // ── Responses for Node 5 (purchase)
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n5.lastInsertRowid, "Not pre-approved yet", "yellow", n7.lastInsertRowid, 1);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n5.lastInsertRowid, "Already pre-approved", "green", n8.lastInsertRowid, 2);
+
+  // ── Responses for Node 7 (transfer offer)
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Yes, transfer me!", "green", n9.lastInsertRowid, 1);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Not ready yet", "yellow", n10.lastInsertRowid, 2);
+  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Declined", "red", null, 3);
+}
+seedDefaultScript();
+
+export function getCallScripts(): any[] {
+  return sqlite.prepare(`SELECT * FROM call_scripts ORDER BY created_at DESC`).all() as any[];
+}
+export function getCallScript(id: number): any {
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(id) as any;
+}
+export function createCallScript(data: { name: string; description?: string; createdBy?: number }): any {
+  const r = sqlite.prepare(`INSERT INTO call_scripts (name, description, created_by) VALUES (?,?,?)`).run(data.name, data.description ?? null, data.createdBy ?? null);
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(r.lastInsertRowid);
+}
+export function updateCallScript(id: number, data: { name?: string; description?: string; isActive?: boolean }): any {
+  if (data.name !== undefined) sqlite.prepare(`UPDATE call_scripts SET name=?, updated_at=datetime('now') WHERE id=?`).run(data.name, id);
+  if (data.description !== undefined) sqlite.prepare(`UPDATE call_scripts SET description=?, updated_at=datetime('now') WHERE id=?`).run(data.description, id);
+  if (data.isActive !== undefined) sqlite.prepare(`UPDATE call_scripts SET is_active=?, updated_at=datetime('now') WHERE id=?`).run(data.isActive ? 1 : 0, id);
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(id);
+}
+export function deleteCallScript(id: number): void {
+  sqlite.prepare(`DELETE FROM call_scripts WHERE id=?`).run(id);
+}
+export function getScriptNodes(scriptId: number): any[] {
+  return sqlite.prepare(`SELECT * FROM script_nodes WHERE script_id=? ORDER BY node_order ASC`).all(scriptId) as any[];
+}
+export function getRootNode(scriptId: number): any {
+  return sqlite.prepare(`SELECT * FROM script_nodes WHERE script_id=? AND parent_node_id IS NULL ORDER BY node_order ASC LIMIT 1`).get(scriptId) as any;
+}
+export function getNodeResponses(nodeId: number): any[] {
+  return sqlite.prepare(`SELECT * FROM script_responses WHERE node_id=? ORDER BY response_order ASC`).all(nodeId) as any[];
+}
+export function getNodeById(id: number): any {
+  return sqlite.prepare(`SELECT * FROM script_nodes WHERE id=?`).get(id) as any;
+}
+export function createScriptNode(data: { scriptId: number; parentNodeId?: number | null; parentResponseId?: number | null; text: string; hint?: string; nodeOrder?: number }): any {
+  const r = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, parent_response_id, text, hint, node_order) VALUES (?,?,?,?,?,?)`).run(
+    data.scriptId, data.parentNodeId ?? null, data.parentResponseId ?? null, data.text, data.hint ?? null, data.nodeOrder ?? 0
+  );
+  return sqlite.prepare(`SELECT * FROM script_nodes WHERE id=?`).get(r.lastInsertRowid);
+}
+export function updateScriptNode(id: number, data: { text?: string; hint?: string }): any {
+  if (data.text !== undefined) sqlite.prepare(`UPDATE script_nodes SET text=? WHERE id=?`).run(data.text, id);
+  if (data.hint !== undefined) sqlite.prepare(`UPDATE script_nodes SET hint=? WHERE id=?`).run(data.hint, id);
+  return sqlite.prepare(`SELECT * FROM script_nodes WHERE id=?`).get(id);
+}
+export function deleteScriptNode(id: number): void {
+  sqlite.prepare(`DELETE FROM script_nodes WHERE id=?`).run(id);
+}
+export function createScriptResponse(data: { nodeId: number; label: string; color?: string; nextNodeId?: number | null; responseOrder?: number }): any {
+  const r = sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(
+    data.nodeId, data.label, data.color ?? 'default', data.nextNodeId ?? null, data.responseOrder ?? 0
+  );
+  return sqlite.prepare(`SELECT * FROM script_responses WHERE id=?`).get(r.lastInsertRowid);
+}
+export function updateScriptResponse(id: number, data: { label?: string; color?: string; nextNodeId?: number | null }): any {
+  if (data.label !== undefined) sqlite.prepare(`UPDATE script_responses SET label=? WHERE id=?`).run(data.label, id);
+  if (data.color !== undefined) sqlite.prepare(`UPDATE script_responses SET color=? WHERE id=?`).run(data.color, id);
+  if (data.nextNodeId !== undefined) sqlite.prepare(`UPDATE script_responses SET next_node_id=? WHERE id=?`).run(data.nextNodeId, id);
+  return sqlite.prepare(`SELECT * FROM script_responses WHERE id=?`).get(id);
+}
+export function deleteScriptResponse(id: number): void {
+  sqlite.prepare(`DELETE FROM script_responses WHERE id=?`).run(id);
+}
+export function getFullScriptTree(scriptId: number): any {
+  const script = getCallScript(scriptId);
+  if (!script) return null;
+  const nodes = getScriptNodes(scriptId);
+  const allResponses = nodes.flatMap(n => getNodeResponses(n.id));
+  return { ...script, nodes, responses: allResponses };
+}

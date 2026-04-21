@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +40,7 @@ const toolItems = [
   { title: "State Lookup",    url: "/state-lookup",  icon: MapPin },
   { title: "NMLS Checks",     url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
   { title: "Stats",           url: "/reporting",     icon: BarChart },
+  { title: "Call Script",     url: "/call-script",   icon: PhoneCall },
 ];
 
 const adminItems: { title: string; url: string; icon: any; badge?: string }[] = [

@@ -2044,6 +2044,85 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  // ── Call Scripts ────────────────────────────────────────────────────────────
+  app.get('/api/call-scripts', requireAuth, (_req: any, res: any) => {
+    res.json(storageExtra.getCallScripts());
+  });
+
+  app.post('/api/call-scripts', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const { name, description } = req.body;
+    if (!name) return res.status(400).json({ error: 'name required' });
+    res.json(storageExtra.createCallScript({ name, description, createdBy: req.session_user.userId }));
+  });
+
+  app.patch('/api/call-scripts/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    res.json(storageExtra.updateCallScript(parseInt(req.params.id), req.body));
+  });
+
+  app.delete('/api/call-scripts/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    storageExtra.deleteCallScript(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get('/api/call-scripts/:id/tree', requireAuth, (req: any, res: any) => {
+    const tree = storageExtra.getFullScriptTree(parseInt(req.params.id));
+    if (!tree) return res.status(404).json({ error: 'Not found' });
+    res.json(tree);
+  });
+
+  app.get('/api/call-scripts/:id/node/:nodeId', requireAuth, (req: any, res: any) => {
+    const node = storageExtra.getNodeById(parseInt(req.params.nodeId));
+    if (!node) return res.status(404).json({ error: 'Not found' });
+    const responses = storageExtra.getNodeResponses(node.id);
+    res.json({ ...node, responses });
+  });
+
+  app.get('/api/call-scripts/:id/root', requireAuth, (req: any, res: any) => {
+    const node = storageExtra.getRootNode(parseInt(req.params.id));
+    if (!node) return res.status(404).json({ error: 'No root node' });
+    const responses = storageExtra.getNodeResponses(node.id);
+    res.json({ ...node, responses });
+  });
+
+  app.post('/api/call-scripts/:id/nodes', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const { text, hint, parentNodeId, parentResponseId, nodeOrder } = req.body;
+    if (!text) return res.status(400).json({ error: 'text required' });
+    res.json(storageExtra.createScriptNode({ scriptId: parseInt(req.params.id), text, hint, parentNodeId, parentResponseId, nodeOrder }));
+  });
+
+  app.patch('/api/script-nodes/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    res.json(storageExtra.updateScriptNode(parseInt(req.params.id), req.body));
+  });
+
+  app.delete('/api/script-nodes/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    storageExtra.deleteScriptNode(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.post('/api/script-nodes/:nodeId/responses', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const { label, color, nextNodeId, responseOrder } = req.body;
+    if (!label) return res.status(400).json({ error: 'label required' });
+    res.json(storageExtra.createScriptResponse({ nodeId: parseInt(req.params.nodeId), label, color, nextNodeId, responseOrder }));
+  });
+
+  app.patch('/api/script-responses/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    res.json(storageExtra.updateScriptResponse(parseInt(req.params.id), req.body));
+  });
+
+  app.delete('/api/script-responses/:id', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    storageExtra.deleteScriptResponse(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
 }
 
 export function createHttpServer(app: Express): Server {
