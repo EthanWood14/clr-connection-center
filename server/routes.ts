@@ -203,14 +203,32 @@ function buildEmail(opts: {
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
 const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
 
-async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }) {
+async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   const apiKey = s.resend_api_key || DEFAULT_RESEND_KEY;
   const from = s.from_address_resend || DEFAULT_FROM;
-  const resend = new Resend(apiKey);
   const toArr = Array.isArray(to) ? to : [to];
-  const { error } = await resend.emails.send({ from, to: toArr, subject, html });
-  if (error) throw new Error(error.message ?? "Resend send failed");
+  console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}…`);
+  let result: any;
+  try {
+    const resend = new Resend(apiKey);
+    result = await resend.emails.send({ from, to: toArr, subject, html });
+  } catch (err: any) {
+    console.error(`[sendEmail] SDK threw:`, err?.message ?? err);
+    throw new Error(`Resend SDK error: ${err?.message ?? "unknown"}`);
+  }
+  if (result?.error) {
+    const msg = result.error.message ?? result.error.name ?? JSON.stringify(result.error);
+    console.error(`[sendEmail] Resend returned error:`, result.error);
+    throw new Error(`Resend: ${msg}`);
+  }
+  const id = result?.data?.id;
+  if (!id) {
+    console.error(`[sendEmail] no id in response:`, result);
+    throw new Error("Resend returned no email id — delivery status unknown");
+  }
+  console.log(`[sendEmail] delivered id=${id}`);
+  return id;
 }
 
 async function sendReport(type: "daily" | "weekly" | "monthly") {
@@ -558,7 +576,9 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   `;
 
   const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body });
-  await sendEmail({ to: managers, subject, html });
+  console.log(`[sendReport] type=${type} recipients=${JSON.stringify(managers)} window=${startDate}..${endDate}`);
+  const id = await sendEmail({ to: managers, subject, html });
+  return { id, recipients: managers };
 }
 
 // ── NMLS Check trigger + cron ────────────────────────────────────────────────
@@ -1972,11 +1992,18 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/settings/email/send-now", requireAuth, async (req, res) => {
-    const { type } = req.body; // 'daily' | 'weekly' | 'monthly'
+    const rawType = req.body?.type;
+    const type: "daily" | "weekly" | "monthly" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type}`);
     try {
-      await sendReport(type ?? "daily");
-      res.json({ ok: true });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+      const result = await sendReport(type);
+      console.log(`[send-now] OK type=${type} id=${result?.id} recipients=${JSON.stringify(result?.recipients)}`);
+      res.json({ ok: true, id: result?.id ?? null, recipients: result?.recipients ?? [] });
+    } catch (e: any) {
+      console.error(`[send-now] FAIL type=${type}:`, e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
   });
 
   // ── Scheduled report recipients (per daily/weekly/monthly) ──────────────────

@@ -619,22 +619,20 @@ function EmailReportsCard() {
       let data: any = {};
       try { data = await res.json(); } catch {}
       if (res.ok) {
-        const recipients = managerEmails.length
-          ? managerEmails.join(", ")
-          : "configured recipients";
+        const serverRecipients: string[] = Array.isArray(data?.recipients) ? data.recipients : [];
+        const recipients = serverRecipients.length
+          ? serverRecipients.join(", ")
+          : (managerEmails.length ? managerEmails.join(", ") : "configured recipients");
+        const idSuffix = data?.id ? ` (id: ${String(data.id).slice(0, 8)}…)` : "";
         toast({
-          title: `${label} report sent`,
+          title: `${label} report sent${idSuffix}`,
           description: `Delivered to: ${recipients}`,
         });
       } else {
         const reason = data.error ?? `Server responded with status ${res.status}.`;
         toast({
           title: `Failed to send ${label.toLowerCase()} report`,
-          description: reason.includes("Resend")
-            ? reason
-            : reason.includes("No manager")
-            ? "No recipient emails have been added. Add a manager email and save."
-            : reason,
+          description: reason,
           variant: "destructive",
         });
       }
