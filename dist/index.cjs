@@ -577,8 +577,11 @@ Callback: "Hey, this is [Your Name] from West Capital Lending \u2014 we're respo
           <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#1e293b">
             <tr><td style="padding:3px 12px 3px 0;color:#64748b">Email</td><td style="font-weight:500">${o.email}</td></tr>
             <tr><td style="padding:3px 12px 3px 0;color:#64748b">Role</td><td style="font-weight:500">${O}</td></tr>
-            <tr><td style="padding:3px 12px 3px 0;color:#64748b">Temporary Password</td><td style="font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">${f}</td></tr>
           </table>
+          <p style="margin:14px 0 4px;font-size:13px;color:#666;">Your temporary password (tap to select, then copy):</p>
+          <div style="background:#f4f4f4;border:1px solid #ddd;border-radius:6px;padding:12px 18px;margin:4px 0 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;letter-spacing:2px;text-align:center;color:#1A2B4A;user-select:all;-webkit-user-select:all;">
+            ${f}
+          </div>
           <p style="margin:12px 0 0;font-size:12px;color:#475569;line-height:1.6">
             You will be prompted to change your password on first login.
           </p>
@@ -606,8 +609,11 @@ Callback: "Hey, this is [Your Name] from West Capital Lending \u2014 we're respo
         <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#1e293b">
           <tr><td style="padding:3px 12px 3px 0;color:#64748b">Email</td><td style="font-weight:500">${o.email}</td></tr>
           <tr><td style="padding:3px 12px 3px 0;color:#64748b">Role</td><td style="font-weight:500">${f}</td></tr>
-          <tr><td style="padding:3px 12px 3px 0;color:#64748b">Temporary Password</td><td style="font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">${p}</td></tr>
         </table>
+        <p style="margin:14px 0 4px;font-size:13px;color:#666;">Your temporary password (tap to select, then copy):</p>
+        <div style="background:#f4f4f4;border:1px solid #ddd;border-radius:6px;padding:12px 18px;margin:4px 0 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;letter-spacing:2px;text-align:center;color:#1A2B4A;user-select:all;-webkit-user-select:all;">
+          ${p}
+        </div>
         <p style="margin:12px 0 0;font-size:12px;color:#475569;line-height:1.6">
           You will be prompted to change your password on first login.
         </p>
