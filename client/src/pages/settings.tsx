@@ -401,6 +401,118 @@ function NmlsScheduleCard() {
   );
 }
 
+type ReportType = "daily" | "weekly" | "monthly";
+interface ReportSchedule { report_type: ReportType; recipients: string[] }
+
+function ScheduledReportRecipientsCard() {
+  const { toast } = useToast();
+  const { data: schedules = [], isLoading } = useQuery<ReportSchedule[]>({
+    queryKey: ["/api/report-schedules"],
+  });
+
+  const [local, setLocal] = useState<Record<ReportType, string[]>>({ daily: [], weekly: [], monthly: [] });
+  const [draft, setDraft] = useState<Record<ReportType, string>>({ daily: "", weekly: "", monthly: "" });
+
+  useEffect(() => {
+    if (!schedules || schedules.length === 0) return;
+    const next: Record<ReportType, string[]> = { daily: [], weekly: [], monthly: [] };
+    for (const s of schedules) next[s.report_type] = s.recipients ?? [];
+    setLocal(next);
+  }, [schedules]);
+
+  const saveMutation = useMutation({
+    mutationFn: ({ type, recipients }: { type: ReportType; recipients: string[] }) =>
+      apiRequest("PUT", `/api/report-schedules/${type}`, { recipients }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] });
+      toast({ title: `${vars.type.charAt(0).toUpperCase() + vars.type.slice(1)} recipients saved` });
+    },
+    onError: () => toast({ title: "Failed to save recipients", variant: "destructive" }),
+  });
+
+  const labels: Record<ReportType, string> = {
+    daily: "Daily Report",
+    weekly: "Weekly Report",
+    monthly: "Monthly Report",
+  };
+
+  function addRecipient(type: ReportType) {
+    const em = (draft[type] || "").trim().toLowerCase();
+    if (!em || local[type].includes(em)) return;
+    setLocal(prev => ({ ...prev, [type]: [...prev[type], em] }));
+    setDraft(prev => ({ ...prev, [type]: "" }));
+  }
+
+  function removeRecipient(type: ReportType, em: string) {
+    setLocal(prev => ({ ...prev, [type]: prev[type].filter(e => e !== em) }));
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Send className="w-4 h-4 text-blue-600" />
+          Scheduled Report Recipients
+        </CardTitle>
+        <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
+          <span>Configure who receives each scheduled report type. These lists override the global Manager Recipients for scheduled sends. EOD reports are unaffected.</span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {isLoading ? (
+          <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+        ) : (
+          (["daily", "weekly", "monthly"] as ReportType[]).map(type => (
+            <div key={type} className="rounded-lg border px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium">{labels[type]}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => saveMutation.mutate({ type, recipients: local[type] })}
+                  disabled={saveMutation.isPending}
+                  className="gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {saveMutation.isPending && saveMutation.variables?.type === type ? "Saving…" : "Save"}
+                </Button>
+              </div>
+              <div className="flex gap-2 mb-2">
+                <Input
+                  placeholder="recipient@westcapital.com"
+                  value={draft[type]}
+                  onChange={e => setDraft(prev => ({ ...prev, [type]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addRecipient(type); } }}
+                  className="flex-1"
+                />
+                <Button size="sm" variant="outline" onClick={() => addRecipient(type)} type="button">Add</Button>
+              </div>
+              {local[type].length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No recipients — this report won't send.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {local[type].map(em => (
+                    <Badge key={em} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs">
+                      {em}
+                      <button
+                        type="button"
+                        onClick={() => removeRecipient(type, em)}
+                        className="ml-0.5 rounded-full hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label={`Remove ${em}`}
+                      >×</button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function EmailReportsCard() {
   const { toast } = useToast();
   const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
@@ -1068,6 +1180,9 @@ export default function Settings() {
 
       {/* Email Reports */}
       <EmailReportsCard />
+
+      {/* Scheduled Report Recipients (admin-only) */}
+      {authUser?.role === "admin" && <ScheduledReportRecipientsCard />}
 
       {/* NMLS License Check Schedule */}
       <NmlsScheduleCard />

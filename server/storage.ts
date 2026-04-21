@@ -670,6 +670,20 @@ function runNewMigrations() {
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
   try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"])}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
+  // report_schedule_settings — per-type recipient overrides for daily/weekly/monthly scheduled reports
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS report_schedule_settings (
+    report_type TEXT PRIMARY KEY,
+    recipients TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  try {
+    const defaults = JSON.stringify(["scott.petrie@westcapitallending.com", "chris.redoble@westcapitallending.com"]);
+    const insertDefault = sqlite.prepare(`INSERT OR IGNORE INTO report_schedule_settings (report_type, recipients) VALUES (?, ?)`);
+    insertDefault.run("daily", defaults);
+    insertDefault.run("weekly", defaults);
+    insertDefault.run("monthly", defaults);
+  } catch (e) { console.error("report_schedule_settings seed failed:", e); }
+
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -833,6 +847,46 @@ export function updateEmailSettings(data: any) {
   const vals = Object.values(data);
   sqlite.prepare(`UPDATE email_settings SET ${fields}, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(...vals);
   return getEmailSettings();
+}
+
+// ── Report schedule recipients (per report_type) ─────────────────────────────
+export type ReportType = "daily" | "weekly" | "monthly";
+
+export function getReportScheduleRecipients(type: ReportType): string[] {
+  const row = sqlite.prepare(`SELECT recipients FROM report_schedule_settings WHERE report_type=?`).get(type) as any;
+  if (!row?.recipients) return [];
+  try {
+    const parsed = JSON.parse(row.recipients);
+    return Array.isArray(parsed) ? parsed.filter((e: unknown) => typeof e === "string" && e.trim()) : [];
+  } catch { return []; }
+}
+
+export function getAllReportSchedules(): { report_type: ReportType; recipients: string[] }[] {
+  const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
+  const byType = new Map<string, string[]>();
+  for (const r of rows) {
+    try {
+      const parsed = JSON.parse(r.recipients || "[]");
+      byType.set(r.report_type, Array.isArray(parsed) ? parsed : []);
+    } catch { byType.set(r.report_type, []); }
+  }
+  return (["daily", "weekly", "monthly"] as ReportType[]).map(t => ({
+    report_type: t,
+    recipients: byType.get(t) ?? [],
+  }));
+}
+
+export function updateReportScheduleRecipients(type: ReportType, recipients: string[]) {
+  const cleaned = Array.isArray(recipients)
+    ? recipients.map(e => String(e || "").trim()).filter(e => e.length > 0)
+    : [];
+  const json = JSON.stringify(cleaned);
+  sqlite.prepare(`
+    INSERT INTO report_schedule_settings (report_type, recipients, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(report_type) DO UPDATE SET recipients=excluded.recipients, updated_at=CURRENT_TIMESTAMP
+  `).run(type, json);
+  return cleaned;
 }
 
 // ── Monthly Assignments storage ────────────────────────────────────────────────

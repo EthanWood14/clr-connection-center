@@ -192,8 +192,11 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
 
 async function sendReport(type: "daily" | "weekly" | "monthly") {
   const settings = storageExtra.getEmailSettings() as any;
-  const managers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
-  if (!managers.length) throw new Error("No recipient emails configured. Add at least one manager email in Email Settings.");
+  const perTypeRecipients = storageExtra.getReportScheduleRecipients(type);
+  const globalManagers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
+  // Per-type recipients take precedence; fall back to the shared manager_emails list.
+  const managers: string[] = perTypeRecipients.length > 0 ? perTypeRecipients : globalManagers;
+  if (!managers.length) throw new Error("No recipient emails configured for this report type. Add at least one recipient in Settings → Scheduled Report Recipients.");
 
   const period = getDefaultPeriod();
   const { startDate, endDate } = period;
@@ -1841,6 +1844,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
       await sendReport(type ?? "daily");
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Scheduled report recipients (per daily/weekly/monthly) ──────────────────
+  app.get("/api/report-schedules", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    res.json(storageExtra.getAllReportSchedules());
+  });
+
+  app.put("/api/report-schedules/:type", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const type = req.params.type;
+    if (type !== "daily" && type !== "weekly" && type !== "monthly") {
+      return res.status(400).json({ error: "type must be 'daily', 'weekly', or 'monthly'" });
+    }
+    const recipients = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+    const saved = storageExtra.updateReportScheduleRecipients(type, recipients);
+    res.json({ report_type: type, recipients: saved });
   });
 
   // ── Monthly Assignments (Fixed mode) ─────────────────────────────────────────
