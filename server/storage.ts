@@ -1013,6 +1013,7 @@ try {
       description TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_by INTEGER,
+      owner_id INTEGER DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -1195,8 +1196,79 @@ function seedEthanScript() {
 }
 seedEthanScript();
 
+// Add owner_id column to existing DBs that don't have it
+try { sqlite.exec(`ALTER TABLE call_scripts ADD COLUMN owner_id INTEGER DEFAULT NULL`); } catch {}
+
 export function getCallScripts(): any[] {
   return sqlite.prepare(`SELECT * FROM call_scripts ORDER BY created_at DESC`).all() as any[];
+}
+
+// Get default (global) scripts — those with owner_id IS NULL
+export function getDefaultScripts(): any[] {
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE owner_id IS NULL AND is_active=1 ORDER BY created_at ASC`).all() as any[];
+}
+
+// Get personal script for a user (copy of default, owner_id = userId)
+export function getUserScript(userId: number): any {
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE owner_id=? LIMIT 1`).get(userId) as any;
+}
+
+// Deep-clone a script (all nodes + responses) for a specific user
+export function cloneScriptForUser(sourceScriptId: number, userId: number): any {
+  const source = sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(sourceScriptId) as any;
+  if (!source) return null;
+
+  // Check if user already has a personal copy — delete it first
+  const existing = sqlite.prepare(`SELECT id FROM call_scripts WHERE owner_id=?`).get(userId) as any;
+  if (existing) {
+    sqlite.prepare(`DELETE FROM call_scripts WHERE id=?`).run(existing.id);
+  }
+
+  // Create new script owned by user
+  const newScript = sqlite.prepare(
+    `INSERT INTO call_scripts (name, description, is_active, created_by, owner_id) VALUES (?,?,1,?,?)`
+  ).run(source.name, source.description, userId, userId);
+  const newScriptId = newScript.lastInsertRowid as number;
+
+  // Clone nodes — need to map old IDs to new IDs
+  const oldNodes = sqlite.prepare(`SELECT * FROM script_nodes WHERE script_id=? ORDER BY id ASC`).all(sourceScriptId) as any[];
+  const nodeIdMap = new Map<number, number>(); // old -> new
+
+  // First pass: insert all nodes (without parent references)
+  for (const n of oldNodes) {
+    const r = sqlite.prepare(
+      `INSERT INTO script_nodes (script_id, text, hint, node_order) VALUES (?,?,?,?)`
+    ).run(newScriptId, n.text, n.hint, n.node_order);
+    nodeIdMap.set(n.id, r.lastInsertRowid as number);
+  }
+
+  // Second pass: update parent_node_id using the map
+  for (const n of oldNodes) {
+    if (n.parent_node_id != null) {
+      const newNodeId = nodeIdMap.get(n.id);
+      const newParentId = nodeIdMap.get(n.parent_node_id);
+      if (newNodeId && newParentId) {
+        sqlite.prepare(`UPDATE script_nodes SET parent_node_id=? WHERE id=?`).run(newParentId, newNodeId);
+      }
+    }
+  }
+
+  // Clone responses — remap node_id and next_node_id
+  const oldResponses = sqlite.prepare(
+    `SELECT sr.* FROM script_responses sr JOIN script_nodes sn ON sr.node_id=sn.id WHERE sn.script_id=? ORDER BY sr.id ASC`
+  ).all(sourceScriptId) as any[];
+
+  for (const r of oldResponses) {
+    const newNodeId = nodeIdMap.get(r.node_id);
+    const newNextId = r.next_node_id != null ? (nodeIdMap.get(r.next_node_id) ?? null) : null;
+    if (newNodeId) {
+      sqlite.prepare(
+        `INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`
+      ).run(newNodeId, r.label, r.color, newNextId, r.response_order);
+    }
+  }
+
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(newScriptId);
 }
 export function getCallScript(id: number): any {
   return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(id) as any;
@@ -1254,6 +1326,13 @@ export function updateScriptResponse(id: number, data: { label?: string; color?:
 }
 export function deleteScriptResponse(id: number): void {
   sqlite.prepare(`DELETE FROM script_responses WHERE id=?`).run(id);
+}
+
+// Get the owning script for a response (for permission checks)
+export function getScriptByResponseId(responseId: number): any {
+  return sqlite.prepare(
+    `SELECT cs.* FROM script_responses sr JOIN script_nodes sn ON sr.node_id=sn.id JOIN call_scripts cs ON sn.script_id=cs.id WHERE sr.id=?`
+  ).get(responseId) as any;
 }
 export function getFullScriptTree(scriptId: number): any {
   const script = getCallScript(scriptId);

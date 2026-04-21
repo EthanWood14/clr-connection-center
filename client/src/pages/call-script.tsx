@@ -13,38 +13,20 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
-  PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, Sparkles,
-  Wrench, Plus, Trash2, Pencil, Construction,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight,
+  Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ScriptResponse {
-  id: number;
-  node_id: number;
-  label: string;
-  color: string;
-  next_node_id: number | null;
-  response_order: number;
-}
-
-interface ScriptNode {
-  id: number;
-  script_id: number;
-  text: string;
-  hint?: string | null;
-  responses: ScriptResponse[];
-}
-
-interface CallScript {
-  id: number;
-  name: string;
-  description?: string;
-  is_active: number;
-}
+interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
+interface ScriptNode { id: number; script_id: number; text: string; hint?: string | null; responses: ScriptResponse[]; }
+interface CallScript { id: number; name: string; description?: string; is_active: number; owner_id: number | null; }
 
 // ─── Color maps ───────────────────────────────────────────────────────────────
-
 const BUBBLE_COLORS: Record<string, string> = {
   green:   "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600",
   red:     "bg-rose-500 hover:bg-rose-600 text-white border-rose-600",
@@ -54,15 +36,7 @@ const BUBBLE_COLORS: Record<string, string> = {
   default: "bg-primary hover:bg-primary/90 text-primary-foreground border-primary",
 };
 
-const BUBBLE_NUMBERS: Record<number, string> = {
-  1: "bg-white/25 text-white",
-  2: "bg-white/25 text-white",
-  3: "bg-white/25 text-white",
-  4: "bg-white/25 text-white",
-};
-
 // ─── Transfer Win State ───────────────────────────────────────────────────────
-
 function TransferWin({ onReset }: { onReset: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center gap-6 py-16 text-center animate-in fade-in zoom-in-95 duration-500">
@@ -71,14 +45,10 @@ function TransferWin({ onReset }: { onReset: () => void }) {
         <h2 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">Transfer Complete!</h2>
         <p className="text-muted-foreground mt-2 text-sm">Great work — log this transfer in Bonzo with proper notation.</p>
       </div>
-      <Button onClick={onReset} className="gap-2 mt-2">
-        <RotateCcw className="w-4 h-4" /> Start New Call
-      </Button>
+      <Button onClick={onReset} className="gap-2 mt-2"><RotateCcw className="w-4 h-4" /> Start New Call</Button>
     </div>
   );
 }
-
-// ─── End State (no next node) ─────────────────────────────────────────────────
 
 function EndState({ isTransfer, onReset }: { isTransfer: boolean; onReset: () => void }) {
   if (isTransfer) return <TransferWin onReset={onReset} />;
@@ -89,15 +59,12 @@ function EndState({ isTransfer, onReset }: { isTransfer: boolean; onReset: () =>
         <h2 className="text-xl font-semibold">End of script</h2>
         <p className="text-muted-foreground mt-1 text-sm">Log your outcome in Call Reports when ready.</p>
       </div>
-      <Button variant="outline" onClick={onReset} className="gap-2 mt-2">
-        <RotateCcw className="w-4 h-4" /> Start Over
-      </Button>
+      <Button variant="outline" onClick={onReset} className="gap-2 mt-2"><RotateCcw className="w-4 h-4" /> Start Over</Button>
     </div>
   );
 }
 
 // ─── Script Runner ────────────────────────────────────────────────────────────
-
 function ScriptRunner({ scriptId }: { scriptId: number }) {
   const [currentNode, setCurrentNode] = useState<ScriptNode | null>(null);
   const [history, setHistory] = useState<ScriptNode[]>([]);
@@ -107,19 +74,12 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   const [copied, setCopied] = useState(false);
   const [animKey, setAnimKey] = useState(0);
 
-  // Load root node
   const { data: rootNode, isLoading } = useQuery<ScriptNode>({
     queryKey: [`/api/call-scripts/${scriptId}/root`],
   });
 
   useEffect(() => {
-    if (rootNode) {
-      setCurrentNode(rootNode);
-      setHistory([]);
-      setEnded(false);
-      setSelectedLabel(null);
-      setAnimKey(k => k + 1);
-    }
+    if (rootNode) { setCurrentNode(rootNode); setHistory([]); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1); }
   }, [rootNode]);
 
   const fetchNode = useCallback(async (nodeId: number): Promise<ScriptNode> => {
@@ -130,77 +90,53 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   const handleResponse = async (resp: ScriptResponse) => {
     if (!currentNode) return;
     setSelectedLabel(resp.label);
-
     await new Promise(r => setTimeout(r, 350));
-
-    if (!resp.next_node_id) {
-      setEnded(true);
-      setWasTransfer(resp.label.toLowerCase().includes("transfer"));
-      return;
-    }
+    if (!resp.next_node_id) { setEnded(true); setWasTransfer(resp.label.toLowerCase().includes("transfer")); return; }
     const next = await fetchNode(resp.next_node_id);
     setHistory(h => [...h, currentNode]);
-    setCurrentNode(next);
-    setSelectedLabel(null);
-    setAnimKey(k => k + 1);
+    setCurrentNode(next); setSelectedLabel(null); setAnimKey(k => k + 1);
   };
 
   const handleBack = async () => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
-    // reload with fresh responses
     const fresh = await fetchNode(prev.id);
-    setCurrentNode(fresh);
-    setHistory(h => h.slice(0, -1));
-    setEnded(false);
-    setSelectedLabel(null);
-    setAnimKey(k => k + 1);
+    setCurrentNode(fresh); setHistory(h => h.slice(0, -1)); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
   };
 
   const handleReset = async () => {
     if (!rootNode) return;
     const fresh = await fetchNode(rootNode.id);
-    setCurrentNode(fresh);
-    setHistory([]);
-    setEnded(false);
-    setSelectedLabel(null);
-    setAnimKey(k => k + 1);
+    setCurrentNode(fresh); setHistory([]); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
   };
 
   const handleCopy = () => {
     if (!currentNode) return;
     navigator.clipboard.writeText(currentNode.text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
-  // Keyboard shortcut 1–4
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (ended || !currentNode || selectedLabel) return;
       const n = parseInt(e.key);
-      if (n >= 1 && n <= currentNode.responses.length) {
-        handleResponse(currentNode.responses[n - 1]);
-      }
+      if (n >= 1 && n <= currentNode.responses.length) handleResponse(currentNode.responses[n - 1]);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [currentNode, ended, selectedLabel]);
 
-  if (isLoading || !currentNode) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-32 w-full rounded-2xl" />
-        <div className="flex gap-3"><Skeleton className="h-12 flex-1 rounded-full" /><Skeleton className="h-12 flex-1 rounded-full" /></div>
-      </div>
-    );
-  }
+  if (isLoading || !currentNode) return (
+    <div className="space-y-4">
+      <Skeleton className="h-32 w-full rounded-2xl" />
+      <div className="flex gap-3"><Skeleton className="h-12 flex-1 rounded-full" /><Skeleton className="h-12 flex-1 rounded-full" /></div>
+    </div>
+  );
 
   if (ended) return <EndState isTransfer={wasTransfer} onReset={handleReset} />;
 
   return (
     <div className="space-y-6">
-      {/* Breadcrumb trail */}
       {history.length > 0 && (
         <div className="flex items-center gap-1 flex-wrap text-xs text-muted-foreground">
           {history.map((h, i) => (
@@ -210,39 +146,22 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
             </span>
           ))}
           <ChevronRight className="w-3 h-3 shrink-0" />
-          <span className="text-foreground font-medium truncate max-w-[120px]">You are here</span>
+          <span className="text-foreground font-medium">You are here</span>
         </div>
       )}
-
-      {/* Script card */}
-      <div
-        key={animKey}
-        className="animate-in fade-in slide-in-from-bottom-4 duration-400"
-      >
+      <div key={animKey} className="animate-in fade-in slide-in-from-bottom-4 duration-400">
         <Card className="border-2 border-primary/20 bg-gradient-to-br from-background to-primary/5 shadow-lg">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
-                <div className="rounded-full bg-primary/10 p-2">
-                  <PhoneCall className="w-4 h-4 text-primary" />
-                </div>
+                <div className="rounded-full bg-primary/10 p-2"><PhoneCall className="w-4 h-4 text-primary" /></div>
                 <span className="text-xs font-semibold text-primary uppercase tracking-wide">What to say</span>
               </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                onClick={handleCopy}
-                title="Copy to clipboard"
-              >
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={handleCopy} title="Copy">
                 {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               </Button>
             </div>
-
-            <p className="text-base leading-relaxed font-medium text-foreground">
-              {currentNode.text}
-            </p>
-
+            <p className="text-base leading-relaxed font-medium whitespace-pre-line">{currentNode.text}</p>
             {currentNode.hint && (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
                 <p className="text-xs text-amber-700 dark:text-amber-400 italic">💡 {currentNode.hint}</p>
@@ -251,35 +170,18 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
           </CardContent>
         </Card>
       </div>
-
-      {/* Response bubbles */}
       <div className="space-y-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
-          They say… <span className="font-normal normal-case">(press 1–{currentNode.responses.length} for quick select)</span>
+          They say… <span className="font-normal normal-case">(press 1–{currentNode.responses.length} to select)</span>
         </p>
         <div className="flex flex-wrap gap-2">
           {currentNode.responses.map((resp, idx) => {
             const colorClass = BUBBLE_COLORS[resp.color] ?? BUBBLE_COLORS.default;
             const isSelected = selectedLabel === resp.label;
             return (
-              <button
-                key={resp.id}
-                onClick={() => !selectedLabel && handleResponse(resp)}
-                disabled={!!selectedLabel}
-                className={`
-                  relative flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold
-                  border transition-all duration-200 shadow-sm
-                  ${colorClass}
-                  ${isSelected ? "scale-95 opacity-70 ring-2 ring-white/50" : "hover:scale-105 hover:shadow-md active:scale-95"}
-                  ${selectedLabel && !isSelected ? "opacity-30" : ""}
-                `}
-              >
-                <span className={`
-                  inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold
-                  bg-black/20 text-white shrink-0
-                `}>
-                  {idx + 1}
-                </span>
+              <button key={resp.id} onClick={() => !selectedLabel && handleResponse(resp)} disabled={!!selectedLabel}
+                className={`relative flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold border transition-all duration-200 shadow-sm ${colorClass} ${isSelected ? "scale-95 opacity-70 ring-2 ring-white/50" : "hover:scale-105 hover:shadow-md active:scale-95"} ${selectedLabel && !isSelected ? "opacity-30" : ""}`}>
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold bg-black/20 text-white shrink-0">{idx + 1}</span>
                 {resp.label}
                 {isSelected && <span className="ml-1 text-xs opacity-80">✓</span>}
               </button>
@@ -287,16 +189,8 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
           })}
         </div>
       </div>
-
-      {/* Nav row */}
       <div className="flex items-center justify-between pt-2 border-t border-border">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground"
-          onClick={handleBack}
-          disabled={history.length === 0}
-        >
+        <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground" onClick={handleBack} disabled={history.length === 0}>
           <ArrowLeft className="w-4 h-4" /> Back
         </Button>
         <span className="text-xs text-muted-foreground">Step {history.length + 1}</span>
@@ -308,14 +202,10 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   );
 }
 
-// ─── Admin Tree View (simple list, visual editor = Under Construction) ────────
-
-function AdminEditor({ scriptId }: { scriptId: number }) {
+// ─── Node Editor ──────────────────────────────────────────────────────────────
+function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => void }) {
   const { toast } = useToast();
-  const { data: tree, isLoading } = useQuery<any>({
-    queryKey: [`/api/call-scripts/${scriptId}/tree`],
-  });
-
+  const { data: tree, isLoading } = useQuery<any>({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
   const [editNode, setEditNode] = useState<any | null>(null);
   const [editText, setEditText] = useState("");
   const [editHint, setEditHint] = useState("");
@@ -332,39 +222,39 @@ function AdminEditor({ scriptId }: { scriptId: number }) {
   });
 
   if (isLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>;
-  if (!tree) return <p className="text-muted-foreground text-sm">No script data found.</p>;
 
   const responseMap = new Map<number, any[]>();
-  (tree.responses ?? []).forEach((r: any) => {
+  (tree?.responses ?? []).forEach((r: any) => {
     if (!responseMap.has(r.node_id)) responseMap.set(r.node_id, []);
     responseMap.get(r.node_id)!.push(r);
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Your Script Nodes</p>
+        <Button size="sm" variant="ghost" onClick={onClose} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
+      </div>
+
       {/* Under construction: visual flow editor */}
-      <div className="rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 p-6 flex flex-col items-center gap-3 text-center">
-        <Construction className="w-8 h-8 text-amber-500" />
+      <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 p-4 flex items-center gap-3">
+        <Construction className="w-5 h-5 text-amber-500 shrink-0" />
         <div>
-          <p className="font-semibold text-amber-700 dark:text-amber-400">Visual Flow Editor</p>
-          <p className="text-xs text-muted-foreground mt-1">Drag-and-drop node graph — ask for development</p>
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Visual Flow Editor</p>
+          <p className="text-xs text-muted-foreground">Drag-and-drop node graph — ask for development</p>
         </div>
       </div>
 
-      {/* Node list editor */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Script Nodes</h3>
-        {tree.nodes?.map((node: any) => {
+      <div className="space-y-2">
+        {tree?.nodes?.map((node: any) => {
           const responses = responseMap.get(node.id) ?? [];
           return (
             <Card key={node.id} className="border border-border">
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium leading-snug flex-1">{node.text}</p>
-                  <Button
-                    size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0"
-                    onClick={() => { setEditNode(node); setEditText(node.text); setEditHint(node.hint ?? ""); }}
-                  >
+                  <p className="text-sm font-medium leading-snug flex-1 whitespace-pre-line line-clamp-3">{node.text}</p>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0"
+                    onClick={() => { setEditNode(node); setEditText(node.text); setEditHint(node.hint ?? ""); }}>
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -372,19 +262,12 @@ function AdminEditor({ scriptId }: { scriptId: number }) {
                 {responses.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     {responses.sort((a: any, b: any) => a.response_order - b.response_order).map((r: any) => (
-                      <Badge
-                        key={r.id}
-                        variant="outline"
-                        className={`text-xs px-2 py-0.5 ${
-                          r.color === "green" ? "border-emerald-400 text-emerald-700 dark:text-emerald-400" :
-                          r.color === "red" ? "border-rose-400 text-rose-700 dark:text-rose-400" :
-                          r.color === "yellow" ? "border-amber-400 text-amber-700 dark:text-amber-400" :
-                          r.color === "blue" ? "border-blue-400 text-blue-700 dark:text-blue-400" :
-                          "border-border text-muted-foreground"
-                        }`}
-                      >
-                        {r.label} {r.next_node_id ? `→ #${r.next_node_id}` : "→ end"}
-                      </Badge>
+                      <Badge key={r.id} variant="outline" className={`text-xs px-2 py-0.5 ${
+                        r.color === "green" ? "border-emerald-400 text-emerald-700 dark:text-emerald-400" :
+                        r.color === "red" ? "border-rose-400 text-rose-700 dark:text-rose-400" :
+                        r.color === "yellow" ? "border-amber-400 text-amber-700 dark:text-amber-400" :
+                        r.color === "blue" ? "border-blue-400 text-blue-700 dark:text-blue-400" : "border-border text-muted-foreground"
+                      }`}>{r.label}</Badge>
                     ))}
                   </div>
                 )}
@@ -394,17 +277,16 @@ function AdminEditor({ scriptId }: { scriptId: number }) {
         })}
       </div>
 
-      {/* Edit node dialog */}
       <Dialog open={!!editNode} onOpenChange={o => !o && setEditNode(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Script Node</DialogTitle>
-            <DialogDescription>Update the CLR's line and coaching hint.</DialogDescription>
+            <DialogDescription>Update what you say at this step.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-sm font-medium">Script text</label>
-              <Textarea value={editText} onChange={e => setEditText(e.target.value)} rows={4} />
+              <Textarea value={editText} onChange={e => setEditText(e.target.value)} rows={5} />
             </div>
             <div className="space-y-1">
               <label className="text-sm font-medium">Coaching hint (optional)</label>
@@ -413,10 +295,8 @@ function AdminEditor({ scriptId }: { scriptId: number }) {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditNode(null)}>Cancel</Button>
-            <Button
-              onClick={() => updateNodeMut.mutate({ id: editNode.id, text: editText, hint: editHint })}
-              disabled={updateNodeMut.isPending || !editText.trim()}
-            >
+            <Button onClick={() => updateNodeMut.mutate({ id: editNode.id, text: editText, hint: editHint })}
+              disabled={updateNodeMut.isPending || !editText.trim()}>
               {updateNodeMut.isPending ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
@@ -427,27 +307,54 @@ function AdminEditor({ scriptId }: { scriptId: number }) {
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function CallScriptPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const isAdmin = (user as any)?.isAdmin;
-  const [view, setView] = useState<"run" | "admin">("run");
-  const [selectedScriptId, setSelectedScriptId] = useState<number | null>(null);
+  const userId = (user as any)?.id;
 
-  const { data: scripts = [], isLoading } = useQuery<CallScript[]>({
-    queryKey: ["/api/call-scripts"],
+  const [view, setView] = useState<"run" | "edit">("run");
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  // Load defaults and personal script
+  const { data: defaults = [], isLoading: loadingDefaults } = useQuery<CallScript[]>({
+    queryKey: ["/api/call-scripts/defaults"],
+  });
+  const { data: myScript, isLoading: loadingMine } = useQuery<CallScript | null>({
+    queryKey: ["/api/call-scripts/mine"],
   });
 
-  const activeScripts = scripts.filter(s => s.is_active);
+  const isLoading = loadingDefaults || loadingMine;
+  const defaultScript = defaults[0] ?? null;
 
-  // Auto-select first script
-  useEffect(() => {
-    if (activeScripts.length > 0 && !selectedScriptId) {
-      setSelectedScriptId(activeScripts[0].id);
-    }
-  }, [activeScripts.length]);
+  // The active script: personal copy if exists, else default
+  const activeScript: CallScript | null = myScript ?? defaultScript;
+  const hasPersonalCopy = !!myScript;
+  const isUsingDefault = !hasPersonalCopy;
 
-  const selectedScript = scripts.find(s => s.id === selectedScriptId);
+  // Clone default → personal copy
+  const cloneMut = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/call-scripts/${defaultScript!.id}/clone`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/defaults"] });
+      toast({ title: "Personal copy created", description: "You can now customize your own script." });
+      setView("edit");
+    },
+    onError: () => toast({ title: "Failed to create copy", variant: "destructive" }),
+  });
+
+  // Reset personal copy → back to default
+  const resetMut = useMutation({
+    mutationFn: () => fetch("/api/call-scripts/mine", { method: "DELETE", credentials: "include" }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
+      setConfirmReset(false);
+      setView("run");
+      toast({ title: "Reset to default script" });
+    },
+    onError: () => toast({ title: "Failed to reset", variant: "destructive" }),
+  });
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
@@ -461,54 +368,57 @@ export default function CallScriptPage() {
       </div>
 
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <PhoneCall className="w-5 h-5 text-primary" />
-            Call Script
+            <PhoneCall className="w-5 h-5 text-primary" /> Call Script
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Step-by-step guided script with borrower response paths
-          </p>
+          <p className="text-sm text-muted-foreground mt-0.5">Step-by-step guided script with borrower response paths</p>
         </div>
-        {isAdmin && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={view === "run" ? "default" : "outline"}
-              className="gap-1.5"
-              onClick={() => setView("run")}
-            >
-              <PhoneCall className="w-3.5 h-3.5" /> Run
-            </Button>
-            <Button
-              size="sm"
-              variant={view === "admin" ? "default" : "outline"}
-              className="gap-1.5"
-              onClick={() => setView("admin")}
-            >
-              <Wrench className="w-3.5 h-3.5" /> Edit Scripts
-            </Button>
-          </div>
-        )}
+        <div className="flex gap-2 flex-wrap">
+          <Button size="sm" variant={view === "run" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("run")}>
+            <PhoneCall className="w-3.5 h-3.5" /> Run
+          </Button>
+          <Button size="sm" variant={view === "edit" ? "default" : "outline"} className="gap-1.5" onClick={() => {
+            if (isUsingDefault && !isAdmin) {
+              // Prompt to create personal copy first
+              cloneMut.mutate();
+            } else {
+              setView("edit");
+            }
+          }} disabled={cloneMut.isPending}>
+            <Pencil className="w-3.5 h-3.5" /> {cloneMut.isPending ? "Copying…" : "Edit Script"}
+          </Button>
+        </div>
       </div>
 
-      {/* Script selector if multiple */}
-      {activeScripts.length > 1 && (
-        <div className="flex gap-2 flex-wrap">
-          {activeScripts.map(s => (
-            <button
-              key={s.id}
-              onClick={() => setSelectedScriptId(s.id)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
-                selectedScriptId === s.id
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background text-foreground border-border hover:border-primary/50"
-              }`}
-            >
-              {s.name}
-            </button>
-          ))}
+      {/* Script source badge + controls */}
+      {!isLoading && activeScript && (
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            {isUsingDefault ? (
+              <Badge variant="outline" className="gap-1 text-xs border-blue-300 text-blue-600 dark:border-blue-700 dark:text-blue-400">
+                <Globe className="w-3 h-3" /> Default Script
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-xs border-emerald-300 text-emerald-600 dark:border-emerald-700 dark:text-emerald-400">
+                <User className="w-3 h-3" /> My Personal Script
+              </Badge>
+            )}
+            <span className="text-xs text-muted-foreground">{activeScript.name}</span>
+          </div>
+          <div className="flex gap-2">
+            {isUsingDefault && !isAdmin && defaultScript && (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => cloneMut.mutate()} disabled={cloneMut.isPending}>
+                <CopyIcon className="w-3 h-3" /> {cloneMut.isPending ? "Copying…" : "Customize My Copy"}
+              </Button>
+            )}
+            {hasPersonalCopy && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive" onClick={() => setConfirmReset(true)}>
+                <RotateCcw className="w-3 h-3" /> Reset to Default
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -516,44 +426,47 @@ export default function CallScriptPage() {
       {isLoading && (
         <div className="space-y-3">
           <Skeleton className="h-40 w-full rounded-2xl" />
-          <div className="flex gap-3">
-            <Skeleton className="h-12 flex-1 rounded-full" />
-            <Skeleton className="h-12 flex-1 rounded-full" />
-          </div>
+          <div className="flex gap-3"><Skeleton className="h-12 flex-1 rounded-full" /><Skeleton className="h-12 flex-1 rounded-full" /></div>
         </div>
       )}
 
-      {/* Main content */}
-      {!isLoading && selectedScriptId && (
-        <>
-          {selectedScript && (
-            <div className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">{selectedScript.name}</span>
-              {selectedScript.description && <span> · {selectedScript.description}</span>}
-            </div>
-          )}
-
-          {view === "run" ? (
-            <ScriptRunner key={selectedScriptId} scriptId={selectedScriptId} />
-          ) : (
-            <AdminEditor key={selectedScriptId} scriptId={selectedScriptId} />
-          )}
-        </>
-      )}
-
-      {!isLoading && activeScripts.length === 0 && (
+      {/* No script at all */}
+      {!isLoading && !activeScript && (
         <Card className="border-dashed">
           <CardContent className="py-16 flex flex-col items-center gap-3 text-center">
-            <div className="rounded-full bg-primary/10 p-4">
-              <PhoneCall className="w-8 h-8 text-primary opacity-40" />
-            </div>
+            <div className="rounded-full bg-primary/10 p-4"><PhoneCall className="w-8 h-8 text-primary opacity-40" /></div>
             <div>
-              <p className="font-semibold">No active scripts</p>
-              <p className="text-sm text-muted-foreground mt-1">An admin needs to create one first.</p>
+              <p className="font-semibold">No script available</p>
+              <p className="text-sm text-muted-foreground mt-1">An admin needs to create the default script first.</p>
             </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Main content */}
+      {!isLoading && activeScript && (
+        view === "run"
+          ? <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
+          : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} />
+      )}
+
+      {/* Reset confirmation */}
+      <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset to Default Script?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete your personal script and restore the default WCL script. You can always customize it again later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => resetMut.mutate()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {resetMut.isPending ? "Resetting…" : "Yes, Reset"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -2108,6 +2108,40 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ── Call Scripts ────────────────────────────────────────────────────────────
+
+  // Helper: can user modify this script?
+  function canEditScript(sessionUser: any, script: any): boolean {
+    if (!sessionUser) return false;
+    if (sessionUser.isAdmin) return true; // admins can edit anything
+    return script.owner_id === sessionUser.userId; // users can only edit their own
+  }
+
+  // Get default scripts (owner_id IS NULL)
+  app.get('/api/call-scripts/defaults', requireAuth, (_req: any, res: any) => {
+    res.json(storageExtra.getDefaultScripts());
+  });
+
+  // Get current user's personal script (or null)
+  app.get('/api/call-scripts/mine', requireAuth, (req: any, res: any) => {
+    const script = storageExtra.getUserScript(req.session_user!.userId);
+    res.json(script ?? null);
+  });
+
+  // Clone default script into personal copy for current user
+  app.post('/api/call-scripts/:id/clone', requireAuth, (req: any, res: any) => {
+    const userId = req.session_user!.userId;
+    const cloned = storageExtra.cloneScriptForUser(parseInt(req.params.id), userId);
+    if (!cloned) return res.status(404).json({ error: 'Source script not found' });
+    res.json(cloned);
+  });
+
+  // Reset personal script back to default (delete personal copy)
+  app.delete('/api/call-scripts/mine', requireAuth, (req: any, res: any) => {
+    const script = storageExtra.getUserScript(req.session_user!.userId);
+    if (script) storageExtra.deleteCallScript(script.id);
+    res.json({ ok: true });
+  });
+
   app.get('/api/call-scripts', requireAuth, (_req: any, res: any) => {
     res.json(storageExtra.getCallScripts());
   });
@@ -2120,12 +2154,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.patch('/api/call-scripts/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const script = storageExtra.getCallScript(parseInt(req.params.id));
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     res.json(storageExtra.updateCallScript(parseInt(req.params.id), req.body));
   });
 
   app.delete('/api/call-scripts/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const script = storageExtra.getCallScript(parseInt(req.params.id));
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     storageExtra.deleteCallScript(parseInt(req.params.id));
     res.json({ ok: true });
   });
@@ -2151,32 +2187,43 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post('/api/call-scripts/:id/nodes', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const script = storageExtra.getCallScript(parseInt(req.params.id));
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     const { text, hint, parentNodeId, parentResponseId, nodeOrder } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
     res.json(storageExtra.createScriptNode({ scriptId: parseInt(req.params.id), text, hint, parentNodeId, parentResponseId, nodeOrder }));
   });
 
   app.patch('/api/script-nodes/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const node = storageExtra.getNodeById(parseInt(req.params.id));
+    if (!node) return res.status(404).json({ error: 'Not found' });
+    const script = storageExtra.getCallScript(node.script_id);
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     res.json(storageExtra.updateScriptNode(parseInt(req.params.id), req.body));
   });
 
   app.delete('/api/script-nodes/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const node = storageExtra.getNodeById(parseInt(req.params.id));
+    if (!node) return res.status(404).json({ error: 'Not found' });
+    const script = storageExtra.getCallScript(node.script_id);
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     storageExtra.deleteScriptNode(parseInt(req.params.id));
     res.json({ ok: true });
   });
 
   app.post('/api/script-nodes/:nodeId/responses', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const node = storageExtra.getNodeById(parseInt(req.params.nodeId));
+    if (!node) return res.status(404).json({ error: 'Not found' });
+    const script = storageExtra.getCallScript(node.script_id);
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     const { label, color, nextNodeId, responseOrder } = req.body;
     if (!label) return res.status(400).json({ error: 'label required' });
     res.json(storageExtra.createScriptResponse({ nodeId: parseInt(req.params.nodeId), label, color, nextNodeId, responseOrder }));
   });
 
   app.patch('/api/script-responses/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const script = storageExtra.getScriptByResponseId(parseInt(req.params.id));
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     res.json(storageExtra.updateScriptResponse(parseInt(req.params.id), req.body));
   });
 
