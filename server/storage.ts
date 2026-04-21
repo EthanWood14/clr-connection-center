@@ -1038,108 +1038,162 @@ try {
   `);
 } catch {}
 
-// Seed default WCL script if none exist
-function seedDefaultScript() {
-  const existing = sqlite.prepare(`SELECT id FROM call_scripts LIMIT 1`).get();
-  if (existing) return;
+// Seed Ethan's real WCL script — runs once via migrations_applied table
+function seedEthanScript() {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v1'`).get();
+  if (done) return;
 
-  const scriptResult = sqlite.prepare(
-    `INSERT INTO call_scripts (name, description, created_by) VALUES (?, ?, ?)`
-  ).run("WCL Cold Call Script", "Standard West Capital Lending cold call flow for new borrower leads.", 1);
-  const scriptId = scriptResult.lastInsertRowid as number;
+  // Wipe any old placeholder script
+  sqlite.exec(`DELETE FROM script_responses; DELETE FROM script_nodes; DELETE FROM call_scripts;`);
 
-  // Node 1 — Opening
-  const n1 = sqlite.prepare(`INSERT INTO script_nodes (script_id, text, hint, node_order) VALUES (?,?,?,?)`).run(
-    scriptId,
-    "Hi, is this [Borrower Name]? Great — my name is [Your Name] with West Capital Lending. I'm reaching out because you recently inquired about a home loan. Do you have just a couple of minutes?",
-    "Speak slowly and warmly. Pause after their name.",
-    1
-  );
-  // Node 2 — Interested
-  const n2 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n1.lastInsertRowid,
-    "Perfect! We specialize in getting people into homes with the best rates available. To point you in the right direction, what's your current situation — are you looking to purchase or refinance?",
-    "Keep energy upbeat. Let them talk.",
-    1
-  );
-  // Node 3 — Not interested
-  const n3 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n1.lastInsertRowid,
-    "Totally understand — I'll be quick, I promise. You had expressed interest in a home loan and I just want to make sure you have all your options. Can I ask what changed?",
-    "Don't be pushy. Empathize first.",
-    2
-  );
-  // Node 4 — Bad time
-  const n4 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n1.lastInsertRowid,
-    "No problem at all! When would be a better time to reach you — later today or sometime this week?",
-    "Get a specific time commitment.",
-    3
-  );
-  // Node 5 — Purchase path
-  const n5 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n2.lastInsertRowid,
-    "Great — purchasing! Are you currently pre-approved, or is that something you're still working on?",
-    "This qualifies their readiness.",
-    1
-  );
-  // Node 6 — Refinance path
-  const n6 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n2.lastInsertRowid,
-    "Got it — refinancing. What's driving the timing on that — lower rate, cash out, or something else?",
-    "Understanding their goal helps with LO match.",
-    2
-  );
-  // Node 7 — Not pre-approved
-  const n7 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n5.lastInsertRowid,
-    "Perfect, that's exactly where we can help. I'd love to connect you with one of our loan officers who can walk you through pre-approval in about 10 minutes. Does that sound good?",
-    "This is your transfer moment — be confident.",
-    1
-  );
-  // Node 8 — Already pre-approved
-  const n8 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n5.lastInsertRowid,
-    "Awesome — you're ahead of the game! Let me connect you with a loan officer who can review your approval and make sure you're getting the best rate available. One moment!",
-    "Transfer immediately — they're hot.",
-    2
-  );
-  // Node 9 — Transfer confirmed
-  const n9 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n7.lastInsertRowid,
-    "Excellent! I'm transferring you to [LO Name] right now. They'll take great care of you. Have a great day! 🎉",
-    "Log transfer in Bonzo immediately after.",
-    1
-  );
-  // Node 10 — Not ready yet
-  const n10 = sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`).run(
-    scriptId, n7.lastInsertRowid,
-    "Totally fine! When do you think you might be ready to move forward? I can set a follow-up appointment so you're first in line when you're ready.",
-    "Set a specific date — don't leave it open.",
-    2
-  );
+  const node = (scriptId: number, parentId: number | null, text: string, hint: string, order: number) =>
+    sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`)
+      .run(scriptId, parentId, text, hint, order).lastInsertRowid as number;
 
-  // ── Responses for Node 1 (opening)
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Yes, I have a minute", "green", n2.lastInsertRowid, 1);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Not interested", "red", n3.lastInsertRowid, 2);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Bad time right now", "yellow", n4.lastInsertRowid, 3);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n1.lastInsertRowid, "Hung up / No answer", "gray", null, 4);
+  const resp = (nodeId: number, label: string, color: string, nextId: number | null, order: number) =>
+    sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`)
+      .run(nodeId, label, color, nextId, order);
 
-  // ── Responses for Node 2 (interested)
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Looking to purchase", "green", n5.lastInsertRowid, 1);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Want to refinance", "blue", n6.lastInsertRowid, 2);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n2.lastInsertRowid, "Not sure yet", "yellow", n6.lastInsertRowid, 3);
+  // ── Script ────────────────────────────────────────────────────────────────
+  const sid = sqlite.prepare(`INSERT INTO call_scripts (name, description, created_by) VALUES (?,?,?)`)
+    .run("WCL Cold Call Script", "Ethan's official West Capital Lending call script — refi/HELOC leads.", 1)
+    .lastInsertRowid as number;
 
-  // ── Responses for Node 5 (purchase)
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n5.lastInsertRowid, "Not pre-approved yet", "yellow", n7.lastInsertRowid, 1);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n5.lastInsertRowid, "Already pre-approved", "green", n8.lastInsertRowid, 2);
+  // ── OPENING ───────────────────────────────────────────────────────────────
+  const nOpen = node(sid, null,
+    `Hi [Their Name], how are you doing this [morning/afternoon/evening]? Great to hear! So, this is [Your Name] with West Capital Lending. I saw that you recently inquired about a refinance or Home Equity Line of Credit, and I wanted to see what you were hoping to accomplish and present some options to you.`,
+    `Memo: Ethan, West Capital Lending, reaching out about home equity loan or refinance options. Speak warmly — pause after their name.`,
+    1);
 
-  // ── Responses for Node 7 (transfer offer)
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Yes, transfer me!", "green", n9.lastInsertRowid, 1);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Not ready yet", "yellow", n10.lastInsertRowid, 2);
-  sqlite.prepare(`INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`).run(n7.lastInsertRowid, "Declined", "red", null, 3);
+  // ── QUALIFYING QUESTIONS ──────────────────────────────────────────────────
+  const nQual = node(sid, nOpen,
+    `Great! I have a few quick questions to point you in the right direction:\n\n1. What are your goals? (type of loan — refi or HELOC?)\n2. Can I confirm your address?\n3. Do you know what your home is currently worth?\n4. What's your current loan balance and interest rate?\n5. What type of loan do you have? (Fixed, FHA, VA?)\n\nOptional: Do you own other properties? Estimated credit score? Employment status? Ballpark annual income?`,
+    `Work through these conversationally — don't fire them as a list. HELOC: also ask how much they want to pull out.`,
+    1);
+
+  // ── TRANSFER (qualified) ──────────────────────────────────────────────────
+  const nTransfer = node(sid, nQual,
+    `Awesome! So I don't have that many connections in the state of [State], but our equity specialist [LO Name] has over 150 connections in that state — I'm going to pass the phone over to them. Give me a few seconds.\n\nOR: I've got everything I need. I'm actually [LO]'s assistant calling from their number — I won't even put you on hold, I have them right next to me. I'm going to hand the phone over now. It was great speaking with you — good luck!`,
+    `This is the transfer moment. Be confident and warm. Log in Bonzo immediately after.`,
+    1);
+
+  // ── NOT QUITE READY ───────────────────────────────────────────────────────
+  const nNotReady = node(sid, nQual,
+    `I totally understand that you're not ready. I will say — what we do here at West Cap is keep you informed until you are ready. What's keeping you from making the next step?`,
+    `Empathize first. Then dig into the real reason.`,
+    2);
+
+  const nLowerRate = node(sid, nNotReady,
+    `I totally get how hard it is to keep up with rates. Here at West Capital, we partner with over 150 lenders to help keep you informed so you can get the best possible deal when you're ready. I'd love to get that done for you today — would you mind if we keep some of your information so we can help when the timing is right?`,
+    `Rate objection — pivot to value and future follow-up.`,
+    1);
+
+  // ── ALREADY HANDLED ──────────────────────────────────────────────────────
+  const nAlready = node(sid, nOpen,
+    `I completely understand. I do want to make sure that you get the best rate — if you want, we can send it over to our pricing team and see what they can do. We typically reach out to over 50 lenders and can beat local rates by up to a full percentage point. OR: Great! Here at West Cap we often beat local lenders by 1–2 percentage points. Did you happen to get a good rate?`,
+    `Don't give up — pivot to rate comparison.`,
+    2);
+
+  // ── OBJECTION: NOT MY BUSINESS ───────────────────────────────────────────
+  const nPrivacy = node(sid, nOpen,
+    `Totally respect that! Your personal business is yours. My goal is just to make sure your finances are protected and you're saving as much as possible — that's why I need a bit more info. Does that make sense?\n\nOR: Dang, I'm sorry — has everyone been blowing you up recently? [pause] Did you go through LendingTree or one of those calculators? I totally understand. Well, what can I do to actually help you today?`,
+    `Pivot quickly — reframe privacy as protection, not intrusion.`,
+    3);
+
+  // ── GOING INTO SURGERY ───────────────────────────────────────────────────
+  const nSurgery = node(sid, nOpen,
+    `Wow — I hope it goes well! I'd really love to help you when you're feeling better. When would be the best time to call you back?`,
+    `Be human. Get a specific callback date.`,
+    4);
+
+  // ── I'M BUSY ─────────────────────────────────────────────────────────────
+  const nBusy = node(sid, nOpen,
+    `I completely understand — I know you're busy and probably getting a lot of calls. I believe I have some information that can genuinely help you though. When would be a good time to reach back out?`,
+    `Don't push. Get a specific time and move on.`,
+    5);
+
+  // ── F*** YOU / GET OFF MY PHONE ──────────────────────────────────────────
+  const nAngry = node(sid, nOpen,
+    `Hello! Please put the pistols away — the duel is tomorrow! The reason I called is that I'd like a quick discussion about the mortgage inquiry you submitted. I'll be brief and to the point — sound fair enough?`,
+    `Disarm with humor. Then immediately pivot back to the script.`,
+    6);
+
+  const nHoldingOff = node(sid, nAngry,
+    `No problem at all. Out of curiosity — what would need to change for you to move forward? That helps me tailor the best option for when the timing is right.`,
+    `Highly variable — think on your feet and try to get back on script.`,
+    1);
+
+  // ── NO BUSINESS OVER PHONE ───────────────────────────────────────────────
+  const nNoPhone = node(sid, nOpen,
+    `Hey, I totally understand — trust is built and earned, not given. My goal is to give you as much value as possible via a brief conversation. What we save by not having a branch in your town, we pass directly on to you. We may not be able to hand you a cup of coffee, but as a top brokerage firm, we can get you the best rate.`,
+    `Reframe phone = savings. Emphasize WCL value: 0.5–1% lower fees on avg, 100+ lenders, personalized broker match.`,
+    7);
+
+  // ── RATES TOO HIGH ───────────────────────────────────────────────────────
+  const nHighRates = node(sid, nOpen,
+    `I hear you — rates have been tough. Here's what makes us different at West Capital Lending:\n• 0.5–1% lower fees on average\n• Thousands lower in fees on average\n• One of the biggest brokerages in America\n• 100+ lenders — we leverage those relationships to get you the best deal\n• Quick 2-minute call to confirm a few details before we match you with the right broker`,
+    `Lead with facts. Then pivot: "Let me take 2 minutes and see what we can find for you."`,
+    8);
+
+  // ── NO RESPONSE / THERE BUT SILENT ──────────────────────────────────────
+  const nSilent = node(sid, nOpen,
+    `Hey [Name], I noticed you're looking for a home equity loan or refinancing options — it could really help you out. Can I give you some options or answer any questions?`,
+    `Simple, direct. Wait for any response before continuing.`,
+    9);
+
+  // ── VOICEMAIL / CALLBACK ─────────────────────────────────────────────────
+  const nVoicemail = node(sid, nOpen,
+    `Voicemail: "Hello, this is [Your Name], [LO]'s assistant from West Capital Lending. We recently received an inquiry about a home equity loan or refinance. We work with over 150 lenders to best help your needs. To reach back out, please call us at [Phone Number]."\n\nCallback: "Hey, this is [Your Name] from West Capital Lending — we're responding to your inquiry for home finance options. I happen to be on another line at the moment — give me a minute and I'll call you back."`,
+    `Leave voicemail only if no answer after 2 attempts. Log in Bonzo.`,
+    10);
+
+  // ── OLD LEADS ────────────────────────────────────────────────────────────
+  const nOldLead = node(sid, nOpen,
+    `Hey [Name], my name is [Your Name] from West Capital Lending — we're one of the biggest mortgage brokerages in the country. We saw that you inquired about pulling some money out of your home a few months back, and wanted to chat.`,
+    `Use this opening for leads 60+ days old.`,
+    11);
+
+  // ── RESPONSES ────────────────────────────────────────────────────────────
+
+  // Opening responses
+  resp(nOpen, "Yes, go ahead", "green", nQual, 1);
+  resp(nOpen, "Not interested / Already taken care of", "red", nAlready, 2);
+  resp(nOpen, "None of your business / Too pushy", "yellow", nPrivacy, 3);
+  resp(nOpen, "Going into surgery", "yellow", nSurgery, 4);
+  resp(nOpen, "I'm busy", "yellow", nBusy, 5);
+  resp(nOpen, "F*** you / Get off my phone", "red", nAngry, 6);
+  resp(nOpen, "Don't do business over phone", "yellow", nNoPhone, 7);
+  resp(nOpen, "Rates are too high", "yellow", nHighRates, 8);
+  resp(nOpen, "No response / Silent", "gray", nSilent, 9);
+  resp(nOpen, "No answer — leaving voicemail", "gray", nVoicemail, 10);
+  resp(nOpen, "Old lead (60+ days)", "blue", nOldLead, 11);
+
+  // Qualifying responses
+  resp(nQual, "Ready to transfer!", "green", nTransfer, 1);
+  resp(nQual, "Not quite ready yet", "yellow", nNotReady, 2);
+
+  // Not ready → lower rate
+  resp(nNotReady, "Waiting for lower rates", "yellow", nLowerRate, 1);
+  resp(nNotReady, "Other reason", "yellow", null, 2);
+
+  // Transfer confirmed
+  resp(nTransfer, "Transfer complete!", "green", null, 1);
+  resp(nTransfer, "Changed mind", "red", nNotReady, 2);
+
+  // Already taken care of
+  resp(nAlready, "Still interested in better rate", "green", nQual, 1);
+  resp(nAlready, "No thanks", "red", null, 2);
+
+  // Angry → holding off
+  resp(nAngry, "Calmed down / Willing to listen", "green", nQual, 1);
+  resp(nAngry, "Still holding off", "yellow", nHoldingOff, 2);
+  resp(nAngry, "Hung up", "gray", null, 3);
+
+  sqlite.prepare(`INSERT INTO migrations_applied (name, applied_at) VALUES (?, datetime('now'))`)
+    .run('ethan_wcl_script_v1');
 }
-seedDefaultScript();
+seedEthanScript();
 
 export function getCallScripts(): any[] {
   return sqlite.prepare(`SELECT * FROM call_scripts ORDER BY created_at DESC`).all() as any[];
