@@ -230,7 +230,15 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   }
   if (!managers.length) throw new Error("No recipient emails configured for this report type. Add at least one recipient in Settings → Scheduled Report Recipients.");
 
-  const period = getDefaultPeriod();
+  // Choose the reporting window that matches the report type.
+  // daily   → today only
+  // weekly  → Sun–Sat containing today
+  // monthly → 16th of prev month → 15th of current (billing period)
+  const period = type === "daily"
+    ? (() => { const t = new Date().toISOString().split("T")[0]; return { startDate: t, endDate: t }; })()
+    : type === "weekly"
+    ? resolveNamedPeriod("week")
+    : getDefaultPeriod();
   const { startDate, endDate } = period;
 
   const outcomes   = storage.getLeadOutcomes({ startDate, endDate });
@@ -676,6 +684,40 @@ cron.schedule("0 9 */3 * *", () => {
       });
     }
   } catch (e) { console.error("Incomplete LO notification error:", e); }
+});
+
+// ── Scheduled CLR reports (daily / weekly / monthly) ────────────────────────
+// Fires every minute and checks email_settings to decide whether any of the
+// three reports should be dispatched. Uses configurable daily_time (HH:MM),
+// fires weekly on Monday at the daily_time, monthly on the 16th at daily_time.
+let lastReportFiredAt: Record<"daily" | "weekly" | "monthly", string> = { daily: "", weekly: "", monthly: "" };
+cron.schedule("* * * * *", async () => {
+  try {
+    const s = storageExtra.getEmailSettings() as any;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const nowHM = `${hh}:${mm}`;
+    const nowDateKey = now.toISOString().split("T")[0];
+    const dailyTime = s.daily_time || "08:00";
+    if (nowHM !== dailyTime) return;
+
+    // daily
+    if (s.daily_enabled && lastReportFiredAt.daily !== nowDateKey) {
+      lastReportFiredAt.daily = nowDateKey;
+      try { await sendReport("daily"); } catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
+    }
+    // weekly — Monday
+    if (s.weekly_enabled && now.getDay() === 1 && lastReportFiredAt.weekly !== nowDateKey) {
+      lastReportFiredAt.weekly = nowDateKey;
+      try { await sendReport("weekly"); } catch (e: any) { console.error("Scheduled weekly report failed:", e?.message ?? e); }
+    }
+    // monthly — 16th
+    if (s.monthly_enabled && now.getDate() === 16 && lastReportFiredAt.monthly !== nowDateKey) {
+      lastReportFiredAt.monthly = nowDateKey;
+      try { await sendReport("monthly"); } catch (e: any) { console.error("Scheduled monthly report failed:", e?.message ?? e); }
+    }
+  } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
 
 export function registerRoutes(httpServer: Server, app: Express) {
