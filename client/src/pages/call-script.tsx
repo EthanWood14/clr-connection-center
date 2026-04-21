@@ -451,6 +451,15 @@ export default function CallScriptPage() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
+      {/* Under Construction Banner */}
+      <div className="flex items-center gap-3 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 px-4 py-3">
+        <Construction className="w-5 h-5 text-amber-500 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Under Construction</p>
+          <p className="text-xs text-muted-foreground">This feature is still being developed. Some things may not work as expected.</p>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
