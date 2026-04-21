@@ -2328,6 +2328,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
     const report = storageExtra.getEodReport(date, userId);
     const activities = storageExtra.getEodActivities(date, userId);
+    if (report) {
+      try { (report as any).assignedLosCalled = JSON.parse((report as any).assigned_los_called || "[]"); } catch { (report as any).assignedLosCalled = []; }
+      try { (report as any).additionalLosCalled = JSON.parse((report as any).additional_los_called || "[]"); } catch { (report as any).additionalLosCalled = []; }
+    }
     res.json({ report, activities });
   });
 
@@ -2346,7 +2350,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
         `).all() as any[]
       : sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId) as any[];
 
-    // For each report, fetch transfer prospect names + LO names from lead_outcomes
+    // Cache LO names once, then enrich each report with LO coverage + transfer prospects.
+    const allLos = storage.getLoanOfficers() as any[];
+    const loNameById = (id: number): string => {
+      const lo = allLos.find((l: any) => l.id === id);
+      return lo ? (lo.fullName ?? lo.full_name ?? `LO #${id}`) : `LO #${id}`;
+    };
     const enriched = reports.map((r: any) => {
       const rows = sqlite.prepare(`
         SELECT o.borrower_name, o.transfer_type, lo.full_name as lo_full_name
@@ -2368,7 +2377,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
           transferType: (o.transfer_type as string | null) ?? null,
         }))
         .filter((p) => p.name.length > 0);
-      return { ...r, transferProspects, transferProspectsWithLo };
+
+      // LO coverage: assigned LOs for that date vs. called/additional stored on the report
+      let assignedCalledIds: number[] = [];
+      try { assignedCalledIds = JSON.parse(r.assigned_los_called || "[]"); } catch { assignedCalledIds = []; }
+      let additionalCalledIds: number[] = [];
+      try { additionalCalledIds = JSON.parse(r.additional_los_called || "[]"); } catch { additionalCalledIds = []; }
+      const dayAssignments = (storage.getDailyAssignments(r.report_date) as any[])
+        .filter((a: any) => (a.assistantId ?? a.assistant_id) === r.assistant_id);
+      const assignedLoIds: number[] = dayAssignments.map((a: any) => a.loId ?? a.lo_id).filter((n: any) => Number.isFinite(n));
+      const calledSet = new Set<number>(assignedCalledIds);
+      const assignedCalledNames = assignedLoIds.filter((id: number) => calledSet.has(id)).map(loNameById);
+      const notCalledNames = assignedLoIds.filter((id: number) => !calledSet.has(id)).map(loNameById);
+      const additionalNames = additionalCalledIds.map(loNameById);
+
+      return {
+        ...r,
+        transferProspects,
+        transferProspectsWithLo,
+        loCoverage: {
+          assignedCalled: assignedCalledNames,
+          notCalled: notCalledNames,
+          additional: additionalNames,
+        },
+      };
     });
 
     res.json(enriched);
@@ -2376,8 +2408,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes } = req.body;
+    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
+    const normalizeIds = (x: any): number[] =>
+      Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
+    const assignedIds = normalizeIds(assignedLosCalled);
+    const additionalIds = normalizeIds(additionalLosCalled);
     const report = storageExtra.upsertEodReport({
       reportDate,
       assistantId: userId,
@@ -2385,6 +2421,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       transfers: Number(transfers ?? 0),
       appointments: Number(appointments ?? 0),
       notes: notes ?? null,
+      assignedLosCalled: assignedIds,
+      additionalLosCalled: additionalIds,
     });
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
@@ -2434,6 +2472,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
           } catch {}
         }
 
+        // Resolve LO coverage — assigned-called, additional, and not-called
+        const allLos = storage.getLoanOfficers() as any[];
+        const loNameById = (id: number) => {
+          const lo = allLos.find((l: any) => l.id === id);
+          return lo ? (lo.fullName ?? lo.full_name ?? `LO #${id}`) : `LO #${id}`;
+        };
+        const todaysAssignments = (storage.getDailyAssignments(reportDate) as any[])
+          .filter((a: any) => (a.assistantId ?? a.assistant_id) === userId);
+        const assignedLoIds: number[] = todaysAssignments.map((a: any) => a.loId ?? a.lo_id).filter((n: any) => Number.isFinite(n));
+        const calledSet = new Set<number>(assignedIds);
+        const assignedCalledNames: string[] = assignedLoIds.filter((id: number) => calledSet.has(id)).map(loNameById);
+        const notCalledNames: string[] = assignedLoIds.filter((id: number) => !calledSet.has(id)).map(loNameById);
+        const additionalNames: string[] = additionalIds.map(loNameById);
+
         const reportDateLong = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
         const reportDateShort = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
@@ -2482,6 +2534,32 @@ export function registerRoutes(httpServer: Server, app: Express) {
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
             }
           </div>` : ""}
+
+          ${(assignedLoIds.length || additionalNames.length) ? (() => {
+            const esc = (s: string) => s.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+            const chipList = (names: string[], bg: string, border: string, color: string) =>
+              names.length
+                ? names.map(n => `<span style="display:inline-block;background:${bg};border:1px solid ${border};color:${color};font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;margin:2px 4px 2px 0">${esc(n)}</span>`).join("")
+                : `<span style="font-size:12px;color:#64748b;font-style:italic">—</span>`;
+            return `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#1e3a8a">📋 LO Coverage</p>
+            <div style="margin-bottom:8px">
+              <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px">Assigned LOs called (${assignedCalledNames.length}/${assignedLoIds.length})</p>
+              ${chipList(assignedCalledNames, "#dcfce7", "#86efac", "#14532d")}
+            </div>
+            ${notCalledNames.length ? `
+            <div style="margin-bottom:8px">
+              <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.5px">Not called (${notCalledNames.length})</p>
+              ${chipList(notCalledNames, "#fee2e2", "#fca5a5", "#7f1d1d")}
+            </div>` : ""}
+            ${additionalNames.length ? `
+            <div>
+              <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px">Additional LOs covered (${additionalNames.length})</p>
+              ${chipList(additionalNames, "#dbeafe", "#93c5fd", "#1e3a8a")}
+            </div>` : ""}
+          </div>`;
+          })() : ""}
 
           ${safeNotes ? `
           <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:20px">

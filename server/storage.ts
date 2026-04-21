@@ -922,6 +922,9 @@ function runNewMigrations() {
     submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(report_date, assistant_id)
   )`);
+  // LO coverage columns (added post-hoc; safe to ignore duplicate errors)
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN assigned_los_called TEXT NOT NULL DEFAULT '[]'`); } catch {}
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_called TEXT NOT NULL DEFAULT '[]'`); } catch {}
 
   // EOD activities table (individual line items per report)
   sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_activities (
@@ -1165,15 +1168,19 @@ export function getEodReport(reportDate: string, assistantId: number): any {
   return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
 }
 
-export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; transfers: number; appointments: number; notes?: string | null }): any {
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[] }): any {
+  const assignedJson = JSON.stringify(Array.isArray(data.assignedLosCalled) ? data.assignedLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
+  const additionalJson = JSON.stringify(Array.isArray(data.additionalLosCalled) ? data.additionalLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   sqlite.prepare(`
-    INSERT INTO eod_reports (report_date, assistant_id, calls_made, transfers, appointments, notes, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, transfers, appointments, notes, assigned_los_called, additional_los_called, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(report_date, assistant_id) DO UPDATE SET
       calls_made=excluded.calls_made, transfers=excluded.transfers,
       appointments=excluded.appointments, notes=excluded.notes,
+      assigned_los_called=excluded.assigned_los_called,
+      additional_los_called=excluded.additional_los_called,
       submitted_at=datetime('now')
-  `).run(data.reportDate, data.assistantId, data.callsMade, data.transfers, data.appointments, data.notes ?? null);
+  `).run(data.reportDate, data.assistantId, data.callsMade, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson);
   return getEodReport(data.reportDate, data.assistantId);
 }
 

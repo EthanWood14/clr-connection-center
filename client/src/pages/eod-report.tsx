@@ -15,8 +15,9 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
-  History, ChevronDown, ChevronUp, User,
+  History, ChevronDown, ChevronUp, User, Users, X,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { format, subDays, addDays, parseISO } from "date-fns";
 
 const ACTIVITY_TYPES = [
@@ -58,10 +59,13 @@ export default function EodReport() {
   const todayStr = new Date().toISOString().split("T")[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
 
-  // Form state — calls + notes only
+  // Form state — calls + notes + LO coverage
   const [callsMade, setCallsMade] = useState("");
   const [notes, setNotes]         = useState("");
   const [dirty, setDirty]         = useState(false);
+  const [assignedCalled, setAssignedCalled] = useState<number[]>([]);
+  const [additionalCalled, setAdditionalCalled] = useState<number[]>([]);
+  const [additionalPick, setAdditionalPick] = useState<string>("");
 
   // Activity form state
   const [activityType, setActivityType] = useState("follow_up");
@@ -72,6 +76,31 @@ export default function EodReport() {
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
   });
+
+  // Today's (selected-date's) assignments for the current CLR
+  const { data: dayAssignments = [] } = useQuery<any[]>({
+    queryKey: ["/api/assignments", selectedDate],
+    queryFn: () => fetch(`/api/assignments?date=${selectedDate}`, { credentials: "include" }).then(r => r.json()),
+  });
+  const myAssignments = useMemo(
+    () => (dayAssignments as any[]).filter(a => (a.assistantId ?? a.assistant_id) === user?.id),
+    [dayAssignments, user?.id]
+  );
+  const assignedLoIdSet = useMemo(() => new Set<number>(myAssignments.map((a: any) => a.loId ?? a.lo_id)), [myAssignments]);
+
+  // All LOs — for the "additional LOs covered" picker
+  const { data: allLos = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
+  const loNameById = (id: number): string => {
+    const lo = (allLos as any[]).find(l => l.id === id);
+    return lo ? (lo.fullName ?? lo.full_name ?? `LO #${id}`) : `LO #${id}`;
+  };
+  const loAssistantId = (lo: any) => lo.assistantId ?? lo.assistant_id;
+  const additionalPickable = useMemo(
+    () => (allLos as any[])
+      .filter(lo => !assignedLoIdSet.has(lo.id) && !additionalCalled.includes(lo.id) && (lo.isActive ?? lo.is_active ?? 1))
+      .sort((a, b) => String(a.fullName ?? a.full_name ?? "").localeCompare(String(b.fullName ?? b.full_name ?? ""))),
+    [allLos, assignedLoIdSet, additionalCalled]
+  );
 
   // Today's outcomes for this user — auto-tally transfers/appointments/fell-through
   const { data: allOutcomes = [] } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
@@ -97,9 +126,13 @@ export default function EodReport() {
     if (report) {
       setCallsMade(String(report.calls_made ?? report.callsMade ?? ""));
       setNotes(report.notes ?? "");
+      setAssignedCalled(Array.isArray(report.assignedLosCalled) ? report.assignedLosCalled : []);
+      setAdditionalCalled(Array.isArray(report.additionalLosCalled) ? report.additionalLosCalled : []);
     } else {
       setCallsMade("");
       setNotes("");
+      setAssignedCalled([]);
+      setAdditionalCalled([]);
     }
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,6 +146,8 @@ export default function EodReport() {
         transfers:    autoTransfers,
         appointments: autoAppointments,
         notes:        notes.trim() || null,
+        assignedLosCalled: assignedCalled,
+        additionalLosCalled: additionalCalled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/eod-reports"] });
@@ -225,6 +260,92 @@ export default function EodReport() {
                   No outcomes logged for this date yet. Log them in Lead Outcomes and they'll appear here.
                 </p>
               )}
+            </CardContent>
+          </Card>
+
+          {/* LO Coverage card */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Users className="w-4 h-4" /> LO Coverage
+                <span className="text-xs font-normal text-muted-foreground ml-1">— which LOs did you call for today?</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Assigned LOs checklist */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your assigned LOs</p>
+                {myAssignments.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No LOs assigned for this date.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {myAssignments.map((a: any) => {
+                      const loId = a.loId ?? a.lo_id;
+                      const loName = a.lo?.fullName ?? a.lo?.full_name ?? loNameById(loId);
+                      const checked = assignedCalled.includes(loId);
+                      return (
+                        <label key={loId} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${checked ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800" : "bg-muted/30 border-border hover:bg-muted/60"}`}>
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) => {
+                              setDirty(true);
+                              setAssignedCalled(prev => v ? Array.from(new Set([...prev, loId])) : prev.filter(id => id !== loId));
+                            }}
+                          />
+                          <span className="text-sm">{loName}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Additional LOs picker */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Additional LOs you covered</p>
+                <div className="flex gap-2">
+                  <Select
+                    value={additionalPick}
+                    onValueChange={(v) => {
+                      const id = parseInt(v);
+                      if (!Number.isFinite(id)) return;
+                      setDirty(true);
+                      setAdditionalCalled(prev => Array.from(new Set([...prev, id])));
+                      setAdditionalPick("");
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm flex-1 min-w-0">
+                      <SelectValue placeholder={additionalPickable.length ? "Add an LO you covered…" : "No more LOs to add"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {additionalPickable.map((lo: any) => (
+                        <SelectItem key={lo.id} value={String(lo.id)}>
+                          {lo.fullName ?? lo.full_name ?? `LO #${lo.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {additionalCalled.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">None added.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {additionalCalled.map(id => (
+                      <Badge key={id} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs">
+                        {loNameById(id)}
+                        <button
+                          type="button"
+                          onClick={() => { setDirty(true); setAdditionalCalled(prev => prev.filter(x => x !== id)); }}
+                          className="ml-0.5 rounded-full hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label={`Remove ${loNameById(id)}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -481,6 +602,45 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Names not recorded for these transfers.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* LO Coverage */}
+                  {r.loCoverage && ((r.loCoverage.assignedCalled?.length ?? 0) + (r.loCoverage.notCalled?.length ?? 0) + (r.loCoverage.additional?.length ?? 0) > 0) && (
+                    <div className="rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 px-3 py-2.5 space-y-2">
+                      <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">LO Coverage</p>
+                      {r.loCoverage.assignedCalled?.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 mb-1">
+                            Assigned called ({r.loCoverage.assignedCalled.length}{r.loCoverage.notCalled?.length ? `/${r.loCoverage.assignedCalled.length + r.loCoverage.notCalled.length}` : ""})
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {r.loCoverage.assignedCalled.map((n: string, i: number) => (
+                              <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">{n}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {r.loCoverage.notCalled?.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-rose-700 dark:text-rose-400 mb-1">Not called ({r.loCoverage.notCalled.length})</p>
+                          <div className="flex flex-wrap gap-1">
+                            {r.loCoverage.notCalled.map((n: string, i: number) => (
+                              <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">{n}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {r.loCoverage.additional?.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-blue-700 dark:text-blue-400 mb-1">Additional covered ({r.loCoverage.additional.length})</p>
+                          <div className="flex flex-wrap gap-1">
+                            {r.loCoverage.additional.map((n: string, i: number) => (
+                              <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-200">{n}</span>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
