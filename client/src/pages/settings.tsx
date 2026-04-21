@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -689,6 +689,85 @@ function EmailReportsCard() {
   );
 }
 
+// ── Resend Intro Emails component ───────────────────────────────────────────
+function ResendIntroEmails({ users }: { users: any[] }) {
+  const { toast } = useToast();
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [sentIds, setSentIds] = useState<Set<number>>(new Set());
+
+  const resendMut = useMutation({
+    mutationFn: async (userId: number) => {
+      setPendingId(userId);
+      const res = await fetch(`/api/users/${userId}/resend-welcome`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      return data;
+    },
+    onSuccess: (_data, userId) => {
+      setPendingId(null);
+      setSentIds(prev => new Set([...prev, userId]));
+      toast({ title: "Intro email sent", description: "A fresh login email with a new temp password was sent." });
+    },
+    onError: (e: any, userId) => {
+      setPendingId(null);
+      toast({ title: "Failed to send email", description: e?.message ?? "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const activeUsers = users.filter(u => u.isActive);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Send className="w-5 h-5 text-muted-foreground" />
+        <div>
+          <h2 className="text-lg font-semibold">Resend Intro Emails</h2>
+          <p className="text-sm text-muted-foreground">Send a fresh welcome email with a new temporary password to any team member.</p>
+        </div>
+      </div>
+      <Card>
+        <CardContent className="p-0">
+          {activeUsers.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">No active users.</div>
+          ) : (
+            activeUsers.map((u: any) => (
+              <div key={u.id} className="flex items-center justify-between px-4 py-3 border-b last:border-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
+                    {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">{u.name}</p>
+                    <p className="text-xs text-muted-foreground">{u.email}</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={sentIds.has(u.id) ? "outline" : "default"}
+                  className="gap-1.5 h-8 text-xs"
+                  disabled={pendingId === u.id}
+                  onClick={() => resendMut.mutate(u.id)}
+                >
+                  {pendingId === u.id ? (
+                    <><RefreshCw className="w-3 h-3 animate-spin" /> Sending…</>
+                  ) : sentIds.has(u.id) ? (
+                    <><Send className="w-3 h-3" /> Sent ✓</>
+                  ) : (
+                    <><Send className="w-3 h-3" /> Send Email</>
+                  )}
+                </Button>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const { user: authUser } = useAuth();
@@ -1066,6 +1145,11 @@ export default function Settings() {
         </div>
         <TeamManagement />
       </div>
+
+      <Separator />
+
+      {/* Resend Intro Emails */}
+      <ResendIntroEmails users={users} />
 
       <Separator />
 

@@ -892,6 +892,69 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(storage.updateUser(id, rest));
   });
 
+  // Resend intro/welcome email to any user (admin only)
+  app.post("/api/users/:id/resend-welcome", requireAuth, async (req: any, res: any) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
+    const id = parseInt(req.params.id);
+    const user = storage.getUserById(id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Generate a fresh temp password and mark must_change_password
+    const words = ["Capital","Lending","Mortgage","Equity","Bridge","Realty","Fund","Asset","Broker","Western"];
+    const word = words[Math.floor(Math.random() * words.length)];
+    const num = String(Math.floor(Math.random() * 9000) + 1000);
+    const tempPassword = `WCL${num}!${word}`;
+    const hash = await bcrypt.hash(tempPassword, 10);
+    storage.setUserPassword(id, hash);
+    storage.updateUser(id, { mustChangePassword: true } as any);
+
+    const roleLabel = user.role === "admin" ? "Administrator" : user.role === "assistant" ? "CLR Assistant" : "Viewer";
+    const welcomeBody = `
+      <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+        Hi <strong style="color:#1e293b">${user.name}</strong>,
+      </p>
+      <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+        Your access to the <strong style="color:#1e293b">CLR Connection Center</strong> has been refreshed. Use the credentials below to log in.
+        You will be prompted to set a new password on first login.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:24px">
+        <p style="margin:0 0 8px;font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Your Login Details</p>
+        <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#1e293b">
+          <tr><td style="padding:3px 12px 3px 0;color:#64748b">Email</td><td style="font-weight:500">${user.email}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;color:#64748b">Role</td><td style="font-weight:500">${roleLabel}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;color:#64748b">Temporary Password</td><td style="font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">${tempPassword}</td></tr>
+        </table>
+        <p style="margin:12px 0 0;font-size:12px;color:#475569;line-height:1.6">
+          You will be prompted to change your password on first login.
+        </p>
+      </div>
+      <div style="text-align:center;margin-bottom:24px">
+        <a href="https://www.wlc.it.com" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+          Log In to CLR Connection Center
+        </a>
+      </div>
+      <div style="border-top:1px solid #e2e8f0;padding-top:16px">
+        <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6">
+          If you have any questions, reach out to your team admin.
+        </p>
+      </div>
+    `;
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: `Your CLR Connection Center access — ${user.name}`,
+        html: buildEmail({
+          subject: "CLR Connection Center Access",
+          preheader: "Your login details are ready.",
+          body: welcomeBody,
+        }),
+      });
+      res.json({ ok: true, tempPassword });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Email failed" });
+    }
+  });
+
   app.delete("/api/users/:id", requireAuth, (req: any, res) => {
     const requesterId = req.session_user?.userId;
     const requesterRole = req.session_user?.role;
