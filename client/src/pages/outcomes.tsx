@@ -19,12 +19,14 @@ import { Plus, Trash2, Filter, ClipboardList, Pencil } from "lucide-react";
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "fell_through",
-  "no_answer", "callback_requested", "not_interested",
-  "wrong_number", "other"
+  "no_answer", "callback_requested", "future_contact",
+  "not_interested", "wrong_number", "other"
 ] as const;
 
 const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer", appointment: "Appointment", fell_through: "Fell Through",
+  no_answer: "No Answer", callback_requested: "Callback Requested",
+  future_contact: "Future Contact",
   not_interested: "Not Interested", wrong_number: "Wrong Number", other: "Other",
 };
 
@@ -34,6 +36,7 @@ const OUTCOME_COLORS: Record<string, string> = {
   fell_through: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
   no_answer: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
   callback_requested: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+  future_contact: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
   not_interested: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   wrong_number: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
   other: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
@@ -218,7 +221,7 @@ const editOutcomeSchema = z.object({
 });
 type EditOutcomeValues = z.infer<typeof editOutcomeSchema>;
 
-const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested"]);
+const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested", "future_contact"]);
 
 function EditOutcomeDialog({
   outcome,

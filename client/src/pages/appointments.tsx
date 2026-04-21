@@ -56,13 +56,14 @@ const OUTCOME_LABELS: Record<string, string> = {
   appointment: "Appointment",
   fell_through: "Fell Through",
   callback_requested: "Callback Requested",
+  future_contact: "Future Contact",
   not_interested: "Not Interested",
   voicemail: "Voicemail",
   no_answer: "No Answer",
 };
 
 // Active appointment types — these are the ones that still need to be handled
-const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested"]);
+const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "future_contact"]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ function EditDialog({
   }, [open, outcome, form]);
 
   const allOutcomeTypes = [
-    "appointment", "callback_requested", "transfer", "fell_through",
+    "appointment", "callback_requested", "future_contact", "transfer", "fell_through",
     "not_interested", "voicemail", "no_answer",
   ];
 
@@ -359,7 +360,14 @@ function AppointmentCard({
                   Upcoming
                 </Badge>
               )}
-              <Badge variant="outline" className="text-xs px-1.5 py-0 capitalize">
+              <Badge
+                variant="outline"
+                className={`text-xs px-1.5 py-0 capitalize ${
+                  outcome.outcomeType === "future_contact"
+                    ? "bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300"
+                    : ""
+                }`}
+              >
                 {OUTCOME_LABELS[outcome.outcomeType] ?? outcome.outcomeType}
               </Badge>
             </div>
