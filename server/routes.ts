@@ -309,6 +309,108 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     </tr>`;
   }).join("");
 
+  // Per-day breakdown (weekly only)
+  const eodAllInRange = storageExtra.getEodReportsByRange(startDate, endDate);
+  const datesInRange: string[] = (() => {
+    const out: string[] = [];
+    const start = new Date(startDate + "T00:00:00Z");
+    const end = new Date(endDate + "T00:00:00Z");
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  })();
+
+  interface DailyClrRow {
+    name: string;
+    calls: number;
+    transfers: number;
+    appointments: number;
+    fellThrough: number;
+  }
+  interface DaySection {
+    date: string;
+    heading: string;
+    rows: DailyClrRow[];
+  }
+
+  const daySections: DaySection[] = datesInRange.map(dateStr => {
+    const rows: DailyClrRow[] = clrs.map((u: any) => {
+      const uid = u.id;
+      const eod = eodAllInRange.find((r: any) => r.report_date === dateStr && r.assistant_id === uid);
+      const dayOutcomes = outcomes.filter((o: any) =>
+        (o.assistantId || o.assistant_id) === uid && (o.date || o.report_date) === dateStr,
+      );
+      const dayTransfersFromOutcomes = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
+      const dayApptsFromOutcomes = dayOutcomes.filter((o: any) => {
+        const t = o.outcomeType || o.outcome_type;
+        return t === "appointment" || t === "callback_requested";
+      }).length;
+      const dayFellThroughFromOutcomes = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
+
+      if (eod) {
+        return {
+          name: u.name,
+          calls: eod.calls_made || 0,
+          transfers: eod.transfers || 0,
+          appointments: eod.appointments || 0,
+          fellThrough: dayFellThroughFromOutcomes,
+        };
+      }
+      if (dayOutcomes.length === 0) {
+        return { name: u.name, calls: 0, transfers: 0, appointments: 0, fellThrough: 0 };
+      }
+      return {
+        name: u.name,
+        calls: dayOutcomes.length,
+        transfers: dayTransfersFromOutcomes,
+        appointments: dayApptsFromOutcomes,
+        fellThrough: dayFellThroughFromOutcomes,
+      };
+    })
+    .filter(r => r.calls > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0)
+    .sort((a, b) => b.transfers - a.transfers || b.calls - a.calls);
+
+    const heading = new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-US", {
+      weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC",
+    });
+    return { date: dateStr, heading, rows };
+  }).filter(s => s.rows.length > 0);
+
+  const perDayHtml = daySections.map(section => {
+    const rowsHtml = section.rows.map((r, i) => {
+      const bg = i % 2 === 0 ? "#ffffff" : "#f9fafb";
+      return `<tr style="background:${bg}">
+        <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${r.transfers}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0f766e">${r.appointments}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#b45309">${r.fellThrough}</td>
+      </tr>`;
+    }).join("");
+
+    return `
+    <div style="margin-bottom:22px">
+      <div style="background:#1A2B4A;color:#ffffff;padding:10px 14px;border-radius:10px 10px 0 0;font-size:13px;font-weight:700;letter-spacing:0.2px">
+        📅 ${section.heading}
+      </div>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 10px 10px;overflow:hidden;font-size:12px">
+        <thead>
+          <tr style="background:#0F182D">
+            <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
+            <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
+            <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+            <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
+            <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>`;
+  }).join("");
+
   // Totals row
   const teamRatioColor = teamCalls > 0 ? (parseFloat(teamRatio) >= 10 ? "#15803d" : parseFloat(teamRatio) >= 5 ? "#b45309" : "#dc2626") : "#94a3b8";
   const teamMissedStyle = teamMissed > 0 ? "color:#dc2626;font-weight:700" : "color:#64748b;font-weight:700";
@@ -343,6 +445,11 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     <!-- Divider -->
     <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
 
+    ${type === "weekly" ? `
+    <!-- Per-day CLR breakdown -->
+    <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Daily CLR Activity</h2>
+    ${daySections.length > 0 ? perDayHtml : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR activity recorded for this period.</p>`}
+    ` : `
     <!-- Per-CLR breakdown table -->
     <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Breakdown</h2>
     ${clrStats.length > 0 ? `
@@ -368,6 +475,7 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     <p style="margin:8px 0 0;font-size:11px;color:#94a3b8">
       * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
     </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
+    `}
 
     <!-- Active LOs callout -->
     <div style="margin-top:28px;padding:14px 18px;background:#eff6ff;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
