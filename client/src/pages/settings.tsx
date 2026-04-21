@@ -9,10 +9,11 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
 
 const DEFAULT_WEIGHTS = {
@@ -904,40 +905,40 @@ export default function Settings() {
 
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
-  return (
-    <div className="p-6 space-y-6 max-w-[800px] mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Settings2 className="w-5 h-5" />
-            Settings
-          </h1>
-          <p className="text-sm text-muted-foreground">Configure the assignment ranking algorithm</p>
-        </div>
-      </div>
+  const isAdmin = authUser?.role === "admin";
 
-      {/* Algorithm Weights — admin only */}
-      {authUser?.role !== "admin" ? (
-        <Card className="relative overflow-hidden">
-          <div className="absolute inset-0 bg-background/70 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center gap-3 rounded-xl">
-            <div className="p-3 rounded-full bg-muted border">
-              <Lock className="w-5 h-5 text-muted-foreground" />
-            </div>
-            <div className="text-center px-6">
-              <p className="text-sm font-semibold text-foreground">Admin Only</p>
-              <p className="text-xs text-muted-foreground mt-1">Algorithm settings can only be changed by an admin.</p>
-            </div>
-          </div>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Ranking Algorithm Weights</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5 opacity-30 pointer-events-none select-none">
-            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14" />)}
-          </CardContent>
-        </Card>
-      ) : (
-      <>
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === "undefined") return "profile";
+    const saved = localStorage.getItem("settings.activeTab");
+    const allowed = ["profile", "reports", "team", "algorithm", "app"];
+    if (saved && allowed.includes(saved)) {
+      if ((saved === "reports" || saved === "team" || saved === "algorithm") && authUser && authUser.role !== "admin") {
+        return "profile";
+      }
+      return saved;
+    }
+    return "profile";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("settings.activeTab", activeTab);
+    }
+  }, [activeTab]);
+
+  // If non-admin somehow lands on an admin tab (e.g. role changed), fall back.
+  useEffect(() => {
+    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm")) {
+      setActiveTab("profile");
+    }
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    document.title = "Settings · WCLCC";
+  }, []);
+
+  const algorithmTab = (
+    <div className="space-y-6">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold">Ranking Algorithm Weights</CardTitle>
@@ -1119,114 +1120,61 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
-      </>
-      )} {/* end admin-only algorithm section */}
 
-      {/* Email Reports — unified recipient list + Resend config + Send Now */}
-      <EmailReportsCard />
+      <div className="flex items-center justify-between pt-2">
+        <Button variant="outline" onClick={handleReset} data-testid="button-reset-settings">
+          <RotateCcw className="w-4 h-4 mr-2" />Reset to Defaults
+        </Button>
+        <Button
+          onClick={handleSave}
+          disabled={updateMutation.isPending || !isWeightValid}
+          data-testid="button-save-settings"
+        >
+          <Save className="w-4 h-4 mr-2" />
+          {updateMutation.isPending ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
 
-      {/* NMLS License Check Schedule */}
-      <NmlsScheduleCard />
-
-      {/* Team Members */}
+  const profileTab = (
+    <div className="space-y-6">
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Users className="w-4 h-4" />
-            Team Members
+            <User className="w-4 h-4 text-muted-foreground" />
+            Your Profile
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
-          {users.length === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">No users found.</div>
-          ) : (
-            users.map((u: any) => (
-              <div key={u.id} className="flex items-center justify-between px-4 py-3 border-b last:border-0" data-testid={`row-user-${u.id}`}>
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-                    {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{u.name}</p>
-                    <p className="text-xs text-muted-foreground">{u.email}</p>
-                  </div>
+        <CardContent className="space-y-3">
+          {authUser ? (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
+                  {(authUser.name ?? authUser.email ?? "?").split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    className={`text-xs px-2 ${u.role === "admin" ? "bg-primary/10 text-primary border-primary/30" : "bg-muted text-muted-foreground"}`}
-                    variant="outline"
-                  >
-                    {u.role}
-                  </Badge>
-                  <Badge
-                    className={`text-xs px-2 ${u.isActive ? "text-green-600 border-green-300" : "text-red-500 border-red-300"}`}
-                    variant="outline"
-                  >
-                    {u.isActive ? "Active" : "Inactive"}
-                  </Badge>
-                  {authUser?.role === "admin" && (
-                    <ManagerToggleButton user={u} />
-                  )}
+                <div>
+                  <p className="text-sm font-medium">{authUser.name}</p>
+                  <p className="text-xs text-muted-foreground">{authUser.email}</p>
                 </div>
               </div>
-            ))
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="text-muted-foreground uppercase tracking-wide">Role</p>
+                  <p className="font-medium capitalize">{authUser.role}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground uppercase tracking-wide">Status</p>
+                  <p className="font-medium text-green-600">Active</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">Loading profile…</p>
           )}
         </CardContent>
       </Card>
 
-      {/* Save / Reset — admin only */}
-      {authUser?.role === "admin" && (
-        <div className="flex items-center justify-between pt-2">
-          <Button variant="outline" onClick={handleReset} data-testid="button-reset-settings">
-            <RotateCcw className="w-4 h-4 mr-2" />Reset to Defaults
-          </Button>
-          <Button
-            onClick={handleSave}
-            disabled={updateMutation.isPending || !isWeightValid}
-            data-testid="button-save-settings"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {updateMutation.isPending ? "Saving…" : "Save Settings"}
-          </Button>
-        </div>
-      )}
-
-      <Separator />
-
-      {/* Team Management */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Users className="w-5 h-5 text-muted-foreground" />
-          <div>
-            <h2 className="text-lg font-semibold">Team Management</h2>
-            <p className="text-sm text-muted-foreground">Add and manage CLR assistant accounts.</p>
-          </div>
-        </div>
-        <TeamManagement />
-      </div>
-
-      <Separator />
-
-      {/* Resend Intro Emails */}
-      <ResendIntroEmails users={users} />
-
-      <Separator />
-
-      {/* Broadcast Notifications */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Megaphone className="w-5 h-5 text-muted-foreground" />
-          <div>
-            <h2 className="text-lg font-semibold">Send Notification</h2>
-            <p className="text-sm text-muted-foreground">Broadcast announcements and reminders to the team.</p>
-          </div>
-        </div>
-        <BroadcastNotifications />
-      </div>
-
-      <Separator />
-
-      {/* Change Password */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -1322,7 +1270,134 @@ export default function Settings() {
           </Button>
         </CardContent>
       </Card>
+    </div>
+  );
 
+  const reportsTab = (
+    <div className="space-y-6">
+      <EmailReportsCard />
+    </div>
+  );
+
+  const teamTab = (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Users className="w-4 h-4" />
+            Team Members
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {users.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">No users found.</div>
+          ) : (
+            users.map((u: any) => (
+              <div key={u.id} className="flex items-center justify-between px-4 py-3 border-b last:border-0" data-testid={`row-user-${u.id}`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
+                    {u.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">{u.name}</p>
+                    <p className="text-xs text-muted-foreground">{u.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    className={`text-xs px-2 ${u.role === "admin" ? "bg-primary/10 text-primary border-primary/30" : "bg-muted text-muted-foreground"}`}
+                    variant="outline"
+                  >
+                    {u.role}
+                  </Badge>
+                  <Badge
+                    className={`text-xs px-2 ${u.isActive ? "text-green-600 border-green-300" : "text-red-500 border-red-300"}`}
+                    variant="outline"
+                  >
+                    {u.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                  <ManagerToggleButton user={u} />
+                </div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <TeamManagement />
+
+      <ResendIntroEmails users={users} />
+    </div>
+  );
+
+  const appTab = (
+    <div className="space-y-6">
+      {isAdmin && <NmlsScheduleCard />}
+      {isAdmin && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Megaphone className="w-5 h-5 text-muted-foreground" />
+            <div>
+              <h2 className="text-lg font-semibold">Send Notification</h2>
+              <p className="text-sm text-muted-foreground">Broadcast announcements and reminders to the team.</p>
+            </div>
+          </div>
+          <BroadcastNotifications />
+        </div>
+      )}
+      {!isAdmin && (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            No app-wide settings available for your account.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="p-6 space-y-6 max-w-[900px] mx-auto">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Settings2 className="w-5 h-5" />
+            Settings
+          </h1>
+          <p className="text-sm text-muted-foreground">Manage your profile and workspace configuration</p>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 p-1">
+          <TabsTrigger value="profile" className="gap-1.5" data-testid="tab-profile">
+            <User className="w-3.5 h-3.5" /> Profile
+          </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="reports" className="gap-1.5" data-testid="tab-reports">
+              <Mail className="w-3.5 h-3.5" /> Reports
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="team" className="gap-1.5" data-testid="tab-team">
+              <Users className="w-3.5 h-3.5" /> Team
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="algorithm" className="gap-1.5" data-testid="tab-algorithm">
+              <Sliders className="w-3.5 h-3.5" /> Algorithm
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="app" className="gap-1.5" data-testid="tab-app">
+            <LayoutGrid className="w-3.5 h-3.5" /> App
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="profile" className="mt-6">{profileTab}</TabsContent>
+        {isAdmin && <TabsContent value="reports" className="mt-6">{reportsTab}</TabsContent>}
+        {isAdmin && <TabsContent value="team" className="mt-6">{teamTab}</TabsContent>}
+        {isAdmin && <TabsContent value="algorithm" className="mt-6">{algorithmTab}</TabsContent>}
+        <TabsContent value="app" className="mt-6">{appTab}</TabsContent>
+      </Tabs>
     </div>
   );
 }
