@@ -205,10 +205,21 @@ const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
 
 async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
-  const apiKey = s.resend_api_key || DEFAULT_RESEND_KEY;
-  const from = s.from_address_resend || DEFAULT_FROM;
+  // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
+  // Old installs sometimes have a non-empty but revoked key in the DB, which
+  // made the plain `||` fallback skip the working default and hard-fail the send.
+  const dbKey = String(s.resend_api_key || "").trim();
+  // A Resend API key looks like "re_" + ~32 chars of [A-Za-z0-9_]. Anything
+  // shorter/obviously-placeholder is treated as unset so we fall back to the
+  // known-good default instead of hard-failing with "API key is invalid".
+  const looksLikeRealKey = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey);
+  const apiKey = looksLikeRealKey ? dbKey : DEFAULT_RESEND_KEY;
+  // Same logic for the From address — only use a DB-configured value when it
+  // is non-empty AND plausibly an email; otherwise fall back to the default.
+  const dbFrom = String(s.from_address_resend || "").trim();
+  const from = dbFrom.includes("@") ? dbFrom : DEFAULT_FROM;
   const toArr = Array.isArray(to) ? to : [to];
-  console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}…`);
+  console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}… keySource=${apiKey === DEFAULT_RESEND_KEY ? "default" : "db"}`);
   let result: any;
   try {
     const resend = new Resend(apiKey);
@@ -2001,6 +2012,34 @@ export function registerRoutes(httpServer: Server, app: Express) {
     } catch (e: any) {
       console.error(`[send-now] FAIL type=${type}:`, e?.message ?? e);
       res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
+  // ── Diagnostic: send a plain test email via Resend (admin only) ─────────────
+  // POST /api/test-email { to?: string }  — defaults to ethan.anthony.wood@gmail.com
+  // Returns { ok, id, to, from, keySource } so the admin can confirm Resend
+  // is actually delivering without going through the full report pipeline.
+  app.post("/api/test-email", requireAuth, async (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const to = typeof req.body?.to === "string" && req.body.to.includes("@")
+      ? req.body.to.trim()
+      : "ethan.anthony.wood@gmail.com";
+    try {
+      const id = await sendEmail({
+        to,
+        subject: `CLR test email — ${new Date().toISOString()}`,
+        html: `<p>This is a test email from the CLR Connection Center.</p>
+               <p>If you received this, Resend delivery is working.</p>
+               <p style="color:#64748b;font-size:12px">Sent at ${new Date().toISOString()}</p>`,
+      });
+      const s = storageExtra.getEmailSettings() as any;
+      const dbKey = String(s.resend_api_key || "").trim();
+      const keySource = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey) ? "db" : "default";
+      console.log(`[test-email] OK to=${to} id=${id} keySource=${keySource}`);
+      res.json({ ok: true, id, to, keySource });
+    } catch (e: any) {
+      console.error(`[test-email] FAIL to=${to}:`, e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error", to });
     }
   });
 
