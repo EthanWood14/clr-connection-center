@@ -719,6 +719,63 @@ function runNewMigrations() {
     }
   } catch (e) { console.error("report_schedule_settings dedupe cleanup failed:", e); }
 
+  // One-time alias cleanup: remove legacy short-form emails (spetrie@, credoble@,
+  // and the "spetries@" typo variant) from recipient lists. The full-name
+  // versions (scott.petrie@ / chris.redoble@) are the canonical addresses.
+  try {
+    const ALIASES = new Set([
+      "spetrie@westcapitallending.com",
+      "spetries@westcapitallending.com",
+      "credoble@westcapitallending.com",
+    ]);
+    const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
+    const updateStmt = sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`);
+    for (const row of rows) {
+      let parsed: unknown = [];
+      try { parsed = JSON.parse(row.recipients || "[]"); } catch { parsed = []; }
+      const list = Array.isArray(parsed) ? parsed : [];
+      const filtered = list.filter(e => typeof e === "string" && !ALIASES.has(e.trim().toLowerCase()));
+      const nextJson = JSON.stringify(filtered);
+      if (nextJson !== row.recipients) {
+        updateStmt.run(nextJson, row.report_type);
+      }
+    }
+  } catch (e) { console.error("report_schedule_settings alias cleanup failed:", e); }
+
+  // Same alias cleanup for email_settings.manager_emails.
+  try {
+    const ALIASES = new Set([
+      "spetrie@westcapitallending.com",
+      "spetries@westcapitallending.com",
+      "credoble@westcapitallending.com",
+    ]);
+    const rows = sqlite.prepare(`SELECT id, manager_emails FROM email_settings`).all() as any[];
+    const updateStmt = sqlite.prepare(`UPDATE email_settings SET manager_emails = ? WHERE id = ?`);
+    for (const row of rows) {
+      let parsed: unknown = [];
+      try { parsed = JSON.parse(row.manager_emails || "[]"); } catch { parsed = []; }
+      const list = Array.isArray(parsed) ? parsed : [];
+      const filtered = list.filter(e => typeof e === "string" && !ALIASES.has(e.trim().toLowerCase()));
+      const nextJson = JSON.stringify(filtered);
+      if (nextJson !== (row.manager_emails || "[]")) {
+        updateStmt.run(nextJson, row.id);
+      }
+    }
+  } catch (e) { console.error("email_settings alias cleanup failed:", e); }
+
+  // If any user rows still have the legacy alias email, promote them to the
+  // full-name version (preserving the is_manager flag from line ~195).
+  try {
+    sqlite.prepare(
+      `UPDATE users SET email = 'scott.petrie@westcapitallending.com'
+       WHERE LOWER(email) IN ('spetrie@westcapitallending.com','spetries@westcapitallending.com')`
+    ).run();
+    sqlite.prepare(
+      `UPDATE users SET email = 'chris.redoble@westcapitallending.com'
+       WHERE LOWER(email) = 'credoble@westcapitallending.com'`
+    ).run();
+  } catch (e) { console.error("users alias cleanup failed:", e); }
+
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

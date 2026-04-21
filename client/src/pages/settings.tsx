@@ -699,8 +699,8 @@ function EmailReportsCard() {
               {/* Quick-add WCL managers */}
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {[
-                  { name: "Chris Redoble", email: "credoble@westcapitallending.com" },
-                  { name: "Scott Petrie",  email: "spetries@westcapitallending.com" },
+                  { name: "Chris Redoble", email: "chris.redoble@westcapitallending.com" },
+                  { name: "Scott Petrie",  email: "scott.petrie@westcapitallending.com" },
                 ].map(({ name, email }) => {
                   const already = managerEmails.includes(email);
                   return (
