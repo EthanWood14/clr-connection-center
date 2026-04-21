@@ -1992,20 +1992,33 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // History: all past EOD reports for the current user (or all users for admin)
+  // Enriched with transfer prospect names pulled from lead_outcomes
   app.get('/api/eod-reports/history', requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     const isAdmin = req.session_user?.role === 'admin';
     const sqlite = storageExtra.getSqlite();
-    if (isAdmin) {
-      const rows = sqlite.prepare(`
-        SELECT e.*, u.name as clr_name
-        FROM eod_reports e LEFT JOIN users u ON e.assistant_id=u.id
-        ORDER BY e.report_date DESC LIMIT 120
-      `).all();
-      return res.json(rows);
-    }
-    const rows = sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId);
-    res.json(rows);
+
+    const reports: any[] = isAdmin
+      ? sqlite.prepare(`
+          SELECT e.*, u.name as clr_name
+          FROM eod_reports e LEFT JOIN users u ON e.assistant_id=u.id
+          ORDER BY e.report_date DESC LIMIT 120
+        `).all() as any[]
+      : sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId) as any[];
+
+    // For each report, fetch transfer prospect names from lead_outcomes
+    const enriched = reports.map((r: any) => {
+      const transferProspects: string[] = (sqlite.prepare(`
+        SELECT borrower_name FROM lead_outcomes
+        WHERE assistant_id=? AND date=? AND outcome_type='transfer'
+        ORDER BY id ASC
+      `).all(r.assistant_id, r.report_date) as any[])
+        .map((o: any) => (o.borrower_name || '').trim())
+        .filter((n: string) => n.length > 0);
+      return { ...r, transferProspects };
+    });
+
+    res.json(enriched);
   });
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
