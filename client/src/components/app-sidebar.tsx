@@ -19,28 +19,28 @@ import { useAuth } from "@/lib/auth";
 
 const mainItems = [
   { title: "Dashboard",       url: "/",            icon: LayoutDashboard },
-  { title: "LO Management",   url: "/directory",   icon: Users },
-  { title: "Your Calling List", url: "/assignments", icon: CalendarCheck },
+  { title: "Directory",       url: "/directory",   icon: Users },
+  { title: "Assignments",     url: "/assignments", icon: CalendarCheck },
 ];
 
 const teamItems = [
-  { title: "Team Stats",      url: "/leaderboard", icon: Trophy },
-  { title: "Team Chat",       url: "/chat",        icon: MessageSquare, badge: "chat" },
+  { title: "Stats",           url: "/leaderboard", icon: Trophy },
+  { title: "Chat",            url: "/chat",        icon: MessageSquare, badge: "chat" },
 ];
 
 const reportItems = [
-  { title: "Call Reports",    url: "/outcomes",    icon: ClipboardList },
-  { title: "EOD Reports",     url: "/eod-report",  icon: FileText },
-  { title: "Upcoming Schedule", url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
+  { title: "Call History",    url: "/outcomes",    icon: ClipboardList },
+  { title: "EOD Report",      url: "/eod-report",  icon: FileText },
+  { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp },
   { title: "LO Breaks",       url: "/snooze",      icon: BedDouble },
 ];
 
 const toolItems = [
   { title: "State Lookup",    url: "/state-lookup",  icon: MapPin },
-  { title: "NMLS Checks",     url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
-  { title: "Stats",           url: "/reporting",     icon: BarChart },
-  { title: "Call Script",     url: "/call-script",   icon: PhoneCall },
+  { title: "NMLS",            url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
+  { title: "Reports",         url: "/reporting",     icon: BarChart },
+  { title: "Script",          url: "/call-script",   icon: PhoneCall },
   { title: "Glossary",        url: "/glossary",      icon: BookOpen },
 ];
 

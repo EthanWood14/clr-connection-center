@@ -174,9 +174,16 @@ function CallEntryWidget() {
   );
 }
 
-function StatCard({ title, value, icon: Icon, sub, color = "primary", href }: any) {
+function StatCard({ title, value, icon: Icon, sub, color = "primary", accent, href }: any) {
+  const accentClass =
+    accent === "blue" ? "border-l-4 border-l-blue-500" :
+    accent === "green" ? "border-l-4 border-l-green-500" :
+    accent === "purple" ? "border-l-4 border-l-purple-500" :
+    accent === "red" ? "border-l-4 border-l-red-500" :
+    accent === "teal" ? "border-l-4 border-l-teal-500" :
+    accent === "navy" ? "border-l-4 border-l-[#1A2B4A]" : "";
   const inner = (
-    <Card className={`h-full ${href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}>
+    <Card className={`h-full ${accentClass} ${href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}>
       <CardContent className="pt-5 pb-5 h-full">
         <div className="flex items-start justify-between h-full">
           <div className="flex flex-col justify-between h-full">
@@ -655,6 +662,29 @@ function PeriodSelector({ value, onChange }: { value: PeriodKey; onChange: (p: P
   );
 }
 
+type ScopeKey = "personal" | "team";
+
+function ScopeSelector({ value, onChange }: { value: ScopeKey; onChange: (s: ScopeKey) => void }) {
+  return (
+    <div className="inline-flex items-center rounded-md border border-border bg-muted/40 p-0.5">
+      {(["personal", "team"] as const).map(opt => (
+        <button
+          key={opt}
+          onClick={() => onChange(opt)}
+          data-testid={`scope-${opt}`}
+          className={`px-3 py-1 text-xs font-medium rounded transition-colors capitalize ${
+            value === opt
+              ? "bg-[#1A2B4A] text-white shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [period, setPeriod] = useState<PeriodKey>(() => {
@@ -663,11 +693,21 @@ export default function Dashboard() {
     return saved === "today" || saved === "week" || saved === "period" ? saved : "week";
   });
 
+  const [scope, setScope] = useState<ScopeKey>(() => {
+    if (typeof window === "undefined") return "personal";
+    const saved = window.localStorage.getItem("dashboard.scope");
+    return saved === "team" ? "team" : "personal";
+  });
+
   useEffect(() => {
     try { window.localStorage.setItem("dashboard.period", period); } catch {}
   }, [period]);
 
-  const { data: stats, isLoading } = useQuery<any>({ queryKey: [`/api/dashboard/stats?period=${period}`] });
+  useEffect(() => {
+    try { window.localStorage.setItem("dashboard.scope", scope); } catch {}
+  }, [scope]);
+
+  const { data: stats, isLoading } = useQuery<any>({ queryKey: [`/api/dashboard/stats?period=${period}&scope=${scope}`] });
   const { data: leaderboardData } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
   const { data: losData } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
@@ -699,16 +739,22 @@ export default function Dashboard() {
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold">Dashboard</h1>
+        <div className="border-l-4 border-[#1A2B4A] pl-3">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-[#1A2B4A] dark:text-white">Dashboard</h1>
+            {scope === "team" && (
+              <Badge className="bg-[#1A2B4A] text-white hover:bg-[#1A2B4A]">Team</Badge>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             {stats?.startDate && stats?.endDate ? `${stats.startDate} — ${stats.endDate}` : "Current period"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <ScopeSelector value={scope} onChange={setScope} />
           <PeriodSelector value={period} onChange={setPeriod} />
           <HelpIcon title="Dashboard">
-            Your personal command center. See your stats for the selected period, upcoming appointments, and your getting-started checklist.
+            Your personal command center. Toggle between Personal and Team views, and use the period selector to switch time ranges.
           </HelpIcon>
         </div>
       </div>
@@ -723,12 +769,12 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" sub={subLabel} href="/outcomes" />
-            <StatCard title="Upcoming Appts" value={displayStats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" sub="scheduled ahead" href="/appointments" />
-            <StatCard title="My Calls Today" value={displayStats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={displayStats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
-            <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" sub={subLabel} href="/outcomes" />
-            <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" sub={subLabel} href="/outcomes" />
-            <StatCard title={callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" sub={`my calls ${subLabel}`} href="/eod-report" />
+            <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" accent="green" sub={subLabel} href="/outcomes" />
+            <StatCard title="Upcoming Appts" value={displayStats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" accent="purple" sub="scheduled ahead" href="/appointments" />
+            <StatCard title={scope === "team" ? "Team Calls Today" : "My Calls Today"} value={displayStats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" accent="blue" sub={displayStats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
+            <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" accent="red" sub={subLabel} href="/outcomes" />
+            <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" accent="teal" sub={subLabel} href="/outcomes" />
+            <StatCard title={scope === "team" ? `Team ${callsTitle}` : callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" accent="blue" sub={scope === "team" ? `team calls ${subLabel}` : `my calls ${subLabel}`} href="/eod-report" />
           </div>
           <OnboardingChecklist />
           <CallEntryWidget />

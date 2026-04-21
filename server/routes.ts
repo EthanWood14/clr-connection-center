@@ -1625,6 +1625,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Dashboard ────────────────────────────────────────────────────────────────
   app.get("/api/dashboard/stats", (req: any, res) => {
     const periodName = (req.query.period as string) || "period";
+    const scope = (req.query.scope as string) === "team" ? "team" : "personal";
     const resolved = resolveNamedPeriod(periodName);
     const startDate = (req.query.startDate as string) || resolved.startDate;
     const endDate = (req.query.endDate as string) || resolved.endDate;
@@ -1633,15 +1634,24 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const userId = req.session_user?.userId;
     const todayStr = new Date().toISOString().split("T")[0];
 
-    // Current user's personal call count for today (unchanged, for existing card)
-    const myLog = userId ? storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId) : null;
-    const myCallsToday = myLog ? myLog.callsMade : null;
-
-    // Future Contacts count for the current user in the selected range
+    let myCallsToday: number | null = null;
     let futureContactsCount = 0;
-    // My Calls in the selected range (sum of my daily call logs)
     let myCallsInPeriod = 0;
-    if (userId) {
+
+    if (scope === "team") {
+      // Team totals — aggregate across all active CLRs
+      const allLogsToday = storage.getDailyCallLogs(todayStr) as any[];
+      myCallsToday = allLogsToday.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+
+      const allOutcomes = storage.getLeadOutcomes({ startDate, endDate }) as any[];
+      futureContactsCount = allOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "future_contact").length;
+
+      const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
+      myCallsInPeriod = callLogs.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+    } else if (userId) {
+      const myLog = storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId);
+      myCallsToday = myLog ? myLog.callsMade : null;
+
       const userOutcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[];
       futureContactsCount = userOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "future_contact").length;
       const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
@@ -1655,6 +1665,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       startDate,
       endDate,
       period: periodName,
+      scope,
       myCallsToday,
       futureContactsCount,
       myCallsInPeriod,

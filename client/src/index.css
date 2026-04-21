@@ -87,26 +87,26 @@
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 
-/* Sidebar width override */
+/* Sidebar — deep navy (#0F182D) in light and dark */
 [data-sidebar="sidebar"] {
-  --sidebar-background: hsl(183, 98%, 18%);
-  --sidebar-foreground: hsl(183, 60%, 90%);
-  --sidebar-primary: hsl(183, 60%, 90%);
-  --sidebar-primary-foreground: hsl(183, 98%, 18%);
-  --sidebar-accent: hsl(183, 70%, 25%);
-  --sidebar-accent-foreground: hsl(183, 60%, 95%);
-  --sidebar-border: hsl(183, 70%, 20%);
-  --sidebar-ring: hsl(183, 60%, 90%);
+  --sidebar-background: hsl(220, 52%, 12%);
+  --sidebar-foreground: hsl(220, 15%, 80%);
+  --sidebar-primary: hsl(0, 0%, 100%);
+  --sidebar-primary-foreground: hsl(220, 52%, 12%);
+  --sidebar-accent: hsl(218, 48%, 20%);
+  --sidebar-accent-foreground: hsl(0, 0%, 100%);
+  --sidebar-border: hsl(220, 40%, 18%);
+  --sidebar-ring: hsl(220, 40%, 50%);
 }
 .dark [data-sidebar="sidebar"] {
-  --sidebar-background: hsl(40, 9%, 8%);
-  --sidebar-foreground: hsl(40, 3%, 75%);
-  --sidebar-primary: hsl(188, 35%, 55%);
-  --sidebar-primary-foreground: hsl(40, 9%, 8%);
-  --sidebar-accent: hsl(40, 8%, 14%);
-  --sidebar-accent-foreground: hsl(40, 3%, 80%);
-  --sidebar-border: hsl(40, 3%, 18%);
-  --sidebar-ring: hsl(188, 35%, 47%);
+  --sidebar-background: hsl(220, 52%, 10%);
+  --sidebar-foreground: hsl(220, 15%, 78%);
+  --sidebar-primary: hsl(0, 0%, 100%);
+  --sidebar-primary-foreground: hsl(220, 52%, 10%);
+  --sidebar-accent: hsl(218, 48%, 18%);
+  --sidebar-accent-foreground: hsl(0, 0%, 100%);
+  --sidebar-border: hsl(220, 40%, 16%);
+  --sidebar-ring: hsl(220, 40%, 50%);
 }
 
 /* Status badge variants */
