@@ -694,6 +694,29 @@ function runNewMigrations() {
     insertDefault.run("monthly", defaults);
   } catch (e) { console.error("report_schedule_settings seed failed:", e); }
 
+  // One-time cleanup: dedupe existing recipient lists case-insensitively.
+  // Safe to run on every boot — idempotent.
+  try {
+    const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
+    const updateStmt = sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`);
+    for (const row of rows) {
+      let parsed: string[] = [];
+      try { parsed = JSON.parse(row.recipients || "[]"); } catch { parsed = []; }
+      if (!Array.isArray(parsed)) parsed = [];
+      const seen = new Set<string>();
+      const deduped: string[] = [];
+      for (const e of parsed) {
+        const trimmed = String(e || "").trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (!seen.has(key)) { seen.add(key); deduped.push(trimmed); }
+      }
+      if (deduped.length !== parsed.length) {
+        updateStmt.run(JSON.stringify(deduped), row.report_type);
+      }
+    }
+  } catch (e) { console.error("report_schedule_settings dedupe cleanup failed:", e); }
+
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -887,9 +910,16 @@ export function getAllReportSchedules(): { report_type: ReportType; recipients: 
 }
 
 export function updateReportScheduleRecipients(type: ReportType, recipients: string[]) {
-  const cleaned = Array.isArray(recipients)
+  const raw = Array.isArray(recipients)
     ? recipients.map(e => String(e || "").trim()).filter(e => e.length > 0)
     : [];
+  // Dedupe case-insensitively, preserving first-seen casing and order
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const e of raw) {
+    const key = e.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); cleaned.push(e); }
+  }
   const json = JSON.stringify(cleaned);
   sqlite.prepare(`
     INSERT INTO report_schedule_settings (report_type, recipients, updated_at)

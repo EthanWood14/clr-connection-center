@@ -195,7 +195,16 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   const perTypeRecipients = storageExtra.getReportScheduleRecipients(type);
   const globalManagers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
   // Per-type recipients take precedence; fall back to the shared manager_emails list.
-  const managers: string[] = perTypeRecipients.length > 0 ? perTypeRecipients : globalManagers;
+  const rawManagers: string[] = perTypeRecipients.length > 0 ? perTypeRecipients : globalManagers;
+  // Dedupe case-insensitively as a safety net
+  const seenManagers = new Set<string>();
+  const managers: string[] = [];
+  for (const e of rawManagers) {
+    const trimmed = String(e || "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (!seenManagers.has(key)) { seenManagers.add(key); managers.push(trimmed); }
+  }
   if (!managers.length) throw new Error("No recipient emails configured for this report type. Add at least one recipient in Settings → Scheduled Report Recipients.");
 
   const period = getDefaultPeriod();
