@@ -41,7 +41,8 @@ const OUTCOME_LABELS: Record<string, string> = {
   fell_through: "Fell Through",
   no_answer: "No Answer",
   callback_requested: "Callback",
-  future_contact: "Future Contact",
+  deferral: "Deferral",
+  future_contact: "Deferral",
   not_interested: "Not Interested",
   wrong_number: "Wrong Number",
   other: "Other",
@@ -53,7 +54,8 @@ const OUTCOME_CHART_COLORS: Record<string, string> = {
   fell_through: "#dc2626",   // red
   no_answer: "#6b7280",      // gray
   callback_requested: "#7c3aed", // purple
-  future_contact: "#0891b2", // cyan
+  deferral: "#d97706",       // amber
+  future_contact: "#d97706", // amber
   not_interested: "#be123c", // rose
   wrong_number: "#6b7280",   // gray
   other: "#9ca3af",          // gray

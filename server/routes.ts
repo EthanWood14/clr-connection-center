@@ -417,7 +417,7 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       const dayTransfersFromOutcomes = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
       const dayApptsFromOutcomes = dayOutcomes.filter((o: any) => {
         const t = o.outcomeType || o.outcome_type;
-        return t === "appointment" || t === "callback_requested";
+        return t === "appointment" || t === "callback_requested" || t === "deferral" || t === "future_contact";
       }).length;
       const dayFellThroughFromOutcomes = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
 
@@ -1644,7 +1644,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
       myCallsToday = allLogsToday.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
 
       const allOutcomes = storage.getLeadOutcomes({ startDate, endDate }) as any[];
-      futureContactsCount = allOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "future_contact").length;
+      futureContactsCount = allOutcomes.filter((o: any) => {
+        const t = o.outcomeType || o.outcome_type;
+        return t === "deferral" || t === "future_contact";
+      }).length;
 
       const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
       myCallsInPeriod = callLogs.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
@@ -1653,7 +1656,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
       myCallsToday = myLog ? myLog.callsMade : null;
 
       const userOutcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[];
-      futureContactsCount = userOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "future_contact").length;
+      futureContactsCount = userOutcomes.filter((o: any) => {
+        const t = o.outcomeType || o.outcome_type;
+        return t === "deferral" || t === "future_contact";
+      }).length;
       const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
       myCallsInPeriod = callLogs
         .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId)

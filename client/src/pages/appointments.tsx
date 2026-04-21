@@ -56,15 +56,33 @@ const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer",
   appointment: "Appointment",
   fell_through: "Fell Through",
-  callback_requested: "Callback Requested",
-  future_contact: "Future Contact",
+  callback_requested: "Callback",
+  deferral: "Deferral",
+  future_contact: "Deferral",
   not_interested: "Not Interested",
   voicemail: "Voicemail",
   no_answer: "No Answer",
 };
 
+// Colors per appointment subtype
+const APPT_BADGE_COLORS: Record<string, string> = {
+  appointment: "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300",
+  callback_requested: "bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300",
+  deferral: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
+  future_contact: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
+};
+
 // Active appointment types — these are the ones that still need to be handled
-const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "future_contact"]);
+const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
+
+// Filter tab definitions
+const FILTER_TABS = [
+  { key: "all", label: "All", tooltip: "All appointments, callbacks, and deferrals" },
+  { key: "appointment", label: "Appointments", tooltip: "Specific date & time confirmed" },
+  { key: "callback_requested", label: "Callbacks", tooltip: "Call back soon — within days/weeks, no exact time" },
+  { key: "deferral", label: "Deferrals", tooltip: "Month+ away — open to future contact, no date set" },
+] as const;
+type FilterKey = typeof FILTER_TABS[number]["key"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,7 +157,7 @@ function EditDialog({
   }, [open, outcome, form]);
 
   const allOutcomeTypes = [
-    "appointment", "callback_requested", "future_contact", "transfer", "fell_through",
+    "appointment", "callback_requested", "deferral", "transfer", "fell_through",
     "not_interested", "voicemail", "no_answer",
   ];
 
@@ -363,11 +381,7 @@ function AppointmentCard({
               )}
               <Badge
                 variant="outline"
-                className={`text-xs px-1.5 py-0 capitalize ${
-                  outcome.outcomeType === "future_contact"
-                    ? "bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300"
-                    : ""
-                }`}
+                className={`text-xs px-1.5 py-0 capitalize ${APPT_BADGE_COLORS[outcome.outcomeType] ?? ""}`}
               >
                 {OUTCOME_LABELS[outcome.outcomeType] ?? outcome.outcomeType}
               </Badge>
@@ -468,6 +482,7 @@ export default function Appointments() {
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
   const [editTarget, setEditTarget] = useState<Outcome | null>(null);
+  const [filterType, setFilterType] = useState<FilterKey>("all");
 
   const { data: outcomes = [], isLoading: loadingOutcomes } = useQuery<Outcome[]>({
     queryKey: ["/api/outcomes"],
@@ -482,19 +497,33 @@ export default function Appointments() {
 
   const todayStr = new Date().toISOString().split("T")[0];
 
-  // Active appointments: must have a followUpDate AND be an active type (not already completed as transfer/fell_through)
+  // Active appointments: followUpDate required for appointment/callback, but deferrals may not have a date
+  const matchesFilter = (o: Outcome) => {
+    if (filterType === "all") return true;
+    if (filterType === "deferral") return o.outcomeType === "deferral" || o.outcomeType === "future_contact";
+    return o.outcomeType === filterType;
+  };
+
   const allAppointments = outcomes
     .filter(
       (o) =>
-        o.followUpDate != null &&
-        o.followUpDate !== "" &&
-        ACTIVE_APPT_TYPES.has(o.outcomeType)
+        ACTIVE_APPT_TYPES.has(o.outcomeType) &&
+        matchesFilter(o) &&
+        (
+          // dated entries always show
+          (o.followUpDate != null && o.followUpDate !== "") ||
+          // undated deferrals still show (they have no date set by definition)
+          o.outcomeType === "deferral" ||
+          o.outcomeType === "future_contact"
+        )
     )
-    .sort((a, b) => (a.followUpDate ?? "").localeCompare(b.followUpDate ?? ""));
+    .sort((a, b) => (a.followUpDate ?? "9999-99-99").localeCompare(b.followUpDate ?? "9999-99-99"));
 
-  const overdueList = allAppointments.filter((o) => o.followUpDate! < todayStr);
-  const todayList = allAppointments.filter((o) => o.followUpDate === todayStr);
-  const upcomingList = allAppointments.filter((o) => o.followUpDate! > todayStr);
+  const hasDate = (o: Outcome) => o.followUpDate != null && o.followUpDate !== "";
+  const overdueList = allAppointments.filter((o) => hasDate(o) && o.followUpDate! < todayStr);
+  const todayList = allAppointments.filter((o) => hasDate(o) && o.followUpDate === todayStr);
+  const upcomingList = allAppointments.filter((o) => hasDate(o) && o.followUpDate! > todayStr);
+  const undatedList = allAppointments.filter((o) => !hasDate(o));
 
   const totalCount = allAppointments.length;
 
@@ -568,8 +597,8 @@ export default function Appointments() {
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
       <PageTooltip
         pageKey="appointments"
-        title="Appointments & callbacks"
-        body="All your active appointments and callbacks appear here, sorted by date."
+        title="Appointments, callbacks & deferrals"
+        body="Appointment = specific date/time. Callback = within days/weeks. Deferral = month+ out, no date set."
       />
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
@@ -583,8 +612,31 @@ export default function Appointments() {
           </p>
         </div>
         <HelpIcon title="Appointments">
-          All active appointments, callbacks, and future contacts. Mark them complete when done.
+          All active appointments, callbacks, and deferrals. Mark them complete when done.
         </HelpIcon>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex gap-2 flex-wrap border-b pb-2">
+        {FILTER_TABS.map((tab) => {
+          const active = filterType === tab.key;
+          return (
+            <button
+              key={tab.key}
+              title={tab.tooltip}
+              onClick={() => setFilterType(tab.key)}
+              className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background hover:bg-muted border-border text-muted-foreground"
+              }`}
+              data-testid={`filter-tab-${tab.key}`}
+            >
+              {tab.label}
+              <span className="ml-1 opacity-70 text-[10px]">ℹ️</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Loading */}
@@ -649,6 +701,23 @@ export default function Appointments() {
           <SectionHeader label="Upcoming" count={upcomingList.length} upcoming />
           <div className="space-y-2">
             {upcomingList.map((o) => (
+              <AppointmentCard
+                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}
+                isPendingComplete={pendingCompleteId === o.id}
+                isPendingReschedule={pendingRescheduleId === o.id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Undated (mostly deferrals) */}
+      {!isLoading && undatedList.length > 0 && (
+        <section>
+          <SectionHeader label="No Date Set" count={undatedList.length} upcoming />
+          <div className="space-y-2">
+            {undatedList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}

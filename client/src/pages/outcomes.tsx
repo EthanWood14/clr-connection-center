@@ -20,16 +20,22 @@ import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 
 const OUTCOME_TYPES = [
-  "transfer", "appointment", "fell_through",
-  "no_answer", "callback_requested", "future_contact",
-  "not_interested", "wrong_number", "other"
+  "transfer", "appointment", "callback_requested", "deferral", "fell_through",
+  "no_answer", "not_interested", "wrong_number", "other"
 ] as const;
 
+// Includes legacy future_contact for backward compatibility (displayed as Deferral)
 const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer", appointment: "Appointment", fell_through: "Fell Through",
-  no_answer: "No Answer", callback_requested: "Callback Requested",
-  future_contact: "Future Contact",
+  no_answer: "No Answer", callback_requested: "Callback",
+  deferral: "Deferral", future_contact: "Deferral",
   not_interested: "Not Interested", wrong_number: "Wrong Number", other: "Other",
+};
+
+const OUTCOME_HELPERS: Record<string, string> = {
+  appointment: "Specific date & time confirmed",
+  callback_requested: "Call back soon — within days/weeks, no exact time",
+  deferral: "Month+ away — open to future contact, no date set",
 };
 
 const OUTCOME_COLORS: Record<string, string> = {
@@ -38,7 +44,8 @@ const OUTCOME_COLORS: Record<string, string> = {
   fell_through: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
   no_answer: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
   callback_requested: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
-  future_contact: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
+  deferral: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  future_contact: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
   not_interested: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
   wrong_number: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
   other: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
@@ -177,10 +184,20 @@ function OutcomeFormDialog({
                     </FormControl>
                     <SelectContent>
                       {OUTCOME_TYPES.map(t => (
-                        <SelectItem key={t} value={t}>{OUTCOME_LABELS[t]}</SelectItem>
+                        <SelectItem key={t} value={t}>
+                          <div className="flex flex-col">
+                            <span>{OUTCOME_LABELS[t]}</span>
+                            {OUTCOME_HELPERS[t] && (
+                              <span className="text-[11px] text-muted-foreground">{OUTCOME_HELPERS[t]}</span>
+                            )}
+                          </div>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {OUTCOME_HELPERS[field.value] && (
+                    <p className="text-xs text-muted-foreground mt-1">ℹ️ {OUTCOME_HELPERS[field.value]}</p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )} />
@@ -323,7 +340,7 @@ const editOutcomeSchema = z.object({
 });
 type EditOutcomeValues = z.infer<typeof editOutcomeSchema>;
 
-const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested", "future_contact"]);
+const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
 
 function EditOutcomeDialog({
   outcome,
@@ -396,10 +413,20 @@ function EditOutcomeDialog({
                   </FormControl>
                   <SelectContent>
                     {OUTCOME_TYPES.map(t => (
-                      <SelectItem key={t} value={t}>{OUTCOME_LABELS[t] ?? t}</SelectItem>
+                      <SelectItem key={t} value={t}>
+                        <div className="flex flex-col">
+                          <span>{OUTCOME_LABELS[t] ?? t}</span>
+                          {OUTCOME_HELPERS[t] && (
+                            <span className="text-[11px] text-muted-foreground">{OUTCOME_HELPERS[t]}</span>
+                          )}
+                        </div>
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {OUTCOME_HELPERS[field.value] && (
+                  <p className="text-xs text-muted-foreground mt-1">ℹ️ {OUTCOME_HELPERS[field.value]}</p>
+                )}
                 <FormMessage />
               </FormItem>
             )} />

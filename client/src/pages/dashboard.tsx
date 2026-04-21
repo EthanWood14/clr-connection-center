@@ -27,15 +27,16 @@ const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a
 const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer", appointment: "Appointment", fell_through: "Fell Through",
   no_answer: "No Answer", callback_requested: "Callback",
-  future_contact: "Future Contact",
+  deferral: "Deferral", future_contact: "Deferral",
   not_interested: "Not Interested", wrong_number: "Wrong Number", other: "Other",
 };
 const OUTCOME_COLORS: Record<string, string> = {
   transfer: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   fell_through: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  callback_requested: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-  future_contact: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
+  callback_requested: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+  deferral: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  future_contact: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
 };
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
 const TIER_COLORS: Record<number, string> = {
