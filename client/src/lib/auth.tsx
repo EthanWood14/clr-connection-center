@@ -9,6 +9,7 @@ export interface AuthUser {
   isClr: boolean;
   hasSeenIntro: boolean;
   mustChangePassword: boolean;
+  createdAt: string | null;
 }
 
 interface AuthContextValue {

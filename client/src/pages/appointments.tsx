@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { HelpIcon, PageTooltip } from "@/components/onboarding";
 import {
   Dialog,
   DialogContent,
@@ -565,15 +566,25 @@ export default function Appointments() {
 
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
+      <PageTooltip
+        pageKey="appointments"
+        title="Appointments & callbacks"
+        body="All your active appointments and callbacks appear here, sorted by date."
+      />
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-foreground">
-          Upcoming Appointments{" "}
-          {!isLoading && <span className="text-muted-foreground font-normal">({totalCount})</span>}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          All active appointments — overdue, today, and upcoming — sorted earliest first
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">
+            Upcoming Appointments{" "}
+            {!isLoading && <span className="text-muted-foreground font-normal">({totalCount})</span>}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            All active appointments — overdue, today, and upcoming — sorted earliest first
+          </p>
+        </div>
+        <HelpIcon title="Appointments">
+          All active appointments, callbacks, and future contacts. Mark them complete when done.
+        </HelpIcon>
       </div>
 
       {/* Loading */}

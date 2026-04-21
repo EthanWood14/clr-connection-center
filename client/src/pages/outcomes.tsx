@@ -16,6 +16,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck } from "lucide-react";
+import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { useAuth } from "@/lib/auth";
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "fell_through",
@@ -501,6 +503,7 @@ function EditOutcomeDialog({
 
 export default function Outcomes() {
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any | null>(null);
   const [filterType, setFilterType] = useState("all");
@@ -518,6 +521,7 @@ export default function Outcomes() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
       setDialogOpen(false);
+      markStep(authUser?.id, "log_outcome");
       toast({ title: "Outcome logged" });
     },
     onError: () => toast({ title: "Error logging outcome", variant: "destructive" }),
@@ -569,15 +573,25 @@ export default function Outcomes() {
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
+      <PageTooltip
+        pageKey="outcomes"
+        title="Log every call here"
+        body="Select the outcome, borrower name, and LO. Transfers require you to note if it was Direct or Appointment."
+      />
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold">Lead Outcomes</h1>
           <p className="text-sm text-muted-foreground">{outcomes.length} outcomes logged</p>
         </div>
-        <Button onClick={() => setDialogOpen(true)} data-testid="button-log-outcome">
-          <Plus className="w-4 h-4 mr-2" />Log Outcome
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setDialogOpen(true)} data-testid="button-log-outcome">
+            <Plus className="w-4 h-4 mr-2" />Log Outcome
+          </Button>
+          <HelpIcon title="Lead Outcomes">
+            Log every call you make here. Each outcome (Transfer, Appointment, Fell Through, etc.) is recorded and feeds into your EOD report and team stats automatically.
+          </HelpIcon>
+        </div>
       </div>
 
       {/* Summary badges */}

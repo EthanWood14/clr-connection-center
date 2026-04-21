@@ -20,6 +20,7 @@ import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
 } from "lucide-react";
+import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
@@ -316,6 +317,8 @@ export default function CallScriptPage() {
   const [view, setView] = useState<"run" | "edit">("run");
   const [confirmReset, setConfirmReset] = useState(false);
 
+  useEffect(() => { markStep(userId, "view_script"); }, [userId]);
+
   // Load defaults and personal script
   const { data: defaults = [], isLoading: loadingDefaults } = useQuery<CallScript[]>({
     queryKey: ["/api/call-scripts/defaults"],
@@ -358,6 +361,9 @@ export default function CallScriptPage() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
+      <PageTooltip pageKey="call-script" title="Call Script">
+        Your personal call script with guided responses. Customize your own copy or use the default.
+      </PageTooltip>
       {/* Under Construction Banner */}
       <div className="flex items-center gap-3 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 px-4 py-3">
         <Construction className="w-5 h-5 text-amber-500 shrink-0" />
@@ -372,6 +378,9 @@ export default function CallScriptPage() {
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <PhoneCall className="w-5 h-5 text-primary" /> Call Script
+            <HelpIcon title="Call Script">
+              Your personal call script with guided responses. Customize your own copy or use the default.
+            </HelpIcon>
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Step-by-step guided script with borrower response paths</p>
         </div>

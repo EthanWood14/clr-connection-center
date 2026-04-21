@@ -18,6 +18,7 @@ import {
   History, ChevronDown, ChevronUp, User, Users, X,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
 
 const ACTIVITY_TYPES = [
@@ -155,6 +156,7 @@ export default function EodReport() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       refetch();
       setDirty(false);
+      markStep(user?.id, "submit_eod");
       toast({ title: "EOD report saved", description: `Report for ${format(parseISO(selectedDate), "MMM d")} saved.` });
     },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
@@ -200,12 +202,20 @@ export default function EodReport() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto">
+      <PageTooltip
+        pageKey="eod-report"
+        title="End-of-day report"
+        body="Submit your end-of-day report here. Check off which LOs you called for and add any notes."
+      />
 
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" /> EOD Reporting
+            <HelpIcon title="EOD Report">
+              Submit your end-of-day summary. Include which LOs you called for, and add any notable notes. This sends an email to your managers.
+            </HelpIcon>
           </h1>
           <p className="text-sm text-muted-foreground">
             {isToday ? "Complete before you log off for the day" : "Viewing a past report"}

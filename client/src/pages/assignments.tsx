@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import {
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   recommended: { label: "Recommended", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: AlertCircle },
@@ -608,12 +609,24 @@ export default function Assignments() {
   const totalWorked = assignments.filter((a: any) => a.status === "worked").length;
   const totalAttempted = assignments.filter((a: any) => a.status === "attempted").length;
 
+  useEffect(() => { markStep(user?.id, "view_assignments"); }, [user?.id]);
+
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 max-w-[1400px] mx-auto">
+      <PageTooltip
+        pageKey="assignments"
+        title="Your daily LO assignments"
+        body="Your daily LO assignments are generated here each morning. This locks after generation."
+      />
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold">Daily Assignments</h1>
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            Daily Assignments
+            <HelpIcon title="Daily Assignments">
+              View your daily LO assignments. Generated once per day — contact an admin if there's an error.
+            </HelpIcon>
+          </h1>
           <p className="text-sm text-muted-foreground">
             {assignments.length} LOs assigned · {totalWorked} worked · {totalAttempted} attempted
           </p>

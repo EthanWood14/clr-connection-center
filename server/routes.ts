@@ -811,7 +811,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword, createdAt: (user as any).createdAt ?? (user as any).created_at ?? null } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }

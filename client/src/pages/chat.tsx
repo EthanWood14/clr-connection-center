@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Send, Trash2, MessageSquare, ArrowLeft } from "lucide-react";
+import { HelpIcon, PageTooltip } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 import { Link } from "wouter";
 
@@ -131,11 +132,19 @@ export default function Chat() {
         <div className="p-2 rounded-lg bg-primary/10 text-primary">
           <MessageSquare className="w-5 h-5" />
         </div>
-        <div>
-          <h1 className="text-xl font-bold leading-tight">Team Chat</h1>
+        <div className="flex-1">
+          <h1 className="text-xl font-bold leading-tight flex items-center gap-2">
+            Team Chat
+            <HelpIcon title="Team Chat">
+              Team-wide chat channel. All users can send and receive messages.
+            </HelpIcon>
+          </h1>
           <p className="text-xs text-muted-foreground">All users · Updates every 3 seconds</p>
         </div>
       </div>
+      <PageTooltip pageKey="chat" title="Team Chat">
+        Team-wide chat channel. All users can send and receive messages.
+      </PageTooltip>
 
       {/* Message list */}
       <div

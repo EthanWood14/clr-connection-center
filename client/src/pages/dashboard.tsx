@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
+import { HelpIcon, OnboardingChecklist, PageTooltip, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -682,8 +683,20 @@ export default function Dashboard() {
   const callsTitle =
     period === "today" ? "Calls Today" : period === "week" ? "Calls This Week" : "Calls This Period";
 
+  const realOutcomeCount = (stats?.transfers ?? 0) + (stats?.fellThrough ?? 0) + (stats?.myCallsInPeriod ?? 0);
+  const sampleMode = useSampleDataMode(realOutcomeCount);
+  const displayStats = sampleMode
+    ? { ...stats, transfers: SAMPLE_STATS.transfers, fellThrough: SAMPLE_STATS.fellThrough, myCallsInPeriod: SAMPLE_STATS.calls, upcomingAppointments: SAMPLE_STATS.appointments, myCallsToday: SAMPLE_STATS.calls, futureContactsCount: SAMPLE_STATS.callbacks }
+    : stats;
+
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1400px] mx-auto">
+      <PageTooltip
+        pageKey="dashboard"
+        title="Welcome to your Dashboard"
+        body="Your stats and upcoming appointments are here. Use the period selector to switch between Today, This Week, and This Period."
+      />
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -692,8 +705,15 @@ export default function Dashboard() {
             {stats?.startDate && stats?.endDate ? `${stats.startDate} — ${stats.endDate}` : "Current period"}
           </p>
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <div className="flex items-center gap-2">
+          <PeriodSelector value={period} onChange={setPeriod} />
+          <HelpIcon title="Dashboard">
+            Your personal command center. See your stats for the selected period, upcoming appointments, and your getting-started checklist.
+          </HelpIcon>
+        </div>
       </div>
+
+      {sampleMode && <SampleDataBanner />}
 
       {/* KPI Row — always visible */}
       {isLoading ? (
@@ -703,13 +723,14 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard title="Transfers" value={stats?.transfers} icon={ArrowUpRight} color="success" sub={subLabel} href="/outcomes" />
-            <StatCard title="Upcoming Appts" value={stats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" sub="scheduled ahead" href="/appointments" />
-            <StatCard title="My Calls Today" value={stats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={stats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
-            <StatCard title="Fell Through" value={stats?.fellThrough} icon={XCircle} color="warning" sub={subLabel} href="/outcomes" />
-            <StatCard title="Future Contacts" value={stats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" sub={subLabel} href="/outcomes" />
-            <StatCard title={callsTitle} value={stats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" sub={`my calls ${subLabel}`} href="/eod-report" />
+            <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" sub={subLabel} href="/outcomes" />
+            <StatCard title="Upcoming Appts" value={displayStats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" sub="scheduled ahead" href="/appointments" />
+            <StatCard title="My Calls Today" value={displayStats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" sub={displayStats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
+            <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" sub={subLabel} href="/outcomes" />
+            <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" sub={subLabel} href="/outcomes" />
+            <StatCard title={callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" sub={`my calls ${subLabel}`} href="/eod-report" />
           </div>
+          <OnboardingChecklist />
           <CallEntryWidget />
         </>
       )}

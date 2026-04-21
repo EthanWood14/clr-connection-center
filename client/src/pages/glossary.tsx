@@ -3,6 +3,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { BookOpen, Search } from "lucide-react";
+import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { useAuth } from "@/lib/auth";
 
 type Category = "Role" | "Loan Type" | "Program" | "Process" | "Financial";
 
@@ -228,10 +230,13 @@ const CATEGORY_STYLES: Record<Category, string> = {
 
 export default function GlossaryPage() {
   const [query, setQuery] = useState("");
+  const { user } = useAuth();
 
   useEffect(() => {
     document.title = "Glossary · WCLCC";
   }, []);
+
+  useEffect(() => { markStep(user?.id, "read_glossary"); }, [user?.id]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -249,9 +254,17 @@ export default function GlossaryPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto w-full">
+      <PageTooltip pageKey="glossary" title="Glossary">
+        Definitions for mortgage and CLR industry terms.
+      </PageTooltip>
       <div className="flex items-center gap-3 mb-1">
         <BookOpen className="w-6 h-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight">Glossary</h1>
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          Glossary
+          <HelpIcon title="Glossary">
+            Definitions for mortgage and CLR industry terms.
+          </HelpIcon>
+        </h1>
       </div>
       <p className="text-sm text-muted-foreground mb-5">
         Mortgage and CLR Connection Center terminology. Search below to filter.

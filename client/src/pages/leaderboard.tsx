@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Trophy, Medal, TrendingUp, BarChart2, Users, ArrowUpRight,
 } from "lucide-react";
+import { HelpIcon } from "@/components/onboarding";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   LineChart, Line, CartesianGrid, Legend, AreaChart, Area,
@@ -321,6 +322,9 @@ export default function TeamStats() {
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Trophy className="w-5 h-5 text-yellow-500" /> Team Stats
+            <HelpIcon title="Team Stats">
+              View team-wide performance stats. Admins can filter by individual CLR.
+            </HelpIcon>
           </h1>
           {startDate && endDate && (
             <p className="text-xs text-muted-foreground mt-0.5">Current period: {startDate} — {endDate}</p>
