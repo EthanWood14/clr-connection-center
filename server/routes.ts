@@ -232,21 +232,19 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
 }
 
 async function sendReport(type: "daily" | "weekly" | "monthly") {
-  const settings = storageExtra.getEmailSettings() as any;
+  // Recipients come EXCLUSIVELY from report_schedule_settings[type]. No fallback
+  // to email_settings.manager_emails — that list is for EOD reports only.
   const perTypeRecipients = storageExtra.getReportScheduleRecipients(type);
-  const globalManagers: string[] = (() => { try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; } })();
-  // Per-type recipients take precedence; fall back to the shared manager_emails list.
-  const rawManagers: string[] = perTypeRecipients.length > 0 ? perTypeRecipients : globalManagers;
-  // Dedupe case-insensitively as a safety net
   const seenManagers = new Set<string>();
   const managers: string[] = [];
-  for (const e of rawManagers) {
+  for (const e of perTypeRecipients) {
     const trimmed = String(e || "").trim();
     if (!trimmed) continue;
     const key = trimmed.toLowerCase();
     if (!seenManagers.has(key)) { seenManagers.add(key); managers.push(trimmed); }
   }
-  if (!managers.length) throw new Error("No recipient emails configured for this report type. Add at least one recipient in Settings → Scheduled Report Recipients.");
+  console.log(`[sendReport] type=${type} resolved-recipients=${JSON.stringify(managers)} (source=report_schedule_settings)`);
+  if (!managers.length) throw new Error(`No recipients configured for ${type} report. Add recipients in Settings → Scheduled Report Recipients.`);
 
   // Choose the reporting window that matches the report type.
   // daily   → today only
