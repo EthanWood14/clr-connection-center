@@ -101,6 +101,7 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   loId: integer("lo_id").notNull().references(() => loanOfficers.id),
   borrowerName: text("borrower_name"),
   outcomeType: text("outcome_type").notNull(),
+  transferType: text("transfer_type"), // 'direct' | 'appointment' | null (required when outcomeType='transfer')
   journeyId: text("journey_id"),
   notes: text("notes"),
   followUpDate: text("follow_up_date"),

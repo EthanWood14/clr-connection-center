@@ -15,7 +15,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Filter, ClipboardList, Pencil } from "lucide-react";
+import { Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck } from "lucide-react";
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "fell_through",
@@ -42,17 +42,66 @@ const OUTCOME_COLORS: Record<string, string> = {
   other: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
 };
 
+const TRANSFER_TYPES = ["direct", "appointment"] as const;
+type TransferType = typeof TRANSFER_TYPES[number];
+
 const outcomeFormSchema = z.object({
   date: z.string().min(1, "Date required"),
   assistantId: z.coerce.number().min(1, "Select an assistant"),
   loId: z.coerce.number().min(1, "Select a loan officer"),
   outcomeType: z.enum(OUTCOME_TYPES),
+  transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   borrowerName: z.string().optional(),
   journeyId: z.string().optional(),
   notes: z.string().optional(),
   followUpDate: z.string().optional(),
+}).superRefine((val, ctx) => {
+  if (val.outcomeType === "transfer" && val.transferType !== "direct" && val.transferType !== "appointment") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["transferType"],
+      message: "Select Direct or Appointment/Callback",
+    });
+  }
 });
 type OutcomeFormValues = z.infer<typeof outcomeFormSchema>;
+
+function TransferTypeOption({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  sub,
+  testId,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: any;
+  label: string;
+  sub: string;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      data-testid={testId}
+      className={`flex items-start gap-2 rounded-md border p-3 text-left transition-colors ${
+        active
+          ? "border-primary bg-primary/5 ring-1 ring-primary"
+          : "border-border hover:border-primary/40 hover:bg-muted/40"
+      }`}
+    >
+      <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${active ? "text-primary" : "text-muted-foreground"}`} />
+      <div className="min-w-0">
+        <p className={`text-sm font-medium ${active ? "text-primary" : "text-foreground"}`}>{label}</p>
+        <p className="text-xs text-muted-foreground">{sub}</p>
+      </div>
+    </button>
+  );
+}
 
 function OutcomeFormDialog({
   open,
@@ -76,6 +125,7 @@ function OutcomeFormDialog({
       assistantId: 1, // default to Ethan
       loId: 0,
       outcomeType: "transfer",
+      transferType: null,
       borrowerName: "",
       journeyId: "",
       notes: "",
@@ -85,7 +135,16 @@ function OutcomeFormDialog({
 
   const [bonzoLogged, setBonzoLogged] = useState(false);
   const watchedType = form.watch("outcomeType");
+  const watchedTransferType = form.watch("transferType");
   const isTransfer = watchedType === "transfer";
+
+  // Clear transferType whenever outcome moves away from "transfer" so stale
+  // values don't trip the superRefine on a later transfer selection.
+  useEffect(() => {
+    if (watchedType !== "transfer" && form.getValues("transferType") != null) {
+      form.setValue("transferType", null, { shouldValidate: false });
+    }
+  }, [watchedType, form]);
 
   useEffect(() => {
     if (open) setBonzoLogged(false);
@@ -124,6 +183,34 @@ function OutcomeFormDialog({
                 </FormItem>
               )} />
             </div>
+            {isTransfer && (
+              <FormField control={form.control} name="transferType" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>How was this transfer made? <span className="text-destructive">*</span></FormLabel>
+                  <FormControl>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup">
+                      <TransferTypeOption
+                        active={field.value === "direct"}
+                        onClick={() => field.onChange("direct")}
+                        icon={Zap}
+                        label="Direct Transfer"
+                        sub="Live transfer on the call"
+                        testId="radio-transfer-direct"
+                      />
+                      <TransferTypeOption
+                        active={field.value === "appointment"}
+                        onClick={() => field.onChange("appointment")}
+                        icon={CalendarCheck}
+                        label="Appointment / Callback"
+                        sub="Scheduled follow-up"
+                        testId="radio-transfer-appointment"
+                      />
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            )}
             <FormField control={form.control} name="assistantId" render={({ field }) => (
               <FormItem>
                 <FormLabel>CLR Assistant</FormLabel>
@@ -199,7 +286,11 @@ function OutcomeFormDialog({
               <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
               <Button
                 type="submit"
-                disabled={isPending || (isTransfer && !bonzoLogged)}
+                disabled={
+                  isPending ||
+                  (isTransfer && !bonzoLogged) ||
+                  (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
+                }
                 data-testid="button-save-outcome"
               >
                 {isPending ? "Saving…" : "Log Outcome"}
@@ -214,10 +305,19 @@ function OutcomeFormDialog({
 
 const editOutcomeSchema = z.object({
   outcomeType: z.enum(OUTCOME_TYPES),
+  transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   loId: z.coerce.number().min(1, "Select a loan officer"),
   borrowerName: z.string().optional(),
   followUpDate: z.string().optional(),
   notes: z.string().optional(),
+}).superRefine((val, ctx) => {
+  if (val.outcomeType === "transfer" && val.transferType !== "direct" && val.transferType !== "appointment") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["transferType"],
+      message: "Select Direct or Appointment/Callback",
+    });
+  }
 });
 type EditOutcomeValues = z.infer<typeof editOutcomeSchema>;
 
@@ -242,6 +342,7 @@ function EditOutcomeDialog({
     resolver: zodResolver(editOutcomeSchema),
     defaultValues: {
       outcomeType: "transfer",
+      transferType: null,
       loId: 0,
       borrowerName: "",
       followUpDate: "",
@@ -251,13 +352,22 @@ function EditOutcomeDialog({
 
   const [bonzoLogged, setBonzoLogged] = useState(false);
   const watchedType = form.watch("outcomeType");
+  const watchedTransferType = form.watch("transferType");
   const isTransfer = watchedType === "transfer";
   const showFollowUp = FOLLOWUP_TYPES.has(watchedType) || !!(outcome?.followUpDate);
 
   useEffect(() => {
+    if (watchedType !== "transfer" && form.getValues("transferType") != null) {
+      form.setValue("transferType", null, { shouldValidate: false });
+    }
+  }, [watchedType, form]);
+
+  useEffect(() => {
     if (open && outcome) {
+      const existingTT = outcome.transferType ?? outcome.transfer_type ?? null;
       form.reset({
         outcomeType: outcome.outcomeType,
+        transferType: existingTT === "direct" || existingTT === "appointment" ? existingTT : null,
         loId: outcome.loId,
         borrowerName: outcome.borrowerName ?? "",
         followUpDate: outcome.followUpDate ?? "",
@@ -291,6 +401,34 @@ function EditOutcomeDialog({
                 <FormMessage />
               </FormItem>
             )} />
+            {isTransfer && (
+              <FormField control={form.control} name="transferType" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>How was this transfer made? <span className="text-destructive">*</span></FormLabel>
+                  <FormControl>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup">
+                      <TransferTypeOption
+                        active={field.value === "direct"}
+                        onClick={() => field.onChange("direct")}
+                        icon={Zap}
+                        label="Direct Transfer"
+                        sub="Live transfer on the call"
+                        testId="radio-edit-transfer-direct"
+                      />
+                      <TransferTypeOption
+                        active={field.value === "appointment"}
+                        onClick={() => field.onChange("appointment")}
+                        icon={CalendarCheck}
+                        label="Appointment / Callback"
+                        sub="Scheduled follow-up"
+                        testId="radio-edit-transfer-appointment"
+                      />
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            )}
             <FormField control={form.control} name="loId" render={({ field }) => (
               <FormItem>
                 <FormLabel>Loan Officer</FormLabel>
@@ -344,7 +482,11 @@ function EditOutcomeDialog({
               <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
               <Button
                 type="submit"
-                disabled={isPending || (isTransfer && !bonzoLogged)}
+                disabled={
+                  isPending ||
+                  (isTransfer && !bonzoLogged) ||
+                  (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
+                }
                 data-testid="button-save-edit-outcome"
               >
                 {isPending ? "Saving…" : "Save"}
@@ -385,6 +527,7 @@ export default function Outcomes() {
     mutationFn: ({ id, data }: { id: number; data: EditOutcomeValues }) => {
       const payload: Record<string, unknown> = {
         outcomeType: data.outcomeType,
+        transferType: data.outcomeType === "transfer" ? data.transferType : null,
         loId: data.loId,
         borrowerName: data.borrowerName ?? "",
         notes: data.notes ?? "",
@@ -520,9 +663,23 @@ export default function Outcomes() {
                 data-testid={`row-outcome-${o.id}`}
               >
                 <span className="text-xs text-muted-foreground font-mono">{o.date}</span>
-                <Badge className={`text-xs w-fit px-2 py-0.5 ${OUTCOME_COLORS[o.outcomeType]}`}>
-                  {OUTCOME_LABELS[o.outcomeType]}
-                </Badge>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Badge className={`text-xs w-fit px-2 py-0.5 ${OUTCOME_COLORS[o.outcomeType]}`}>
+                    {OUTCOME_LABELS[o.outcomeType]}
+                  </Badge>
+                  {o.outcomeType === "transfer" && (o.transferType === "direct" || o.transferType === "appointment") && (
+                    <Badge
+                      className={`text-[10px] w-fit px-1.5 py-0 ${
+                        o.transferType === "direct"
+                          ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                          : "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+                      }`}
+                      data-testid={`badge-transfer-type-${o.id}`}
+                    >
+                      {o.transferType === "direct" ? "Direct" : "Appt/Callback"}
+                    </Badge>
+                  )}
+                </div>
                 <span className="text-sm text-muted-foreground truncate" data-testid={`text-outcome-lo-${o.id}`}>
                   {o.lo?.fullName ?? `LO #${o.loId}`}
                 </span>

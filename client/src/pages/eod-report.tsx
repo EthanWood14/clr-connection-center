@@ -463,12 +463,21 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                       <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Transfer Prospects</p>
                       {r.transferProspects && r.transferProspects.length > 0 ? (
                         <div className="space-y-1">
-                          {r.transferProspects.map((name: string, i: number) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold shrink-0">{i + 1}</span>
-                              <span className="text-xs font-medium text-emerald-900 dark:text-emerald-300">{name}</span>
-                            </div>
-                          ))}
+                          {r.transferProspects.map((p: any, i: number) => {
+                            // Back-compat: older cached responses may have returned string[] instead of { name, transferType }
+                            const name = typeof p === "string" ? p : p?.name;
+                            const tt = typeof p === "string" ? null : p?.transferType;
+                            const ttLabel = tt === "direct" ? "Direct" : tt === "appointment" ? "Appt" : null;
+                            return (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold shrink-0">{i + 1}</span>
+                                <span className="text-xs font-medium text-emerald-900 dark:text-emerald-300">{name}</span>
+                                {ttLabel && (
+                                  <span className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80">({ttLabel})</span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground italic">Names not recorded for these transfers.</p>

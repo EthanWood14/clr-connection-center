@@ -84,6 +84,7 @@ sqlite.exec(`
     lo_id INTEGER NOT NULL REFERENCES loan_officers(id),
     borrower_name TEXT,
     outcome_type TEXT NOT NULL,
+    transfer_type TEXT,
     journey_id TEXT,
     notes TEXT,
     follow_up_date TEXT,
@@ -188,6 +189,15 @@ try {
 // ── Migration: add is_manager to users if missing ──────────────────────
 try {
   sqlite.exec(`ALTER TABLE users ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0;`);
+} catch {
+  // Column already exists — ignore
+}
+
+// ── Migration: add transfer_type to lead_outcomes if missing ───────────
+// Values: 'direct' | 'appointment' | NULL (NULL for non-transfer outcomes
+// and for legacy transfer rows logged before this column existed).
+try {
+  sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN transfer_type TEXT;`);
 } catch {
   // Column already exists — ignore
 }

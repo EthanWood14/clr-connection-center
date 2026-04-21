@@ -1475,9 +1475,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.post("/api/outcomes", (req, res) => {
     try {
-      const outcome = storage.createLeadOutcome(req.body);
+      const body = { ...req.body };
+      if (body.outcomeType === "transfer") {
+        if (body.transferType !== "direct" && body.transferType !== "appointment") {
+          return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
+        }
+      } else {
+        body.transferType = null;
+      }
+      const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
-      audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType }) });
+      audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
       res.json(outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1486,8 +1494,18 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.patch("/api/outcomes/:id", (req, res) => {
     const id = parseInt(req.params.id);
-    const outcome = storage.updateLeadOutcome(id, req.body);
-    if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(req.body) });
+    const body = { ...req.body };
+    // If caller is setting outcomeType, enforce the same rule.
+    if (body.outcomeType === "transfer") {
+      if (body.transferType !== "direct" && body.transferType !== "appointment") {
+        return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
+      }
+    } else if (body.outcomeType !== undefined) {
+      // outcomeType is being changed away from transfer — clear transferType
+      body.transferType = null;
+    }
+    const outcome = storage.updateLeadOutcome(id, body);
+    if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
     res.json(outcome);
   });
 
@@ -2216,19 +2234,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
     // For each report, fetch transfer prospect names + LO names from lead_outcomes
     const enriched = reports.map((r: any) => {
       const rows = sqlite.prepare(`
-        SELECT o.borrower_name, lo.full_name as lo_full_name
+        SELECT o.borrower_name, o.transfer_type, lo.full_name as lo_full_name
         FROM lead_outcomes o
         LEFT JOIN loan_officers lo ON lo.id = o.lo_id
         WHERE o.assistant_id=? AND o.date=? AND o.outcome_type='transfer'
         ORDER BY o.id ASC
       `).all(r.assistant_id, r.report_date) as any[];
-      const transferProspects: string[] = rows
-        .map((o: any) => (o.borrower_name || '').trim())
-        .filter((n: string) => n.length > 0);
-      const transferProspectsWithLo: Array<{ name: string; loName: string | null }> = rows
+      const transferProspects: Array<{ name: string; transferType: string | null }> = rows
+        .map((o: any) => ({
+          name: (o.borrower_name || '').trim(),
+          transferType: (o.transfer_type as string | null) ?? null,
+        }))
+        .filter((p) => p.name.length > 0);
+      const transferProspectsWithLo: Array<{ name: string; loName: string | null; transferType: string | null }> = rows
         .map((o: any) => ({
           name: (o.borrower_name || '').trim(),
           loName: (o.lo_full_name || '').trim() || null,
+          transferType: (o.transfer_type as string | null) ?? null,
         }))
         .filter((p) => p.name.length > 0);
       return { ...r, transferProspects, transferProspectsWithLo };
@@ -2274,7 +2296,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
         // Fetch today's outcomes for this user to get transfer prospect names + LO names + fell through count
         const sqlite2 = (storageExtra as any).getSqlite ? (storageExtra as any).getSqlite() : null;
-        let transferProspects: Array<{ name: string; loName: string | null }> = [];
+        let transferProspects: Array<{ name: string; loName: string | null; transferType: string | null }> = [];
         let fellThroughCount = 0;
         if (sqlite2) {
           try {
@@ -2290,6 +2312,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
               .map((o: any) => ({
                 name: (o.borrower_name || '').trim(),
                 loName: (o.lo_full_name || '').trim() || null,
+                transferType: (o.transfer_type as string | null) ?? null,
               }))
               .filter((p: any) => p.name.length > 0);
             fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
@@ -2331,10 +2354,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
               ? transferProspects.map((p, i) => {
                   const safeName = p.name.replace(/</g,'&lt;').replace(/>/g,'&gt;');
                   const safeLo = p.loName ? p.loName.replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
+                  const tt = p.transferType === 'direct' ? 'Direct'
+                           : p.transferType === 'appointment' ? 'Appt'
+                           : null;
                   return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
                     <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
                     <span style="font-size:13px;font-weight:600;color:#14532d">${safeName}</span>
                     ${safeLo ? `<span style="font-size:13px;color:#15803d">&rarr;</span><span style="font-size:13px;font-weight:600;color:#166534">${safeLo}</span>` : ''}
+                    ${tt ? `<span style="font-size:12px;color:#4b5563;font-weight:500">(${tt})</span>` : ''}
                   </div>`;
                 }).join('')
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
