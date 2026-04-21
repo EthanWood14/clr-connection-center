@@ -699,11 +699,15 @@ function EmailReportsCard() {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Mail className="w-4 h-4 text-blue-600" />
-          Email Reports
+          Email — Resend Config & Send Now
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.</span>
+          <span>
+            Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.
+            <br />
+            <strong>Send Now</strong> buttons deliver to recipients from <em>Scheduled Report Recipients</em> above. The <em>EOD Report Recipients</em> list on this card is used only for per-CLR end-of-day notifications.
+          </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -727,9 +731,10 @@ function EmailReportsCard() {
               </div>
             </div>
 
-            {/* Manager emails */}
+            {/* EOD manager emails (NOT used for daily/weekly/monthly scheduled reports) */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Manager Recipients</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">EOD Report Recipients</p>
+              <p className="text-[11px] text-muted-foreground mb-2">Receives end-of-day summaries when a CLR submits their shift recap. <strong>Does not affect</strong> daily/weekly/monthly scheduled reports — use <em>Scheduled Report Recipients</em> for those.</p>
               {/* Quick-add WCL managers */}
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {[
@@ -1267,11 +1272,12 @@ export default function Settings() {
       </>
       )} {/* end admin-only algorithm section */}
 
-      {/* Email Reports */}
-      <EmailReportsCard />
-
-      {/* Scheduled Report Recipients (admin-only) */}
+      {/* Scheduled Report Recipients (admin-only) — rendered FIRST so admins see
+          the list that drives daily/weekly/monthly sends before the EOD-only settings. */}
       {authUser?.role === "admin" && <ScheduledReportRecipientsCard />}
+
+      {/* Email Reports (Resend config + EOD recipient list + Send Now buttons) */}
+      <EmailReportsCard />
 
       {/* NMLS License Check Schedule */}
       <NmlsScheduleCard />
