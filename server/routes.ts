@@ -1980,10 +1980,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.get('/api/eod-reports', requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
-    const user = storage.getUserById(userId);
     const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
     if (req.session_user?.role === 'admin' && req.query.all === '1') {
-      // Admin can see all reports for a date
       const from = (req.query.from as string) || date;
       const to = (req.query.to as string) || date;
       return res.json(storageExtra.getEodReportsByRange(from, to));
@@ -1991,6 +1989,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const report = storageExtra.getEodReport(date, userId);
     const activities = storageExtra.getEodActivities(date, userId);
     res.json({ report, activities });
+  });
+
+  // History: all past EOD reports for the current user (or all users for admin)
+  app.get('/api/eod-reports/history', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    const isAdmin = req.session_user?.role === 'admin';
+    const sqlite = storageExtra.getSqlite();
+    if (isAdmin) {
+      const rows = sqlite.prepare(`
+        SELECT e.*, u.name as clr_name
+        FROM eod_reports e LEFT JOIN users u ON e.assistant_id=u.id
+        ORDER BY e.report_date DESC LIMIT 120
+      `).all();
+      return res.json(rows);
+    }
+    const rows = sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId);
+    res.json(rows);
   });
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
@@ -2008,84 +2023,112 @@ export function registerRoutes(httpServer: Server, app: Express) {
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
 
-    // ── Send EOD summary email to managers (non-blocking on failure) ──────────
+    // ── Send EOD summary email to managers + CLR themselves ─────────────────
     try {
       const settings = storageExtra.getEmailSettings() as any;
       const managers: string[] = (() => {
         try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; }
       })();
-      if (managers.length > 0) {
-        const user = storage.getUserById(userId) as any;
-        const clrName = user?.name ?? `User #${userId}`;
-        const vm = Number(voicemails ?? 0);
-        const tx = Number(textsSent ?? 0);
-        const em = Number(emailsSent ?? 0);
-        const loc = Number(loConnections ?? 0);
+
+      const clrUser = storage.getUserById(userId) as any;
+      const clrName = clrUser?.name ?? `User #${userId}`;
+      const clrEmail = clrUser?.email ?? null;
+
+      // Build recipient list: managers + CLR themselves
+      const allRecipients = [...new Set([...managers, ...(clrEmail ? [clrEmail] : [])])];
+
+      if (allRecipients.length > 0) {
         const calls = Number(callsMade ?? 0);
         const xfers = Number(transfers ?? 0);
         const appts = Number(appointments ?? 0);
-        const totalContacts = calls + vm + tx + em;
-
         const safeNotes = (notes ?? "").toString().trim();
+
+        // Fetch today's outcomes for this user to get transfer prospect names + fell through count
+        const todayOutcomes = (storage as any).db?.prepare(
+          `SELECT * FROM outcomes WHERE assistant_id=? AND date=?`
+        )?.all(userId, reportDate) as any[] ?? [];
+
+        // Fallback: query via storage
+        let allOutcomesForDay: any[] = [];
+        try {
+          allOutcomesForDay = (storageExtra as any).getOutcomesForDay
+            ? (storageExtra as any).getOutcomesForDay(userId, reportDate)
+            : [];
+        } catch {}
+
+        // Use direct sqlite query for outcomes
+        const sqlite2 = (storageExtra as any).getSqlite ? (storageExtra as any).getSqlite() : null;
+        let transferProspects: string[] = [];
+        let fellThroughCount = 0;
+        if (sqlite2) {
+          try {
+            const dayRows = sqlite2.prepare(`SELECT * FROM outcomes WHERE assistant_id=? AND date=?`).all(userId, reportDate) as any[];
+            transferProspects = dayRows
+              .filter((o: any) => o.outcome_type === 'transfer' || o.outcomeType === 'transfer')
+              .map((o: any) => (o.borrower_name || o.borrowerName || '').trim())
+              .filter((n: string) => n.length > 0);
+            fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through' || o.outcomeType === 'fell_through').length;
+          } catch {}
+        }
+
         const reportDateLong = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
         const reportDateShort = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
-        const metricRow = (label: string, val: string | number, desc: string) => `
-          <tr>
-            <td style="padding:14px 16px;border-bottom:1px solid #e2e8f0;vertical-align:top">
-              <div style="font-size:14px;color:#0F182D;font-weight:600;margin-bottom:4px">${label}</div>
-              <div style="font-size:12px;color:#94a3b8;line-height:1.5">${desc}</div>
-            </td>
-            <td align="right" style="padding:14px 16px;border-bottom:1px solid #e2e8f0;vertical-align:top;width:90px">
-              <div style="font-size:22px;color:#1A2B4A;font-weight:700;line-height:1">${val}</div>
-            </td>
-          </tr>`;
+        const statBlock = (label: string, val: number | string, color: string, sub?: string) => `
+          <td style="text-align:center;padding:16px 12px;background:#ffffff;border-radius:10px;border:1px solid #e2e8f0">
+            <div style="font-size:28px;font-weight:800;color:${color};line-height:1">${val}</div>
+            <div style="font-size:12px;font-weight:600;color:#1e293b;margin-top:5px">${label}</div>
+            ${sub ? `<div style="font-size:11px;color:#94a3b8;margin-top:2px">${sub}</div>` : ''}
+          </td>`;
 
         const body = `
-          <div style="background:#1A2B4A;border-radius:10px;padding:22px 24px;margin-bottom:24px;color:#ffffff">
-            <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.6px;font-weight:700">Daily Summary</p>
-            <h2 style="margin:0;font-size:20px;color:#ffffff;font-weight:700;line-height:1.3">Here's ${clrName}'s end-of-day summary for ${reportDateLong}.</h2>
+          <div style="background:#1A2B4A;border-radius:10px;padding:22px 24px;margin-bottom:24px">
+            <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.7px;font-weight:700">End of Day Report</p>
+            <h2 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:700">${clrName} &mdash; ${reportDateLong}</h2>
+            <p style="margin:0;font-size:13px;color:#94a3b8">Submitted via CLR Connection Center</p>
           </div>
 
-          <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6">
-            This is a personal recap of <strong style="color:#1e293b">${clrName}</strong>'s activity today. Each number below reflects work they completed as an individual CLR.
-          </p>
-
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:20px">
-            ${metricRow("Calls Made", calls, "Outbound calls placed to leads or referral partners")}
-            ${metricRow("Voicemails Left", vm, "Voicemails left when calls went unanswered")}
-            ${metricRow("Texts Sent", tx, "Text messages sent to leads or partners")}
-            ${metricRow("Emails Sent", em, "Emails sent to leads or partners")}
-            ${metricRow("Loan Officer Connections", loc, "Number of successful contacts made with Loan Officers")}
-            ${metricRow("Transfers", xfers, "Leads transferred to a Loan Officer for further conversation")}
-            ${metricRow("Appointments Set", appts, "Appointments scheduled with a lead or partner")}
+          <!-- Stats grid -->
+          <table width="100%" cellpadding="6" cellspacing="0" border="0" style="margin-bottom:20px">
             <tr>
-              <td style="padding:16px;background:#f8fafc;vertical-align:top">
-                <div style="font-size:14px;color:#0F182D;font-weight:700;margin-bottom:4px">Total People Reached</div>
-                <div style="font-size:12px;color:#64748b;line-height:1.5">Combined unique contacts made across all channels</div>
-              </td>
-              <td align="right" style="padding:16px;background:#f8fafc;vertical-align:top;width:90px">
-                <div style="font-size:24px;color:#1A2B4A;font-weight:800;line-height:1">${totalContacts}</div>
-              </td>
+              ${statBlock("Calls Made", calls, "#1A2B4A")}
+              ${statBlock("Transfers", xfers, "#059669", xfers === 1 ? "1 lead transferred" : `${xfers} leads transferred`)}
+              ${statBlock("Appointments", appts, "#2563eb")}
+              ${statBlock("Fell Through", fellThroughCount, "#dc2626")}
             </tr>
           </table>
 
-          ${safeNotes ? `
-          <div style="margin-top:24px;padding:18px 20px;background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0">
-            <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#713f12">Additional Notes</p>
-            <p style="margin:0 0 10px;font-size:12px;color:#854d0e;line-height:1.5">Other notable work done today not mentioned above.</p>
-            <p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${safeNotes.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+          ${xfers > 0 ? `
+          <!-- Transfer prospects -->
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfer Prospects (${xfers})</p>
+            ${transferProspects.length > 0
+              ? transferProspects.map((name, i) =>
+                  `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
+                    <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
+                    <span style="font-size:13px;font-weight:600;color:#14532d">${name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
+                  </div>`
+                ).join('')
+              : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
+            }
           </div>` : ""}
 
-          <p style="margin:28px 0 0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.5">© 2026 West Capital Lending · CLR Connection Center</p>
+          ${safeNotes ? `
+          <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#713f12">📝 Additional Notes</p>
+            <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap">${safeNotes.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
+          </div>` : ""}
+
+          <p style="margin:24px 0 0;font-size:11px;color:#94a3b8;text-align:center">© 2026 West Capital Lending &middot; CLR Connection Center</p>
         `;
-        const subject = `${clrName}'s EOD Report — ${reportDateShort}`;
+
+        const subject = `EOD Report: ${clrName} — ${reportDateShort}`;
         const html = buildEmail({
           subject,
-          preheader: `${clrName}'s daily summary · ${calls} calls · ${xfers} transfers · ${appts} appointments`,
+          preheader: `${calls} calls · ${xfers} transfers · ${appts} appointments · ${fellThroughCount} fell through`,
           body,
         });
-        await sendEmail({ to: managers, subject, html });
+        await sendEmail({ to: allRecipients, subject, html });
       }
     } catch (e: any) {
       console.error("EOD email send failed:", e?.message ?? e);

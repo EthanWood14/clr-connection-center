@@ -1199,6 +1199,9 @@ seedEthanScript();
 // Add owner_id column to existing DBs that don't have it
 try { sqlite.exec(`ALTER TABLE call_scripts ADD COLUMN owner_id INTEGER DEFAULT NULL`); } catch {}
 
+// Expose sqlite for direct queries in routes
+export function getSqlite() { return sqlite; }
+
 export function getCallScripts(): any[] {
   return sqlite.prepare(`SELECT * FROM call_scripts ORDER BY created_at DESC`).all() as any[];
 }

@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
+  History, ChevronDown, ChevronUp, User,
 } from "lucide-react";
 import { format, subDays, addDays, parseISO } from "date-fns";
 
@@ -53,6 +54,7 @@ function ReadOnlyStat({ icon: Icon, label, value, color }: { icon: any; label: s
 export default function EodReport() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const isAdmin = (user as any)?.isAdmin || (user as any)?.role === 'admin';
   const todayStr = new Date().toISOString().split("T")[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
 
@@ -364,6 +366,110 @@ export default function EodReport() {
           </p>
         </>
       )}
+
+      {/* ── Report History ── */}
+      <ReportHistory isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+// ── Report History Component ────────────────────────────────────────────────
+function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  const { data: history = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/eod-reports/history"],
+    queryFn: () => fetch("/api/eod-reports/history", { credentials: "include" }).then(r => r.json()),
+  });
+
+  if (isLoading) return (
+    <div className="space-y-2 pt-2">
+      {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+    </div>
+  );
+
+  if (history.length === 0) return (
+    <Card className="border-dashed">
+      <CardContent className="py-8 text-center text-sm text-muted-foreground">
+        No past reports yet.
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <History className="w-4 h-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Report History</h2>
+        {isAdmin && <span className="text-xs text-muted-foreground">(all CLRs)</span>}
+      </div>
+
+      <div className="space-y-2">
+        {history.map((r: any) => {
+          const dateLabel = format(parseISO(r.report_date), "EEE, MMM d, yyyy");
+          const isOpen = expanded === r.id;
+          const calls = r.calls_made ?? 0;
+          const xfers = r.transfers ?? 0;
+          const appts = r.appointments ?? 0;
+
+          return (
+            <Card key={r.id} className="border border-border overflow-hidden">
+              <button
+                className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                onClick={() => setExpanded(isOpen ? null : r.id)}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{dateLabel}</span>
+                      {isAdmin && r.clr_name && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <User className="w-3 h-3" />{r.clr_name}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5">
+                      <span className="text-xs text-muted-foreground">{calls} calls</span>
+                      <span className="text-xs text-emerald-600 font-medium">{xfers} transfers</span>
+                      <span className="text-xs text-blue-600">{appts} appts</span>
+                    </div>
+                  </div>
+                </div>
+                {isOpen
+                  ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" />
+                  : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+              </button>
+
+              {isOpen && (
+                <div className="px-4 pb-4 pt-1 border-t border-border bg-muted/20 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { label: "Calls", val: calls, color: "text-foreground" },
+                      { label: "Transfers", val: xfers, color: "text-emerald-600" },
+                      { label: "Appointments", val: appts, color: "text-blue-600" },
+                    ].map(s => (
+                      <div key={s.label} className="rounded-lg bg-background border border-border px-3 py-2 text-center">
+                        <div className={`text-xl font-bold ${s.color}`}>{s.val}</div>
+                        <div className="text-xs text-muted-foreground">{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {r.notes && (
+                    <div className="rounded-lg bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 px-3 py-2">
+                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1">Notes</p>
+                      <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{r.notes}</p>
+                    </div>
+                  )}
+                  {r.submitted_at && (
+                    <p className="text-xs text-muted-foreground">Submitted: {format(new Date(r.submitted_at), "MMM d, yyyy 'at' h:mm a")}</p>
+                  )}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
