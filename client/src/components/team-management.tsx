@@ -288,6 +288,23 @@ export function TeamManagement() {
       toast({ title: "Failed to update status", description: err.message, variant: "destructive" }),
   });
 
+  const toggleManagerMutation = useMutation({
+    mutationFn: ({ id, is_manager }: { id: number; is_manager: boolean }) =>
+      apiRequest("PATCH", `/api/users/${id}/manager`, { is_manager }),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] });
+      toast({
+        title: vars.is_manager ? "Manager enabled" : "Manager disabled",
+        description: vars.is_manager
+          ? "User added to daily/weekly/monthly report recipients."
+          : "User removed from scheduled report recipients.",
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to update manager flag", description: err.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
     onSuccess: () => {
@@ -348,6 +365,7 @@ export function TeamManagement() {
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead className="text-center">Active</TableHead>
+                  {isAdmin && <TableHead className="text-center">Manager</TableHead>}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -396,6 +414,19 @@ export function TeamManagement() {
                         data-testid={`switch-active-${user.id}`}
                       />
                     </TableCell>
+                    {isAdmin && (
+                      <TableCell className="text-center">
+                        <Switch
+                          checked={!!(user as any).isManager}
+                          onCheckedChange={(checked) =>
+                            toggleManagerMutation.mutate({ id: user.id, is_manager: checked })
+                          }
+                          disabled={toggleManagerMutation.isPending}
+                          aria-label={`Toggle manager for ${user.name}`}
+                          data-testid={`switch-manager-${user.id}`}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button

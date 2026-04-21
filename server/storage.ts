@@ -185,6 +185,16 @@ try {
   // Column already exists — ignore
 }
 
+// ── Migration: add is_manager to users if missing ──────────────────────
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0;`);
+} catch {
+  // Column already exists — ignore
+}
+try {
+  sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
+} catch {}
+
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 
@@ -887,6 +897,29 @@ export function updateReportScheduleRecipients(type: ReportType, recipients: str
     ON CONFLICT(report_type) DO UPDATE SET recipients=excluded.recipients, updated_at=CURRENT_TIMESTAMP
   `).run(type, json);
   return cleaned;
+}
+
+export function addEmailToAllReportSchedules(email: string) {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return;
+  for (const t of ["daily", "weekly", "monthly"] as ReportType[]) {
+    const current = getReportScheduleRecipients(t);
+    if (!current.some(e => e.trim().toLowerCase() === target)) {
+      updateReportScheduleRecipients(t, [...current, email.trim()]);
+    }
+  }
+}
+
+export function removeEmailFromAllReportSchedules(email: string) {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return;
+  for (const t of ["daily", "weekly", "monthly"] as ReportType[]) {
+    const current = getReportScheduleRecipients(t);
+    const filtered = current.filter(e => e.trim().toLowerCase() !== target);
+    if (filtered.length !== current.length) {
+      updateReportScheduleRecipients(t, filtered);
+    }
+  }
 }
 
 // ── Monthly Assignments storage ────────────────────────────────────────────────

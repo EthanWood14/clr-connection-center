@@ -12,6 +12,7 @@ export const users = sqliteTable("users", {
   isClr: integer("is_clr", { mode: "boolean" }).notNull().default(true), // admins: true = also a CLR, included in assignments
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
+  isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 

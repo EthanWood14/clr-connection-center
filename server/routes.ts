@@ -1006,6 +1006,22 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(storage.updateUser(id, rest));
   });
 
+  // Toggle is_manager flag (admin only) with auto-sync to scheduled report recipients
+  app.patch("/api/users/:id/manager", requireAuth, async (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid user id" });
+    const user = storage.getUserById(id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const isManager = !!req.body?.is_manager;
+    const updated = storage.updateUser(id, { isManager } as any);
+    if (user.email) {
+      if (isManager) storageExtra.addEmailToAllReportSchedules(user.email);
+      else storageExtra.removeEmailFromAllReportSchedules(user.email);
+    }
+    res.json(updated);
+  });
+
   // Resend intro/welcome email to any user (admin only)
   app.post("/api/users/:id/resend-welcome", requireAuth, async (req: any, res: any) => {
     if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
