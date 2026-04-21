@@ -21,6 +21,7 @@ import Directory from "@/pages/directory";
 import Assignments from "@/pages/assignments";
 import Outcomes from "@/pages/outcomes";
 import Leaderboard from "@/pages/leaderboard";
+import TeamStats from "@/pages/team-stats";
 import Settings from "@/pages/settings";
 import StateLookup from "@/pages/state-lookup";
 import Appointments from "@/pages/appointments";
@@ -98,7 +99,9 @@ function AppRouter() {
       <Route path="/assignments" component={Assignments} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/appointments" component={Appointments} />
-      <Route path="/leaderboard" component={Leaderboard} />
+      <Route path="/leaderboard" component={TeamStats} />
+      <Route path="/team-stats" component={TeamStats} />
+      <Route path="/leaderboard-classic" component={Leaderboard} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/chat" component={Chat} />
       <Route path="/snooze" component={Snooze} />

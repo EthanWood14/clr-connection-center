@@ -1678,6 +1678,126 @@ export function registerRoutes(httpServer: Server, app: Express) {
     });
   });
 
+  // ── Team Stats (rich analytics) ──────────────────────────────────────────────
+  app.get("/api/stats", (req, res) => {
+    const periodName = (req.query.period as string) || "period";
+    const { startDate, endDate } = resolveNamedPeriod(periodName);
+    const clrParam = (req.query.clr_id as string) || "all";
+    const clrId = clrParam === "all" || !clrParam ? undefined : parseInt(clrParam);
+
+    // Previous period of equal length (for trend deltas)
+    const start = new Date(startDate + "T00:00:00");
+    const end = new Date(endDate + "T00:00:00");
+    const dayMs = 86400000;
+    const lenDays = Math.round((end.getTime() - start.getTime()) / dayMs) + 1;
+    const prevEnd = new Date(start.getTime() - dayMs);
+    const prevStart = new Date(prevEnd.getTime() - (lenDays - 1) * dayMs);
+    const prevStartStr = prevStart.toISOString().split("T")[0];
+    const prevEndStr = prevEnd.toISOString().split("T")[0];
+
+    const outcomesAll = storage.getLeadOutcomes({ startDate, endDate }) as any[];
+    const outcomesPrev = storage.getLeadOutcomes({ startDate: prevStartStr, endDate: prevEndStr }) as any[];
+    const callLogsAll = storage.getCallLogsByRange(startDate, endDate) as any[];
+    const callLogsPrev = storage.getCallLogsByRange(prevStartStr, prevEndStr) as any[];
+    const users = storage.getUsers() as any[];
+    const activeAssistants = users.filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive);
+
+    const filterByClr = <T extends any>(arr: T[], field: string): T[] =>
+      clrId === undefined ? arr : arr.filter((o: any) => (o[field] ?? o[field.replace(/([A-Z])/g, "_$1").toLowerCase()]) === clrId);
+
+    const outcomes = clrId === undefined ? outcomesAll : outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === clrId);
+    const outcomesPrevFiltered = clrId === undefined ? outcomesPrev : outcomesPrev.filter((o: any) => (o.assistantId ?? o.assistant_id) === clrId);
+    const callLogs = clrId === undefined ? callLogsAll : callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === clrId);
+    const callLogsPrevFiltered = clrId === undefined ? callLogsPrev : callLogsPrev.filter((l: any) => (l.assistantId ?? l.assistant_id) === clrId);
+
+    const ot = (o: any) => o.outcomeType ?? o.outcome_type;
+    const isAppt = (t: string) => t === "appointment" || t === "callback_requested" || t === "deferral";
+
+    const sumCalls = (logs: any[]) => logs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
+
+    const totalCalls = sumCalls(callLogs);
+    const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
+    const totalAppointments = outcomes.filter(o => isAppt(ot(o))).length;
+    const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
+    const transferRate = totalCalls > 0 ? (totalTransfers / totalCalls) * 100 : 0;
+
+    const prevCalls = sumCalls(callLogsPrevFiltered);
+    const prevTransfers = outcomesPrevFiltered.filter(o => ot(o) === "transfer").length;
+    const prevAppointments = outcomesPrevFiltered.filter(o => isAppt(ot(o))).length;
+    const prevTransferRate = prevCalls > 0 ? (prevTransfers / prevCalls) * 100 : 0;
+
+    // Build daily breakdown
+    const days: string[] = [];
+    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + dayMs)) {
+      days.push(d.toISOString().split("T")[0]);
+    }
+    const daily = days.map(day => {
+      const dayOutcomes = outcomes.filter((o: any) => o.date === day);
+      const dayLogs = callLogs.filter((l: any) => (l.logDate ?? l.log_date) === day);
+      const calls = sumCalls(dayLogs);
+      const transfers = dayOutcomes.filter(o => ot(o) === "transfer").length;
+      const appointments = dayOutcomes.filter(o => isAppt(ot(o))).length;
+      const fellThrough = dayOutcomes.filter(o => ot(o) === "fell_through").length;
+      const rate = calls > 0 ? (transfers / calls) * 100 : 0;
+      return { date: day, calls, transfers, appointments, fellThrough, transferRate: +rate.toFixed(1) };
+    });
+
+    // Outcome breakdown (for donut)
+    const breakdown = {
+      transfer: outcomes.filter(o => ot(o) === "transfer").length,
+      appointment: outcomes.filter(o => ot(o) === "appointment").length,
+      callback_requested: outcomes.filter(o => ot(o) === "callback_requested").length,
+      deferral: outcomes.filter(o => ot(o) === "deferral").length,
+      fell_through: outcomes.filter(o => ot(o) === "fell_through").length,
+      no_answer: outcomes.filter(o => ot(o) === "no_answer").length,
+    };
+
+    // Per-CLR breakdown (always from full team data, not the filtered set)
+    const perClr = activeAssistants.map((u: any) => {
+      const uOutcomes = outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === u.id);
+      const uLogs = callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === u.id);
+      const uCalls = sumCalls(uLogs);
+      const uTransfers = uOutcomes.filter(o => ot(o) === "transfer").length;
+      const uAppointments = uOutcomes.filter(o => isAppt(ot(o))).length;
+      const uFellThrough = uOutcomes.filter(o => ot(o) === "fell_through").length;
+      const uDeferrals = uOutcomes.filter(o => ot(o) === "deferral").length;
+      const rate = uCalls > 0 ? (uTransfers / uCalls) * 100 : 0;
+      return {
+        userId: u.id,
+        name: u.name,
+        calls: uCalls,
+        transfers: uTransfers,
+        appointments: uAppointments,
+        fellThrough: uFellThrough,
+        deferrals: uDeferrals,
+        transferRate: +rate.toFixed(1),
+      };
+    }).sort((a, b) => b.transfers - a.transfers);
+
+    res.json({
+      period: periodName,
+      startDate,
+      endDate,
+      clrId: clrId ?? null,
+      totals: {
+        calls: totalCalls,
+        transfers: totalTransfers,
+        appointments: totalAppointments,
+        fellThrough: totalFellThrough,
+        transferRate: +transferRate.toFixed(1),
+      },
+      previous: {
+        calls: prevCalls,
+        transfers: prevTransfers,
+        appointments: prevAppointments,
+        transferRate: +prevTransferRate.toFixed(1),
+      },
+      daily,
+      breakdown,
+      perClr,
+    });
+  });
+
   // ── Leaderboard ───────────────────────────────────────────────────────────────
   // ── Analytics History (last N periods) ─────────────────────────────────────
   app.get("/api/analytics/history", (req, res) => {
