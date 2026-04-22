@@ -19,9 +19,13 @@ import {
 
 const dbPath = process.env.DATABASE_PATH ?? "clr.db";
 const sqlite = new Database(dbPath);
-export const db = drizzle(sqlite);
 
-// ── Init tables ────────────────────────────────────────────────────────────────
+// ── Critical pre-Drizzle migrations ──────────────────────────────────────────
+// These MUST run before `drizzle(sqlite)` prepares any statements referencing
+// columns defined in the Drizzle schema. Otherwise Drizzle compiles SELECTs
+// that reference columns not yet present on disk and the app crashes at
+// startup with "no such column: <name>". Ensure the users table exists first,
+// then add every schema-referenced column here.
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +35,31 @@ sqlite.exec(`
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+`);
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_dismissed_sample INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_calls_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_transfers_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_appointments_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN phone TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_company_name TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_name_override TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_lo_override TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
+
+export const db = drizzle(sqlite);
+
+// ── Init tables ────────────────────────────────────────────────────────────────
+sqlite.exec(`
 
   CREATE TABLE IF NOT EXISTS loan_officers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
