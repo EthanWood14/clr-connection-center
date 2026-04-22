@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { formatDistanceToNow } from "date-fns";
+import { parseServerTimestamp } from "@/lib/dates";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -284,7 +285,7 @@ export function BroadcastNotifications() {
                       <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.message}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-xs text-muted-foreground/60">
-                          {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                          {formatDistanceToNow(parseServerTimestamp(n.createdAt) ?? new Date(), { addSuffix: true })}
                         </span>
                         <span className="text-xs text-muted-foreground/40">·</span>
                         <span className="text-xs text-muted-foreground/60">

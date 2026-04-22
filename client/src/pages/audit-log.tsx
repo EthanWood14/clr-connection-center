@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatDistanceToNow, format, parseISO } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
+import { parseDbTimestamp } from "@/lib/utils";
 import { Shield } from "lucide-react";
 import {
   Table,
@@ -204,9 +205,14 @@ export default function AuditLog() {
                   let relativeTime = "";
                   let fullDate = "";
                   try {
-                    parsedDate = parseISO(log.createdAt);
-                    relativeTime = formatDistanceToNow(parsedDate, { addSuffix: true });
-                    fullDate = format(parsedDate, "MMM d, yyyy 'at' h:mm:ss a");
+                    parsedDate = parseDbTimestamp(log.createdAt);
+                    if (parsedDate) {
+                      relativeTime = formatDistanceToNow(parsedDate, { addSuffix: true });
+                      fullDate = format(parsedDate, "MMM d, yyyy 'at' h:mm:ss a");
+                    } else {
+                      relativeTime = log.createdAt;
+                      fullDate = log.createdAt;
+                    }
                   } catch {
                     relativeTime = log.createdAt;
                     fullDate = log.createdAt;

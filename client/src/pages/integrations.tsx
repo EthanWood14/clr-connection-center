@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { parseDbTimestamp } from "@/lib/utils";
 import { Copy, Eye, EyeOff, Save, CheckCircle2, Circle, Plug, RefreshCw, Lock } from "lucide-react";
 import { useLocation } from "wouter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -200,7 +201,7 @@ function IntegrationCard({
               {lastSync ? (
                 <>
                   <span className="font-semibold">Last synced:</span>{" "}
-                  {new Date(lastSync.started_at).toLocaleString()} —{" "}
+                  {parseDbTimestamp(lastSync.started_at)?.toLocaleString() ?? "—"} —{" "}
                   <span className={lastSync.status === "error" ? "text-destructive" : lastSync.status === "running" ? "text-blue-600" : "text-green-600"}>
                     {lastSync.status}
                   </span>
@@ -576,7 +577,7 @@ export default function IntegrationsPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleString()}
+                      {parseDbTimestamp(e.created_at)?.toLocaleString() ?? "—"}
                     </td>
                   </tr>
                 ))}

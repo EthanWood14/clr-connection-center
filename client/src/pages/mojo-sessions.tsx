@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { Phone, Lock, RefreshCw } from "lucide-react";
 import { InfoBanner } from "@/components/info-banner";
+import { parseDbTimestamp } from "@/lib/utils";
 
 type Session = {
   id: number;
@@ -276,7 +277,7 @@ export default function MojoSessionsPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Sync Status</CardTitle>
             <CardDescription>
-              Last sync: {new Date(syncStatus.last.started_at).toLocaleString()} —{" "}
+              Last sync: {parseDbTimestamp(syncStatus.last.started_at)?.toLocaleString() ?? "—"} —{" "}
               {syncStatus.last.status} ({syncStatus.last.records_synced ?? 0} records)
               {syncStatus.last.error_message && (
                 <span className="text-muted-foreground"> — {syncStatus.last.error_message}</span>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { parseDbTimestamp } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,7 +140,7 @@ export default function BonzoProspectsPage() {
     <div className="p-4 md:p-6 space-y-6 max-w-7xl">
       {hasToken ? (
         <InfoBanner storageKey="bonzo_connected" variant="success" title="Bonzo Connected">
-          API sync is active. Last synced: {syncStatus?.last ? new Date(syncStatus.last).toLocaleString() : "—"}. Click Sync Now to refresh.
+          API sync is active. Last synced: {syncStatus?.last ? (parseDbTimestamp(syncStatus.last)?.toLocaleString() ?? "—") : "—"}. Click Sync Now to refresh.
         </InfoBanner>
       ) : (
         <InfoBanner storageKey="bonzo_no_token" variant="warning" title="Bonzo API Not Connected">
@@ -306,7 +307,7 @@ export default function BonzoProspectsPage() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {p.last_activity_at ? new Date(p.last_activity_at).toLocaleString() : "—"}
+                          {p.last_activity_at ? (parseDbTimestamp(p.last_activity_at)?.toLocaleString() ?? "—") : "—"}
                         </td>
                       </tr>
                     );
@@ -323,7 +324,7 @@ export default function BonzoProspectsPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Sync Status</CardTitle>
             <CardDescription>
-              Last sync: {new Date(syncStatus.last.started_at).toLocaleString()} —{" "}
+              Last sync: {parseDbTimestamp(syncStatus.last.started_at)?.toLocaleString() ?? "—"} —{" "}
               {syncStatus.last.status} ({syncStatus.last.records_synced ?? 0} records)
               {syncStatus.last.error_message && (
                 <span className="text-destructive"> — {syncStatus.last.error_message}</span>

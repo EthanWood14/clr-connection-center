@@ -21,6 +21,7 @@ interface OutcomeBreakdown {
   appointment: number;
   fell_through: number;
   callback_requested: number;
+  deferral: number;
   future_contact: number;
   no_answer: number;
   total: number;
@@ -37,10 +38,11 @@ interface CheckResult {
 const OUTCOME_LABELS: Array<[keyof OutcomeBreakdown, string]> = [
   ["transfer", "Transfers"],
   ["appointment", "Appointments"],
-  ["fell_through", "Fell Through"],
-  ["callback_requested", "Callbacks"],
-  ["future_contact", "Future"],
-  ["no_answer", "No Answer"],
+  ["callback_requested", "Callbacks Requested"],
+  ["deferral", "Deferrals"],
+  ["future_contact", "Future Contacts"],
+  ["fell_through", "Fell Throughs"],
+  ["no_answer", "No Answers"],
 ];
 
 function formatDate(dateStr: string) {

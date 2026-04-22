@@ -510,6 +510,7 @@ try {
 // any `db.select().from(users)` — those queries read every column in the schema,
 // so if a later migration adds a column we must add it here too.
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();

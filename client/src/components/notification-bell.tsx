@@ -9,6 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
+import { parseServerTimestamp } from "@/lib/dates";
 
 const CURRENT_USER_ID = 1;
 
@@ -126,7 +127,7 @@ export function NotificationBell() {
                   <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 mt-1">→ Click to complete in NMLS Checks</p>
                 )}
                 <p className="text-xs text-muted-foreground/60 mt-1">
-                  {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                  {formatDistanceToNow(parseServerTimestamp(n.createdAt) ?? new Date(), { addSuffix: true })}
                 </p>
               </div>
             ))

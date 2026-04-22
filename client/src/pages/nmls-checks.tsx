@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ShieldCheck, AlertTriangle, CheckCircle2, Clock, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/lib/auth";
+import { parseDbTimestamp } from "@/lib/utils";
 
 export default function NmlsChecks() {
   const { toast } = useToast();
@@ -143,7 +144,7 @@ export default function NmlsChecks() {
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
                         <Clock className="w-3 h-3" />
                         <span>
-                          Assigned {formatDistanceToNow(new Date(check.assigned_at), { addSuffix: true })}
+                          Assigned {formatDistanceToNow(parseDbTimestamp(check.assigned_at) ?? new Date(), { addSuffix: true })}
                           {daysOverdue > 0 && (
                             <span className={isUrgent ? " text-destructive font-semibold" : " text-yellow-600 dark:text-yellow-400"}>
                               {" "}· {daysOverdue} day{daysOverdue !== 1 ? "s" : ""} overdue

@@ -12,6 +12,7 @@ import {
   ShieldCheck, ShieldAlert, ShieldQuestion, RefreshCw, ExternalLink, Search, CheckCircle2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { parseDbTimestamp } from "@/lib/utils";
 
 interface NmlsItem {
   id: number;
@@ -174,7 +175,7 @@ export default function NmlsStatus() {
                     )}
                     <div className="text-xs text-muted-foreground mt-1.5">
                       {item.nmlsLastChecked
-                        ? `Last checked ${formatDistanceToNow(new Date(item.nmlsLastChecked), { addSuffix: true })}`
+                        ? `Last checked ${formatDistanceToNow(parseDbTimestamp(item.nmlsLastChecked) ?? new Date(), { addSuffix: true })}`
                         : "Never checked"}
                       {item.nmlsLicenseExpiration && ` · Expires ${item.nmlsLicenseExpiration}`}
                     </div>

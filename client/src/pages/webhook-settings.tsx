@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { parseDbTimestamp } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { Copy, Eye, EyeOff, Save, Webhook, CheckCircle2, Circle } from "lucide-react";
 import { useLocation } from "wouter";
+import { formatLocalTime } from "@/lib/dates";
 
 const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
 const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
@@ -219,7 +221,7 @@ export default function WebhookSettingsPage() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {new Date(e.created_at).toLocaleString()}
+                        {parseDbTimestamp(e.created_at)?.toLocaleString() ?? "—"}
                       </td>
                     </tr>
                   );

@@ -37,12 +37,13 @@ type OutcomeBreakdown = {
   appointment: number;
   fell_through: number;
   callback_requested: number;
+  deferral: number;
   future_contact: number;
   no_answer: number;
   total: number;
 };
 function emptyOutcomeBreakdown(): OutcomeBreakdown {
-  return { transfer: 0, appointment: 0, fell_through: 0, callback_requested: 0, future_contact: 0, no_answer: 0, total: 0 };
+  return { transfer: 0, appointment: 0, fell_through: 0, callback_requested: 0, deferral: 0, future_contact: 0, no_answer: 0, total: 0 };
 }
 function getOutcomeBreakdownFor(userId: number, dateStr: string): OutcomeBreakdown {
   const rows = storage.getLeadOutcomes({ startDate: dateStr, endDate: dateStr, assistantId: userId });
