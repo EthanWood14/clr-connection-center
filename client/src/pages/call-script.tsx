@@ -22,14 +22,14 @@ import {
 import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
-  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch,
+  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Users,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
 interface ScriptNode { id: number; script_id: number; text: string; hint?: string | null; responses: ScriptResponse[]; }
-interface CallScript { id: number; name: string; description?: string; is_active: number; owner_id: number | null; }
+interface CallScript { id: number; name: string; description?: string; is_active: number; owner_id: number | null; owner_name?: string | null; is_default?: boolean; }
 
 // ─── Placeholder auto-fill ────────────────────────────────────────────────────
 export interface PlaceholderValues {
@@ -390,7 +390,7 @@ function renderScriptText(text: string, searchQuery: string, values: Placeholder
 // ─── Inline Node Editor ───────────────────────────────────────────────────────
 function InlineNodeBlock({
   node, responses, allNodes, depth, scriptId, expanded, onToggle, searchQuery, childNodesByParent, autoEdit,
-  onEditStarted, onChildExpand, expandedIds,
+  onEditStarted, onChildExpand, expandedIds, canEdit = true,
 }: {
   node: any;
   responses: any[];
@@ -405,6 +405,7 @@ function InlineNodeBlock({
   onEditStarted: () => void;
   onChildExpand: (id: number) => void;
   expandedIds: Set<number>;
+  canEdit?: boolean;
 }) {
   const { toast } = useToast();
   const placeholders = usePlaceholders();
@@ -507,7 +508,7 @@ function InlineNodeBlock({
                   <p className="text-xs text-amber-600 dark:text-amber-400 italic mt-1">💡 {renderScriptText(node.hint, searchQuery, placeholders)}</p>
                 )}
               </div>
-              {!editing && (
+              {!editing && canEdit && (
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditing(true)} title="Edit">
                     <Pencil className="w-3.5 h-3.5" />
@@ -530,11 +531,14 @@ function InlineNodeBlock({
                     otherNodes={otherNodes} scriptId={scriptId} searchQuery={searchQuery}
                     onCreateLinked={() => createLinkedNodeMut.mutate(r.id)}
                     creatingLinked={createLinkedNodeMut.isPending}
+                    canEdit={canEdit}
                   />
                 ))}
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => addResponseMut.mutate()} disabled={addResponseMut.isPending}>
-                  <Plus className="w-3 h-3" /> {addResponseMut.isPending ? "Adding…" : "Add Response"}
-                </Button>
+                {canEdit && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => addResponseMut.mutate()} disabled={addResponseMut.isPending}>
+                    <Plus className="w-3 h-3" /> {addResponseMut.isPending ? "Adding…" : "Add Response"}
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>
@@ -558,6 +562,7 @@ function InlineNodeBlock({
               onEditStarted={() => {}}
               onChildExpand={onChildExpand}
               expandedIds={expandedIds}
+              canEdit={canEdit}
             />
           ))}
         </div>
@@ -566,9 +571,9 @@ function InlineNodeBlock({
   );
 }
 
-function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, searchQuery, onCreateLinked, creatingLinked }: {
+function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, searchQuery, onCreateLinked, creatingLinked, canEdit = true }: {
   response: any; index: number; total: number; siblings: any[]; otherNodes: any[]; scriptId: number; searchQuery: string;
-  onCreateLinked: () => void; creatingLinked: boolean;
+  onCreateLinked: () => void; creatingLinked: boolean; canEdit?: boolean;
 }) {
   const { toast } = useToast();
   const [label, setLabel] = useState(response.label);
@@ -627,6 +632,7 @@ function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, s
           {highlight(response.label, searchQuery)}
         </Badge>
         <span className="text-muted-foreground truncate max-w-[180px]">{targetLabel}</span>
+        {canEdit && (
         <div className="flex gap-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
           <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Move up"
             onClick={() => swap(-1)} disabled={index === 0 || reorderPairMut.isPending}>
@@ -650,6 +656,7 @@ function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, s
             <X className="w-3 h-3" />
           </Button>
         </div>
+        )}
       </div>
     );
   }
@@ -683,7 +690,7 @@ function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, s
 }
 
 // ─── Node Editor ──────────────────────────────────────────────────────────────
-function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => void }) {
+function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; onClose: () => void; canEdit?: boolean }) {
   const { toast } = useToast();
   const { data: tree, isLoading } = useQuery<any>({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
   const [search, setSearch] = useState("");
@@ -757,11 +764,20 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Script Nodes</p>
+        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+          Script Nodes
+          {!canEdit && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-normal normal-case text-muted-foreground">
+              <Lock className="w-3 h-3" /> read-only
+            </span>
+          )}
+        </p>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => addNodeMut.mutate()} disabled={addNodeMut.isPending} className="text-xs gap-1">
-            <Plus className="w-3 h-3" /> {addNodeMut.isPending ? "Adding…" : "Add Node"}
-          </Button>
+          {canEdit && (
+            <Button size="sm" variant="outline" onClick={() => addNodeMut.mutate()} disabled={addNodeMut.isPending} className="text-xs gap-1">
+              <Plus className="w-3 h-3" /> {addNodeMut.isPending ? "Adding…" : "Add Node"}
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={onClose} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
         </div>
       </div>
@@ -803,6 +819,7 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
               onEditStarted={() => setAutoEditId(null)}
               onChildExpand={expandOne}
               expandedIds={expanded}
+              canEdit={canEdit}
             />
           ))}
         </div>
@@ -829,6 +846,7 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
               onEditStarted={() => setAutoEditId(null)}
               onChildExpand={expandOne}
               expandedIds={expanded}
+              canEdit={canEdit}
             />
           ))}
         </div>
@@ -1068,28 +1086,47 @@ export default function CallScriptPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, assignedLoName, borrowerName, timezone, timeTick]);
 
-  // Load defaults and personal script
+  // Load defaults, personal script, and all scripts (for browsing across CLRs)
   const { data: defaults = [], isLoading: loadingDefaults } = useQuery<CallScript[]>({
     queryKey: ["/api/call-scripts/defaults"],
   });
   const { data: myScript, isLoading: loadingMine } = useQuery<CallScript | null>({
     queryKey: ["/api/call-scripts/mine"],
   });
+  const { data: allScripts = [], isLoading: loadingAll } = useQuery<CallScript[]>({
+    queryKey: ["/api/call-scripts"],
+  });
 
-  const isLoading = loadingDefaults || loadingMine;
+  const isLoading = loadingDefaults || loadingMine || loadingAll;
   const defaultScript = defaults[0] ?? null;
 
-  // The active script: personal copy if exists, else default
-  const activeScript: CallScript | null = myScript ?? defaultScript;
+  // Selected script — defaults to personal copy if exists, else default
+  const [selectedScriptId, setSelectedScriptId] = useState<number | null>(null);
+  useEffect(() => {
+    if (selectedScriptId != null) return;
+    const initial = myScript?.id ?? defaultScript?.id ?? null;
+    if (initial != null) setSelectedScriptId(initial);
+  }, [myScript?.id, defaultScript?.id, selectedScriptId]);
+
+  // Resolve the active script from the selection
+  const activeScript: CallScript | null = useMemo(() => {
+    if (selectedScriptId == null) return myScript ?? defaultScript ?? null;
+    return allScripts.find(s => s.id === selectedScriptId) ?? myScript ?? defaultScript ?? null;
+  }, [selectedScriptId, allScripts, myScript, defaultScript]);
+
   const hasPersonalCopy = !!myScript;
-  const isUsingDefault = !hasPersonalCopy;
+  const isUsingDefault = activeScript ? activeScript.owner_id == null : !hasPersonalCopy;
+  const isMine = !!(activeScript && myScript && activeScript.id === myScript.id);
+  const canEditActive = !!activeScript && (isAdmin || isMine);
 
   // Clone default → personal copy
   const cloneMut = useMutation({
     mutationFn: () => apiRequest("POST", `/api/call-scripts/${defaultScript!.id}/clone`, {}),
-    onSuccess: () => {
+    onSuccess: (newScript: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
       queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/defaults"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
+      if (newScript?.id) setSelectedScriptId(newScript.id);
       toast({ title: "Personal copy created", description: "You can now customize your own script." });
       setView("edit");
     },
@@ -1101,6 +1138,8 @@ export default function CallScriptPage() {
     mutationFn: () => fetch("/api/call-scripts/mine", { method: "DELETE", credentials: "include" }).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
+      if (defaultScript?.id) setSelectedScriptId(defaultScript.id);
       setConfirmReset(false);
       setView("run");
       toast({ title: "Reset to default script" });
@@ -1132,15 +1171,23 @@ export default function CallScriptPage() {
           <Button size="sm" variant={view === "flowchart" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("flowchart")}>
             <GitBranch className="w-3.5 h-3.5" /> Flowchart
           </Button>
-          <Button size="sm" variant={view === "edit" ? "default" : "outline"} className="gap-1.5" onClick={() => {
-            if (isUsingDefault && !isAdmin) {
-              // Prompt to create personal copy first
-              cloneMut.mutate();
-            } else {
-              setView("edit");
-            }
-          }} disabled={cloneMut.isPending}>
-            <Pencil className="w-3.5 h-3.5" /> {cloneMut.isPending ? "Copying…" : "Edit Script"}
+          <Button
+            size="sm"
+            variant={view === "edit" ? "default" : "outline"}
+            className="gap-1.5"
+            onClick={() => {
+              // If viewing the default and user has no personal copy, cloning gives them an editable script.
+              if (!canEditActive && isUsingDefault && !isAdmin && !hasPersonalCopy) {
+                cloneMut.mutate();
+              } else {
+                setView("edit");
+              }
+            }}
+            disabled={cloneMut.isPending || (!canEditActive && !(isUsingDefault && !isAdmin && !hasPersonalCopy))}
+            title={!canEditActive ? "You don't have permission to edit this script" : undefined}
+          >
+            {canEditActive ? <Pencil className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            {cloneMut.isPending ? "Copying…" : canEditActive ? "Edit Script" : (isUsingDefault && !isAdmin && !hasPersonalCopy ? "Customize My Copy" : "View Only")}
           </Button>
         </div>
       </div>
@@ -1177,28 +1224,93 @@ export default function CallScriptPage() {
         </CardContent>
       </Card>
 
+      {/* Script selector */}
+      {!isLoading && allScripts.length > 0 && (
+        <Card>
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Script:</label>
+              <Select
+                value={selectedScriptId != null ? String(selectedScriptId) : ""}
+                onValueChange={(v) => setSelectedScriptId(parseInt(v))}
+              >
+                <SelectTrigger className="h-8 text-xs w-full max-w-sm">
+                  <SelectValue placeholder="Select a script" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(() => {
+                    const mine = myScript ? [myScript] : [];
+                    const defaultsGlobal = allScripts.filter(s => s.owner_id == null);
+                    const others = allScripts.filter(s => s.owner_id != null && (!myScript || s.id !== myScript.id));
+                    return (
+                      <>
+                        {mine.map(s => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            <span className="flex items-center gap-1.5">
+                              <User className="w-3 h-3 text-emerald-600" />
+                              <span>My Script — {s.name}</span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                        {defaultsGlobal.map(s => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            <span className="flex items-center gap-1.5">
+                              <Globe className="w-3 h-3 text-blue-600" />
+                              <span>Default — {s.name}</span>
+                              {!isAdmin && <Lock className="w-3 h-3 text-muted-foreground" />}
+                            </span>
+                          </SelectItem>
+                        ))}
+                        {others.map(s => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            <span className="flex items-center gap-1.5">
+                              <Users className="w-3 h-3 text-muted-foreground" />
+                              <span>{s.owner_name ? `${s.owner_name}'s Script` : s.name}</span>
+                              {!isAdmin && <Lock className="w-3 h-3 text-muted-foreground" />}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </>
+                    );
+                  })()}
+                </SelectContent>
+              </Select>
+              {!canEditActive && activeScript && (
+                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> read-only
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Script source badge + controls */}
       {!isLoading && activeScript && (
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            {isUsingDefault ? (
+            {isMine ? (
+              <Badge variant="outline" className="gap-1 text-xs border-emerald-300 text-emerald-600 dark:border-emerald-700 dark:text-emerald-400">
+                <User className="w-3 h-3" /> My Personal Script
+              </Badge>
+            ) : isUsingDefault ? (
               <Badge variant="outline" className="gap-1 text-xs border-blue-300 text-blue-600 dark:border-blue-700 dark:text-blue-400">
                 <Globe className="w-3 h-3" /> Default Script
               </Badge>
             ) : (
-              <Badge variant="outline" className="gap-1 text-xs border-emerald-300 text-emerald-600 dark:border-emerald-700 dark:text-emerald-400">
-                <User className="w-3 h-3" /> My Personal Script
+              <Badge variant="outline" className="gap-1 text-xs border-muted-foreground/40 text-muted-foreground">
+                <Users className="w-3 h-3" /> {activeScript.owner_name ? `${activeScript.owner_name}'s Script` : "Other CLR's Script"}
               </Badge>
             )}
             <span className="text-xs text-muted-foreground">{activeScript.name}</span>
           </div>
           <div className="flex gap-2">
-            {isUsingDefault && !isAdmin && defaultScript && (
+            {isUsingDefault && !isAdmin && !hasPersonalCopy && defaultScript && (
               <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => cloneMut.mutate()} disabled={cloneMut.isPending}>
                 <CopyIcon className="w-3 h-3" /> {cloneMut.isPending ? "Copying…" : "Customize My Copy"}
               </Button>
             )}
-            {hasPersonalCopy && (
+            {hasPersonalCopy && isMine && (
               <Button size="sm" variant="ghost" className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive" onClick={() => setConfirmReset(true)}>
                 <RotateCcw className="w-3 h-3" /> Reset to Default
               </Button>
@@ -1234,7 +1346,7 @@ export default function CallScriptPage() {
           ? <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
           : view === "flowchart"
             ? <ScriptFlowchart key={activeScript.id} scriptId={activeScript.id} />
-            : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} />
+            : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} canEdit={canEditActive} />
       )}
 
       {/* Reset confirmation */}

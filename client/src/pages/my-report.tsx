@@ -57,8 +57,8 @@ const COLORS = {
   transfers: "#22C55E",
   appointments: "#A855F7",
   fell: "#EF4444",
-  direct: "#0EA5E9",
-  appt: "#A855F7",
+  direct: "#1E3A8A",       // navy/blue — Direct
+  appt: "#14B8A6",         // teal — Appointment/Callback
   other: "#94A3B8",
 };
 
@@ -131,20 +131,31 @@ export default function MyReport() {
     }));
   }, [data?.daily]);
 
+  // Transfer Types: only include Direct + Appointment/Callback; drop unspecified/null entirely.
   const transferTypeData = useMemo(() => {
     if (!data) return [];
     const t = data.transferByType;
     return [
       { name: "Direct", value: t.direct, color: COLORS.direct },
-      { name: "Appointment", value: t.appointment, color: COLORS.appt },
-      ...(t.unspecified > 0 ? [{ name: "Unspecified", value: t.unspecified, color: COLORS.other }] : []),
+      { name: "Appointment/Callback", value: t.appointment, color: COLORS.appt },
     ].filter(x => x.value > 0);
   }, [data]);
 
+  // Total transfers (used to detect "all unspecified" case — chart hidden then).
+  const totalTransfers = data?.totals.transfers ?? 0;
+  const hasAnyTransferType = (data?.transferByType.direct ?? 0) + (data?.transferByType.appointment ?? 0) > 0;
+
+  // Timeframe Breakdown: drop null/empty/"unspecified" entries; only show real timeframe values.
   const timeframeData = useMemo(() => {
     if (!data) return [];
     return Object.entries(data.transferByTimeframe)
-      .map(([tf, count]) => ({ name: formatTf(tf), value: count }))
+      .filter(([tf, count]) => {
+        if (!tf) return false;
+        const key = String(tf).trim().toLowerCase();
+        if (!key || key === "unspecified" || key === "null" || key === "undefined") return false;
+        return (count as number) > 0;
+      })
+      .map(([tf, count]) => ({ name: formatTf(tf), value: count as number }))
       .sort((a, b) => b.value - a.value);
   }, [data]);
 
@@ -279,15 +290,17 @@ export default function MyReport() {
           )}
 
           {/* Transfer breakdown */}
-          {(data.totals.transfers > 0) && (
+          {(totalTransfers > 0) && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Transfer Types</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {transferTypeData.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-6">No transfer type data.</p>
+                  {!hasAnyTransferType ? (
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                      No transfer type data yet. Select Direct or Appointment/Callback when logging transfers.
+                    </p>
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
@@ -317,12 +330,14 @@ export default function MyReport() {
                 </CardHeader>
                 <CardContent>
                   {timeframeData.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-6">No timeframe data.</p>
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                      No timeframe data yet. Add lead timeframes when logging transfers.
+                    </p>
                   ) : (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <BarChart data={timeframeData} layout="vertical" margin={{ left: 16 }}>
+                    <ResponsiveContainer width="100%" height={Math.max(180, timeframeData.length * 36 + 40)}>
+                      <BarChart data={timeframeData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
                         <XAxis type="number" fontSize={11} allowDecimals={false} />
-                        <YAxis type="category" dataKey="name" fontSize={11} width={90} />
+                        <YAxis type="category" dataKey="name" fontSize={11} width={130} interval={0} />
                         <Tooltip />
                         <Bar dataKey="value" fill={COLORS.transfers} radius={[0, 4, 4, 0]} />
                       </BarChart>

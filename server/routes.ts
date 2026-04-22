@@ -3603,10 +3603,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Call Scripts ────────────────────────────────────────────────────────────
 
   // Helper: can user modify this script?
+  // - Admins can edit any script.
+  // - Regular users can only edit scripts they own (owner_id === their userId).
+  // - Default scripts (owner_id IS NULL) are only editable by admins.
   function canEditScript(sessionUser: any, script: any): boolean {
     if (!sessionUser) return false;
-    if (sessionUser.isAdmin) return true; // admins can edit anything
-    return script.owner_id === sessionUser.userId; // users can only edit their own
+    const isAdmin = sessionUser.isAdmin === true || sessionUser.role === 'admin';
+    if (isAdmin) return true;
+    if (script.owner_id == null) return false; // default script — admin only
+    return script.owner_id === sessionUser.userId;
   }
 
   // Get default scripts (owner_id IS NULL)
@@ -3636,7 +3641,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.get('/api/call-scripts', requireAuth, (_req: any, res: any) => {
-    res.json(storageExtra.getCallScripts());
+    const scripts = storageExtra.getCallScripts();
+    const users = storage.getUsers() as any[];
+    const withOwner = scripts.map((s: any) => {
+      const owner = s.owner_id != null ? users.find(u => u.id === s.owner_id) : null;
+      return { ...s, owner_name: owner?.name ?? null, is_default: s.owner_id == null };
+    });
+    res.json(withOwner);
   });
 
   app.post('/api/call-scripts', requireAuth, (req: any, res: any) => {

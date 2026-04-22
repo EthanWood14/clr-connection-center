@@ -224,7 +224,7 @@ function CallEntryWidget() {
   );
 }
 
-function StatCard({ title, value, icon: Icon, sub, color = "primary", accent, href }: any) {
+function StatCard({ title, value, icon: Icon, sub, color = "primary", accent, href, breakdown }: any) {
   const accentClass =
     accent === "blue" ? "border-l-4 border-l-blue-500" :
     accent === "green" ? "border-l-4 border-l-green-500" :
@@ -236,10 +236,22 @@ function StatCard({ title, value, icon: Icon, sub, color = "primary", accent, hr
     <Card className={`h-full ${accentClass} ${href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}>
       <CardContent className="pt-5 pb-5 h-full">
         <div className="flex items-start justify-between h-full">
-          <div className="flex flex-col justify-between h-full">
+          <div className="flex flex-col justify-between h-full flex-1 min-w-0">
             <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{title}</p>
             <p className="text-2xl font-bold text-foreground my-2">{value ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">{sub ?? "\u00a0"}</p>
+            {breakdown && breakdown.length > 0 ? (
+              <div className="space-y-0.5">
+                {breakdown.map((b: { icon: string; label: string; value: number | string }, i: number) => (
+                  <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span aria-hidden className="shrink-0">{b.icon}</span>
+                    <span className="truncate">{b.label}:</span>
+                    <span className="font-semibold text-foreground tabular-nums">{b.value ?? 0}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">{sub ?? "\u00a0"}</p>
+            )}
           </div>
           <div className={`p-2 rounded-lg shrink-0 ${color === "primary" ? "bg-primary/10 text-primary" : color === "success" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : color === "warning" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400" : "bg-muted text-muted-foreground"}`}>
             <Icon className="w-4 h-4" />
@@ -845,7 +857,7 @@ export default function Dashboard() {
   const realOutcomeCount = (stats?.transfers ?? 0) + (stats?.fellThrough ?? 0) + (stats?.myCallsInPeriod ?? 0);
   const sampleMode = useSampleDataMode(realOutcomeCount);
   const displayStats = sampleMode
-    ? { ...stats, transfers: SAMPLE_STATS.transfers, fellThrough: SAMPLE_STATS.fellThrough, myCallsInPeriod: SAMPLE_STATS.calls, upcomingAppointments: SAMPLE_STATS.appointments, myCallsToday: SAMPLE_STATS.calls, futureContactsCount: SAMPLE_STATS.callbacks }
+    ? { ...stats, transfers: SAMPLE_STATS.transfers, appointments: SAMPLE_STATS.appointments, fellThrough: SAMPLE_STATS.fellThrough, myCallsInPeriod: SAMPLE_STATS.calls, upcomingAppointments: SAMPLE_STATS.appointments, myCallsToday: SAMPLE_STATS.calls, futureContactsCount: SAMPLE_STATS.callbacks }
     : stats;
 
   return (
@@ -889,7 +901,19 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" accent="green" sub={subLabel} href="/outcomes" />
-            <StatCard title="Upcoming Appts" value={displayStats?.upcomingAppointments ?? 0} icon={Calendar} color="primary" accent="purple" sub="scheduled ahead" href="/appointments" />
+            <StatCard
+              title="Appointments"
+              value={displayStats?.upcomingAppointments ?? 0}
+              icon={Calendar}
+              color="primary"
+              accent="purple"
+              href="/appointments"
+              breakdown={[
+                { icon: "📅", label: "Appointments", value: displayStats?.appointments ?? 0 },
+                { icon: "🔄", label: "Transfers", value: displayStats?.transfers ?? 0 },
+                { icon: "❌", label: "Fell Throughs", value: displayStats?.fellThrough ?? 0 },
+              ]}
+            />
             <StatCard title={scope === "team" ? "Team Calls Today" : "My Calls Today"} value={displayStats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" accent="blue" sub={displayStats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
             <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" accent="red" sub={subLabel} href="/outcomes" />
             <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" accent="teal" sub={subLabel} href="/outcomes" />
