@@ -671,7 +671,118 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     </div>` : ''}
   `;
 
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body });
+  // ── Call Notes section ──────────────────────────────────────────────────────
+  // Lists every outcome with a non-empty `notes` field, grouped by CLR.
+  // For weekly reports, further grouped by day. Section is omitted entirely if
+  // no notes exist in the reporting window.
+  const escNote = (s: string) => (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+  const formatOutcomeType = (t: string) => {
+    const map: Record<string, string> = {
+      transfer: "Transfer",
+      appointment: "Appointment",
+      fell_through: "Fell Through",
+      no_answer: "No Answer",
+      callback_requested: "Callback Requested",
+      deferral: "Deferral",
+      future_contact: "Future Contact",
+      not_interested: "Not Interested",
+      wrong_number: "Wrong Number",
+      other: "Other",
+    };
+    return map[t] || t.replace(/_/g, " ");
+  };
+  interface NoteEntry {
+    date: string;
+    outcomeType: string;
+    loName: string | null;
+    note: string;
+  }
+  const clrNotes: Array<{ clrId: number; clrName: string; entries: NoteEntry[] }> = clrs.map((u: any) => {
+    const uid = u.id;
+    const entries: NoteEntry[] = outcomes
+      .filter((o: any) => {
+        const aid = o.assistantId ?? o.assistant_id;
+        const n = o.notes;
+        return aid === uid && typeof n === "string" && n.trim().length > 0;
+      })
+      .map((o: any) => {
+        const loId = o.loId ?? o.lo_id;
+        const lo = los.find((l: any) => l.id === loId);
+        const loName = lo ? ((lo as any).fullName ?? (lo as any).full_name ?? null) : null;
+        return {
+          date: (o.date ?? o.report_date) as string,
+          outcomeType: (o.outcomeType ?? o.outcome_type) as string,
+          loName: (o.outcomeType ?? o.outcome_type) === "transfer" || (o.outcomeType ?? o.outcome_type) === "appointment" ? loName : null,
+          note: String(o.notes).trim(),
+        };
+      });
+    return { clrId: uid, clrName: u.name, entries };
+  }).filter(c => c.entries.length > 0);
+
+  let callNotesHtml = "";
+  if (clrNotes.length > 0) {
+    if (type === "weekly") {
+      const clrBlocks = clrNotes.map((c, idx) => {
+        // Group entries by date
+        const byDate = new Map<string, NoteEntry[]>();
+        for (const e of c.entries) {
+          if (!byDate.has(e.date)) byDate.set(e.date, []);
+          byDate.get(e.date)!.push(e);
+        }
+        const sortedDates = Array.from(byDate.keys()).sort();
+        const daysHtml = sortedDates.map(dateStr => {
+          const heading = new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-US", {
+            weekday: "long", month: "short", day: "numeric", timeZone: "UTC",
+          });
+          const items = byDate.get(dateStr)!.map(e => {
+            const loPart = e.loName ? ` &mdash; <span style="color:#334155">${escNote(e.loName)}</span>` : "";
+            return `<li style="margin:0 0 6px;font-size:13px;color:#334155;line-height:1.5">
+              <strong style="color:#1A2B4A">${formatOutcomeType(e.outcomeType)}</strong>${loPart}
+              <span style="color:#64748b;font-style:italic"> &mdash; ${escNote(e.note)}</span>
+            </li>`;
+          }).join("");
+          return `<div style="margin:8px 0 4px">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:#475569">${heading}</p>
+            <ul style="margin:0 0 0 16px;padding:0;list-style:disc">${items}</ul>
+          </div>`;
+        }).join("");
+        return `<div style="margin-bottom:${idx < clrNotes.length - 1 ? '18px' : '0'};padding-bottom:${idx < clrNotes.length - 1 ? '14px' : '0'};${idx < clrNotes.length - 1 ? 'border-bottom:1px solid #e2e8f0;' : ''}">
+          <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)}</p>
+          ${daysHtml}
+        </div>`;
+      }).join("");
+      callNotesHtml = `
+      <div style="margin-top:28px">
+        <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Notes This Week</h2>
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px">
+          ${clrBlocks}
+        </div>
+      </div>`;
+    } else {
+      const clrBlocks = clrNotes.map((c, idx) => {
+        const items = c.entries.map(e => {
+          const loPart = e.loName ? ` &mdash; <span style="color:#334155">${escNote(e.loName)}</span>` : "";
+          return `<li style="margin:0 0 6px;font-size:13px;color:#334155;line-height:1.5">
+            <strong style="color:#1A2B4A">${formatOutcomeType(e.outcomeType)}</strong>${loPart}
+            <span style="color:#64748b;font-style:italic"> &mdash; ${escNote(e.note)}</span>
+          </li>`;
+        }).join("");
+        return `<div style="margin-bottom:${idx < clrNotes.length - 1 ? '14px' : '0'};padding-bottom:${idx < clrNotes.length - 1 ? '12px' : '0'};${idx < clrNotes.length - 1 ? 'border-bottom:1px solid #e2e8f0;' : ''}">
+          <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)}</p>
+          <ul style="margin:0 0 0 16px;padding:0;list-style:disc">${items}</ul>
+        </div>`;
+      }).join("");
+      callNotesHtml = `
+      <div style="margin-top:28px">
+        <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Call Notes</h2>
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px">
+          ${clrBlocks}
+        </div>
+      </div>`;
+    }
+  }
+
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body: body + callNotesHtml });
   console.log(`[sendReport] type=${type} recipients=${JSON.stringify(managers)} window=${startDate}..${endDate}`);
   const id = await sendEmail({ to: managers, subject, html });
   return { id, recipients: managers };
