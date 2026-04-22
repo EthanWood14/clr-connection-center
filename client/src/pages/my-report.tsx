@@ -242,12 +242,13 @@ export default function MyReport() {
                   <LineChart data={trendData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="date" fontSize={11} />
-                    <YAxis fontSize={11} allowDecimals={false} />
+                    <YAxis yAxisId="calls" orientation="left" fontSize={11} allowDecimals={false} stroke={COLORS.calls} label={{ value: "Calls", angle: -90, position: "insideLeft", fontSize: 10, fill: COLORS.calls }} />
+                    <YAxis yAxisId="small" orientation="right" fontSize={11} allowDecimals={false} stroke={COLORS.transfers} label={{ value: "Transfers / Appts", angle: 90, position: "insideRight", fontSize: 10, fill: COLORS.transfers }} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="Calls" stroke={COLORS.calls} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="Transfers" stroke={COLORS.transfers} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="Appointments" stroke={COLORS.appointments} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line yAxisId="calls" type="monotone" dataKey="Calls" stroke={COLORS.calls} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line yAxisId="small" type="monotone" dataKey="Transfers" stroke={COLORS.transfers} strokeWidth={2} dot={{ r: 3 }} />
+                    <Line yAxisId="small" type="monotone" dataKey="Appointments" stroke={COLORS.appointments} strokeWidth={2} dot={{ r: 3 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </CardContent>
