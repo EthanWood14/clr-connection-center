@@ -1759,6 +1759,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
         body.transferType = null;
       }
       const nullify = (v: any) => (v === undefined || v === '' ? null : v);
+      const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
       const nullableFields = [
         "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
         "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
@@ -1767,6 +1768,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
         "rescheduleDatetime", "nextSteps",
       ];
       for (const k of nullableFields) body[k] = nullify(body[k]);
+      body.requiresFollowup = boolToInt(body.requiresFollowup);
+      body.rescheduled = boolToInt(body.rescheduled);
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
@@ -1789,6 +1792,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       body.transferType = null;
     }
     const nullify = (v: any) => (v === undefined || v === '' ? null : v);
+    const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
     const nullableFields = [
       "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
       "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
@@ -1799,6 +1803,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
     for (const k of nullableFields) {
       if (k in body) body[k] = nullify(body[k]);
     }
+    if ("requiresFollowup" in body) body.requiresFollowup = boolToInt(body.requiresFollowup);
+    if ("rescheduled" in body) body.rescheduled = boolToInt(body.rescheduled);
     const outcome = storage.updateLeadOutcome(id, body);
     if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
     res.json(outcome);
