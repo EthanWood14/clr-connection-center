@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { Copy, Eye, EyeOff, Save, CheckCircle2, Circle, Plug } from "lucide-react";
+import { Copy, Eye, EyeOff, Save, CheckCircle2, Circle, Plug, RefreshCw, Lock } from "lucide-react";
 import { useLocation } from "wouter";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
 const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
@@ -96,6 +97,7 @@ function IntegrationCard({
   logoBg, logoLetter, name, status, description, webhookUrl,
   secret, onSecretChange, apiToken, onApiTokenChange,
   apiTokenLabel, features, onSave, saving,
+  hasToken, onSync, syncing, lastSync, syncTooltip,
 }: {
   logoBg: string;
   logoLetter: string;
@@ -111,6 +113,11 @@ function IntegrationCard({
   features: { label: string; active: boolean }[];
   onSave: () => void;
   saving: boolean;
+  hasToken: boolean;
+  onSync: () => void;
+  syncing: boolean;
+  lastSync: { started_at: string; status: string; records_synced: number; error_message: string | null } | null;
+  syncTooltip: string;
 }) {
   return (
     <Card>
@@ -183,6 +190,46 @@ function IntegrationCard({
           </ul>
         </div>
 
+        <div className="pt-2 border-t space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="text-xs text-muted-foreground">
+              {lastSync ? (
+                <>
+                  <span className="font-semibold">Last synced:</span>{" "}
+                  {new Date(lastSync.started_at).toLocaleString()} —{" "}
+                  <span className={lastSync.status === "error" ? "text-destructive" : lastSync.status === "running" ? "text-blue-600" : "text-green-600"}>
+                    {lastSync.status}
+                  </span>
+                  {" · "}{lastSync.records_synced ?? 0} records
+                </>
+              ) : (
+                <span>No syncs yet</span>
+              )}
+            </div>
+            {hasToken ? (
+              <Button size="sm" variant="outline" onClick={onSync} disabled={syncing}>
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncing ? "animate-spin" : ""}`} />
+                {syncing ? "Syncing..." : "Sync Now"}
+              </Button>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button size="sm" variant="outline" disabled>
+                      <Lock className="w-3.5 h-3.5 mr-1.5" />
+                      Sync Now
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{syncTooltip}</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          {lastSync?.error_message && (
+            <div className="text-xs text-destructive">{lastSync.error_message}</div>
+          )}
+        </div>
+
         <div className="flex justify-end pt-2">
           <Button onClick={onSave} disabled={saving}>
             <Save className="w-3.5 h-3.5 mr-1.5" />
@@ -239,6 +286,36 @@ export default function IntegrationsPage() {
       toast({ title: "Saved", description: "Integration settings updated." });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const { data: bonzoSyncStatus } = useQuery<{ log: any[]; last: any; running: any }>({
+    queryKey: ["/api/bonzo/sync-log"],
+    enabled: user?.role === "admin",
+    refetchInterval: (q) => (q.state.data?.running ? 3000 : 15000),
+  });
+
+  const { data: mojoSyncStatus } = useQuery<{ log: any[]; last: any; running: any }>({
+    queryKey: ["/api/mojo/sync-log"],
+    enabled: user?.role === "admin",
+    refetchInterval: (q) => (q.state.data?.running ? 3000 : 15000),
+  });
+
+  const bonzoSyncMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/bonzo/sync/full"),
+    onSuccess: (r: any) => {
+      toast({ title: "Bonzo sync complete", description: `${r.records_synced ?? 0} records synced.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/bonzo/sync-log"] });
+    },
+    onError: (e: any) => toast({ title: "Bonzo sync failed", description: e.message, variant: "destructive" }),
+  });
+
+  const mojoSyncMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/mojo/sync/sessions"),
+    onSuccess: (r: any) => {
+      toast({ title: r?.note ? "Sync triggered" : "Mojo sync complete", description: r?.note ?? `${r.records_synced ?? 0} records synced.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/mojo/sync-log"] });
+    },
+    onError: (e: any) => toast({ title: "Mojo sync failed", description: e.message, variant: "destructive" }),
   });
 
   const bonzoStatus: Status = useMemo(() => {
@@ -314,6 +391,11 @@ export default function IntegrationsPage() {
             bonzoApiToken: local.bonzoApiToken,
           })}
           saving={isLoading || saveMutation.isPending}
+          hasToken={!!(settings?.bonzoApiToken?.trim())}
+          onSync={() => bonzoSyncMutation.mutate()}
+          syncing={bonzoSyncMutation.isPending || !!bonzoSyncStatus?.running}
+          lastSync={bonzoSyncStatus?.last ?? null}
+          syncTooltip="Configure Bonzo API token to enable this"
         />
 
         <IntegrationCard
@@ -334,6 +416,11 @@ export default function IntegrationsPage() {
             mojoApiKey: local.mojoApiKey,
           })}
           saving={isLoading || saveMutation.isPending}
+          hasToken={!!(settings?.mojoApiKey?.trim())}
+          onSync={() => mojoSyncMutation.mutate()}
+          syncing={mojoSyncMutation.isPending || !!mojoSyncStatus?.running}
+          lastSync={mojoSyncStatus?.last ?? null}
+          syncTooltip="Configure Mojo API key to enable this"
         />
       </div>
 

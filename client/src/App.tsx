@@ -45,6 +45,8 @@ import GlossaryPage from "@/pages/glossary";
 import LoVacation from "@/pages/lo-vacation";
 import WebhookSettings from "@/pages/webhook-settings";
 import Integrations from "@/pages/integrations";
+import BonzoProspects from "@/pages/bonzo-prospects";
+import MojoSessions from "@/pages/mojo-sessions";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -91,6 +93,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/lo-vacation":   "LO Vacation",
   "/webhook-settings": "Integrations",
   "/integrations":     "Integrations",
+  "/bonzo-prospects":  "Bonzo Prospects",
+  "/mojo-sessions":    "Mojo Sessions",
 };
 
 function usePageTitle() {
@@ -131,6 +135,8 @@ function AppRouter() {
       <Route path="/lo-vacation" component={LoVacation} />
       <Route path="/webhook-settings" component={Integrations} />
       <Route path="/integrations" component={Integrations} />
+      <Route path="/bonzo-prospects" component={BonzoProspects} />
+      <Route path="/mojo-sessions" component={MojoSessions} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />

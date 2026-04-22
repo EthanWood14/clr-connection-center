@@ -1007,6 +1007,96 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN bonzo_api_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN mojo_api_key TEXT`); } catch {}
 
+  // ── Bonzo integration tables ─────────────────────────────────────────────
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_prospects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bonzo_id TEXT UNIQUE NOT NULL,
+      first_name TEXT,
+      last_name TEXT,
+      email TEXT,
+      phone TEXT,
+      pipeline_id TEXT,
+      pipeline_name TEXT,
+      stage_id TEXT,
+      stage_name TEXT,
+      assigned_user_id INTEGER,
+      bonzo_user_id TEXT,
+      bonzo_user_name TEXT,
+      tags TEXT DEFAULT '[]',
+      last_activity_at TEXT,
+      imported_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_pipelines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bonzo_id TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      stages TEXT DEFAULT '[]',
+      imported_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_sync_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sync_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      records_synced INTEGER DEFAULT 0,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT
+    )`);
+  } catch {}
+
+  // ── Mojo integration tables ──────────────────────────────────────────────
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS mojo_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_date TEXT NOT NULL,
+      clr_user_id INTEGER,
+      clr_name TEXT,
+      total_calls INTEGER DEFAULT 0,
+      contacts_reached INTEGER DEFAULT 0,
+      dnc_hits INTEGER DEFAULT 0,
+      transfers INTEGER DEFAULT 0,
+      appointments INTEGER DEFAULT 0,
+      voicemails INTEGER DEFAULT 0,
+      no_answers INTEGER DEFAULT 0,
+      source TEXT DEFAULT 'webhook',
+      imported_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(session_date, clr_user_id)
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS mojo_contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mojo_id TEXT UNIQUE,
+      first_name TEXT,
+      last_name TEXT,
+      phone TEXT,
+      email TEXT,
+      status TEXT,
+      assigned_clr_id INTEGER,
+      list_name TEXT,
+      imported_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS mojo_sync_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sync_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      records_synced INTEGER DEFAULT 0,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT
+    )`);
+  } catch {}
 }
 runNewMigrations();
 
@@ -1756,4 +1846,198 @@ export function getFullScriptTree(scriptId: number): any {
   const nodes = getScriptNodes(scriptId);
   const allResponses = nodes.flatMap(n => getNodeResponses(n.id));
   return { ...script, nodes, responses: allResponses };
+}
+
+// ── Bonzo storage helpers ────────────────────────────────────────────────────
+export function upsertBonzoProspect(p: {
+  bonzoId: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  pipelineId?: string | null;
+  pipelineName?: string | null;
+  stageId?: string | null;
+  stageName?: string | null;
+  assignedUserId?: number | null;
+  bonzoUserId?: string | null;
+  bonzoUserName?: string | null;
+  tags?: string[];
+  lastActivityAt?: string | null;
+}) {
+  const now = new Date().toISOString();
+  const existing = sqlite.prepare(`SELECT id FROM bonzo_prospects WHERE bonzo_id=?`).get(p.bonzoId) as any;
+  const tagsJson = JSON.stringify(p.tags ?? []);
+  if (existing) {
+    sqlite.prepare(
+      `UPDATE bonzo_prospects SET first_name=?, last_name=?, email=?, phone=?, pipeline_id=?, pipeline_name=?, stage_id=?, stage_name=?, assigned_user_id=?, bonzo_user_id=?, bonzo_user_name=?, tags=?, last_activity_at=?, updated_at=? WHERE bonzo_id=?`
+    ).run(
+      p.firstName ?? null, p.lastName ?? null, p.email ?? null, p.phone ?? null,
+      p.pipelineId ?? null, p.pipelineName ?? null, p.stageId ?? null, p.stageName ?? null,
+      p.assignedUserId ?? null, p.bonzoUserId ?? null, p.bonzoUserName ?? null,
+      tagsJson, p.lastActivityAt ?? null, now, p.bonzoId,
+    );
+  } else {
+    sqlite.prepare(
+      `INSERT INTO bonzo_prospects (bonzo_id, first_name, last_name, email, phone, pipeline_id, pipeline_name, stage_id, stage_name, assigned_user_id, bonzo_user_id, bonzo_user_name, tags, last_activity_at, imported_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      p.bonzoId, p.firstName ?? null, p.lastName ?? null, p.email ?? null, p.phone ?? null,
+      p.pipelineId ?? null, p.pipelineName ?? null, p.stageId ?? null, p.stageName ?? null,
+      p.assignedUserId ?? null, p.bonzoUserId ?? null, p.bonzoUserName ?? null,
+      tagsJson, p.lastActivityAt ?? null, now, now,
+    );
+  }
+}
+
+export function getBonzoProspects(filters: {
+  search?: string;
+  pipelineId?: string;
+  stageId?: string;
+  assignedUserId?: number;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filters.search) {
+    where.push(`(LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ? OR phone LIKE ?)`);
+    const s = `%${filters.search.toLowerCase()}%`;
+    args.push(s, s, s, `%${filters.search}%`);
+  }
+  if (filters.pipelineId) { where.push(`pipeline_id=?`); args.push(filters.pipelineId); }
+  if (filters.stageId) { where.push(`stage_id=?`); args.push(filters.stageId); }
+  if (filters.assignedUserId !== undefined) { where.push(`assigned_user_id=?`); args.push(filters.assignedUserId); }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const offset = filters.offset ?? 0;
+  const rows = sqlite.prepare(
+    `SELECT bp.*, u.name AS assigned_user_name FROM bonzo_prospects bp LEFT JOIN users u ON u.id = bp.assigned_user_id ${clause} ORDER BY COALESCE(last_activity_at, updated_at) DESC LIMIT ? OFFSET ?`
+  ).all(...args, limit, offset) as any[];
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM bonzo_prospects ${clause}`).get(...args) as any).c;
+  return { rows, total };
+}
+
+export function getBonzoPipelines() {
+  return sqlite.prepare(`SELECT * FROM bonzo_pipelines ORDER BY name`).all() as any[];
+}
+
+export function upsertBonzoPipeline(p: { bonzoId: string; name: string; stages: any[] }) {
+  const now = new Date().toISOString();
+  const existing = sqlite.prepare(`SELECT id FROM bonzo_pipelines WHERE bonzo_id=?`).get(p.bonzoId) as any;
+  const stagesJson = JSON.stringify(p.stages ?? []);
+  if (existing) {
+    sqlite.prepare(`UPDATE bonzo_pipelines SET name=?, stages=?, updated_at=? WHERE bonzo_id=?`).run(p.name, stagesJson, now, p.bonzoId);
+  } else {
+    sqlite.prepare(`INSERT INTO bonzo_pipelines (bonzo_id, name, stages, imported_at, updated_at) VALUES (?,?,?,?,?)`).run(p.bonzoId, p.name, stagesJson, now, now);
+  }
+}
+
+export function startBonzoSync(syncType: string): number {
+  const now = new Date().toISOString();
+  const r = sqlite.prepare(`INSERT INTO bonzo_sync_log (sync_type, status, started_at) VALUES (?, 'running', ?)`).run(syncType, now);
+  return r.lastInsertRowid as number;
+}
+
+export function finishBonzoSync(id: number, data: { status: 'success' | 'error'; recordsSynced?: number; errorMessage?: string | null }) {
+  const now = new Date().toISOString();
+  sqlite.prepare(`UPDATE bonzo_sync_log SET status=?, records_synced=?, error_message=?, completed_at=? WHERE id=?`).run(
+    data.status, data.recordsSynced ?? 0, data.errorMessage ?? null, now, id,
+  );
+}
+
+export function getBonzoSyncLog(limit = 20) {
+  return sqlite.prepare(`SELECT * FROM bonzo_sync_log ORDER BY started_at DESC LIMIT ?`).all(limit) as any[];
+}
+
+export function getLastBonzoSync() {
+  return sqlite.prepare(`SELECT * FROM bonzo_sync_log ORDER BY started_at DESC LIMIT 1`).get() as any;
+}
+
+export function getRunningBonzoSync() {
+  return sqlite.prepare(`SELECT * FROM bonzo_sync_log WHERE status='running' ORDER BY started_at DESC LIMIT 1`).get() as any;
+}
+
+// ── Mojo storage helpers ─────────────────────────────────────────────────────
+export function getMojoSessions(filters: { clrUserId?: number; startDate?: string; endDate?: string } = {}) {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filters.clrUserId !== undefined) { where.push(`clr_user_id=?`); args.push(filters.clrUserId); }
+  if (filters.startDate) { where.push(`session_date >= ?`); args.push(filters.startDate); }
+  if (filters.endDate) { where.push(`session_date <= ?`); args.push(filters.endDate); }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return sqlite.prepare(
+    `SELECT ms.*, u.name AS clr_user_name FROM mojo_sessions ms LEFT JOIN users u ON u.id = ms.clr_user_id ${clause} ORDER BY session_date DESC, clr_name`
+  ).all(...args) as any[];
+}
+
+export function upsertMojoSession(s: {
+  sessionDate: string;
+  clrUserId?: number | null;
+  clrName?: string | null;
+  totalCalls?: number;
+  contactsReached?: number;
+  dncHits?: number;
+  transfers?: number;
+  appointments?: number;
+  voicemails?: number;
+  noAnswers?: number;
+  source?: string;
+}) {
+  const now = new Date().toISOString();
+  const existing = sqlite.prepare(`SELECT id FROM mojo_sessions WHERE session_date=? AND clr_user_id IS ?`).get(s.sessionDate, s.clrUserId ?? null) as any;
+  if (existing) {
+    sqlite.prepare(
+      `UPDATE mojo_sessions SET clr_name=?, total_calls=?, contacts_reached=?, dnc_hits=?, transfers=?, appointments=?, voicemails=?, no_answers=?, source=?, updated_at=? WHERE id=?`
+    ).run(
+      s.clrName ?? null, s.totalCalls ?? 0, s.contactsReached ?? 0, s.dncHits ?? 0,
+      s.transfers ?? 0, s.appointments ?? 0, s.voicemails ?? 0, s.noAnswers ?? 0,
+      s.source ?? 'webhook', now, existing.id,
+    );
+  } else {
+    sqlite.prepare(
+      `INSERT INTO mojo_sessions (session_date, clr_user_id, clr_name, total_calls, contacts_reached, dnc_hits, transfers, appointments, voicemails, no_answers, source, imported_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      s.sessionDate, s.clrUserId ?? null, s.clrName ?? null,
+      s.totalCalls ?? 0, s.contactsReached ?? 0, s.dncHits ?? 0,
+      s.transfers ?? 0, s.appointments ?? 0, s.voicemails ?? 0, s.noAnswers ?? 0,
+      s.source ?? 'webhook', now, now,
+    );
+  }
+}
+
+export function getMojoContacts(filters: { assignedClrId?: number; limit?: number; offset?: number } = {}) {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filters.assignedClrId !== undefined) { where.push(`assigned_clr_id=?`); args.push(filters.assignedClrId); }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const offset = filters.offset ?? 0;
+  const rows = sqlite.prepare(`SELECT * FROM mojo_contacts ${clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?`).all(...args, limit, offset) as any[];
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM mojo_contacts ${clause}`).get(...args) as any).c;
+  return { rows, total };
+}
+
+export function startMojoSync(syncType: string): number {
+  const now = new Date().toISOString();
+  const r = sqlite.prepare(`INSERT INTO mojo_sync_log (sync_type, status, started_at) VALUES (?, 'running', ?)`).run(syncType, now);
+  return r.lastInsertRowid as number;
+}
+
+export function finishMojoSync(id: number, data: { status: 'success' | 'error'; recordsSynced?: number; errorMessage?: string | null }) {
+  const now = new Date().toISOString();
+  sqlite.prepare(`UPDATE mojo_sync_log SET status=?, records_synced=?, error_message=?, completed_at=? WHERE id=?`).run(
+    data.status, data.recordsSynced ?? 0, data.errorMessage ?? null, now, id,
+  );
+}
+
+export function getMojoSyncLog(limit = 20) {
+  return sqlite.prepare(`SELECT * FROM mojo_sync_log ORDER BY started_at DESC LIMIT ?`).all(limit) as any[];
+}
+
+export function getLastMojoSync() {
+  return sqlite.prepare(`SELECT * FROM mojo_sync_log ORDER BY started_at DESC LIMIT 1`).get() as any;
+}
+
+export function getRunningMojoSync() {
+  return sqlite.prepare(`SELECT * FROM mojo_sync_log WHERE status='running' ORDER BY started_at DESC LIMIT 1`).get() as any;
 }

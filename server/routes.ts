@@ -2367,18 +2367,51 @@ export function registerRoutes(httpServer: Server, app: Express) {
     let createdOutcome = false;
 
     if (matched) {
+      const incMojoSession = (deltas: { calls?: number; contacts?: number; dnc?: number; transfers?: number; appointments?: number; voicemails?: number; noAnswers?: number }) => {
+        try {
+          const existing = storageExtra.getSqlite().prepare(
+            `SELECT * FROM mojo_sessions WHERE session_date=? AND clr_user_id=?`
+          ).get(today, matched.id) as any;
+          storageExtra.upsertMojoSession({
+            sessionDate: today,
+            clrUserId: matched.id,
+            clrName: matched.name,
+            totalCalls: (existing?.total_calls ?? 0) + (deltas.calls ?? 0),
+            contactsReached: (existing?.contacts_reached ?? 0) + (deltas.contacts ?? 0),
+            dncHits: (existing?.dnc_hits ?? 0) + (deltas.dnc ?? 0),
+            transfers: (existing?.transfers ?? 0) + (deltas.transfers ?? 0),
+            appointments: (existing?.appointments ?? 0) + (deltas.appointments ?? 0),
+            voicemails: (existing?.voicemails ?? 0) + (deltas.voicemails ?? 0),
+            noAnswers: (existing?.no_answers ?? 0) + (deltas.noAnswers ?? 0),
+            source: "webhook",
+          });
+        } catch (e) {
+          console.error("Failed to upsert mojo_session:", e);
+        }
+      };
       const inc = (callsDelta: number, contactsDelta: number, dncDelta: number) => {
         storageExtra.incrementDailyCallLog({ logDate: today, assistantId: matched.id, callsDelta, contactsDelta, dncDelta });
       };
 
       if (rawDisp === "answered" || rawDisp === "connected") {
         inc(1, 1, 0); action = "calls+contacts";
-      } else if (rawDisp === "no_answer" || rawDisp === "no-answer" || rawDisp === "noanswer" || rawDisp === "voicemail" || rawDisp === "vm" || rawDisp === "busy") {
+        incMojoSession({ calls: 1, contacts: 1 });
+      } else if (rawDisp === "voicemail" || rawDisp === "vm") {
         inc(1, 0, 0); action = "calls";
+        incMojoSession({ calls: 1, voicemails: 1 });
+      } else if (rawDisp === "no_answer" || rawDisp === "no-answer" || rawDisp === "noanswer" || rawDisp === "busy") {
+        inc(1, 0, 0); action = "calls";
+        incMojoSession({ calls: 1, noAnswers: 1 });
       } else if (rawDisp === "dnc" || rawDisp === "do_not_call" || rawDisp === "do-not-call") {
         inc(1, 0, 1); action = "calls+dnc";
+        incMojoSession({ calls: 1, dnc: 1 });
       } else if (rawDisp === "transfer" || rawDisp === "appointment") {
         inc(1, 1, 0);
+        incMojoSession({
+          calls: 1, contacts: 1,
+          transfers: rawDisp === "transfer" ? 1 : 0,
+          appointments: rawDisp === "appointment" ? 1 : 0,
+        });
         action = `calls+contacts+outcome(${rawDisp})`;
         // Create a lead_outcome record. loId is required — use 0 as a placeholder for webhook-originated outcomes.
         try {
@@ -2399,6 +2432,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
         }
       } else {
         inc(1, 0, 0); action = "calls";
+        incMojoSession({ calls: 1 });
       }
     } else {
       action = "unmatched";
@@ -2448,6 +2482,29 @@ export function registerRoutes(httpServer: Server, app: Express) {
         } catch (e) {
           console.error("Failed to create Bonzo notification:", e);
         }
+      }
+      // Upsert bonzo_prospects on stage change if we have an id
+      try {
+        const bonzoId = body.prospect_id || body.id || body.contact_id;
+        if (bonzoId) {
+          storageExtra.upsertBonzoProspect({
+            bonzoId: String(bonzoId),
+            firstName: body.first_name ?? null,
+            lastName: body.last_name ?? null,
+            email: body.email ?? null,
+            phone: body.phone ?? null,
+            pipelineId: body.pipeline_id ? String(body.pipeline_id) : null,
+            pipelineName: body.pipeline_name ?? null,
+            stageId: body.stage_id ? String(body.stage_id) : null,
+            stageName: body.stage || body.stage_name || body.new_stage || null,
+            assignedUserId: matched?.id ?? null,
+            bonzoUserName: body.assigned_to ?? body.owner ?? null,
+            tags: [],
+            lastActivityAt: new Date().toISOString(),
+          });
+        }
+      } catch (e) {
+        console.error("Failed to upsert bonzo_prospect from webhook:", e);
       }
     } else if (eventType === "conversation.started" || eventType === "conversation.created" ||
                eventType === "message.sent" || eventType === "message.created") {
@@ -3736,6 +3793,210 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     storageExtra.deleteScriptResponse(parseInt(req.params.id));
     res.json({ ok: true });
+  });
+
+  // ── Bonzo integration API ─────────────────────────────────────────────────
+  const BONZO_API_BASE = "https://app.getbonzo.com/api";
+
+  async function fetchBonzoPage(token: string, path: string, params: Record<string, any> = {}): Promise<any> {
+    const qs = new URLSearchParams(params as any).toString();
+    const url = `${BONZO_API_BASE}${path}${qs ? `?${qs}` : ""}`;
+    const res = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Bonzo API ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.json();
+  }
+
+  function matchClrForBonzo(phone?: string | null, userName?: string | null): number | null {
+    const matched = findUserByWebhookPhoneOrName(phone, userName);
+    return matched?.id ?? null;
+  }
+
+  async function runBonzoProspectSync(token: string, logId: number): Promise<number> {
+    let page = 1;
+    let total = 0;
+    const maxPages = 200;
+    while (page <= maxPages) {
+      const data = await fetchBonzoPage(token, "/prospects", { page, per_page: 100 });
+      const items: any[] = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+      if (!items.length) break;
+      for (const item of items) {
+        const bonzoId = String(item.id ?? item.prospect_id ?? "");
+        if (!bonzoId) continue;
+        const phone = item.phone ?? item.phone_number ?? item.mobile ?? null;
+        const bonzoUserName = item.assigned_user?.name ?? item.assigned_to?.name ?? item.owner_name ?? null;
+        storageExtra.upsertBonzoProspect({
+          bonzoId,
+          firstName: item.first_name ?? null,
+          lastName: item.last_name ?? null,
+          email: item.email ?? null,
+          phone,
+          pipelineId: item.pipeline_id ? String(item.pipeline_id) : (item.pipeline?.id ? String(item.pipeline.id) : null),
+          pipelineName: item.pipeline?.name ?? item.pipeline_name ?? null,
+          stageId: item.stage_id ? String(item.stage_id) : (item.stage?.id ? String(item.stage.id) : null),
+          stageName: item.stage?.name ?? item.stage_name ?? null,
+          assignedUserId: matchClrForBonzo(null, bonzoUserName),
+          bonzoUserId: item.assigned_user?.id ? String(item.assigned_user.id) : null,
+          bonzoUserName,
+          tags: Array.isArray(item.tags) ? item.tags : [],
+          lastActivityAt: item.last_activity_at ?? item.updated_at ?? null,
+        });
+        total += 1;
+      }
+      const hasNext = data?.meta?.current_page !== undefined
+        ? data.meta.current_page < data.meta.last_page
+        : items.length >= 100;
+      if (!hasNext) break;
+      page += 1;
+    }
+    return total;
+  }
+
+  async function runBonzoPipelineSync(token: string): Promise<number> {
+    const data = await fetchBonzoPage(token, "/pipelines");
+    const items: any[] = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+    let total = 0;
+    for (const item of items) {
+      const bonzoId = String(item.id ?? "");
+      if (!bonzoId) continue;
+      storageExtra.upsertBonzoPipeline({
+        bonzoId,
+        name: item.name ?? "Unnamed Pipeline",
+        stages: Array.isArray(item.stages) ? item.stages : [],
+      });
+      total += 1;
+    }
+    return total;
+  }
+
+  app.post("/api/bonzo/sync/prospects", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return res.status(400).json({ error: "Bonzo API token not configured", setup_required: true });
+    const logId = storageExtra.startBonzoSync("prospects");
+    try {
+      const count = await runBonzoProspectSync(token, logId);
+      storageExtra.finishBonzoSync(logId, { status: "success", recordsSynced: count });
+      res.json({ ok: true, records_synced: count });
+    } catch (e: any) {
+      storageExtra.finishBonzoSync(logId, { status: "error", errorMessage: String(e?.message ?? e) });
+      res.status(500).json({ error: String(e?.message ?? e) });
+    }
+  });
+
+  app.post("/api/bonzo/sync/pipelines", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return res.status(400).json({ error: "Bonzo API token not configured", setup_required: true });
+    const logId = storageExtra.startBonzoSync("pipelines");
+    try {
+      const count = await runBonzoPipelineSync(token);
+      storageExtra.finishBonzoSync(logId, { status: "success", recordsSynced: count });
+      res.json({ ok: true, records_synced: count });
+    } catch (e: any) {
+      storageExtra.finishBonzoSync(logId, { status: "error", errorMessage: String(e?.message ?? e) });
+      res.status(500).json({ error: String(e?.message ?? e) });
+    }
+  });
+
+  app.post("/api/bonzo/sync/full", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return res.status(400).json({ error: "Bonzo API token not configured", setup_required: true });
+    const logId = storageExtra.startBonzoSync("full");
+    try {
+      const pipelines = await runBonzoPipelineSync(token);
+      const prospects = await runBonzoProspectSync(token, logId);
+      storageExtra.finishBonzoSync(logId, { status: "success", recordsSynced: pipelines + prospects });
+      res.json({ ok: true, pipelines, prospects, records_synced: pipelines + prospects });
+    } catch (e: any) {
+      storageExtra.finishBonzoSync(logId, { status: "error", errorMessage: String(e?.message ?? e) });
+      res.status(500).json({ error: String(e?.message ?? e) });
+    }
+  });
+
+  app.get("/api/bonzo/prospects", requireAuth, (req: any, res) => {
+    const q = req.query ?? {};
+    const out = storageExtra.getBonzoProspects({
+      search: typeof q.search === "string" ? q.search : undefined,
+      pipelineId: typeof q.pipelineId === "string" ? q.pipelineId : undefined,
+      stageId: typeof q.stageId === "string" ? q.stageId : undefined,
+      assignedUserId: q.assignedUserId ? Number(q.assignedUserId) : undefined,
+      limit: q.limit ? Number(q.limit) : 100,
+      offset: q.offset ? Number(q.offset) : 0,
+    });
+    res.json(out);
+  });
+
+  app.get("/api/bonzo/pipelines", requireAuth, (_req, res) => {
+    res.json(storageExtra.getBonzoPipelines());
+  });
+
+  app.get("/api/bonzo/sync-log", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.json({
+      log: storageExtra.getBonzoSyncLog(20),
+      last: storageExtra.getLastBonzoSync() ?? null,
+      running: storageExtra.getRunningBonzoSync() ?? null,
+    });
+  });
+
+  // ── Mojo integration API ──────────────────────────────────────────────────
+  app.post("/api/mojo/sync/sessions", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const settings = storageExtra.getWebhookSettings();
+    const key = settings.mojo_api_key?.trim();
+    if (!key) return res.status(400).json({ error: "Mojo API key not configured", setup_required: true });
+    const logId = storageExtra.startMojoSync("sessions");
+    try {
+      // Mojo has no public REST API at time of writing; stubbed so UI can exercise the flow.
+      storageExtra.finishMojoSync(logId, {
+        status: "success",
+        recordsSynced: 0,
+        errorMessage: "Mojo external API is not yet available; webhook data continues to populate mojo_sessions automatically.",
+      });
+      res.json({ ok: true, records_synced: 0, note: "Mojo external API not yet available — webhook data continues to populate automatically." });
+    } catch (e: any) {
+      storageExtra.finishMojoSync(logId, { status: "error", errorMessage: String(e?.message ?? e) });
+      res.status(500).json({ error: String(e?.message ?? e) });
+    }
+  });
+
+  app.get("/api/mojo/sessions", requireAuth, (req: any, res) => {
+    const q = req.query ?? {};
+    res.json(storageExtra.getMojoSessions({
+      clrUserId: q.clrUserId ? Number(q.clrUserId) : undefined,
+      startDate: typeof q.startDate === "string" ? q.startDate : undefined,
+      endDate: typeof q.endDate === "string" ? q.endDate : undefined,
+    }));
+  });
+
+  app.get("/api/mojo/contacts", requireAuth, (req: any, res) => {
+    const q = req.query ?? {};
+    res.json(storageExtra.getMojoContacts({
+      assignedClrId: q.assignedClrId ? Number(q.assignedClrId) : undefined,
+      limit: q.limit ? Number(q.limit) : 100,
+      offset: q.offset ? Number(q.offset) : 0,
+    }));
+  });
+
+  app.get("/api/mojo/sync-log", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    res.json({
+      log: storageExtra.getMojoSyncLog(20),
+      last: storageExtra.getLastMojoSync() ?? null,
+      running: storageExtra.getRunningMojoSync() ?? null,
+    });
   });
 
 }
