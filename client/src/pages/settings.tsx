@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -787,6 +787,93 @@ function WeeklyGoalsCard() {
   );
 }
 
+// ── Script Defaults Card (per-user placeholder overrides) ───────────────────
+function ScriptDefaultsCard() {
+  const { toast } = useToast();
+  const { user, refetchUser } = useAuth();
+  const [company, setCompany] = useState("");
+  const [nameOverride, setNameOverride] = useState("");
+  const [loOverride, setLoOverride] = useState("");
+
+  useEffect(() => {
+    const u = user as any;
+    if (u) {
+      setCompany(u.scriptCompanyName ?? "");
+      setNameOverride(u.scriptNameOverride ?? "");
+      setLoOverride(u.scriptLoOverride ?? "");
+    }
+  }, [(user as any)?.scriptCompanyName, (user as any)?.scriptNameOverride, (user as any)?.scriptLoOverride]);
+
+  const saveMut = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/users/${(user as any)?.id}`, {
+      scriptCompanyName: company.trim() || null,
+      scriptNameOverride: nameOverride.trim() || null,
+      scriptLoOverride: loOverride.trim() || null,
+    }),
+    onSuccess: async () => {
+      await refetchUser();
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: "Script defaults saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to save", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <PhoneCall className="w-4 h-4 text-muted-foreground" />
+          Script Defaults
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          These values fill in the <span className="text-teal-500 font-medium">[placeholders]</span> in your call script automatically.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Company Name</label>
+          <Input
+            value={company}
+            onChange={e => setCompany(e.target.value)}
+            placeholder="West Capital Lending"
+            data-testid="settings-script-company"
+          />
+          <p className="text-[11px] text-muted-foreground">Used for <code>[company]</code>. Blank = "West Capital Lending".</p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Display Name Override</label>
+          <Input
+            value={nameOverride}
+            onChange={e => setNameOverride(e.target.value)}
+            placeholder="Leave blank to use your account name"
+            data-testid="settings-script-name"
+          />
+          <p className="text-[11px] text-muted-foreground">Used for <code>[your name]</code>. Blank = your account name.</p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">LO Name Override</label>
+          <Input
+            value={loOverride}
+            onChange={e => setLoOverride(e.target.value)}
+            placeholder="Leave blank to use today's assigned LO"
+            data-testid="settings-script-lo"
+          />
+          <p className="text-[11px] text-muted-foreground">Used for <code>[lo name]</code> if no LO is assigned today.</p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+          className="gap-1.5"
+        >
+          <Save className="w-3.5 h-3.5" />
+          {saveMut.isPending ? "Saving…" : "Save Script Defaults"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Manager toggle button (admin-only, shown inline on each user row) ──────
 function ManagerToggleButton({ user }: { user: any }) {
   const { toast } = useToast();
@@ -1464,6 +1551,9 @@ export default function Settings() {
               <Sliders className="w-3.5 h-3.5" /> Algorithm
             </TabsTrigger>
           )}
+          <TabsTrigger value="script" className="gap-1.5" data-testid="tab-script">
+            <PhoneCall className="w-3.5 h-3.5" /> Script
+          </TabsTrigger>
           <TabsTrigger value="app" className="gap-1.5" data-testid="tab-app">
             <LayoutGrid className="w-3.5 h-3.5" /> App
           </TabsTrigger>
@@ -1473,6 +1563,7 @@ export default function Settings() {
         {isAdmin && <TabsContent value="reports" className="mt-6">{reportsTab}</TabsContent>}
         {isAdmin && <TabsContent value="team" className="mt-6">{teamTab}</TabsContent>}
         {isAdmin && <TabsContent value="algorithm" className="mt-6">{algorithmTab}</TabsContent>}
+        <TabsContent value="script" className="mt-6"><ScriptDefaultsCard /></TabsContent>
         <TabsContent value="app" className="mt-6">{appTab}</TabsContent>
       </Tabs>
     </div>

@@ -201,6 +201,11 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_appointments_weekly INTEGER
 // ── Migration: CLR phone for webhook matching ──────────────────────────
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN phone TEXT`); } catch {}
 
+// ── Migration: script placeholder defaults (per-user) ──────────────────
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_company_name TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_name_override TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_lo_override TEXT`); } catch {}
+
 // ── Migration: add transfer_type to lead_outcomes if missing ───────────
 // Values: 'direct' | 'appointment' | NULL (NULL for non-transfer outcomes
 // and for legacy transfer rows logged before this column existed).

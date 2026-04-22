@@ -17,6 +17,9 @@ export const users = sqliteTable("users", {
   goalTransfersWeekly: integer("goal_transfers_weekly").notNull().default(0),
   goalAppointmentsWeekly: integer("goal_appointments_weekly").notNull().default(0),
   phone: text("phone"),
+  scriptCompanyName: text("script_company_name"),
+  scriptNameOverride: text("script_name_override"),
+  scriptLoOverride: text("script_lo_override"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 

@@ -10,6 +10,9 @@ export interface AuthUser {
   hasSeenIntro: boolean;
   mustChangePassword: boolean;
   createdAt: string | null;
+  scriptCompanyName?: string | null;
+  scriptNameOverride?: string | null;
+  scriptLoOverride?: string | null;
 }
 
 interface AuthContextValue {

@@ -973,7 +973,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(user as any).isClr, hasSeenIntro: !!(user as any).hasSeenIntro, mustChangePassword: !!(user as any).mustChangePassword, createdAt: (user as any).createdAt ?? (user as any).created_at ?? null } });
+      const u = user as any;
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -1575,6 +1576,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
       ...a,
       lo: los.find(l => l.id === a.loId),
       assistant: users.find(u => u.id === a.assistantId),
+    }));
+    res.json(enriched);
+  });
+
+  // Today's assignments for the current CLR (used by call script for [lo name])
+  app.get("/api/assignments/today", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const date = new Date().toISOString().split("T")[0];
+    const assignments = storage.getDailyAssignments(date).filter(a => a.assistantId === userId);
+    const los = storage.getLoanOfficers();
+    const enriched = assignments.map(a => ({
+      ...a,
+      lo: los.find(l => l.id === a.loId),
     }));
     res.json(enriched);
   });

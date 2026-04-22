@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -30,6 +30,105 @@ import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
 interface ScriptNode { id: number; script_id: number; text: string; hint?: string | null; responses: ScriptResponse[]; }
 interface CallScript { id: number; name: string; description?: string; is_active: number; owner_id: number | null; }
+
+// ─── Placeholder auto-fill ────────────────────────────────────────────────────
+export interface PlaceholderValues {
+  yourName: string;
+  loName: string;
+  company: string;
+  borrowerName: string;
+  timeOfDay: "morning" | "afternoon" | "evening";
+}
+
+const TIMEZONE_OPTIONS: { label: string; value: string }[] = [
+  { label: "Pacific", value: "America/Los_Angeles" },
+  { label: "Mountain", value: "America/Denver" },
+  { label: "Arizona", value: "America/Phoenix" },
+  { label: "Central", value: "America/Chicago" },
+  { label: "Eastern", value: "America/New_York" },
+  { label: "Alaska", value: "America/Anchorage" },
+  { label: "Hawaii", value: "Pacific/Honolulu" },
+];
+
+function detectDefaultTimezone(): string {
+  try {
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const match = TIMEZONE_OPTIONS.find(tz => tz.value === browserTz);
+    if (match) return match.value;
+    if (browserTz?.startsWith("America/")) {
+      if (/Phoenix/.test(browserTz)) return "America/Phoenix";
+      if (/Denver|Boise|Edmonton/.test(browserTz)) return "America/Denver";
+      if (/Chicago|Regina|Mexico_City/.test(browserTz)) return "America/Chicago";
+      if (/New_York|Toronto|Detroit/.test(browserTz)) return "America/New_York";
+      if (/Anchorage|Juneau|Sitka/.test(browserTz)) return "America/Anchorage";
+      return "America/Los_Angeles";
+    }
+    if (browserTz?.startsWith("Pacific/Honolulu")) return "Pacific/Honolulu";
+  } catch {}
+  return "America/Los_Angeles";
+}
+
+function computeTimeOfDay(timezone: string, now: Date = new Date()): "morning" | "afternoon" | "evening" {
+  let hour = 0;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: timezone,
+    }).formatToParts(now);
+    const hourPart = parts.find(p => p.type === "hour");
+    hour = hourPart ? parseInt(hourPart.value, 10) : now.getHours();
+    if (hour === 24) hour = 0;
+  } catch {
+    hour = now.getHours();
+  }
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 21) return "evening";
+  return "morning";
+}
+
+const PLACEHOLDER_REGEX = /\[(your name|lo name|company|borrower name|morning\/afternoon\/evening)\]/gi;
+
+function resolvePlaceholderKey(key: string, values: PlaceholderValues): string | null {
+  const k = key.toLowerCase();
+  if (k === "your name") return values.yourName || "";
+  if (k === "lo name") return values.loName || "";
+  if (k === "company") return values.company || "";
+  if (k === "borrower name") return values.borrowerName || "";
+  if (k === "morning/afternoon/evening") return values.timeOfDay;
+  return null;
+}
+
+function resolvePlaceholders(text: string, values: PlaceholderValues): React.ReactNode {
+  if (!text) return text;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(PLACEHOLDER_REGEX.source, "gi");
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    const resolved = resolvePlaceholderKey(match[1], values);
+    const display = resolved && resolved.trim() ? resolved : match[0];
+    parts.push(
+      <span key={`${match.index}-${match[0]}`} className="text-teal-500 font-medium">{display}</span>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts.length > 0 ? parts : text;
+}
+
+const PlaceholderContext = createContext<PlaceholderValues | null>(null);
+const usePlaceholders = () => useContext(PlaceholderContext);
+
+function resolvePlaceholdersPlain(text: string, values: PlaceholderValues): string {
+  if (!text) return text;
+  return text.replace(new RegExp(PLACEHOLDER_REGEX.source, "gi"), (full, key) => {
+    const resolved = resolvePlaceholderKey(key, values);
+    return resolved && resolved.trim() ? resolved : full;
+  });
+}
 
 // ─── Color maps ───────────────────────────────────────────────────────────────
 const BUBBLE_COLORS: Record<string, string> = {
@@ -71,6 +170,7 @@ function EndState({ isTransfer, onReset }: { isTransfer: boolean; onReset: () =>
 
 // ─── Script Runner ────────────────────────────────────────────────────────────
 function ScriptRunner({ scriptId }: { scriptId: number }) {
+  const placeholders = usePlaceholders();
   const [currentNode, setCurrentNode] = useState<ScriptNode | null>(null);
   const [history, setHistory] = useState<ScriptNode[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
@@ -117,7 +217,8 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
 
   const handleCopy = () => {
     if (!currentNode) return;
-    navigator.clipboard.writeText(currentNode.text);
+    const plain = placeholders ? resolvePlaceholdersPlain(currentNode.text, placeholders) : currentNode.text;
+    navigator.clipboard.writeText(plain);
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
@@ -166,7 +267,9 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
                 {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               </Button>
             </div>
-            <p className="text-base leading-relaxed font-medium whitespace-pre-line">{currentNode.text}</p>
+            <p className="text-base leading-relaxed font-medium whitespace-pre-line">
+              {placeholders ? resolvePlaceholders(currentNode.text, placeholders) : currentNode.text}
+            </p>
             {currentNode.hint && (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
                 <p className="text-xs text-amber-700 dark:text-amber-400 italic">💡 {currentNode.hint}</p>
@@ -265,6 +368,25 @@ function highlight(text: string, q: string): React.ReactNode {
   return parts;
 }
 
+// Apply placeholder resolution to any string segments inside an existing React node array.
+function applyPlaceholdersToNode(node: React.ReactNode, values: PlaceholderValues, keyPrefix = ""): React.ReactNode {
+  if (typeof node === "string") return resolvePlaceholders(node, values);
+  if (Array.isArray(node)) {
+    return node.map((child, i) => (
+      <span key={`${keyPrefix}${i}`}>{applyPlaceholdersToNode(child, values, `${keyPrefix}${i}-`)}</span>
+    ));
+  }
+  return node;
+}
+
+function renderScriptText(text: string, searchQuery: string, values: PlaceholderValues | null): React.ReactNode {
+  if (!values) return highlight(text, searchQuery);
+  if (!searchQuery.trim()) return resolvePlaceholders(text, values);
+  // When searching, run highlight then wrap raw-string segments with placeholder resolution.
+  const highlighted = highlight(text, searchQuery);
+  return applyPlaceholdersToNode(highlighted, values);
+}
+
 // ─── Inline Node Editor ───────────────────────────────────────────────────────
 function InlineNodeBlock({
   node, responses, allNodes, depth, scriptId, expanded, onToggle, searchQuery, childNodesByParent, autoEdit,
@@ -285,6 +407,7 @@ function InlineNodeBlock({
   expandedIds: Set<number>;
 }) {
   const { toast } = useToast();
+  const placeholders = usePlaceholders();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(node.text);
   const [hint, setHint] = useState(node.hint ?? "");
@@ -366,7 +489,7 @@ function InlineNodeBlock({
                 </div>
                 {!editing ? (
                   <p className="text-sm leading-snug mt-1 whitespace-pre-line">
-                    {highlight(node.text, searchQuery)}
+                    {renderScriptText(node.text, searchQuery, placeholders)}
                   </p>
                 ) : (
                   <div className="mt-2 space-y-2">
@@ -381,7 +504,7 @@ function InlineNodeBlock({
                   </div>
                 )}
                 {!editing && node.hint && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 italic mt-1">💡 {highlight(node.hint, searchQuery)}</p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 italic mt-1">💡 {renderScriptText(node.hint, searchQuery, placeholders)}</p>
                 )}
               </div>
               {!editing && (
@@ -717,6 +840,7 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
 // ─── Flowchart (read-only visual tree) ────────────────────────────────────────
 function ScriptFlowchart({ scriptId }: { scriptId: number }) {
   const { data: tree, isLoading } = useQuery<any>({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
+  const placeholders = usePlaceholders();
 
   if (isLoading) {
     return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>;
@@ -770,9 +894,27 @@ function ScriptFlowchart({ scriptId }: { scriptId: number }) {
     return t.length > n ? t.slice(0, n) + "…" : t;
   }
 
+  const renderFlowText = (raw: string): React.ReactNode => {
+    if (!placeholders) return raw;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const regex = new RegExp(PLACEHOLDER_REGEX.source, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(raw)) !== null) {
+      if (match.index > lastIndex) parts.push(raw.slice(lastIndex, match.index));
+      const resolved = resolvePlaceholderKey(match[1], placeholders);
+      const display = resolved && resolved.trim() ? resolved : match[0];
+      parts.push(<span key={`${match.index}-${match[0]}`} className="text-teal-200 font-semibold">{display}</span>);
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < raw.length) parts.push(raw.slice(lastIndex));
+    return parts.length > 0 ? parts : raw;
+  };
+
   const NodeBox = ({ n }: { n: any }) => {
     const kind = inferNodeKind(n.text || "");
     const style = NODE_KIND_HEX[kind];
+    const raw = truncate(n.text || "(empty)", 80);
     return (
       <div
         className="inline-block min-w-[190px] max-w-[240px] rounded-lg border-2 text-white shadow-sm overflow-hidden"
@@ -782,7 +924,7 @@ function ScriptFlowchart({ scriptId }: { scriptId: number }) {
           {style.label}
         </div>
         <div className="px-2.5 py-1.5 text-xs leading-snug">
-          {truncate(n.text || "(empty)", 80)}
+          {renderFlowText(raw)}
         </div>
       </div>
     );
@@ -876,6 +1018,55 @@ export default function CallScriptPage() {
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => { markStep(userId, "view_script"); }, [userId]);
+  useEffect(() => { document.title = "Scripts · WCLCC"; }, []);
+
+  // ── Placeholder state ────────────────────────────────────────────────────
+  const [timezone, setTimezone] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("clr_script_timezone");
+      if (saved && TIMEZONE_OPTIONS.some(o => o.value === saved)) return saved;
+    } catch {}
+    return detectDefaultTimezone();
+  });
+  useEffect(() => {
+    try { localStorage.setItem("clr_script_timezone", timezone); } catch {}
+  }, [timezone]);
+
+  const [borrowerName, setBorrowerName] = useState("");
+
+  // Re-compute time-of-day once per minute so it drifts between buckets mid-session
+  const [timeTick, setTimeTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTimeTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Fetch today's assignments to resolve [lo name]
+  const { data: todayAssignments = [] } = useQuery<any[]>({
+    queryKey: ["/api/assignments/today"],
+    queryFn: () => fetch("/api/assignments/today", { credentials: "include" }).then(r => r.ok ? r.json() : []),
+  });
+
+  const assignedLoName: string = useMemo(() => {
+    const first = Array.isArray(todayAssignments) && todayAssignments.length > 0 ? todayAssignments[0] : null;
+    const name = first?.lo?.fullName ?? first?.lo?.full_name ?? "";
+    return name ?? "";
+  }, [todayAssignments]);
+
+  const placeholders: PlaceholderValues = useMemo(() => {
+    const u = user as any;
+    const scriptNameOverride = (u?.scriptNameOverride ?? "").trim();
+    const scriptLoOverride = (u?.scriptLoOverride ?? "").trim();
+    const scriptCompany = (u?.scriptCompanyName ?? "").trim();
+    return {
+      yourName: scriptNameOverride || u?.name || "",
+      loName: assignedLoName || scriptLoOverride || "your loan officer",
+      company: scriptCompany || "West Capital Lending",
+      borrowerName: borrowerName.trim(),
+      timeOfDay: computeTimeOfDay(timezone),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, assignedLoName, borrowerName, timezone, timeTick]);
 
   // Load defaults and personal script
   const { data: defaults = [], isLoading: loadingDefaults } = useQuery<CallScript[]>({
@@ -918,6 +1109,7 @@ export default function CallScriptPage() {
   });
 
   return (
+    <PlaceholderContext.Provider value={placeholders}>
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       <PageTooltip pageKey="call-script" title="Call Script">
         Your personal call script with guided responses. Customize your own copy or use the default.
@@ -952,6 +1144,38 @@ export default function CallScriptPage() {
           </Button>
         </div>
       </div>
+
+      {/* Placeholder controls: timezone + borrower name */}
+      <Card className="border-dashed">
+        <CardContent className="p-3 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Timezone:</label>
+            <Select value={timezone} onValueChange={setTimezone}>
+              <SelectTrigger className="h-8 text-xs w-44" data-testid="script-timezone-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TIMEZONE_OPTIONS.map(tz => (
+                  <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-[11px] text-muted-foreground">
+              Greeting: <span className="text-teal-500 font-medium">{placeholders.timeOfDay}</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Borrower name:</label>
+            <Input
+              value={borrowerName}
+              onChange={e => setBorrowerName(e.target.value)}
+              placeholder="Enter borrower's first name"
+              className="h-8 text-sm w-56"
+              data-testid="script-borrower-name"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Script source badge + controls */}
       {!isLoading && activeScript && (
@@ -1031,5 +1255,6 @@ export default function CallScriptPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PlaceholderContext.Provider>
   );
 }
