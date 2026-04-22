@@ -15,6 +15,7 @@ import { IntroModal } from "@/components/intro-modal";
 import { NmlsOverduePopup } from "@/components/nmls-overdue-popup";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { AppFooter } from "@/components/app-footer";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
 import Dashboard from "@/pages/dashboard";
 import Directory from "@/pages/directory";
@@ -171,19 +172,20 @@ function AuthenticatedApp() {
         <div className="flex h-screen w-full overflow-hidden">
           <AppSidebar />
           <div className="flex flex-col flex-1 min-w-0">
-            <header className="flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
+            <header className="sticky top-0 z-40 flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
               <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
               <div className="flex items-center gap-1">
                 <NotificationBell />
                 <ThemeToggle />
               </div>
             </header>
-            <main className="flex-1 overflow-auto flex flex-col">
+            <main className="flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
               <div className="flex-1">
                 <AppRouter />
               </div>
               <AppFooter />
             </main>
+            <MobileBottomNav />
           </div>
         </div>
       </DailyReportGate>

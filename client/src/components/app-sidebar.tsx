@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,7 @@ const toolItems = [
 
 const adminItems: { title: string; url: string; icon: any; badge?: string }[] = [
   { title: "Settings",        url: "/settings",    icon: Settings },
+  { title: "LO Vacation",     url: "/lo-vacation", icon: Plane },
   { title: "History",         url: "/audit-log",   icon: ScrollText },
 ];
 
