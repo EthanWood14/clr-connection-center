@@ -31,6 +31,30 @@ function requestAccessRateOk(ip: string): boolean {
   return true;
 }
 
+// ── Outcome breakdown for a user on a given date ─────────────────────────
+type OutcomeBreakdown = {
+  transfer: number;
+  appointment: number;
+  fell_through: number;
+  callback_requested: number;
+  future_contact: number;
+  no_answer: number;
+  total: number;
+};
+function emptyOutcomeBreakdown(): OutcomeBreakdown {
+  return { transfer: 0, appointment: 0, fell_through: 0, callback_requested: 0, future_contact: 0, no_answer: 0, total: 0 };
+}
+function getOutcomeBreakdownFor(userId: number, dateStr: string): OutcomeBreakdown {
+  const rows = storage.getLeadOutcomes({ startDate: dateStr, endDate: dateStr, assistantId: userId });
+  const b = emptyOutcomeBreakdown();
+  for (const r of rows as any[]) {
+    const t = String(r.outcome_type ?? r.outcomeType ?? "");
+    if (t in b) (b as any)[t] += 1;
+    b.total += 1;
+  }
+  return b;
+}
+
 function signPayload(payload: object): string {
   // Simple HMAC-like signature using base64 + secret
   // We use cookie-parser's signed cookie mechanism, so the value is just JSON
@@ -1491,7 +1515,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -1504,6 +1528,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const user = storage.getUserById(userId) as any;
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
+  });
+
+  // Update own profile preferences (currently: timezone).
+  // IANA timezone name, validated against Intl.supportedValuesOf when available;
+  // we also fall back to constructing an Intl.DateTimeFormat to probe the value.
+  app.patch("/api/auth/profile", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const body = req.body ?? {};
+    const patch: Record<string, any> = {};
+
+    if (typeof body.timezone === "string") {
+      const tz = body.timezone.trim();
+      let valid = false;
+      try {
+        const supported = (Intl as any).supportedValuesOf?.("timeZone") as string[] | undefined;
+        if (supported && Array.isArray(supported)) {
+          valid = supported.includes(tz);
+        } else {
+          new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+          valid = true;
+        }
+      } catch { valid = false; }
+      if (!valid) return res.status(400).json({ error: `Invalid timezone: ${tz}` });
+      patch.timezone = tz;
+    }
+
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No supported fields provided" });
+    const updated = storage.updateUser(userId, patch as any);
+    if (!updated) return res.status(404).json({ error: "User not found" });
+    return res.json({ ok: true, user: updated });
   });
 
   // Mark intro video as seen for current user
@@ -2875,13 +2930,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const todayStr = new Date().toISOString().split("T")[0];
 
     if (!isClr) {
-      // Non-CLR (admins, LOs, etc.) are never gated.
-      return res.json({ hasLog: true, date: todayStr, exempt: true });
+      return res.json({ hasLog: true, date: todayStr, exempt: true, outcomes: emptyOutcomeBreakdown() });
     }
 
     const logs = storage.getDailyCallLogs(todayStr);
-    const hasLog = logs.some(l => l.assistantId === userId);
-    res.json({ hasLog, date: todayStr });
+    const logForUser = logs.find(l => l.assistantId === userId);
+    const hasLog = !!logForUser;
+    const outcomes = getOutcomeBreakdownFor(userId, todayStr);
+    res.json({
+      hasLog,
+      date: todayStr,
+      outcomes,
+      callsMadeLogged: logForUser?.callsMade ?? 0,
+    });
   });
 
   app.get("/api/call-logs", (req, res) => {

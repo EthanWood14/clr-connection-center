@@ -16,11 +16,32 @@ import { Textarea } from "@/components/ui/textarea";
 import { ClipboardList, Coffee } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+interface OutcomeBreakdown {
+  transfer: number;
+  appointment: number;
+  fell_through: number;
+  callback_requested: number;
+  future_contact: number;
+  no_answer: number;
+  total: number;
+}
+
 interface CheckResult {
   hasLog: boolean;
   date: string;
   exempt?: boolean;
+  outcomes?: OutcomeBreakdown;
+  callsMadeLogged?: number;
 }
+
+const OUTCOME_LABELS: Array<[keyof OutcomeBreakdown, string]> = [
+  ["transfer", "Transfers"],
+  ["appointment", "Appointments"],
+  ["fell_through", "Fell Through"],
+  ["callback_requested", "Callbacks"],
+  ["future_contact", "Future"],
+  ["no_answer", "No Answer"],
+];
 
 function formatDate(dateStr: string) {
   try {
@@ -128,6 +149,26 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
+            {checkData?.outcomes && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Today's logged outcomes
+                </p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  {OUTCOME_LABELS.map(([key, label]) => (
+                    <div key={key} className="flex items-center justify-between">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-medium tabular-nums">{checkData.outcomes![key]}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 pt-2 border-t flex items-center justify-between text-xs">
+                  <span className="font-semibold">Total Logged</span>
+                  <span className="font-semibold tabular-nums">{checkData.outcomes.total}</span>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label htmlFor="calls-made">Calls Made</Label>
               <Input

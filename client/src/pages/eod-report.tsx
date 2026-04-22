@@ -20,6 +20,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
+import { parseServerTimestamp } from "@/lib/dates";
 
 const ACTIVITY_TYPES = [
   { value: "follow_up",          label: "Follow-Up Call" },
@@ -125,9 +126,15 @@ export default function EodReport() {
     [allOutcomes, selectedDate, user?.id]
   );
 
-  const autoTransfers    = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
-  const autoAppointments = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "appointment").length;
-  const autoFellThrough  = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
+  const outcomeCount = (t: string) =>
+    dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === t).length;
+  const autoTransfers    = outcomeCount("transfer");
+  const autoAppointments = outcomeCount("appointment");
+  const autoFellThrough  = outcomeCount("fell_through");
+  const autoCallbacks    = outcomeCount("callback_requested");
+  const autoFuture       = outcomeCount("future_contact");
+  const autoNoAnswer     = outcomeCount("no_answer");
+  const autoTotalLogged  = dayOutcomes.length;
 
   const report     = data?.report ?? null;
   const activities = data?.activities ?? [];
@@ -369,7 +376,7 @@ export default function EodReport() {
                 <Clock className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0" />
                 <p className="text-xs text-amber-900 dark:text-amber-200 flex-1 min-w-[200px]">
                   You have a saved draft from{" "}
-                  <strong>{format(new Date(draftRestoredAt), "MMM d, h:mm a")}</strong>. Your progress has been restored.
+                  <strong>{format(parseServerTimestamp(draftRestoredAt) ?? new Date(), "MMM d, h:mm a")}</strong>. Your progress has been restored.
                 </p>
                 <Button
                   size="sm"
@@ -401,10 +408,17 @@ export default function EodReport() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-3 flex-wrap">
-                <ReadOnlyStat icon={TrendingUp}  label="Transfers"   value={autoTransfers}    color="text-green-600 dark:text-green-400" />
-                <ReadOnlyStat icon={Calendar}    label="Appointments" value={autoAppointments} color="text-blue-600 dark:text-blue-400" />
-                <ReadOnlyStat icon={XCircle}     label="Fell Through" value={autoFellThrough}  color="text-orange-500 dark:text-orange-400" />
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                <ReadOnlyStat icon={TrendingUp}    label="Transfers"    value={autoTransfers}    color="text-green-600 dark:text-green-400" />
+                <ReadOnlyStat icon={Calendar}      label="Appointments" value={autoAppointments} color="text-blue-600 dark:text-blue-400" />
+                <ReadOnlyStat icon={XCircle}       label="Fell Through" value={autoFellThrough}  color="text-orange-500 dark:text-orange-400" />
+                <ReadOnlyStat icon={PhoneCall}     label="Callbacks"    value={autoCallbacks}    color="text-amber-600 dark:text-amber-400" />
+                <ReadOnlyStat icon={Clock}         label="Future"       value={autoFuture}       color="text-indigo-600 dark:text-indigo-400" />
+                <ReadOnlyStat icon={ClipboardList} label="No Answer"    value={autoNoAnswer}     color="text-muted-foreground" />
+              </div>
+              <div className="mt-3 flex items-center justify-between px-1 text-xs">
+                <span className="text-muted-foreground">Total logged today</span>
+                <span className="font-semibold tabular-nums">{autoTotalLogged}</span>
               </div>
               {dayOutcomes.length === 0 && (
                 <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1.5">
@@ -888,7 +902,7 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                   )}
 
                   {r.submitted_at && (
-                    <p className="text-xs text-muted-foreground">Submitted: {format(new Date(r.submitted_at), "MMM d, yyyy 'at' h:mm a")}</p>
+                    <p className="text-xs text-muted-foreground">Submitted: {format(parseServerTimestamp(r.submitted_at) ?? new Date(), "MMM d, yyyy 'at' h:mm a")}</p>
                   )}
                 </div>
               )}
