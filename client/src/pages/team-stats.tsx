@@ -53,7 +53,7 @@ interface StatsResponse {
   previous: { calls: number; transfers: number; appointments: number; transferRate: number };
   daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number }>;
+  perClr: Array<{ userId: number; name: string; calls: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -95,7 +95,7 @@ function SummaryCard({ title, value, previous, suffix = "" }: { title: string; v
   );
 }
 
-type SortKey = "name" | "calls" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits";
+type SortKey = "name" | "calls" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "vsGoal";
 
 export default function TeamStats() {
   const { user } = useAuth();
@@ -144,7 +144,15 @@ export default function TeamStats() {
   const perClrSorted = useMemo(() => {
     if (!data?.perClr) return [];
     const rows = [...data.perClr];
+    const goalPct = (r: any) => {
+      const g = Number(r.transfersGoal ?? 0);
+      return g > 0 ? (Number(r.transfers ?? 0) / g) * 100 : -1;
+    };
     rows.sort((a: any, b: any) => {
+      if (sortKey === "vsGoal") {
+        const av = goalPct(a); const bv = goalPct(b);
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
       const av = a[sortKey]; const bv = b[sortKey];
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortDir === "asc" ? av - bv : bv - av;
@@ -392,6 +400,7 @@ export default function TeamStats() {
                       ["name","CLR Name"],
                       ["calls","Calls"],
                       ["transfers","Transfers"],
+                      ["vsGoal","vs Goal"],
                       ["transferRate","Transfer Rate"],
                       ["appointments","Appointments"],
                       ["fellThrough","Fell Through"],
@@ -419,7 +428,7 @@ export default function TeamStats() {
               <tbody>
                 {perClrSorted.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
+                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
                   </tr>
                 ) : perClrSorted.map((row: any) => (
                   <tr
@@ -431,6 +440,16 @@ export default function TeamStats() {
                     <td className="px-4 py-2.5 font-medium">{row.name}</td>
                     <td className="px-4 py-2.5">{row.calls}</td>
                     <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400">{row.transfers}</td>
+                    <td className="px-4 py-2.5">
+                      {Number(row.transfersGoal ?? 0) > 0 ? (
+                        <span className={(row.transfers >= row.transfersGoal) ? "text-green-600 dark:text-green-400 font-semibold" : "text-muted-foreground"}>
+                          {row.transfers}/{row.transfersGoal} ({Math.round((row.transfers / row.transfersGoal) * 100)}%)
+                          {row.goalSource === "default" ? <span className="ml-1 text-[10px] opacity-70">(default)</span> : null}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5">{row.transferRate.toFixed(1)}%</td>
                     <td className="px-4 py-2.5">{row.appointments}</td>
                     <td className="px-4 py-2.5 text-red-600 dark:text-red-400">{row.fellThrough}</td>

@@ -57,6 +57,18 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
+// ── CLR Goals (per-user weekly goals set by admins) ───────────────────────────
+export const clrGoals = sqliteTable("clr_goals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().unique(),
+  orgId: integer("org_id").notNull().default(1),
+  callsGoal: integer("calls_goal").notNull().default(0),
+  transfersGoal: integer("transfers_goal").notNull().default(0),
+  appointmentsGoal: integer("appointments_goal").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
+});
+export type ClrGoal = typeof clrGoals.$inferSelect;
+
 // ── Loan Officers ──────────────────────────────────────────────────────────────
 export const loanOfficers = sqliteTable("loan_officers", {
   id: integer("id").primaryKey({ autoIncrement: true }),

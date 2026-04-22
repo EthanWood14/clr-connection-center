@@ -14,6 +14,8 @@ import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
 
 const DEFAULT_WEIGHTS = {
@@ -1074,6 +1076,93 @@ function ManagerToggleButton({ user }: { user: any }) {
   );
 }
 
+// ── Per-CLR Weekly Goals button + modal (admin only) ───────────────────────
+function SetGoalsButton({ user }: { user: any }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [calls, setCalls] = useState("0");
+  const [transfers, setTransfers] = useState("0");
+  const [appointments, setAppointments] = useState("0");
+
+  const { data: goalData, isLoading } = useQuery<any>({
+    queryKey: ["/api/goals", user.id],
+    queryFn: () => fetch(`/api/goals/${user.id}`, { credentials: "include" }).then(r => r.json()),
+    enabled: open,
+  });
+
+  useEffect(() => {
+    if (goalData?.goals) {
+      setCalls(String(goalData.goals.calls ?? 0));
+      setTransfers(String(goalData.goals.transfers ?? 0));
+      setAppointments(String(goalData.goals.appointments ?? 0));
+    }
+  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/goals/${user.id}`, {
+        callsGoal: parseInt(calls) || 0,
+        transfersGoal: parseInt(transfers) || 0,
+        appointmentsGoal: parseInt(appointments) || 0,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/goals"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/goals", user.id] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/my-report", "week"] });
+      toast({ title: `Goals saved for ${user.name}` });
+      setOpen(false);
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to save goals", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="text-xs h-7 px-2"
+        onClick={() => setOpen(true)}
+        data-testid={`button-set-goals-${user.id}`}
+      >
+        <Target className="w-3 h-3 mr-1" /> Set Goals
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Weekly Goals — {user.name}</DialogTitle>
+            <DialogDescription>
+              {goalData?.source === "individual"
+                ? "Individual goals are set for this CLR."
+                : "No individual goals set — showing team default. Enter 0 to keep default."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label htmlFor={`calls-${user.id}`}>Weekly Calls Goal</Label>
+              <Input id={`calls-${user.id}`} type="number" min={0} value={calls} onChange={e => setCalls(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`transfers-${user.id}`}>Weekly Transfers Goal</Label>
+              <Input id={`transfers-${user.id}`} type="number" min={0} value={transfers} onChange={e => setTransfers(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`appointments-${user.id}`}>Weekly Appointments Goal</Label>
+              <Input id={`appointments-${user.id}`} type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={saveMut.isPending}>Cancel</Button>
+            <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || isLoading}>
+              {saveMut.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Resend Intro Emails component ───────────────────────────────────────────
 function ResendIntroEmails({ users }: { users: any[] }) {
   const { toast } = useToast();
@@ -1646,6 +1735,7 @@ export default function Settings() {
                   >
                     {u.isActive ? "Active" : "Inactive"}
                   </Badge>
+                  {(u.isClr ?? u.is_clr ?? true) && <SetGoalsButton user={u} />}
                   <ManagerToggleButton user={u} />
                 </div>
               </div>

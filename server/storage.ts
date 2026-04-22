@@ -318,6 +318,22 @@ try {
 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
 
+// ── Per-CLR weekly goals table (admin-managed, per user) ──────────────────────
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS clr_goals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      org_id INTEGER NOT NULL DEFAULT 1,
+      calls_goal INTEGER NOT NULL DEFAULT 0,
+      transfers_goal INTEGER NOT NULL DEFAULT 0,
+      appointments_goal INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id)
+    );
+  `);
+} catch {}
+
 for (const t of ["users","loan_officers","lead_outcomes","daily_call_logs","forum_posts","forum_answers","forum_votes","forum_subscriptions","lo_assignments","unified_contacts","webhook_settings","webhook_events","bonzo_contacts","mojo_sessions","mojo_contacts"]) {
   try { sqlite.exec(`ALTER TABLE ${t} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 }

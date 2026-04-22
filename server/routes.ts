@@ -2321,6 +2321,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
       no_answer: outcomes.filter(o => ot(o) === "no_answer").length,
     };
 
+    // Load per-CLR goals once so we can compute "vs goal" per row.
+    // Falls back to the user's own weekly goal fields if no individual record exists.
+    let goalsByUser = new Map<number, { calls: number; transfers: number; appointments: number }>();
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const rows = sqlite.prepare(`SELECT user_id, calls_goal, transfers_goal, appointments_goal FROM clr_goals`).all() as any[];
+      for (const r of rows) {
+        goalsByUser.set(r.user_id, {
+          calls: Number(r.calls_goal ?? 0),
+          transfers: Number(r.transfers_goal ?? 0),
+          appointments: Number(r.appointments_goal ?? 0),
+        });
+      }
+    } catch {}
+
     // Per-CLR breakdown (always from full team data, not the filtered set)
     const perClr = activeAssistants.map((u: any) => {
       const uOutcomes = outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === u.id);
@@ -2334,6 +2349,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const uFellThrough = uOutcomes.filter(o => ot(o) === "fell_through").length;
       const uDeferrals = uOutcomes.filter(o => ot(o) === "deferral").length;
       const rate = uCalls > 0 ? (uTransfers / uCalls) * 100 : 0;
+      const ug = goalsByUser.get(u.id);
+      const transfersGoal = Number(ug?.transfers ?? u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0);
+      const callsGoal = Number(ug?.calls ?? u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0);
+      const appointmentsGoal = Number(ug?.appointments ?? u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0);
+      const goalSource: "individual" | "default" = ug ? "individual" : "default";
       return {
         userId: u.id,
         name: u.name,
@@ -2345,6 +2365,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
         fellThrough: uFellThrough,
         deferrals: uDeferrals,
         transferRate: +rate.toFixed(1),
+        transfersGoal,
+        callsGoal,
+        appointmentsGoal,
+        goalSource,
       };
     }).sort((a, b) => b.transfers - a.transfers);
 
@@ -3747,11 +3771,25 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const todayStr = new Date().toISOString().split("T")[0];
 
     const user = storage.getUserById(userId) as any;
-    const goals = {
+    // Per-CLR admin-set goals take precedence over the user's own (team default) goals.
+    let goals = {
       calls: Number(user?.goalCallsWeekly ?? user?.goal_calls_weekly ?? 0),
       transfers: Number(user?.goalTransfersWeekly ?? user?.goal_transfers_weekly ?? 0),
       appointments: Number(user?.goalAppointmentsWeekly ?? user?.goal_appointments_weekly ?? 0),
     };
+    let goalsSource: "individual" | "default" = "default";
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const cg = sqlite.prepare(`SELECT calls_goal, transfers_goal, appointments_goal FROM clr_goals WHERE user_id = ?`).get(userId) as any;
+      if (cg) {
+        goals = {
+          calls: Number(cg.calls_goal ?? 0),
+          transfers: Number(cg.transfers_goal ?? 0),
+          appointments: Number(cg.appointments_goal ?? 0),
+        };
+        goalsSource = "individual";
+      }
+    } catch {}
 
     const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
     const callLogs = (storage.getCallLogsByRange(startDate, endDate) as any[])
@@ -3896,6 +3934,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       endDate,
       daysInPeriod,
       goals,
+      goalsSource,
       totals: {
         calls: totalCalls,
         transfers: totalTransfers,
@@ -3939,6 +3978,103 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return res.status(500).json({ error: e?.message ?? "Failed to update goals" });
     }
     res.json({ ok: true, goals: { calls: goalCallsWeekly, transfers: goalTransfersWeekly, appointments: goalAppointmentsWeekly } });
+  });
+
+  // ── Per-CLR Goals (admin-managed) ────────────────────────────────────────────
+  // List all CLR goals for the org (admin only)
+  app.get("/api/goals", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
+    const orgId = req.session_user?.orgId ?? 1;
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const rows = sqlite.prepare(`
+        SELECT user_id AS userId, org_id AS orgId,
+               calls_goal AS callsGoal,
+               transfers_goal AS transfersGoal,
+               appointments_goal AS appointmentsGoal,
+               updated_at AS updatedAt
+        FROM clr_goals
+        WHERE org_id = ?
+      `).all(orgId);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to list goals" });
+    }
+  });
+
+  // Get goals for a specific user. Falls back to the user's own weekly goal fields.
+  app.get("/api/goals/:userId", requireAuth, (req: any, res) => {
+    const userId = parseInt(req.params.userId, 10);
+    if (!Number.isFinite(userId)) return res.status(400).json({ error: "Invalid user id" });
+    // Non-admins can only view their own goals
+    if (req.session_user?.role !== "admin" && req.session_user?.userId !== userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const row = sqlite.prepare(`
+        SELECT user_id AS userId, org_id AS orgId,
+               calls_goal AS callsGoal,
+               transfers_goal AS transfersGoal,
+               appointments_goal AS appointmentsGoal,
+               updated_at AS updatedAt
+        FROM clr_goals WHERE user_id = ?
+      `).get(userId) as any;
+      if (row) {
+        return res.json({
+          userId,
+          source: "individual",
+          goals: {
+            calls: row.callsGoal ?? 0,
+            transfers: row.transfersGoal ?? 0,
+            appointments: row.appointmentsGoal ?? 0,
+          },
+        });
+      }
+      // Fallback: team default from the user's own stored weekly goal fields.
+      const user = storage.getUserById(userId) as any;
+      return res.json({
+        userId,
+        source: "default",
+        goals: {
+          calls: Number(user?.goalCallsWeekly ?? user?.goal_calls_weekly ?? 0),
+          transfers: Number(user?.goalTransfersWeekly ?? user?.goal_transfers_weekly ?? 0),
+          appointments: Number(user?.goalAppointmentsWeekly ?? user?.goal_appointments_weekly ?? 0),
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to fetch goals" });
+    }
+  });
+
+  // Upsert goals for a user (admin only)
+  app.patch("/api/goals/:userId", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
+    const userId = parseInt(req.params.userId, 10);
+    if (!Number.isFinite(userId)) return res.status(400).json({ error: "Invalid user id" });
+    const toInt = (v: any) => {
+      const n = parseInt(String(v ?? 0), 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    };
+    const calls = toInt(req.body?.callsGoal ?? req.body?.calls);
+    const transfers = toInt(req.body?.transfersGoal ?? req.body?.transfers);
+    const appointments = toInt(req.body?.appointmentsGoal ?? req.body?.appointments);
+    const orgId = req.session_user?.orgId ?? 1;
+    try {
+      const sqlite = storageExtra.getSqlite();
+      sqlite.prepare(`
+        INSERT INTO clr_goals (user_id, org_id, calls_goal, transfers_goal, appointments_goal, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          calls_goal = excluded.calls_goal,
+          transfers_goal = excluded.transfers_goal,
+          appointments_goal = excluded.appointments_goal,
+          updated_at = datetime('now')
+      `).run(userId, orgId, calls, transfers, appointments);
+      res.json({ ok: true, userId, goals: { calls, transfers, appointments } });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update goals" });
+    }
   });
 
   // ── Call Scripts ────────────────────────────────────────────────────────────
