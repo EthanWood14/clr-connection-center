@@ -228,6 +228,20 @@ const CATEGORY_STYLES: Record<Category, string> = {
   "Financial": "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
 };
 
+const CATEGORIES: { key: Category; label: string }[] = [
+  { key: "Role", label: "Roles" },
+  { key: "Loan Type", label: "Loan Types" },
+  { key: "Program", label: "Programs" },
+  { key: "Process", label: "Process Terms" },
+  { key: "Financial", label: "Financial Terms" },
+];
+
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+function slugCategory(c: Category) {
+  return c.toLowerCase().replace(/\s+/g, "-");
+}
+
 export default function GlossaryPage() {
   const [query, setQuery] = useState("");
   const { user } = useAuth();
@@ -238,28 +252,80 @@ export default function GlossaryPage() {
 
   useEffect(() => { markStep(user?.id, "read_glossary"); }, [user?.id]);
 
+  const q = query.trim().toLowerCase();
+  const isSearching = q.length > 0;
+
+  const sortedTerms = useMemo(
+    () => [...TERMS].sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: "base" })),
+    []
+  );
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const sorted = [...TERMS].sort((a, b) =>
-      a.term.localeCompare(b.term, undefined, { sensitivity: "base" })
-    );
-    if (!q) return sorted;
-    return sorted.filter((t) =>
+    if (!isSearching) return sortedTerms;
+    return sortedTerms.filter((t) =>
       t.term.toLowerCase().includes(q) ||
       (t.abbr?.toLowerCase().includes(q) ?? false) ||
       t.definition.toLowerCase().includes(q) ||
       t.category.toLowerCase().includes(q)
     );
-  }, [query]);
+  }, [sortedTerms, q, isSearching]);
+
+  const byCategory = useMemo(() => {
+    const map: Record<Category, Term[]> = { "Role": [], "Loan Type": [], "Program": [], "Process": [], "Financial": [] };
+    for (const t of sortedTerms) map[t.category].push(t);
+    return map;
+  }, [sortedTerms]);
+
+  const availableLetters = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of sortedTerms) set.add(t.term[0].toUpperCase());
+    return set;
+  }, [sortedTerms]);
+
+  function scrollTo(id: string) {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function TermCard({ t }: { t: Term }) {
+    return (
+      <Card
+        id={`term-${t.term.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
+        className="hover:shadow-md transition-shadow"
+        data-testid={`glossary-term-${t.term}`}
+      >
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+            <h2 className="text-lg font-bold leading-tight text-[#1A2B4A] dark:text-blue-100">
+              {t.term}
+              {t.abbr && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({t.abbr})
+                </span>
+              )}
+            </h2>
+            <Badge
+              variant="secondary"
+              className={`${CATEGORY_STYLES[t.category]} border-0 text-[11px] font-medium shrink-0`}
+            >
+              {t.category}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground leading-relaxed">{t.definition}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto w-full">
+    <div className="p-4 md:p-6 max-w-6xl mx-auto w-full">
       <PageTooltip pageKey="glossary" title="Glossary">
         Definitions for mortgage and CLR industry terms.
       </PageTooltip>
+
       <div className="flex items-center gap-3 mb-1">
         <BookOpen className="w-6 h-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 text-[#1A2B4A] dark:text-blue-100">
           Glossary
           <HelpIcon title="Glossary">
             Definitions for mortgage and CLR industry terms.
@@ -267,9 +333,10 @@ export default function GlossaryPage() {
         </h1>
       </div>
       <p className="text-sm text-muted-foreground mb-5">
-        Mortgage and CLR Connection Center terminology. Search below to filter.
+        Mortgage and CLR Connection Center terminology. Search, jump by letter, or pick a category.
       </p>
 
+      {/* Search */}
       <div className="relative mb-5">
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -282,46 +349,109 @@ export default function GlossaryPage() {
         />
       </div>
 
-      {filtered.length === 0 ? (
-        <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground text-center">
-            No terms match "{query}".
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-3">
-          {filtered.map((t) => (
-            <Card key={t.term} data-testid={`glossary-term-${t.term}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3 mb-1.5 flex-wrap">
-                  <div className="min-w-0">
-                    <h2 className="text-lg font-bold leading-tight">
-                      {t.term}
-                      {t.abbr && (
-                        <span className="ml-2 text-sm font-normal text-muted-foreground">
-                          ({t.abbr})
-                        </span>
-                      )}
-                    </h2>
-                  </div>
-                  <Badge
-                    variant="secondary"
-                    className={`${CATEGORY_STYLES[t.category]} border-0 text-[11px] font-medium shrink-0`}
-                  >
-                    {t.category}
-                  </Badge>
-                </div>
-                <p className="text-sm text-foreground/90 leading-relaxed">
-                  {t.definition}
-                </p>
-              </CardContent>
-            </Card>
-          ))}
+      {/* Alphabet jump (hidden while searching) */}
+      {!isSearching && (
+        <div className="flex flex-wrap gap-1 mb-5">
+          {ALPHABET.map(letter => {
+            const has = availableLetters.has(letter);
+            return (
+              <button
+                key={letter}
+                type="button"
+                disabled={!has}
+                onClick={() => {
+                  const firstTerm = sortedTerms.find(t => t.term[0].toUpperCase() === letter);
+                  if (firstTerm) scrollTo(`term-${firstTerm.term.toLowerCase().replace(/[^a-z0-9]/g, "-")}`);
+                }}
+                className={`w-7 h-7 text-xs font-semibold rounded transition-colors ${
+                  has
+                    ? "bg-muted hover:bg-primary hover:text-primary-foreground text-foreground cursor-pointer"
+                    : "bg-muted/40 text-muted-foreground/40 cursor-not-allowed"
+                }`}
+                aria-label={`Jump to letter ${letter}`}
+              >
+                {letter}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground text-center mt-6">
-        {filtered.length} of {TERMS.length} terms
+      {/* Mobile category filter row (horizontal scroll) */}
+      {!isSearching && (
+        <div className="lg:hidden overflow-x-auto mb-4 -mx-4 px-4">
+          <div className="flex gap-2 min-w-min">
+            {CATEGORIES.map(c => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => scrollTo(`cat-${slugCategory(c.key)}`)}
+                className={`whitespace-nowrap px-3 py-1.5 text-xs font-semibold rounded-full border ${CATEGORY_STYLES[c.key]} hover:opacity-80 transition-opacity`}
+              >
+                {c.label} ({byCategory[c.key].length})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isSearching ? (
+        // Search results: flat list
+        filtered.length === 0 ? (
+          <Card>
+            <CardContent className="p-6 text-sm text-muted-foreground text-center">
+              No terms match "{query}".
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filtered.map(t => <TermCard key={t.term} t={t} />)}
+          </div>
+        )
+      ) : (
+        // Default view: sidebar + grouped categories
+        <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6">
+          {/* Desktop sidebar */}
+          <aside className="hidden lg:block sticky top-4 self-start">
+            <div className="space-y-1">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Categories</p>
+              {CATEGORIES.map(c => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => scrollTo(`cat-${slugCategory(c.key)}`)}
+                  className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-muted transition-colors flex items-center justify-between group"
+                >
+                  <span className="font-medium">{c.label}</span>
+                  <span className="text-xs text-muted-foreground group-hover:text-foreground">{byCategory[c.key].length}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          {/* Main content — grouped by category */}
+          <div className="space-y-8">
+            {CATEGORIES.map(c => (
+              byCategory[c.key].length > 0 && (
+                <section key={c.key} id={`cat-${slugCategory(c.key)}`} className="scroll-mt-4">
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                    <h2 className="text-lg font-bold text-[#1A2B4A] dark:text-blue-100">{c.label}</h2>
+                    <Badge variant="secondary" className={`${CATEGORY_STYLES[c.key]} border-0 text-[10px]`}>
+                      {byCategory[c.key].length}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {byCategory[c.key].map(t => <TermCard key={t.term} t={t} />)}
+                  </div>
+                </section>
+              )
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground text-center mt-8">
+        {isSearching ? filtered.length : TERMS.length} of {TERMS.length} terms
       </p>
     </div>
   );

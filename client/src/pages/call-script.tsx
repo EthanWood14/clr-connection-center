@@ -22,7 +22,7 @@ import {
 import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
-  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X,
+  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
@@ -659,14 +659,6 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
         )}
       </div>
 
-      <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 p-4 flex items-center gap-3">
-        <Construction className="w-5 h-5 text-amber-500 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Visual Flow Editor</p>
-          <p className="text-xs text-muted-foreground">Drag-and-drop node graph — coming soon. For now, use the tree below.</p>
-        </div>
-      </div>
-
       {searchLower ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
@@ -722,6 +714,157 @@ function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => vo
   );
 }
 
+// ─── Flowchart (read-only visual tree) ────────────────────────────────────────
+function ScriptFlowchart({ scriptId }: { scriptId: number }) {
+  const { data: tree, isLoading } = useQuery<any>({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
+
+  if (isLoading) {
+    return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>;
+  }
+
+  const nodes: any[] = tree?.nodes ?? [];
+  const responses: any[] = tree?.responses ?? [];
+
+  if (nodes.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-12 text-center text-sm text-muted-foreground">
+          No nodes in this script yet. Add some in the Editor tab.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const childMap = new Map<number | null, any[]>();
+  nodes.forEach((n: any) => {
+    const parent = n.parent_node_id ?? null;
+    if (!childMap.has(parent)) childMap.set(parent, []);
+    childMap.get(parent)!.push(n);
+  });
+  childMap.forEach(list => list.sort((a, b) => (a.node_order ?? 0) - (b.node_order ?? 0)));
+
+  const responsesByParent = new Map<number, any[]>();
+  responses.forEach((r: any) => {
+    if (!responsesByParent.has(r.node_id)) responsesByParent.set(r.node_id, []);
+    responsesByParent.get(r.node_id)!.push(r);
+  });
+  responsesByParent.forEach(list => list.sort((a, b) => (a.response_order ?? 0) - (b.response_order ?? 0)));
+
+  const responseLabelFor = (parentId: number, childId: number): string => {
+    const resps = responsesByParent.get(parentId) ?? [];
+    const match = resps.find((r: any) => r.next_node_id === childId);
+    return match?.label ?? "";
+  };
+
+  const NODE_KIND_HEX: Record<NodeKind, { bg: string; border: string; label: string }> = {
+    opening:   { bg: "#1e3a8a", border: "#1e40af", label: "Opening" },
+    objection: { bg: "#f43f5e", border: "#e11d48", label: "Objection" },
+    transfer:  { bg: "#10b981", border: "#059669", label: "Transfer" },
+    voicemail: { bg: "#9ca3af", border: "#6b7280", label: "Voicemail" },
+    dnc:       { bg: "#7f1d1d", border: "#991b1b", label: "DNC" },
+    default:   { bg: "#475569", border: "#334155", label: "Node" },
+  };
+
+  function truncate(s: string, n: number) {
+    const t = (s || "").trim().replace(/\s+/g, " ");
+    return t.length > n ? t.slice(0, n) + "…" : t;
+  }
+
+  const NodeBox = ({ n }: { n: any }) => {
+    const kind = inferNodeKind(n.text || "");
+    const style = NODE_KIND_HEX[kind];
+    return (
+      <div
+        className="inline-block min-w-[190px] max-w-[240px] rounded-lg border-2 text-white shadow-sm overflow-hidden"
+        style={{ background: style.bg, borderColor: style.border }}
+      >
+        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-black/20">
+          {style.label}
+        </div>
+        <div className="px-2.5 py-1.5 text-xs leading-snug">
+          {truncate(n.text || "(empty)", 80)}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSubtree = (n: any, parentId: number | null): React.ReactNode => {
+    const children = childMap.get(n.id) ?? [];
+    const label = parentId !== null ? responseLabelFor(parentId, n.id) : "";
+    return (
+      <div key={n.id} className="flex flex-col items-center">
+        {label && (
+          <div className="text-[10px] font-medium text-muted-foreground italic mb-1 px-2 py-0.5 rounded bg-muted border border-border max-w-[200px] truncate">
+            ↳ "{truncate(label, 30)}"
+          </div>
+        )}
+        <NodeBox n={n} />
+        {children.length > 0 && (
+          <>
+            {/* vertical connector down */}
+            <div className="w-0.5 h-4 bg-muted-foreground/40" />
+            {/* horizontal bar across children */}
+            {children.length > 1 && (
+              <div className="relative flex justify-center">
+                <div
+                  className="absolute top-0 left-0 right-0 h-0.5 bg-muted-foreground/40"
+                  style={{ margin: "0 3rem" }}
+                />
+              </div>
+            )}
+            <div className="flex items-start gap-6 pt-4 relative">
+              {children.map((c: any, idx: number) => (
+                <div key={c.id} className="flex flex-col items-center relative">
+                  {/* vertical line up to horizontal bar */}
+                  {children.length > 1 && (
+                    <div className="absolute -top-4 w-0.5 h-4 bg-muted-foreground/40" />
+                  )}
+                  {renderSubtree(c, n.id)}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const roots = childMap.get(null) ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <div>
+              <p className="text-sm font-semibold">Visual Flowchart</p>
+              <p className="text-xs text-muted-foreground">Read-only view. Edit in the Editor tab.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {(["opening","objection","transfer","voicemail","dnc","default"] as NodeKind[]).map(k => (
+                <span key={k} className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded" style={{ background: NODE_KIND_HEX[k].bg }} />
+                  {NODE_KIND_HEX[k].label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto overflow-y-visible">
+            <div className="min-w-max flex flex-col gap-8 items-start py-4">
+              {roots.map((r: any) => (
+                <div key={r.id} className="min-w-max">
+                  {renderSubtree(r, null)}
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function CallScriptPage() {
   const { user } = useAuth();
@@ -729,7 +872,7 @@ export default function CallScriptPage() {
   const isAdmin = (user as any)?.isAdmin;
   const userId = (user as any)?.id;
 
-  const [view, setView] = useState<"run" | "edit">("run");
+  const [view, setView] = useState<"run" | "edit" | "flowchart">("run");
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => { markStep(userId, "view_script"); }, [userId]);
@@ -779,15 +922,6 @@ export default function CallScriptPage() {
       <PageTooltip pageKey="call-script" title="Call Script">
         Your personal call script with guided responses. Customize your own copy or use the default.
       </PageTooltip>
-      {/* Under Construction Banner */}
-      <div className="flex items-center gap-3 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 px-4 py-3">
-        <Construction className="w-5 h-5 text-amber-500 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Under Construction</p>
-          <p className="text-xs text-muted-foreground">This feature is still being developed. Some things may not work as expected.</p>
-        </div>
-      </div>
-
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -802,6 +936,9 @@ export default function CallScriptPage() {
         <div className="flex gap-2 flex-wrap">
           <Button size="sm" variant={view === "run" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("run")}>
             <PhoneCall className="w-3.5 h-3.5" /> Run
+          </Button>
+          <Button size="sm" variant={view === "flowchart" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("flowchart")}>
+            <GitBranch className="w-3.5 h-3.5" /> Flowchart
           </Button>
           <Button size="sm" variant={view === "edit" ? "default" : "outline"} className="gap-1.5" onClick={() => {
             if (isUsingDefault && !isAdmin) {
@@ -871,7 +1008,9 @@ export default function CallScriptPage() {
       {!isLoading && activeScript && (
         view === "run"
           ? <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
-          : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} />
+          : view === "flowchart"
+            ? <ScriptFlowchart key={activeScript.id} scriptId={activeScript.id} />
+            : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} />
       )}
 
       {/* Reset confirmation */}

@@ -52,7 +52,8 @@ function getDefaultPeriod() {
   };
 }
 
-// Resolve a named period ("today" | "week" | "period") to date range.
+// Resolve a named period to date range.
+// Supported: today | week | month | 30days | 90days | alltime | period
 function resolveNamedPeriod(name: string): { startDate: string; endDate: string } {
   const now = new Date();
   const todayStr = now.toISOString().split("T")[0];
@@ -60,8 +61,7 @@ function resolveNamedPeriod(name: string): { startDate: string; endDate: string 
     return { startDate: todayStr, endDate: todayStr };
   }
   if (name === "week") {
-    // Sunday–Saturday containing today
-    const dow = now.getDay(); // 0=Sun ... 6=Sat
+    const dow = now.getDay();
     const sunday = new Date(now);
     sunday.setDate(now.getDate() - dow);
     const saturday = new Date(sunday);
@@ -71,7 +71,34 @@ function resolveNamedPeriod(name: string): { startDate: string; endDate: string 
       endDate: saturday.toISOString().split("T")[0],
     };
   }
-  // default: "period"
+  if (name === "month") {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      startDate: start.toISOString().split("T")[0],
+      endDate: end.toISOString().split("T")[0],
+    };
+  }
+  if (name === "30days") {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 29);
+    return {
+      startDate: start.toISOString().split("T")[0],
+      endDate: todayStr,
+    };
+  }
+  if (name === "90days") {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 89);
+    return {
+      startDate: start.toISOString().split("T")[0],
+      endDate: todayStr,
+    };
+  }
+  if (name === "alltime") {
+    return { startDate: "2000-01-01", endDate: todayStr };
+  }
+  // default: "period" (16th–15th)
   return getDefaultPeriod();
 }
 
@@ -1764,6 +1791,51 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  // Recent activity widget for dashboard home page.
+  // Returns last 3 transfers + last 3 fell-throughs for the current user.
+  app.get("/api/dashboard/recent-activity", requireAuth, (req: any, res) => {
+    const userId = req.session.userId as number;
+    const outcomes = storage.getLeadOutcomes({ assistantId: userId }) as any[];
+    const los = storage.getLoanOfficers() as any[];
+    const users = storage.getUsers() as any[];
+
+    const enrich = (o: any) => {
+      const lo = los.find((l: any) => l.id === (o.loId ?? o.lo_id));
+      const assistant = users.find((u: any) => u.id === (o.assistantId ?? o.assistant_id));
+      return {
+        id: o.id,
+        date: o.date,
+        createdAt: o.createdAt ?? o.created_at,
+        borrowerName: o.borrowerName ?? o.borrower_name ?? null,
+        notes: o.notes ?? null,
+        loId: o.loId ?? o.lo_id,
+        loName: lo?.fullName ?? null,
+        assistantName: assistant?.name ?? null,
+        outcomeType: o.outcomeType ?? o.outcome_type,
+      };
+    };
+
+    const sortByDateDesc = (a: any, b: any) => {
+      const ad = (a.createdAt ?? a.created_at ?? a.date ?? "") as string;
+      const bd = (b.createdAt ?? b.created_at ?? b.date ?? "") as string;
+      return bd.localeCompare(ad);
+    };
+
+    const transfers = outcomes
+      .filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer")
+      .sort(sortByDateDesc)
+      .slice(0, 3)
+      .map(enrich);
+
+    const fellThroughs = outcomes
+      .filter((o: any) => (o.outcomeType ?? o.outcome_type) === "fell_through")
+      .sort(sortByDateDesc)
+      .slice(0, 3)
+      .map(enrich);
+
+    res.json({ transfers, fellThroughs });
+  });
+
   // ── Notifications ────────────────────────────────────────────────────────────
   app.get("/api/notifications", (req, res) => {
     const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
@@ -2698,6 +2770,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (report) {
       try { (report as any).assignedLosCalled = JSON.parse((report as any).assigned_los_called || "[]"); } catch { (report as any).assignedLosCalled = []; }
       try { (report as any).additionalLosCalled = JSON.parse((report as any).additional_los_called || "[]"); } catch { (report as any).additionalLosCalled = []; }
+      (report as any).additionalLosOtherNotes = (report as any).additional_los_other_notes ?? null;
     }
     res.json({ report, activities });
   });
@@ -2762,10 +2835,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
         ...r,
         transferProspects,
         transferProspectsWithLo,
+        additionalLosOtherNotes: (r.additional_los_other_notes ?? null),
         loCoverage: {
           assignedCalled: assignedCalledNames,
           notCalled: notCalledNames,
           additional: additionalNames,
+          otherNotes: (r.additional_los_other_notes ?? null),
         },
       };
     });
@@ -2775,12 +2850,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled } = req.body;
+    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
     const normalizeIds = (x: any): number[] =>
       Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
     const assignedIds = normalizeIds(assignedLosCalled);
     const additionalIds = normalizeIds(additionalLosCalled);
+    const otherNotesStr = typeof additionalLosOtherNotes === "string" ? additionalLosOtherNotes : null;
     const report = storageExtra.upsertEodReport({
       reportDate,
       assistantId: userId,
@@ -2790,6 +2866,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       notes: notes ?? null,
       assignedLosCalled: assignedIds,
       additionalLosCalled: additionalIds,
+      additionalLosOtherNotes: otherNotesStr,
     });
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
@@ -2972,12 +3049,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
             }
           </div>` : ""}
 
-          ${(assignedLoIds.length || additionalNames.length) ? (() => {
+          ${(assignedLoIds.length || additionalNames.length || (otherNotesStr && otherNotesStr.trim())) ? (() => {
             const esc = (s: string) => s.replace(/</g,"&lt;").replace(/>/g,"&gt;");
             const chipList = (names: string[], bg: string, border: string, color: string) =>
               names.length
                 ? names.map(n => `<span style="display:inline-block;background:${bg};border:1px solid ${border};color:${color};font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;margin:2px 4px 2px 0">${esc(n)}</span>`).join("")
                 : `<span style="font-size:12px;color:#64748b;font-style:italic">—</span>`;
+            const otherTrimmed = (otherNotesStr ?? "").trim();
             return `
           <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:20px">
             <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#1e3a8a">📋 LO Coverage</p>
@@ -2991,9 +3069,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
               ${chipList(notCalledNames, "#fee2e2", "#fca5a5", "#7f1d1d")}
             </div>` : ""}
             ${additionalNames.length ? `
-            <div>
+            <div style="margin-bottom:8px">
               <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px">Additional LOs covered (${additionalNames.length})</p>
               ${chipList(additionalNames, "#dbeafe", "#93c5fd", "#1e3a8a")}
+            </div>` : ""}
+            ${otherTrimmed ? `
+            <div>
+              <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px">Additional (Other)</p>
+              <p style="margin:0;font-size:13px;color:#334155;line-height:1.5;white-space:pre-wrap">${esc(otherTrimmed)}</p>
             </div>` : ""}
           </div>`;
           })() : ""}

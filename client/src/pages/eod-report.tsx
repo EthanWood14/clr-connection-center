@@ -67,6 +67,8 @@ export default function EodReport() {
   const [assignedCalled, setAssignedCalled] = useState<number[]>([]);
   const [additionalCalled, setAdditionalCalled] = useState<number[]>([]);
   const [additionalPick, setAdditionalPick] = useState<string>("");
+  const [additionalOtherNotes, setAdditionalOtherNotes] = useState<string>("");
+  const [showOtherInput, setShowOtherInput] = useState(false);
 
   // Activity form state
   const [activityType, setActivityType] = useState("follow_up");
@@ -129,11 +131,16 @@ export default function EodReport() {
       setNotes(report.notes ?? "");
       setAssignedCalled(Array.isArray(report.assignedLosCalled) ? report.assignedLosCalled : []);
       setAdditionalCalled(Array.isArray(report.additionalLosCalled) ? report.additionalLosCalled : []);
+      const savedOther = (report.additionalLosOtherNotes ?? report.additional_los_other_notes ?? "") as string;
+      setAdditionalOtherNotes(savedOther || "");
+      setShowOtherInput(!!savedOther);
     } else {
       setCallsMade("");
       setNotes("");
       setAssignedCalled([]);
       setAdditionalCalled([]);
+      setAdditionalOtherNotes("");
+      setShowOtherInput(false);
     }
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,6 +156,7 @@ export default function EodReport() {
         notes:        notes.trim() || null,
         assignedLosCalled: assignedCalled,
         additionalLosCalled: additionalCalled,
+        additionalLosOtherNotes: additionalOtherNotes.trim() || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/eod-reports"] });
@@ -317,6 +325,11 @@ export default function EodReport() {
                   <Select
                     value={additionalPick}
                     onValueChange={(v) => {
+                      if (v === "__other__") {
+                        setShowOtherInput(true);
+                        setAdditionalPick("");
+                        return;
+                      }
                       const id = parseInt(v);
                       if (!Number.isFinite(id)) return;
                       setDirty(true);
@@ -325,7 +338,7 @@ export default function EodReport() {
                     }}
                   >
                     <SelectTrigger className="h-9 text-sm flex-1 min-w-0">
-                      <SelectValue placeholder={additionalPickable.length ? "Add an LO you covered…" : "No more LOs to add"} />
+                      <SelectValue placeholder={additionalPickable.length ? "Add an LO you covered…" : "Add an LO…"} />
                     </SelectTrigger>
                     <SelectContent>
                       {additionalPickable.map((lo: any) => (
@@ -333,10 +346,11 @@ export default function EodReport() {
                           {lo.fullName ?? lo.full_name ?? `LO #${lo.id}`}
                         </SelectItem>
                       ))}
+                      <SelectItem value="__other__">Other…</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                {additionalCalled.length === 0 ? (
+                {additionalCalled.length === 0 && !additionalOtherNotes && !showOtherInput ? (
                   <p className="text-xs text-muted-foreground italic">None added.</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
@@ -353,6 +367,32 @@ export default function EodReport() {
                         </button>
                       </Badge>
                     ))}
+                  </div>
+                )}
+
+                {showOtherInput && (
+                  <div className="mt-2 space-y-1.5 border border-dashed border-border rounded-lg p-2.5 bg-muted/30">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground">Other — enter LO name or description</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowOtherInput(false);
+                          setAdditionalOtherNotes("");
+                          setDirty(true);
+                        }}
+                        className="rounded-full hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Remove other"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <Input
+                      placeholder="e.g. John Smith (new LO) or an external LO name"
+                      value={additionalOtherNotes}
+                      onChange={e => { setAdditionalOtherNotes(e.target.value); setDirty(true); }}
+                      className="h-8 text-sm"
+                    />
                   </div>
                 )}
               </div>
@@ -617,7 +657,7 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                   )}
 
                   {/* LO Coverage */}
-                  {r.loCoverage && ((r.loCoverage.assignedCalled?.length ?? 0) + (r.loCoverage.notCalled?.length ?? 0) + (r.loCoverage.additional?.length ?? 0) > 0) && (
+                  {r.loCoverage && ((r.loCoverage.assignedCalled?.length ?? 0) + (r.loCoverage.notCalled?.length ?? 0) + (r.loCoverage.additional?.length ?? 0) > 0 || r.loCoverage.otherNotes) && (
                     <div className="rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 px-3 py-2.5 space-y-2">
                       <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">LO Coverage</p>
                       {r.loCoverage.assignedCalled?.length > 0 && (
@@ -650,6 +690,12 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                               <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-200">{n}</span>
                             ))}
                           </div>
+                        </div>
+                      )}
+                      {r.loCoverage.otherNotes && (
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-blue-700 dark:text-blue-400 mb-1">Additional (Other)</p>
+                          <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{r.loCoverage.otherNotes}</p>
                         </div>
                       )}
                     </div>

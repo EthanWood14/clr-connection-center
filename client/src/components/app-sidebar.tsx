@@ -48,7 +48,7 @@ const toolItems = [
 
 const adminItems: { title: string; url: string; icon: any; badge?: string }[] = [
   { title: "Settings",        url: "/settings",    icon: Settings },
-  { title: "LO Vacation",     url: "/lo-vacation", icon: Plane },
+  { title: "LO Status",       url: "/lo-vacation", icon: Plane },
   { title: "History",         url: "/audit-log",   icon: ScrollText },
 ];
 

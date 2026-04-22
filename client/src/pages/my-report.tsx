@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,18 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
-type Period = "today" | "week" | "period";
+type Period = "today" | "week" | "month" | "30days" | "90days" | "alltime" | "period";
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "week", label: "This Week" },
+  { value: "month", label: "This Month" },
+  { value: "30days", label: "Last 30 Days" },
+  { value: "90days", label: "Last 90 Days" },
+  { value: "alltime", label: "All Time" },
+];
+
+const MY_REPORT_PERIOD_LS_KEY = "my-report-period";
 
 interface PersonalReport {
   user: { id: number; name: string; email: string };
@@ -95,7 +106,16 @@ function formatTf(tf: string) {
 
 export default function MyReport() {
   const { user } = useAuth();
-  const [period, setPeriod] = useState<Period>("week");
+  const [period, setPeriodState] = useState<Period>(() => {
+    if (typeof window === "undefined") return "week";
+    const saved = localStorage.getItem(MY_REPORT_PERIOD_LS_KEY) as Period | null;
+    if (saved && PERIOD_OPTIONS.some(o => o.value === saved)) return saved;
+    return "week";
+  });
+  const setPeriod = (p: Period) => {
+    setPeriodState(p);
+    try { localStorage.setItem(MY_REPORT_PERIOD_LS_KEY, p); } catch {}
+  };
 
   const { data, isLoading } = useQuery<PersonalReport>({
     queryKey: ["/api/my-report", period],
@@ -149,13 +169,16 @@ export default function MyReport() {
           </p>
         </div>
 
-        <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
-          <TabsList>
-            <TabsTrigger value="today">Today</TabsTrigger>
-            <TabsTrigger value="week">This Week</TabsTrigger>
-            <TabsTrigger value="period">This Period</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PERIOD_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {isLoading ? (

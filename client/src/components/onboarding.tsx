@@ -87,26 +87,24 @@ export function PageTooltip({ pageKey, title, body }: { pageKey: string; title?:
   }
 
   return (
-    <div className="fixed z-50 top-20 left-1/2 -translate-x-1/2 max-w-md mx-auto px-4 animate-in fade-in slide-in-from-top-2 duration-300">
-      <Card className="border-primary bg-primary/5 shadow-lg">
-        <CardContent className="p-4 pr-3">
-          <div className="flex items-start gap-3">
-            <Sparkles className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              {title && <p className="text-sm font-semibold mb-1">{title}</p>}
-              <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
-              <Button size="sm" className="mt-3" onClick={dismiss}>Got it</Button>
-            </div>
-            <button
-              onClick={dismiss}
-              className="text-muted-foreground hover:text-foreground p-1 -m-1"
-              aria-label="Dismiss"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </CardContent>
-      </Card>
+    <div
+      className="fixed bottom-20 right-4 z-50 max-w-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl rounded-lg p-4 animate-in fade-in slide-in-from-bottom-2 duration-300"
+      role="status"
+    >
+      <button
+        onClick={dismiss}
+        className="absolute top-2 right-2 p-1 rounded-md text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+        aria-label="Dismiss"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+      <div className="flex items-start gap-2 pr-5">
+        <Sparkles className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          {title && <p className="text-sm font-semibold mb-1 text-gray-900 dark:text-gray-100">{title}</p>}
+          <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">{body}</p>
+        </div>
+      </div>
     </div>
   );
 }

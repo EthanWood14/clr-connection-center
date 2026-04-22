@@ -98,7 +98,7 @@ export default function LoVacation() {
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Plane className="w-5 h-5" />
-            LO Vacation & Activity Status
+            LO Status
           </h1>
           <p className="text-sm text-muted-foreground">
             {counts.active} active · {counts.inactive} inactive · {counts.vacation} on vacation

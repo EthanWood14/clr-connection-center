@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUpIcon, ArrowDownIcon, MinusIcon, ArrowUpDown } from "lucide-react";
@@ -31,7 +30,18 @@ const BREAKDOWN_SEGMENTS = [
   { key: "no_answer",         label: "No Answer",    color: COLORS.no_answer },
 ];
 
-type Period = "today" | "week" | "period";
+type Period = "today" | "week" | "month" | "30days" | "90days" | "alltime" | "period";
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "week", label: "This Week" },
+  { value: "month", label: "This Month" },
+  { value: "30days", label: "Last 30 Days" },
+  { value: "90days", label: "Last 90 Days" },
+  { value: "alltime", label: "All Time" },
+];
+
+const STATS_PERIOD_LS_KEY = "team-stats-period";
 
 interface StatsResponse {
   period: string;
@@ -90,7 +100,16 @@ export default function TeamStats() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  const [period, setPeriod] = useState<Period>("period");
+  const [period, setPeriodState] = useState<Period>(() => {
+    if (typeof window === "undefined") return "week";
+    const saved = localStorage.getItem(STATS_PERIOD_LS_KEY) as Period | null;
+    if (saved && PERIOD_OPTIONS.some(o => o.value === saved)) return saved;
+    return "week";
+  });
+  const setPeriod = (p: Period) => {
+    setPeriodState(p);
+    try { localStorage.setItem(STATS_PERIOD_LS_KEY, p); } catch {}
+  };
   const [clrFilter, setClrFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("transfers");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -172,13 +191,16 @@ export default function TeamStats() {
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-          <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
-            <TabsList>
-              <TabsTrigger value="today" data-testid="tab-today">Today</TabsTrigger>
-              <TabsTrigger value="week" data-testid="tab-week">This Week</TabsTrigger>
-              <TabsTrigger value="period" data-testid="tab-period">This Period</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
+            <SelectTrigger className="w-48" data-testid="select-period">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PERIOD_OPTIONS.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {isAdmin && (
             <Select value={clrFilter} onValueChange={setClrFilter}>

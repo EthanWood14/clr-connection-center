@@ -563,6 +563,75 @@ function TabAppointments() {
       <div className="text-right">
         <Link href="/appointments" className="text-xs text-primary hover:underline">Manage all appointments →</Link>
       </div>
+
+      <RecentActivityWidget />
+    </div>
+  );
+}
+
+// ── Dashboard widget: Recent Transfers + Fell Throughs ─────────────────────────
+function RecentActivityWidget() {
+  const { data, isLoading } = useQuery<{
+    transfers: Array<{ id: number; borrowerName: string | null; loName: string | null; date: string; notes: string | null }>;
+    fellThroughs: Array<{ id: number; borrowerName: string | null; loName: string | null; date: string; notes: string | null }>;
+  }>({ queryKey: ["/api/dashboard/recent-activity"] });
+
+  const fmt = (iso: string | null | undefined) => {
+    if (!iso) return "";
+    try { return format(parseISO(iso), "MMM d"); } catch { return ""; }
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+      <Card className="border-green-200 dark:border-green-900/40">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-700 dark:text-green-400">
+            <TrendingUp className="w-4 h-4" /> Recent Transfers
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-10" />)}</div>
+          ) : !data?.transfers?.length ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No recent transfers.</p>
+          ) : (
+            data.transfers.map(t => (
+              <div key={t.id} className="flex items-start justify-between py-2 border-b last:border-0">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{t.borrowerName || "Unknown borrower"}</p>
+                  <p className="text-xs text-muted-foreground">{t.loName || "—"}</p>
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0 ml-2">{fmt(t.date)}</span>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-red-200 dark:border-red-900/40">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-700 dark:text-red-400">
+            <XCircle className="w-4 h-4" /> Recent Fell Throughs
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-10" />)}</div>
+          ) : !data?.fellThroughs?.length ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No recent fell throughs.</p>
+          ) : (
+            data.fellThroughs.map(t => (
+              <div key={t.id} className="flex items-start justify-between py-2 border-b last:border-0">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{t.borrowerName || "Unknown borrower"}</p>
+                  <p className="text-xs text-muted-foreground">{t.loName || "—"}</p>
+                </div>
+                <span className="text-xs text-muted-foreground shrink-0 ml-2">{fmt(t.date)}</span>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
