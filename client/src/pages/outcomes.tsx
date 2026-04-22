@@ -882,51 +882,17 @@ export default function Outcomes() {
   const [editTarget, setEditTarget] = useState<any | null>(null);
   const [filterType, setFilterType] = useState("all");
 
-  // Read initial assistant filter from URL hash params (?user=…) so a shared
-  // link preserves the viewer's selection. Default: current user's own calls.
-  const initialAssistant = (() => {
-    try {
-      const hash = window.location.hash || "";
-      const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
-      const params = new URLSearchParams(q);
-      const u = params.get("user");
-      if (u) return u;
-    } catch {}
-    return authUser?.id ? String(authUser.id) : "all";
-  })();
-  const [filterAssistant, setFilterAssistant] = useState<string>(initialAssistant);
+  const [filterAssistant, setFilterAssistant] = useState<string>(
+    authUser?.id ? String(authUser.id) : "all",
+  );
   const [search, setSearch] = useState("");
 
-  // Sync filter to current user once auth resolves (default "My Calls").
   useEffect(() => {
     if (authUser?.id && filterAssistant === "all") {
-      // Only auto-switch if the URL didn't explicitly request "all".
-      try {
-        const hash = window.location.hash || "";
-        const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
-        if (new URLSearchParams(q).get("user") !== "all") {
-          setFilterAssistant(String(authUser.id));
-        }
-      } catch {
-        setFilterAssistant(String(authUser.id));
-      }
+      setFilterAssistant(String(authUser.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.id]);
-
-  // Reflect filter changes back into the URL hash query so sharing works.
-  useEffect(() => {
-    try {
-      const hash = window.location.hash || "#/outcomes";
-      const [path, q = ""] = hash.replace(/^#/, "").split("?");
-      const params = new URLSearchParams(q);
-      params.set("user", filterAssistant);
-      const next = `#${path}?${params.toString()}`;
-      if (next !== window.location.hash) {
-        window.history.replaceState(null, "", next);
-      }
-    } catch {}
-  }, [filterAssistant]);
 
   const { data: outcomes = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
