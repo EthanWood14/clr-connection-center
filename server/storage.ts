@@ -207,31 +207,6 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_company_name TEXT`); } ca
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_name_override TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_lo_override TEXT`); } catch {}
 
-// ── Migration: reminder_email_enabled (per-user toggle) ────────────────
-try { sqlite.exec(`ALTER TABLE users ADD COLUMN reminder_email_enabled INTEGER NOT NULL DEFAULT 1`); } catch {}
-
-// ── Migration: reminder_log (tracks sent appointment/callback reminders) ─
-try {
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS reminder_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    outcome_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    reminder_type TEXT NOT NULL DEFAULT 'email',
-    sent_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(outcome_id, reminder_type)
-  )`);
-} catch {}
-
-// ── Migration: org_settings (per-org toggles) ──────────────────────────
-try {
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS org_settings (
-    org_id INTEGER PRIMARY KEY,
-    reminders_enabled INTEGER NOT NULL DEFAULT 1,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  sqlite.exec(`INSERT OR IGNORE INTO org_settings (org_id, reminders_enabled) VALUES (1, 1)`);
-} catch {}
-
 // ── Migration: add transfer_type to lead_outcomes if missing ───────────
 // Values: 'direct' | 'appointment' | NULL (NULL for non-transfer outcomes
 // and for legacy transfer rows logged before this column existed).
@@ -361,6 +336,173 @@ try {
 
 for (const t of ["users","loan_officers","lead_outcomes","daily_call_logs","forum_posts","forum_answers","forum_votes","forum_subscriptions","lo_assignments","unified_contacts","webhook_settings","webhook_events","bonzo_contacts","mojo_sessions","mojo_contacts"]) {
   try { sqlite.exec(`ALTER TABLE ${t} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+}
+
+// ── Demo mode: is_demo column + demo org + demo users + sample data ───────
+try { sqlite.exec(`ALTER TABLE organizations ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+try {
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO organizations (id, name, slug, company_name, plan, is_demo)
+    VALUES (2, 'Demo Company', 'demo', 'Demo Lending Co', 'active', 1)
+  `).run();
+  // Ensure is_demo=1 for demo org even if the row was created before this column existed
+  sqlite.prepare(`UPDATE organizations SET is_demo = 1 WHERE id = 2`).run();
+} catch {}
+
+try {
+  const demoHash = bcrypt.hashSync("Demo2026!", 10);
+  const nowIso = new Date().toISOString();
+
+  // Demo CLR user
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO users
+      (name, email, role, is_active, is_clr, password_hash, must_change_password, org_id, has_seen_intro, created_at)
+    VALUES (?, ?, 'clr', 1, 1, ?, 0, 2, 1, ?)
+  `).run("Demo CLR", "demo@clrconnection.com", demoHash, nowIso);
+
+  // Demo admin user
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO users
+      (name, email, role, is_active, is_clr, password_hash, must_change_password, org_id, has_seen_intro, created_at)
+    VALUES (?, ?, 'admin', 1, 0, ?, 0, 2, 1, ?)
+  `).run("Demo Admin", "demoadmin@clrconnection.com", demoHash, nowIso);
+
+  // Force role/password/org_id on existing demo rows (in case they were seeded differently)
+  sqlite.prepare(`UPDATE users SET role='clr', org_id=2, password_hash=?, must_change_password=0, is_active=1 WHERE LOWER(email)='demo@clrconnection.com'`).run(demoHash);
+  sqlite.prepare(`UPDATE users SET role='admin', org_id=2, password_hash=?, must_change_password=0, is_active=1 WHERE LOWER(email)='demoadmin@clrconnection.com'`).run(demoHash);
+} catch (e) {
+  console.error("demo user seed failed:", e);
+}
+
+// Seed demo sample data (only once, tracked via migrations_applied)
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'demo_sample_data_v1'`).get();
+  if (!done) {
+    const nowIso = new Date().toISOString();
+    const demoCLR = sqlite.prepare(`SELECT id FROM users WHERE email='demo@clrconnection.com'`).get() as { id: number } | undefined;
+
+    // 5 demo loan officers scoped to org_id=2
+    const demoLOs = [
+      { fullName: "Alex Thompson",  nmlsId: "9000001", phone: "(555) 100-2001", email: "alex.thompson@demolending.com", tier: 1, boost: 8 },
+      { fullName: "Jordan Rivera",  nmlsId: "9000002", phone: "(555) 100-2002", email: "jordan.rivera@demolending.com", tier: 2, boost: 5 },
+      { fullName: "Taylor Morgan",  nmlsId: "9000003", phone: "(555) 100-2003", email: "taylor.morgan@demolending.com", tier: 1, boost: 7 },
+      { fullName: "Casey Bennett",  nmlsId: "9000004", phone: "(555) 100-2004", email: "casey.bennett@demolending.com", tier: 2, boost: 3 },
+      { fullName: "Morgan Ellis",   nmlsId: "9000005", phone: "(555) 100-2005", email: "morgan.ellis@demolending.com",  tier: 3, boost: 2 },
+    ];
+    const insertLO = sqlite.prepare(`
+      INSERT OR IGNORE INTO loan_officers
+        (full_name, nmls_id, phone, email, licensed_states, other_credentials, tags, internal_status, boost_score, priority_tier, total_times_worked, last_worked_date, nmls_states, org_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '["CA","TX","FL"]', '{}', '[]', 'active', ?, ?, 10, ?, '[]', 2, ?, ?)
+    `);
+    const today = new Date();
+    const dayStr = (offset: number) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - offset);
+      return d.toISOString().split("T")[0];
+    };
+    const dayStrFuture = (offset: number) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() + offset);
+      return d.toISOString().split("T")[0];
+    };
+    const loIds: number[] = [];
+    for (const lo of demoLOs) {
+      const info = insertLO.run(lo.fullName, lo.nmlsId, lo.phone, lo.email, lo.boost, lo.tier, dayStr(Math.floor(Math.random() * 10)), nowIso, nowIso);
+      const row = sqlite.prepare(`SELECT id FROM loan_officers WHERE nmls_id = ?`).get(lo.nmlsId) as { id: number } | undefined;
+      if (row) loIds.push(row.id);
+    }
+
+    if (demoCLR && loIds.length > 0) {
+      // 30 lead outcomes spread over last 14 days, various types
+      const outcomeTypes = ["transfer","appointment","no_answer","callback_requested","not_interested","fell_through","deferral","wrong_number"];
+      const insertOutcome = sqlite.prepare(`
+        INSERT INTO lead_outcomes (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, notes, tags, org_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', 2, ?, ?)
+      `);
+      const borrowers = ["John Smith","Emily Brown","Michael Davis","Sarah Wilson","Chris Lee","Ashley Garcia","Daniel Kim","Olivia Nguyen","Ryan Patel","Jessica Ramirez"];
+      for (let i = 0; i < 30; i++) {
+        const ot = outcomeTypes[i % outcomeTypes.length];
+        const d = dayStr(i % 14);
+        const loId = loIds[i % loIds.length];
+        const borrower = borrowers[i % borrowers.length];
+        const transferType = ot === "transfer" ? (i % 2 === 0 ? "direct" : "appointment") : null;
+        insertOutcome.run(d, demoCLR.id, loId, borrower, ot, transferType, "Demo outcome note", nowIso, nowIso);
+      }
+
+      // 14 days of daily_call_logs for the demo CLR
+      const insertCallLog = sqlite.prepare(`
+        INSERT OR IGNORE INTO daily_call_logs (log_date, assistant_id, calls_made, notes, updated_at, org_id)
+        VALUES (?, ?, ?, ?, ?, 2)
+      `);
+      for (let i = 0; i < 14; i++) {
+        insertCallLog.run(dayStr(i), demoCLR.id, 40 + (i * 3) % 25, "Demo call log", nowIso);
+      }
+
+      // 3 upcoming appointments (stored as lead_outcomes with outcome_type='appointment' and appointment_datetime in next 7 days)
+      const insertAppt = sqlite.prepare(`
+        INSERT INTO lead_outcomes (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, appointment_datetime, lead_goal, notes, tags, org_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'appointment', 'appointment', ?, ?, ?, '[]', 2, ?, ?)
+      `);
+      const apptPayloads = [
+        { day: 1, name: "Kevin Wallace",  goal: "purchase" },
+        { day: 3, name: "Lauren Foster",  goal: "refinance" },
+        { day: 5, name: "Derrick Howard", goal: "purchase" },
+      ];
+      for (let i = 0; i < apptPayloads.length; i++) {
+        const a = apptPayloads[i];
+        const dt = `${dayStrFuture(a.day)}T15:00:00Z`;
+        insertAppt.run(dayStr(0), demoCLR.id, loIds[i % loIds.length], a.name, dt, a.goal, "Upcoming demo appointment", nowIso, nowIso);
+      }
+    }
+
+    // 2 forum posts + answers (forum tables may not exist yet at this point — guarded)
+    try {
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        author_id INTEGER NOT NULL,
+        author_name TEXT NOT NULL,
+        upvotes INTEGER DEFAULT 0,
+        is_answered INTEGER DEFAULT 0,
+        is_pinned INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        org_id INTEGER NOT NULL DEFAULT 1
+      )`);
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_answers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        author_id INTEGER NOT NULL,
+        author_name TEXT NOT NULL,
+        upvotes INTEGER DEFAULT 0,
+        is_accepted INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        org_id INTEGER NOT NULL DEFAULT 1
+      )`);
+    } catch {}
+    if (demoCLR) {
+      try {
+        const p1 = sqlite.prepare(`INSERT INTO forum_posts (title, body, author_id, author_name, upvotes, is_answered, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 2, ?, ?)`)
+          .run("Best time to call LOs in the morning?", "Looking for tips on when to call LOs — does before 10am work better than after?", demoCLR.id, "Demo CLR", 3, nowIso, nowIso);
+        sqlite.prepare(`INSERT INTO forum_answers (post_id, body, author_id, author_name, upvotes, is_accepted, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 2, ?, ?)`)
+          .run(p1.lastInsertRowid, "We've had great luck between 9-10am and right before lunch.", demoCLR.id, "Demo Admin", 5, nowIso, nowIso);
+
+        const p2 = sqlite.prepare(`INSERT INTO forum_posts (title, body, author_id, author_name, upvotes, is_answered, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 2, ?, ?)`)
+          .run("How do you handle missed-appointment follow-ups?", "What's your script for reaching back out when someone missed an LO appointment?", demoCLR.id, "Demo CLR", 4, nowIso, nowIso);
+        sqlite.prepare(`INSERT INTO forum_answers (post_id, body, author_id, author_name, upvotes, is_accepted, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 2, ?, ?)`)
+          .run(p2.lastInsertRowid, "We call within 2 hours and offer to reschedule same-day whenever possible.", demoCLR.id, "Demo Admin", 2, nowIso, nowIso);
+      } catch (e) { console.error("demo forum seed failed:", e); }
+    }
+
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("demo_sample_data_v1", nowIso);
+  }
+} catch (e) {
+  console.error("demo sample data seed failed:", e);
 }
 
 // Seed default admin user and algorithm settings if empty

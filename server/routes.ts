@@ -12,7 +12,6 @@ import crypto from "crypto";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
-import { runRemindersTick } from "./reminders";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1121,17 +1120,6 @@ cron.schedule("* * * * *", async () => {
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
 
-// ── Appointment/Callback reminder emails (every 30 minutes) ────────────────
-// Fires ~:05 and :35 to avoid colliding with the hourly scheduled-report tick.
-cron.schedule("5,35 * * * *", async () => {
-  try {
-    const result = await runRemindersTick();
-    if (result.sent || result.errors) {
-      console.log(`[reminders] tick complete sent=${result.sent} errors=${result.errors}`);
-    }
-  } catch (e: any) { console.error("Reminder cron error:", e?.message ?? e); }
-});
-
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -1140,6 +1128,41 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Cookie parser ──────────────────────────────────────────────────────────
   app.use(cookieParser(SESSION_SECRET));
+
+  // ── Demo guard: block mutations for users whose org is flagged is_demo=1 ──
+  // Exceptions: auth/login and auth/logout must always work.
+  const demoOrgCache = new Map<number, boolean>();
+  function isDemoOrg(orgId: number): boolean {
+    if (!orgId) return false;
+    if (demoOrgCache.has(orgId)) return demoOrgCache.get(orgId)!;
+    try {
+      const sqliteDb = storageExtra.getRawSqlite();
+      const row = sqliteDb.prepare(`SELECT is_demo FROM organizations WHERE id = ?`).get(orgId) as any;
+      const flag = !!(row && row.is_demo);
+      demoOrgCache.set(orgId, flag);
+      return flag;
+    } catch {
+      return false;
+    }
+  }
+  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+    const mutating = req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE";
+    if (!mutating) return next();
+    // Allowed auth routes even in demo mode
+    if (req.path === "/auth/login" || req.path === "/auth/logout") return next();
+    try {
+      const raw = (req as any).signedCookies?.[COOKIE_NAME];
+      if (!raw) return next();
+      const session = JSON.parse(raw);
+      const orgId = Number(session?.orgId ?? 0);
+      if (orgId && isDemoOrg(orgId)) {
+        return res.status(403).json({ error: "Demo mode is read-only. Sign up for full access." });
+      }
+    } catch {
+      // bad cookie → let downstream auth handle it
+    }
+    next();
+  });
 
   // ── Standalone private SA console (separate from main app) ────────────────
   registerSaConsole(app);
@@ -1260,8 +1283,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Allow impersonation: session.orgId overrides user.orgId if super admin
       const orgId = session.superAdmin && session.orgId ? Number(session.orgId) : Number(u.orgId ?? u.org_id ?? 1);
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
-      const reminderEmailEnabled = (u.reminderEmailEnabled ?? u.reminder_email_enabled);
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId, reminderEmailEnabled: reminderEmailEnabled === undefined || reminderEmailEnabled === null ? true : !!reminderEmailEnabled } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -3153,56 +3175,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       });
       res.json({ ok: true });
     } catch (e: any) { res.status(400).json({ error: e.message }); }
-  });
-
-  // ── Reminder settings (org-wide + trigger) ─────────────────────────────────
-  app.get("/api/settings/reminders", requireAuth, (_req, res) => {
-    try {
-      const row = storageExtra.getRawSqlite()
-        .prepare(`SELECT reminders_enabled FROM org_settings WHERE org_id = 1`)
-        .get() as any;
-      res.json({ remindersEnabled: row ? !!row.reminders_enabled : true });
-    } catch {
-      res.json({ remindersEnabled: true });
-    }
-  });
-
-  app.patch("/api/settings/reminders", requireAuth, (req: any, res) => {
-    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
-    const enabled = req.body?.remindersEnabled ? 1 : 0;
-    try {
-      storageExtra.getRawSqlite()
-        .prepare(`INSERT INTO org_settings (org_id, reminders_enabled, updated_at)
-                  VALUES (1, ?, datetime('now'))
-                  ON CONFLICT(org_id) DO UPDATE SET reminders_enabled = excluded.reminders_enabled, updated_at = datetime('now')`)
-        .run(enabled);
-      res.json({ ok: true, remindersEnabled: !!enabled });
-    } catch (e: any) {
-      res.status(500).json({ error: e?.message ?? "Failed to update" });
-    }
-  });
-
-  app.post("/api/settings/reminders/run-now", requireAuth, async (req: any, res) => {
-    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
-    try {
-      const result = await runRemindersTick();
-      res.json({ ok: true, ...result });
-    } catch (e: any) {
-      res.status(500).json({ error: e?.message ?? "Failed to run" });
-    }
-  });
-
-  // Per-user reminder toggle (user updates their own)
-  app.patch("/api/users/me/reminder-email", requireAuth, (req: any, res) => {
-    const userId = req.session_user?.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const enabled = !!req.body?.enabled;
-    try {
-      storage.updateUser(userId, { reminderEmailEnabled: enabled } as any);
-      res.json({ ok: true, reminderEmailEnabled: enabled });
-    } catch (e: any) {
-      res.status(500).json({ error: e?.message ?? "Failed to update" });
-    }
   });
 
   app.post("/api/settings/email/send-now", requireAuth, async (req, res) => {

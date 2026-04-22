@@ -58,6 +58,23 @@ export default function Login() {
     }
   }
 
+  async function handleDemoLogin() {
+    setEmail("demo@clrconnection.com");
+    setPassword("Demo2026!");
+    setError(null);
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/login", { email: "demo@clrconnection.com", password: "Demo2026!" });
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      window.location.hash = "#/";
+      window.location.reload();
+    } catch (err: any) {
+      setError(err.message ?? "Demo login failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8] relative px-4">
       <BackgroundPattern />
@@ -194,6 +211,29 @@ export default function Login() {
               )}
             </button>
           </form>
+
+          {/* Demo section */}
+          <div className="mt-6 pt-5 border-t border-slate-100">
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#1A2B4A]">Try the Demo</div>
+                  <div className="text-[11px] text-slate-500">Explore a sandboxed read-only org</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDemoLogin}
+                  disabled={loading}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-md bg-[#1A2B4A] text-white hover:bg-[#243a63] disabled:opacity-60 transition-colors"
+                >
+                  Login as Demo
+                </button>
+              </div>
+              <div className="text-[11px] text-slate-500 font-mono">
+                demo@clrconnection.com · Demo2026!
+              </div>
+            </div>
+          </div>
 
           {/* Stats row */}
           <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-3 gap-2 text-center">

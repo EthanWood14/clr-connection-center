@@ -13,6 +13,7 @@ export const organizations = sqliteTable("organizations", {
   fromEmail: text("from_email"),
   managerEmails: text("manager_emails"),
   plan: text("plan").notNull().default("trial"),
+  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 export type Organization = typeof organizations.$inferSelect;
@@ -50,7 +51,6 @@ export const users = sqliteTable("users", {
   scriptLoOverride: text("script_lo_override"),
   superAdmin: integer("super_admin", { mode: "boolean" }).notNull().default(false),
   orgId: integer("org_id").notNull().default(1),
-  reminderEmailEnabled: integer("reminder_email_enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 
@@ -277,24 +277,6 @@ export const monthlyAssignments = sqliteTable("monthly_assignments", {
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 export type MonthlyAssignment = typeof monthlyAssignments.$inferSelect;
-
-// ── Reminder Log (appointment/callback email reminders) ────────────────────────
-export const reminderLog = sqliteTable("reminder_log", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  outcomeId: integer("outcome_id").notNull(),
-  userId: integer("user_id").notNull(),
-  reminderType: text("reminder_type").notNull().default("email"),
-  sentAt: text("sent_at").notNull().default(new Date().toISOString()),
-});
-export type ReminderLog = typeof reminderLog.$inferSelect;
-
-// ── Org Settings (per-org toggles) ─────────────────────────────────────────────
-export const orgSettings = sqliteTable("org_settings", {
-  orgId: integer("org_id").primaryKey(),
-  remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(true),
-  updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
-});
-export type OrgSettings = typeof orgSettings.$inferSelect;
 
 // ── Assignment Overrides (admin unlock log) ────────────────────────────────────
 export const assignmentOverrides = sqliteTable("assignment_overrides", {

@@ -107,8 +107,8 @@ export const LANDING_HTML = `<!DOCTYPE html>
     <div class="ctas">
       <a href="#request" class="btn btn-primary">Request Access</a>
       <span style="display:inline-flex;flex-direction:column;align-items:center">
-        <button type="button" class="btn btn-ghost disabled" disabled>See a Demo</button>
-        <span class="demo-note">Demo mode coming soon</span>
+        <a href="/#/login" class="btn btn-ghost">See a Demo</a>
+        <span class="demo-note">Use demo@clrconnection.com / Demo2026!</span>
       </span>
     </div>
   </div>
@@ -154,6 +154,7 @@ export const LANDING_HTML = `<!DOCTYPE html>
 </section>
 
 <section id="request" class="alt">
+  <a id="request-access"></a>
   <div class="container">
     <h2>Request Access</h2>
     <p class="kicker">Tell us about your team. We'll be in touch within 1 business day.</p>
