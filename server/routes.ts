@@ -1466,7 +1466,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Allow impersonation: session.orgId overrides user.orgId if super admin
       const orgId = session.superAdmin && session.orgId ? Number(session.orgId) : Number(u.orgId ?? u.org_id ?? 1);
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId } });
+      const isImpersonating = !!(session.superAdmin && session.isImpersonating);
+      const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -5463,7 +5465,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const org = sqliteRaw.prepare(`SELECT id, name FROM organizations WHERE id = ?`).get(id) as any;
     if (!org) return res.status(404).json({ error: "Org not found" });
     const session = req.session_user;
-    const payload = JSON.stringify({ userId: session.userId, role: session.role, orgId: id, superAdmin: true });
+    const u = storage.getUserById(session.userId) as any;
+    const originalOrgId = Number(session.originalOrgId ?? u?.orgId ?? u?.org_id ?? 1);
+    const payload = JSON.stringify({
+      userId: session.userId,
+      role: session.role,
+      orgId: id,
+      superAdmin: true,
+      originalOrgId,
+      isImpersonating: true,
+      impersonatingOrgName: org.name,
+    });
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
@@ -5474,11 +5486,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true, orgId: id, orgName: org.name });
   });
 
-  app.post("/api/super-admin/stop-impersonating", requireAuth, requireSuperAdmin, (req: any, res) => {
+  function clearImpersonationCookie(req: any, res: any) {
     const session = req.session_user;
     const u = storage.getUserById(session.userId) as any;
-    const originalOrgId = Number(u?.orgId ?? u?.org_id ?? 1);
-    const payload = JSON.stringify({ userId: session.userId, role: session.role, orgId: originalOrgId, superAdmin: true });
+    const originalOrgId = Number(session.originalOrgId ?? u?.orgId ?? u?.org_id ?? 1);
+    const payload = JSON.stringify({
+      userId: session.userId,
+      role: session.role,
+      orgId: originalOrgId,
+      superAdmin: true,
+    });
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
@@ -5486,6 +5503,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+    return originalOrgId;
+  }
+
+  app.post("/api/super-admin/stop-impersonating", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const originalOrgId = clearImpersonationCookie(req, res);
+    res.json({ ok: true, orgId: originalOrgId });
+  });
+
+  app.post("/api/super-admin/exit-impersonate", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const originalOrgId = clearImpersonationCookie(req, res);
     res.json({ ok: true, orgId: originalOrgId });
   });
 

@@ -11,26 +11,28 @@ export function ImpersonationBanner() {
     enabled: !!user,
   });
 
-  // Only show if super-admin AND current org !== their home org (assume home org = 1 for WCL admin)
-  // Simpler check: super admin viewing non-WCL org
-  if (!user?.superAdmin || !org) return null;
-  if (org.id === 1) return null;
+  // Show when the session says we're impersonating. Fall back to org.id !== 1
+  // for legacy sessions that lack the isImpersonating flag.
+  const impersonating = user?.isImpersonating || (!!user?.superAdmin && !!org && org.id !== 1);
+  if (!user?.superAdmin || !org || !impersonating) return null;
 
   async function exitImpersonation() {
     try {
-      await apiRequest("POST", "/api/super-admin/stop-impersonating");
+      await apiRequest("POST", "/api/super-admin/exit-impersonate");
       await queryClient.invalidateQueries();
-      window.location.hash = "#/super-admin";
+      window.location.hash = "#/";
       window.location.reload();
     } catch (e) {
       console.error(e);
     }
   }
 
+  const displayName = user?.impersonatingOrgName || org.name;
+
   return (
     <div className="w-full bg-amber-500 text-white px-4 py-2 flex items-center gap-3 text-sm shadow">
       <div className="flex-1 min-w-0 truncate">
-        <strong>Impersonating:</strong> {org.name}
+        <strong>Impersonating:</strong> {displayName}
       </div>
       <Button
         variant="ghost"

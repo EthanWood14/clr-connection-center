@@ -16,6 +16,8 @@ export interface AuthUser {
   scriptLoOverride?: string | null;
   superAdmin?: boolean;
   orgId?: number;
+  isImpersonating?: boolean;
+  impersonatingOrgName?: string | null;
   reminderEmailEnabled?: boolean;
   smsRemindersEnabled?: boolean;
   phone?: string | null;
