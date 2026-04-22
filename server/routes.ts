@@ -1903,6 +1903,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
     let myCallsToday: number | null = null;
     let futureContactsCount = 0;
     let myCallsInPeriod = 0;
+    let contactsReachedPeriod = 0;
+    let dncHitsPeriod = 0;
+
+    // Sum contacts_reached + dnc_hits from raw call_logs for the period
+    const rawLogsInPeriod = storageExtra.getCallLogsByRangeRaw(startDate, endDate) as any[];
 
     if (scope === "team") {
       // Team totals — aggregate across all active CLRs
@@ -1917,6 +1922,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
       const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
       myCallsInPeriod = callLogs.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+      contactsReachedPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
+      dncHitsPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
     } else if (userId) {
       const myLog = storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId);
       myCallsToday = myLog ? myLog.callsMade : null;
@@ -1930,6 +1937,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
       myCallsInPeriod = callLogs
         .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId)
         .reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+      const myRaw = rawLogsInPeriod.filter((l: any) => l.assistant_id === userId);
+      contactsReachedPeriod = myRaw.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
+      dncHitsPeriod = myRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
     }
 
     res.json({
@@ -1941,6 +1951,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       myCallsToday,
       futureContactsCount,
       myCallsInPeriod,
+      contactsReached: contactsReachedPeriod,
+      dncHits: dncHitsPeriod,
     });
   });
 
@@ -1980,8 +1992,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const isAppt = (t: string) => t === "appointment" || t === "callback_requested" || t === "deferral";
 
     const sumCalls = (logs: any[]) => logs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
+    const sumContacts = (logs: any[]) => logs.reduce((s, l) => s + (l.contactsReached ?? l.contacts_reached ?? 0), 0);
+    const sumDnc = (logs: any[]) => logs.reduce((s, l) => s + (l.dncHits ?? l.dnc_hits ?? 0), 0);
+
+    // Raw call logs include contacts_reached/dnc_hits columns (not exposed via Drizzle schema)
+    const rawCallLogsAll = storageExtra.getCallLogsByRangeRaw(startDate, endDate);
+    const rawCallLogs = clrId === undefined ? rawCallLogsAll : rawCallLogsAll.filter((l: any) => l.assistant_id === clrId);
 
     const totalCalls = sumCalls(callLogs);
+    const totalContactsReached = sumContacts(rawCallLogs);
+    const totalDncHits = sumDnc(rawCallLogs);
     const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
     const totalAppointments = outcomes.filter(o => isAppt(ot(o))).length;
     const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
@@ -2022,7 +2042,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const perClr = activeAssistants.map((u: any) => {
       const uOutcomes = outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === u.id);
       const uLogs = callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === u.id);
+      const uRawLogs = rawCallLogsAll.filter((l: any) => l.assistant_id === u.id);
       const uCalls = sumCalls(uLogs);
+      const uContacts = sumContacts(uRawLogs);
+      const uDnc = sumDnc(uRawLogs);
       const uTransfers = uOutcomes.filter(o => ot(o) === "transfer").length;
       const uAppointments = uOutcomes.filter(o => isAppt(ot(o))).length;
       const uFellThrough = uOutcomes.filter(o => ot(o) === "fell_through").length;
@@ -2032,6 +2055,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
         userId: u.id,
         name: u.name,
         calls: uCalls,
+        contactsReached: uContacts,
+        dncHits: uDnc,
         transfers: uTransfers,
         appointments: uAppointments,
         fellThrough: uFellThrough,
@@ -2047,6 +2072,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       clrId: clrId ?? null,
       totals: {
         calls: totalCalls,
+        contactsReached: totalContactsReached,
+        dncHits: totalDncHits,
         transfers: totalTransfers,
         appointments: totalAppointments,
         fellThrough: totalFellThrough,
@@ -2123,11 +2150,29 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (a.status === "worked" || a.status === "skipped") completionByUser[uid].completed++;
     }
 
+    // Per-CLR contacts_reached + dnc_hits for the period (from raw call_logs)
+    const callStats = storageExtra.getCallStatsByRange(startDate, endDate);
+    const callStatsByUser: Record<number, { contactsReached: number; dncHits: number }> = {};
+    for (const row of callStats as any[]) {
+      callStatsByUser[row.assistant_id] = {
+        contactsReached: row.total_contacts ?? 0,
+        dncHits: row.total_dnc ?? 0,
+      };
+    }
+
     const leaderboardWithCompletion = (leaderboard as any[]).map((entry: any) => {
       const uid = entry.userId || entry.user_id;
       const comp = completionByUser[uid] ?? { assigned: 0, completed: 0 };
       const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
-      return { ...entry, assignedCount: comp.assigned, completedCount: comp.completed, completionPct };
+      const cs = callStatsByUser[uid] ?? { contactsReached: 0, dncHits: 0 };
+      return {
+        ...entry,
+        assignedCount: comp.assigned,
+        completedCount: comp.completed,
+        completionPct,
+        contactsReached: cs.contactsReached,
+        dncHits: cs.dncHits,
+      };
     });
 
     res.json({ leaderboard: leaderboardWithCompletion, startDate, endDate });
@@ -2220,7 +2265,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
     const logs = storage.getDailyCallLogs(date);
     const users = storage.getUsers();
-    const enriched = logs.map(l => ({ ...l, assistant: users.find(u => u.id === l.assistantId) }));
+    const rawStats = storageExtra.getCallStatsForDay(date) as any[];
+    const byUser: Record<number, { contacts_reached: number; dnc_hits: number }> = {};
+    for (const r of rawStats) byUser[r.assistant_id] = { contacts_reached: r.contacts_reached, dnc_hits: r.dnc_hits };
+    const enriched = logs.map(l => ({
+      ...l,
+      contactsReached: byUser[l.assistantId]?.contacts_reached ?? 0,
+      dncHits: byUser[l.assistantId]?.dnc_hits ?? 0,
+      assistant: users.find(u => u.id === l.assistantId),
+    }));
     res.json(enriched);
   });
 
@@ -2248,6 +2301,166 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
     const log = storage.upsertDailyCallLog({ logDate, assistantId: Number(assistantId), callsMade: Number(callsMade), notes: notes ?? null });
     res.json(log);
+  });
+
+  // ── Webhook endpoints (PUBLIC — no auth; external services POST here) ───────
+  function requireAdminSession(req: any, res: Response): boolean {
+    const uid = req.session_user?.userId;
+    if (!uid) { res.status(401).json({ error: "Unauthorized" }); return false; }
+    const u = storage.getUserById(uid);
+    if (!u || u.role !== "admin") { res.status(403).json({ error: "Admin only" }); return false; }
+    return true;
+  }
+
+  function verifyWebhookSecret(header: string | undefined, stored: string | null | undefined): boolean {
+    if (!stored) return true; // no secret configured → skip verification
+    if (!header) return false;
+    return header.trim() === stored.trim();
+  }
+
+  app.post("/api/webhook/mojo", (req, res) => {
+    const body = req.body ?? {};
+    const settings = storageExtra.getWebhookSettings();
+    const providedSecret = (req.headers["x-mojo-secret"] as string) || "";
+    if (!verifyWebhookSecret(providedSecret, settings.mojo_secret)) {
+      storageExtra.logWebhookEvent({ source: "mojo", eventType: "auth_failed", payload: body, processed: false });
+      return res.status(401).json({ ok: false, error: "invalid secret" });
+    }
+
+    const rawDisp = String(body.disposition || body.call_disposition || body.status || body.result || "").toLowerCase().trim();
+    const nameGuess = body.agent_name || body.user_name || body.rep_name || body.name || body.agent || body.user || null;
+    const matched = storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
+    const today = new Date().toISOString().split("T")[0];
+
+    let action = "ignored";
+    let createdOutcome = false;
+
+    if (matched) {
+      const inc = (callsDelta: number, contactsDelta: number, dncDelta: number) => {
+        storageExtra.incrementDailyCallLog({ logDate: today, assistantId: matched.id, callsDelta, contactsDelta, dncDelta });
+      };
+
+      if (rawDisp === "answered" || rawDisp === "connected") {
+        inc(1, 1, 0); action = "calls+contacts";
+      } else if (rawDisp === "no_answer" || rawDisp === "no-answer" || rawDisp === "noanswer" || rawDisp === "voicemail" || rawDisp === "vm" || rawDisp === "busy") {
+        inc(1, 0, 0); action = "calls";
+      } else if (rawDisp === "dnc" || rawDisp === "do_not_call" || rawDisp === "do-not-call") {
+        inc(1, 0, 1); action = "calls+dnc";
+      } else if (rawDisp === "transfer" || rawDisp === "appointment") {
+        inc(1, 1, 0);
+        action = `calls+contacts+outcome(${rawDisp})`;
+        // Create a lead_outcome record. loId is required — use 0 as a placeholder for webhook-originated outcomes.
+        try {
+          const borrowerName = body.borrower_name || body.lead_name || body.contact_name || body.prospect_name || null;
+          const notes = body.notes || body.call_notes || `Auto-logged from Mojo webhook (${rawDisp})`;
+          storageExtra.getSqlite().prepare(
+            `INSERT INTO lead_outcomes (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, notes, tags, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+          ).run(
+            today, matched.id, 0, borrowerName,
+            rawDisp, rawDisp === "transfer" ? "direct" : null,
+            notes, "[]",
+            new Date().toISOString(), new Date().toISOString()
+          );
+          createdOutcome = true;
+        } catch (e) {
+          console.error("Failed to create lead_outcome from Mojo webhook:", e);
+        }
+      } else {
+        inc(1, 0, 0); action = "calls";
+      }
+    } else {
+      action = "unmatched";
+    }
+
+    storageExtra.logWebhookEvent({
+      source: "mojo",
+      eventType: rawDisp || "unknown",
+      payload: body,
+      matchedUserId: matched?.id ?? null,
+      processed: !!matched,
+    });
+
+    res.json({ ok: true, matched_user: matched?.name ?? null, action, created_outcome: createdOutcome });
+  });
+
+  app.post("/api/webhook/bonzo", (req, res) => {
+    const body = req.body ?? {};
+    const settings = storageExtra.getWebhookSettings();
+    const providedSecret = (req.headers["x-bonzo-secret"] as string) || "";
+    if (!verifyWebhookSecret(providedSecret, settings.bonzo_secret)) {
+      storageExtra.logWebhookEvent({ source: "bonzo", eventType: "auth_failed", payload: body, processed: false });
+      return res.status(401).json({ ok: false, error: "invalid secret" });
+    }
+
+    const eventType = String(body.event || body.type || body.webhook_type || "").toLowerCase().trim();
+    const nameGuess = body.agent_name || body.user_name || body.rep_name || body.name || body.assigned_to || body.owner || null;
+    const matched = storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
+
+    let handled = false;
+    if (eventType === "prospect.created" || eventType === "contact.created") {
+      handled = true;
+    } else if (eventType === "prospect.stage_changed" || eventType === "pipeline.stage_changed") {
+      handled = true;
+      if (matched) {
+        try {
+          const prospectName = body.prospect_name || body.contact_name || body.name || "a prospect";
+          const stageName = body.stage || body.stage_name || body.new_stage || "a new stage";
+          storage.createNotification({
+            userId: matched.id,
+            type: "announcement",
+            title: "Bonzo stage change",
+            message: `Bonzo: ${prospectName} moved to ${stageName}`,
+            isRead: false,
+          });
+        } catch (e) {
+          console.error("Failed to create Bonzo notification:", e);
+        }
+      }
+    } else if (eventType === "conversation.started" || eventType === "conversation.created" ||
+               eventType === "message.sent" || eventType === "message.created") {
+      handled = true;
+    }
+
+    storageExtra.logWebhookEvent({
+      source: "bonzo",
+      eventType: eventType || "unknown",
+      payload: body,
+      matchedUserId: matched?.id ?? null,
+      processed: handled,
+    });
+
+    res.json({ ok: true, matched_user: matched?.name ?? null, event_type: eventType || "unknown" });
+  });
+
+  // Admin-only webhook event list + settings
+  app.get("/api/webhook/events", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const limit = Math.min(parseInt((req.query.limit as string) || "50") || 50, 200);
+    const rows = storageExtra.getRecentWebhookEvents(limit);
+    res.json(rows);
+  });
+
+  app.get("/api/webhook/settings", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const s = storageExtra.getWebhookSettings();
+    res.json({
+      mojoSecret: s.mojo_secret ?? "",
+      bonzoSecret: s.bonzo_secret ?? "",
+    });
+  });
+
+  app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { mojoSecret, bonzoSecret } = req.body ?? {};
+    const updated = storageExtra.updateWebhookSettings({
+      mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
+      bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
+    });
+    res.json({
+      mojoSecret: updated.mojo_secret ?? "",
+      bonzoSecret: updated.bonzo_secret ?? "",
+    });
   });
 
   // ── Reporting period helper ───────────────────────────────────────────────────

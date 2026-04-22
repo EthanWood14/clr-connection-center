@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,10 @@ const adminItems: { title: string; url: string; icon: any; badge?: string }[] = 
   { title: "Settings",        url: "/settings",    icon: Settings },
   { title: "LO Status",       url: "/lo-vacation", icon: Plane },
   { title: "History",         url: "/audit-log",   icon: ScrollText },
+];
+
+const integrationItems: { title: string; url: string; icon: any; badge?: string }[] = [
+  { title: "Webhooks",        url: "/webhook-settings", icon: Webhook },
 ];
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -220,6 +224,18 @@ export function AppSidebar() {
             <SidebarMenu>{renderItems(adminItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {/* INTEGRATIONS (admin only) */}
+        {user?.role === "admin" && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+              Integrations
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{renderItems(integrationItems)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {/* HELP */}
         <SidebarGroup>

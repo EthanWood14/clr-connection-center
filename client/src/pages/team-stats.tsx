@@ -52,7 +52,7 @@ interface StatsResponse {
   previous: { calls: number; transfers: number; appointments: number; transferRate: number };
   daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number }>;
+  perClr: Array<{ userId: number; name: string; calls: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -94,7 +94,7 @@ function SummaryCard({ title, value, previous, suffix = "" }: { title: string; v
   );
 }
 
-type SortKey = "name" | "calls" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals";
+type SortKey = "name" | "calls" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits";
 
 export default function TeamStats() {
   const { user } = useAuth();
@@ -366,15 +366,22 @@ export default function TeamStats() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 border-b">
                 <tr className="text-left">
-                  {([
-                    ["name","CLR Name"],
-                    ["calls","Calls"],
-                    ["transfers","Transfers"],
-                    ["transferRate","Transfer Rate"],
-                    ["appointments","Appointments"],
-                    ["fellThrough","Fell Through"],
-                    ["deferrals","Deferrals"],
-                  ] as [SortKey, string][]).map(([k, label]) => (
+                  {(() => {
+                    const hasWebhookData = (data.perClr ?? []).some((r: any) => (r.contactsReached ?? 0) > 0 || (r.dncHits ?? 0) > 0);
+                    const cols: [SortKey, string][] = [
+                      ["name","CLR Name"],
+                      ["calls","Calls"],
+                      ["transfers","Transfers"],
+                      ["transferRate","Transfer Rate"],
+                      ["appointments","Appointments"],
+                      ["fellThrough","Fell Through"],
+                      ["deferrals","Deferrals"],
+                    ];
+                    if (hasWebhookData) {
+                      cols.push(["contactsReached","Contacts"], ["dncHits","DNC Hits"]);
+                    }
+                    return cols;
+                  })().map(([k, label]) => (
                     <th
                       key={k}
                       className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer hover:text-foreground select-none"
@@ -408,6 +415,12 @@ export default function TeamStats() {
                     <td className="px-4 py-2.5">{row.appointments}</td>
                     <td className="px-4 py-2.5 text-red-600 dark:text-red-400">{row.fellThrough}</td>
                     <td className="px-4 py-2.5 text-amber-600 dark:text-amber-400">{row.deferrals}</td>
+                    {(data.perClr ?? []).some((r: any) => (r.contactsReached ?? 0) > 0 || (r.dncHits ?? 0) > 0) && (
+                      <>
+                        <td className="px-4 py-2.5 text-blue-600 dark:text-blue-400">{row.contactsReached ?? 0}</td>
+                        <td className="px-4 py-2.5 text-red-700 dark:text-red-300">{row.dncHits ?? 0}</td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>

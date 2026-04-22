@@ -894,6 +894,9 @@ export default function Dashboard() {
             <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" accent="red" sub={subLabel} href="/outcomes" />
             <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" accent="teal" sub={subLabel} href="/outcomes" />
             <StatCard title={scope === "team" ? `Team ${callsTitle}` : callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" accent="blue" sub={scope === "team" ? `team calls ${subLabel}` : `my calls ${subLabel}`} href="/eod-report" />
+            {(displayStats?.contactsReached ?? 0) > 0 && (
+              <StatCard title="Contacts Reached" value={displayStats?.contactsReached ?? 0} icon={PhoneCall} color="primary" accent="teal" sub={`answered ${subLabel}`} href="/eod-report" />
+            )}
           </div>
           <GoalStripe />
           <OnboardingChecklist />

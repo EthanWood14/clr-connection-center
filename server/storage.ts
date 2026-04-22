@@ -964,6 +964,37 @@ function runNewMigrations() {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // Webhook events — raw inbound webhook payload log
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    event_type TEXT,
+    payload TEXT NOT NULL,
+    matched_user_id INTEGER,
+    processed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`);
+
+  // Webhook settings — optional per-source secrets
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS webhook_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    mojo_secret TEXT,
+    bonzo_secret TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  try {
+    const row = sqlite.prepare(`SELECT id FROM webhook_settings WHERE id=1`).get();
+    if (!row) {
+      const now = new Date().toISOString();
+      sqlite.prepare(`INSERT INTO webhook_settings (id, mojo_secret, bonzo_secret, created_at, updated_at) VALUES (1, NULL, NULL, ?, ?)`).run(now, now);
+    }
+  } catch {}
+
+  // daily_call_logs: add webhook-sourced counters
+  try { sqlite.exec(`ALTER TABLE daily_call_logs ADD COLUMN contacts_reached INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE daily_call_logs ADD COLUMN dnc_hits INTEGER NOT NULL DEFAULT 0`); } catch {}
+
 }
 runNewMigrations();
 
@@ -1440,6 +1471,129 @@ try { sqlite.exec(`ALTER TABLE call_scripts ADD COLUMN owner_id INTEGER DEFAULT 
 
 // Expose sqlite for direct queries in routes
 export function getSqlite() { return sqlite; }
+
+// ── Webhook storage helpers ────────────────────────────────────────────────────
+export function logWebhookEvent(data: { source: string; eventType?: string | null; payload: any; matchedUserId?: number | null; processed?: boolean }) {
+  const now = new Date().toISOString();
+  const res = sqlite.prepare(
+    `INSERT INTO webhook_events (source, event_type, payload, matched_user_id, processed, created_at) VALUES (?,?,?,?,?,?)`
+  ).run(
+    data.source,
+    data.eventType ?? null,
+    typeof data.payload === "string" ? data.payload : JSON.stringify(data.payload ?? {}),
+    data.matchedUserId ?? null,
+    data.processed ? 1 : 0,
+    now,
+  );
+  return { id: res.lastInsertRowid as number, createdAt: now };
+}
+
+export function getRecentWebhookEvents(limit = 50) {
+  return sqlite.prepare(
+    `SELECT we.*, u.name AS matched_user_name
+       FROM webhook_events we
+       LEFT JOIN users u ON u.id = we.matched_user_id
+       ORDER BY we.created_at DESC
+       LIMIT ?`
+  ).all(limit) as any[];
+}
+
+export function getWebhookSettings() {
+  const row = sqlite.prepare(`SELECT * FROM webhook_settings WHERE id=1`).get() as any;
+  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null };
+}
+
+export function updateWebhookSettings(data: { mojoSecret?: string | null; bonzoSecret?: string | null }) {
+  const now = new Date().toISOString();
+  const existing = getWebhookSettings();
+  const mojo = data.mojoSecret !== undefined ? (data.mojoSecret || null) : existing.mojo_secret;
+  const bonzo = data.bonzoSecret !== undefined ? (data.bonzoSecret || null) : existing.bonzo_secret;
+  sqlite.prepare(
+    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, updated_at=? WHERE id=1`
+  ).run(mojo, bonzo, now);
+  return getWebhookSettings();
+}
+
+// Match a CLR user by name (case-insensitive partial match). Returns user or null.
+export function findUserByName(name: string | null | undefined): any | null {
+  if (!name || typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  const candidates = sqlite.prepare(
+    `SELECT id, name, role, is_active FROM users WHERE is_active = 1 AND (role = 'assistant' OR role = 'admin')`
+  ).all() as any[];
+  // Try exact match first
+  const exact = candidates.find(u => u.name.toLowerCase() === lower);
+  if (exact) return exact;
+  // Try contains match (either direction)
+  const partial = candidates.find(u => {
+    const n = u.name.toLowerCase();
+    return n.includes(lower) || lower.includes(n);
+  });
+  if (partial) return partial;
+  // Try first-name match
+  const first = lower.split(/\s+/)[0];
+  if (first && first.length >= 3) {
+    const firstMatch = candidates.find(u => u.name.toLowerCase().startsWith(first));
+    if (firstMatch) return firstMatch;
+  }
+  return null;
+}
+
+// Upsert daily call log and increment counters by delta amounts
+export function incrementDailyCallLog(params: { logDate: string; assistantId: number; callsDelta?: number; contactsDelta?: number; dncDelta?: number }) {
+  const { logDate, assistantId } = params;
+  const callsDelta = params.callsDelta ?? 0;
+  const contactsDelta = params.contactsDelta ?? 0;
+  const dncDelta = params.dncDelta ?? 0;
+  const now = new Date().toISOString();
+  const existing = sqlite.prepare(
+    `SELECT id FROM daily_call_logs WHERE log_date=? AND assistant_id=?`
+  ).get(logDate, assistantId) as any;
+  if (existing) {
+    sqlite.prepare(
+      `UPDATE daily_call_logs
+         SET calls_made = COALESCE(calls_made,0) + ?,
+             contacts_reached = COALESCE(contacts_reached,0) + ?,
+             dnc_hits = COALESCE(dnc_hits,0) + ?,
+             updated_at = ?
+       WHERE id = ?`
+    ).run(callsDelta, contactsDelta, dncDelta, now, existing.id);
+  } else {
+    sqlite.prepare(
+      `INSERT INTO daily_call_logs (log_date, assistant_id, calls_made, contacts_reached, dnc_hits, updated_at)
+       VALUES (?,?,?,?,?,?)`
+    ).run(logDate, assistantId, Math.max(0, callsDelta), Math.max(0, contactsDelta), Math.max(0, dncDelta), now);
+  }
+}
+
+export function getCallStatsByRange(from: string, to: string) {
+  return sqlite.prepare(
+    `SELECT assistant_id, SUM(calls_made) AS total_calls,
+            SUM(COALESCE(contacts_reached,0)) AS total_contacts,
+            SUM(COALESCE(dnc_hits,0)) AS total_dnc
+       FROM daily_call_logs
+      WHERE log_date >= ? AND log_date <= ?
+      GROUP BY assistant_id`
+  ).all(from, to) as any[];
+}
+
+export function getCallLogsByRangeRaw(from: string, to: string) {
+  return sqlite.prepare(
+    `SELECT * FROM daily_call_logs WHERE log_date >= ? AND log_date <= ?`
+  ).all(from, to) as any[];
+}
+
+export function getCallStatsForDay(date: string) {
+  return sqlite.prepare(
+    `SELECT assistant_id,
+            COALESCE(calls_made,0) AS calls_made,
+            COALESCE(contacts_reached,0) AS contacts_reached,
+            COALESCE(dnc_hits,0) AS dnc_hits
+       FROM daily_call_logs WHERE log_date = ?`
+  ).all(date) as any[];
+}
 
 export function getCallScripts(): any[] {
   return sqlite.prepare(`SELECT * FROM call_scripts ORDER BY created_at DESC`).all() as any[];
