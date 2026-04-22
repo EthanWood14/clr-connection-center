@@ -318,6 +318,34 @@ try {
   console.error("admin pw reset migration failed:", e);
 }
 
+// ── Admin UPSERT migration (ensures admin exists even if users row was deleted) ─
+// Inserts ethan.anthony.wood@gmail.com if missing, then forces password + role.
+try {
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'admin_upsert_v2'`).get();
+  if (!done) {
+    const hash = "$2b$10$WgepzdNbwEzTSAQW11xE5e.NWwkYjstTBIDf8UlE.gitFxnwnMNMK";
+    const nowIso = new Date().toISOString();
+    sqlite.prepare(`
+      INSERT OR IGNORE INTO users
+        (name, email, role, is_active, is_clr, password_hash, must_change_password, created_at)
+      VALUES (?, ?, 'admin', 1, 0, ?, 0, ?)
+    `).run("Ethan Wood", "ethan.anthony.wood@gmail.com", hash, nowIso);
+    sqlite.prepare(`
+      UPDATE users
+         SET name = 'Ethan Wood',
+             role = 'admin',
+             is_active = 1,
+             password_hash = ?,
+             must_change_password = 0
+       WHERE email = ?
+    `).run(hash, "ethan.anthony.wood@gmail.com");
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+      .run("admin_upsert_v2", nowIso);
+  }
+} catch (e) {
+  console.error("admin upsert migration failed:", e);
+}
+
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
   db.insert(algorithmSettings).values({
