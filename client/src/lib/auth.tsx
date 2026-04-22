@@ -16,6 +16,7 @@ export interface AuthUser {
   scriptLoOverride?: string | null;
   superAdmin?: boolean;
   orgId?: number;
+  reminderEmailEnabled?: boolean;
 }
 
 interface AuthContextValue {

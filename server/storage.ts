@@ -207,6 +207,31 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_company_name TEXT`); } ca
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_name_override TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_lo_override TEXT`); } catch {}
 
+// ── Migration: reminder_email_enabled (per-user toggle) ────────────────
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN reminder_email_enabled INTEGER NOT NULL DEFAULT 1`); } catch {}
+
+// ── Migration: reminder_log (tracks sent appointment/callback reminders) ─
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS reminder_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    reminder_type TEXT NOT NULL DEFAULT 'email',
+    sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(outcome_id, reminder_type)
+  )`);
+} catch {}
+
+// ── Migration: org_settings (per-org toggles) ──────────────────────────
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS org_settings (
+    org_id INTEGER PRIMARY KEY,
+    reminders_enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  sqlite.exec(`INSERT OR IGNORE INTO org_settings (org_id, reminders_enabled) VALUES (1, 1)`);
+} catch {}
+
 // ── Migration: add transfer_type to lead_outcomes if missing ───────────
 // Values: 'direct' | 'appointment' | NULL (NULL for non-transfer outcomes
 // and for legacy transfer rows logged before this column existed).

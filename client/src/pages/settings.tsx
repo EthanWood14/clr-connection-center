@@ -789,6 +789,123 @@ function WeeklyGoalsCard() {
   );
 }
 
+// ── Notifications Card (per-user email reminders + admin org toggle) ────────
+function NotificationsCard() {
+  const { toast } = useToast();
+  const { user: authUser, refetchUser } = useAuth();
+  const isAdmin = authUser?.role === "admin";
+
+  const [userEnabled, setUserEnabled] = useState<boolean>(true);
+  const [orgEnabled, setOrgEnabled] = useState<boolean>(true);
+  const [runningNow, setRunningNow] = useState(false);
+
+  useEffect(() => {
+    if (authUser) setUserEnabled(authUser.reminderEmailEnabled ?? true);
+  }, [authUser?.reminderEmailEnabled]);
+
+  useEffect(() => {
+    fetch("/api/settings/reminders", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => { if (typeof d?.remindersEnabled === "boolean") setOrgEnabled(d.remindersEnabled); })
+      .catch(() => {});
+  }, []);
+
+  async function saveUser(enabled: boolean) {
+    setUserEnabled(enabled);
+    try {
+      const r = await fetch("/api/users/me/reminder-email", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      toast({ title: enabled ? "Email reminders on" : "Email reminders off" });
+      await refetchUser();
+    } catch (e: any) {
+      setUserEnabled(!enabled);
+      toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
+    }
+  }
+
+  async function saveOrg(enabled: boolean) {
+    setOrgEnabled(enabled);
+    try {
+      const r = await fetch("/api/settings/reminders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ remindersEnabled: enabled }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      toast({ title: enabled ? "Org-wide reminders enabled" : "Org-wide reminders disabled" });
+    } catch (e: any) {
+      setOrgEnabled(!enabled);
+      toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
+    }
+  }
+
+  async function runNow() {
+    setRunningNow(true);
+    try {
+      const r = await fetch("/api/settings/reminders/run-now", { method: "POST", credentials: "include" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "Failed");
+      toast({ title: "Reminders dispatched", description: `sent=${d.sent} skipped=${d.skipped} errors=${d.errors}` });
+    } catch (e: any) {
+      toast({ title: "Run failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setRunningNow(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Mail className="w-4 h-4 text-muted-foreground" />
+          Notifications
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Get an email before your appointments and callbacks.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Email Reminders</p>
+            <p className="text-xs text-muted-foreground">
+              We'll email you up to 24 hours before each upcoming appointment or callback.
+            </p>
+          </div>
+          <Switch checked={userEnabled} onCheckedChange={saveUser} data-testid="toggle-reminder-email" />
+        </div>
+
+        {isAdmin && (
+          <>
+            <Separator />
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">Org-Wide Reminders</p>
+                <p className="text-xs text-muted-foreground">
+                  Master switch for the whole organization. When off, no reminder emails are sent to anyone.
+                </p>
+              </div>
+              <Switch checked={orgEnabled} onCheckedChange={saveOrg} data-testid="toggle-reminder-org" />
+            </div>
+            <div>
+              <Button size="sm" variant="outline" onClick={runNow} disabled={runningNow} className="gap-1.5">
+                <Send className="w-3.5 h-3.5" />
+                {runningNow ? "Running…" : "Run reminder check now"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Script Defaults Card (per-user placeholder overrides) ───────────────────
 function ExportDataCard() {
   const { toast } = useToast();
@@ -1689,6 +1806,8 @@ export default function Settings() {
           </Button>
         </CardContent>
       </Card>
+
+      <NotificationsCard />
     </div>
   );
 

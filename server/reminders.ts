@@ -1,0 +1,191 @@
+import { Resend } from "resend";
+import { getRawSqlite, storage } from "./storage";
+
+const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
+const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
+
+function resolveResendKey(): string {
+  try {
+    const row = getRawSqlite().prepare(`SELECT resend_api_key FROM email_settings WHERE id=1`).get() as any;
+    const dbKey = String(row?.resend_api_key || "").trim();
+    if (/^re_[A-Za-z0-9_]{28,}$/.test(dbKey)) return dbKey;
+  } catch {}
+  return DEFAULT_RESEND_KEY;
+}
+
+function resolveFrom(): string {
+  try {
+    const row = getRawSqlite().prepare(`SELECT from_address_resend FROM email_settings WHERE id=1`).get() as any;
+    const from = String(row?.from_address_resend || "").trim();
+    if (from.includes("@")) return from.includes("<") ? from : `CLR Connection Center <${from}>`;
+  } catch {}
+  return DEFAULT_FROM;
+}
+
+function fmtDateTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-US", {
+      weekday: "short", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+    });
+  } catch { return iso; }
+}
+
+type PendingOutcome = {
+  outcome_id: number;
+  assistant_id: number;
+  outcome_type: string;
+  borrower_name: string | null;
+  notes: string | null;
+  scheduled_date: string;
+  clr_name: string;
+  clr_email: string;
+  clr_reminder_enabled: number;
+  lo_name: string;
+};
+
+/**
+ * Find upcoming appointments/callbacks in next 24h that haven't had a reminder
+ * sent in the last 12h. Outcome's scheduled_date comes from either the
+ * outcome-specific datetime columns (appointment_datetime, reschedule_datetime,
+ * followup_date) or follow_up_date as a last resort.
+ */
+function findPendingReminders(): PendingOutcome[] {
+  const sqlite = getRawSqlite();
+  // Use COALESCE to pick the first non-null scheduled date column.
+  // appointment_datetime — transfer-with-appointment & appointment outcomes
+  // reschedule_datetime  — rescheduled appointments
+  // followup_date        — callback_requested & generic followup
+  // follow_up_date       — legacy column
+  const rows = sqlite.prepare(`
+    SELECT
+      lo.id AS outcome_id,
+      lo.assistant_id,
+      lo.outcome_type,
+      lo.borrower_name,
+      lo.notes,
+      COALESCE(
+        NULLIF(lo.appointment_datetime, ''),
+        NULLIF(lo.reschedule_datetime, ''),
+        NULLIF(lo.followup_date, ''),
+        NULLIF(lo.follow_up_date, '')
+      ) AS scheduled_date,
+      u.name AS clr_name,
+      u.email AS clr_email,
+      u.reminder_email_enabled AS clr_reminder_enabled,
+      loff.full_name AS lo_name
+    FROM lead_outcomes lo
+    JOIN users u ON u.id = lo.assistant_id
+    LEFT JOIN loan_officers loff ON loff.id = lo.lo_id
+    WHERE lo.outcome_type IN ('appointment', 'callback_requested')
+      AND COALESCE(
+        NULLIF(lo.appointment_datetime, ''),
+        NULLIF(lo.reschedule_datetime, ''),
+        NULLIF(lo.followup_date, ''),
+        NULLIF(lo.follow_up_date, '')
+      ) IS NOT NULL
+  `).all() as PendingOutcome[];
+
+  const now = Date.now();
+  const in24h = now + 24 * 60 * 60 * 1000;
+  const twelveHoursAgoIso = new Date(now - 12 * 60 * 60 * 1000).toISOString();
+
+  const existingReminderStmt = sqlite.prepare(`
+    SELECT sent_at FROM reminder_log
+    WHERE outcome_id = ? AND reminder_type = 'email'
+    ORDER BY sent_at DESC LIMIT 1
+  `);
+
+  return rows.filter(r => {
+    if (!r.clr_reminder_enabled) return false;
+    if (!r.clr_email) return false;
+    const t = Date.parse(r.scheduled_date);
+    if (!Number.isFinite(t)) return false;
+    if (t <= now || t > in24h) return false; // must be in the future, within 24h
+    const existing = existingReminderStmt.get(r.outcome_id) as any;
+    if (existing && existing.sent_at > twelveHoursAgoIso) return false;
+    return true;
+  });
+}
+
+function buildEmail(o: PendingOutcome): { subject: string; html: string } {
+  const label = o.outcome_type === "appointment" ? "Appointment" : "Callback";
+  const actionNoun = o.outcome_type === "appointment" ? "appointment" : "callback";
+  const borrower = o.borrower_name?.trim() || "Unknown";
+  const when = fmtDateTime(o.scheduled_date);
+  const subject = `Reminder: ${label} with ${borrower} — ${when}`;
+  const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c] || c));
+  const notesRow = o.notes?.trim()
+    ? `<p style="margin:6px 0"><strong>Notes:</strong> ${esc(o.notes.trim())}</p>`
+    : "";
+  const html = `<!doctype html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;color:#1e293b;line-height:1.55">
+  <p>Hi ${esc(o.clr_name)},</p>
+  <p>You have an upcoming ${actionNoun} scheduled:</p>
+  <div style="border-left:3px solid #1A2B4A;padding:8px 14px;background:#f8fafc;margin:12px 0">
+    <p style="margin:6px 0"><strong>Borrower:</strong> ${esc(borrower)}</p>
+    <p style="margin:6px 0"><strong>LO:</strong> ${esc(o.lo_name || "Unknown")}</p>
+    <p style="margin:6px 0"><strong>Scheduled:</strong> ${esc(when)}</p>
+    ${notesRow}
+  </div>
+  <p>Log in to CLR Connection Center to complete or reschedule.</p>
+  <p style="margin-top:18px">
+    <a href="https://www.wlc.it.com" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Login</a>
+  </p>
+  <p style="color:#64748b;font-size:12px;margin-top:28px">
+    You're receiving this because reminder emails are enabled on your account. Disable them in Settings → Profile.
+  </p>
+</body></html>`;
+  return { subject, html };
+}
+
+/**
+ * Check all upcoming appointments/callbacks and send reminder emails where due.
+ * Respects org-level `reminders_enabled` and per-user `reminder_email_enabled`.
+ */
+export async function runRemindersTick(): Promise<{ sent: number; skipped: number; errors: number }> {
+  const sqlite = getRawSqlite();
+  const stats = { sent: 0, skipped: 0, errors: 0 };
+
+  let orgEnabled = 1;
+  try {
+    const row = sqlite.prepare(`SELECT reminders_enabled FROM org_settings WHERE org_id = 1`).get() as any;
+    if (row && row.reminders_enabled === 0) orgEnabled = 0;
+  } catch {}
+  if (!orgEnabled) {
+    console.log("[reminders] org-level reminders disabled; skipping tick");
+    return stats;
+  }
+
+  const pending = findPendingReminders();
+  if (!pending.length) return stats;
+
+  const apiKey = resolveResendKey();
+  const from = resolveFrom();
+  const resend = new Resend(apiKey);
+  const insertLog = sqlite.prepare(`
+    INSERT OR REPLACE INTO reminder_log (outcome_id, user_id, reminder_type, sent_at)
+    VALUES (?, ?, 'email', datetime('now'))
+  `);
+
+  for (const o of pending) {
+    const { subject, html } = buildEmail(o);
+    try {
+      const result = await resend.emails.send({ from, to: [o.clr_email], subject, html });
+      if (result?.error) {
+        stats.errors++;
+        console.error(`[reminders] send failed outcome=${o.outcome_id} to=${o.clr_email}:`, result.error);
+        continue;
+      }
+      insertLog.run(o.outcome_id, o.assistant_id);
+      stats.sent++;
+      console.log(`[reminders] sent outcome=${o.outcome_id} to=${o.clr_email} id=${result?.data?.id}`);
+    } catch (e: any) {
+      stats.errors++;
+      console.error(`[reminders] exception outcome=${o.outcome_id}:`, e?.message ?? e);
+    }
+  }
+  return stats;
+}
