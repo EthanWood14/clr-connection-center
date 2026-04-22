@@ -1,320 +1,144 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Search } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { BookOpen, Search, Plus, Pencil, Trash2 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
-import { useAuth } from "@/lib/auth";
 
-type Category = "Role" | "Loan Type" | "Program" | "Process" | "Financial";
-
-type Term = {
+type GlossaryTerm = {
+  id: number;
+  org_id: number;
   term: string;
-  abbr?: string;
-  category: Category;
   definition: string;
+  category: string | null;
 };
 
-const TERMS: Term[] = [
-  // Roles
-  {
-    term: "CLR",
-    abbr: "Client Lending Representative",
-    category: "Role",
-    definition:
-      "The team member responsible for calling leads, qualifying prospects, and routing them to the appropriate Loan Officer. CLRs are the first point of contact for potential borrowers.",
-  },
-  {
-    term: "LO",
-    abbr: "Loan Officer",
-    category: "Role",
-    definition:
-      "Licensed mortgage professional who advises borrowers, structures loan products, and takes the application after a CLR transfer.",
-  },
-  {
-    term: "Manager",
-    category: "Role",
-    definition:
-      "A supervisor or team lead who receives report emails and oversees CLR performance.",
-  },
+const UNCATEGORIZED = "Uncategorized";
+const NEW_CATEGORY_SENTINEL = "__new__";
 
-  // Loan Types
-  {
-    term: "Conventional",
-    category: "Loan Type",
-    definition:
-      "A standard mortgage loan not insured or guaranteed by the federal government. Typically requires a minimum 3–5% down payment and good credit. Conforming loans must meet Fannie Mae/Freddie Mac limits.",
-  },
-  {
-    term: "FHA",
-    abbr: "Federal Housing Administration",
-    category: "Loan Type",
-    definition:
-      "A government-backed loan with lower credit and down payment requirements (as low as 3.5%). Popular with first-time homebuyers.",
-  },
-  {
-    term: "VA",
-    abbr: "Veterans Affairs",
-    category: "Loan Type",
-    definition:
-      "A government-backed loan available to eligible military veterans, active-duty service members, and surviving spouses. Often requires no down payment and no PMI.",
-  },
-  {
-    term: "Jumbo",
-    category: "Loan Type",
-    definition:
-      "A loan that exceeds the conforming loan limits set by the FHFA (typically above $766,550 in most areas). Requires stronger credit and larger down payments.",
-  },
-  {
-    term: "Non-QM",
-    abbr: "Non-Qualified Mortgage",
-    category: "Loan Type",
-    definition:
-      "Loans that don't meet standard qualified mortgage guidelines. Used for self-employed borrowers, investors, or those with unique income situations.",
-  },
-  {
-    term: "HELOC",
-    abbr: "Home Equity Line of Credit",
-    category: "Loan Type",
-    definition:
-      "A revolving line of credit secured by the borrower's home equity. Functions like a credit card with a draw period and repayment period.",
-  },
+function categoryColor(cat: string): string {
+  // Deterministic color by category hash — keeps new categories visually stable.
+  const palette = [
+    "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200",
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+    "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200",
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+    "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+    "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-200",
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
+    "bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-200",
+  ];
+  let h = 0;
+  for (let i = 0; i < cat.length; i++) h = ((h << 5) - h + cat.charCodeAt(i)) | 0;
+  return palette[Math.abs(h) % palette.length];
+}
 
-  // Programs
-  {
-    term: "DPA",
-    abbr: "Down Payment Assistance",
-    category: "Program",
-    definition:
-      "Programs that help borrowers cover their down payment or closing costs, often through grants or second loans. Varies by state and county.",
-  },
-  {
-    term: "CalHFA",
-    abbr: "California Housing Finance Agency",
-    category: "Program",
-    definition:
-      "California's state housing finance agency offering down payment assistance and below-market interest rate programs for first-time homebuyers in California.",
-  },
-
-  // Process
-  {
-    term: "Transfer",
-    category: "Process",
-    definition:
-      "When a CLR connects a qualified prospect to an LO, either live (Direct Transfer) or scheduled (Appointment Transfer).",
-  },
-  {
-    term: "Direct Transfer",
-    category: "Process",
-    definition:
-      "A live handoff where the CLR connects the prospect to an LO in real time during the call.",
-  },
-  {
-    term: "Fell Through",
-    category: "Process",
-    definition:
-      "A call or lead that did not result in a transfer or appointment; the prospect was not qualified or declined to move forward.",
-  },
-  {
-    term: "Future Contact",
-    category: "Process",
-    definition:
-      "A lead who is not ready now but has expressed interest in being contacted at a later date.",
-  },
-  {
-    term: "Appointment / Callback",
-    category: "Process",
-    definition:
-      "A scheduled time for an LO or CLR to follow up with a prospect who couldn't connect immediately.",
-  },
-  {
-    term: "NMLS",
-    abbr: "Nationwide Multistate Licensing System",
-    category: "Process",
-    definition:
-      "The licensing system for mortgage professionals. Each LO has a unique NMLS ID that must be current and compliant.",
-  },
-  {
-    term: "Pipeline",
-    category: "Process",
-    definition:
-      "The collection of active leads and prospects a CLR or LO is currently working.",
-  },
-  {
-    term: "Conversion Rate",
-    category: "Process",
-    definition:
-      "The percentage of calls or contacts that result in a transfer to an LO.",
-  },
-  {
-    term: "Lead",
-    category: "Process",
-    definition:
-      "A potential borrower who has expressed interest in mortgage services, typically obtained through marketing or lead purchase platforms.",
-  },
-  {
-    term: "Prospect",
-    category: "Process",
-    definition:
-      "A lead who has been contacted and is being actively qualified by a CLR.",
-  },
-  {
-    term: "Bonzo",
-    category: "Process",
-    definition:
-      "The CRM and communication platform used by the team to manage leads and log interactions. CLRs must use proper Bonzo notation when recording transfers.",
-  },
-
-  // Financial
-  {
-    term: "PMI",
-    abbr: "Private Mortgage Insurance",
-    category: "Financial",
-    definition:
-      "Insurance required on conventional loans when the down payment is less than 20%. Protects the lender if the borrower defaults.",
-  },
-  {
-    term: "DTI",
-    abbr: "Debt-to-Income Ratio",
-    category: "Financial",
-    definition:
-      "A borrower's monthly debt payments divided by gross monthly income. A key factor lenders use to qualify borrowers.",
-  },
-  {
-    term: "LTV",
-    abbr: "Loan-to-Value Ratio",
-    category: "Financial",
-    definition:
-      "The loan amount divided by the appraised property value. Higher LTV = more risk for the lender.",
-  },
-  {
-    term: "APR",
-    abbr: "Annual Percentage Rate",
-    category: "Financial",
-    definition:
-      "The true yearly cost of a loan, including interest rate and fees. More comprehensive than the interest rate alone.",
-  },
-  {
-    term: "Rate Lock",
-    category: "Financial",
-    definition:
-      "A lender's commitment to hold a specific interest rate for a set period while the loan is processed.",
-  },
-  {
-    term: "Closing Costs",
-    category: "Financial",
-    definition:
-      "Fees and expenses (beyond the purchase price) due at closing, typically 2–5% of the loan amount.",
-  },
-  {
-    term: "Pre-Approval",
-    category: "Financial",
-    definition:
-      "A lender's conditional commitment to loan a borrower a specific amount, based on verified financial information.",
-  },
-  {
-    term: "Escrow",
-    category: "Financial",
-    definition:
-      "A neutral third party that holds funds during a transaction. Also refers to the account that holds property tax and insurance payments collected monthly.",
-  },
-];
-
-const CATEGORY_STYLES: Record<Category, string> = {
-  "Role": "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200",
-  "Loan Type": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  "Program": "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200",
-  "Process": "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-  "Financial": "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
-};
-
-const CATEGORIES: { key: Category; label: string }[] = [
-  { key: "Role", label: "Roles" },
-  { key: "Loan Type", label: "Loan Types" },
-  { key: "Program", label: "Programs" },
-  { key: "Process", label: "Process Terms" },
-  { key: "Financial", label: "Financial Terms" },
-];
-
-const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-
-function slugCategory(c: Category) {
-  return c.toLowerCase().replace(/\s+/g, "-");
+function slug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
 export default function GlossaryPage() {
-  const [query, setQuery] = useState("");
   const { user } = useAuth();
+  const { toast } = useToast();
+  const isAdmin = user?.role === "admin";
 
-  useEffect(() => {
-    document.title = "Glossary · WCLCC";
-  }, []);
+  const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<GlossaryTerm | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState<GlossaryTerm | null>(null);
 
+  useEffect(() => { document.title = "Glossary · WCLCC"; }, []);
   useEffect(() => { markStep(user?.id, "read_glossary"); }, [user?.id]);
+
+  const { data: terms = [], isLoading } = useQuery<GlossaryTerm[]>({
+    queryKey: ["/api/glossary"],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: { term: string; definition: string; category: string | null }) =>
+      apiRequest("POST", "/api/glossary", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/glossary"] });
+      toast({ title: "Term added" });
+      setAdding(false);
+    },
+    onError: (e: any) => toast({ title: "Failed to add term", description: e?.message, variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: { term: string; definition: string; category: string | null } }) =>
+      apiRequest("PATCH", `/api/glossary/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/glossary"] });
+      toast({ title: "Term updated" });
+      setEditing(null);
+    },
+    onError: (e: any) => toast({ title: "Failed to update term", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/glossary/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/glossary"] });
+      toast({ title: "Term deleted" });
+      setDeleting(null);
+    },
+    onError: (e: any) => toast({ title: "Failed to delete term", description: e?.message, variant: "destructive" }),
+  });
 
   const q = query.trim().toLowerCase();
   const isSearching = q.length > 0;
 
-  const sortedTerms = useMemo(
-    () => [...TERMS].sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: "base" })),
-    []
-  );
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of terms) set.add((t.category || UNCATEGORIZED).trim() || UNCATEGORIZED);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [terms]);
 
   const filtered = useMemo(() => {
-    if (!isSearching) return sortedTerms;
-    return sortedTerms.filter((t) =>
+    if (!isSearching) return terms;
+    return terms.filter(t =>
       t.term.toLowerCase().includes(q) ||
-      (t.abbr?.toLowerCase().includes(q) ?? false) ||
       t.definition.toLowerCase().includes(q) ||
-      t.category.toLowerCase().includes(q)
+      (t.category ?? "").toLowerCase().includes(q)
     );
-  }, [sortedTerms, q, isSearching]);
+  }, [terms, q, isSearching]);
 
-  const byCategory = useMemo(() => {
-    const map: Record<Category, Term[]> = { "Role": [], "Loan Type": [], "Program": [], "Process": [], "Financial": [] };
-    for (const t of sortedTerms) map[t.category].push(t);
+  const grouped = useMemo(() => {
+    const map: Record<string, GlossaryTerm[]> = {};
+    for (const t of filtered) {
+      const cat = (t.category || UNCATEGORIZED).trim() || UNCATEGORIZED;
+      (map[cat] ||= []).push(t);
+    }
+    for (const cat of Object.keys(map)) {
+      map[cat].sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: "base" }));
+    }
     return map;
-  }, [sortedTerms]);
+  }, [filtered]);
 
-  const availableLetters = useMemo(() => {
-    const set = new Set<string>();
-    for (const t of sortedTerms) set.add(t.term[0].toUpperCase());
-    return set;
-  }, [sortedTerms]);
+  const groupedCategories = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
 
-  function scrollTo(id: string) {
-    const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  function TermCard({ t }: { t: Term }) {
-    return (
-      <Card
-        id={`term-${t.term.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
-        className="hover:shadow-md transition-shadow"
-        data-testid={`glossary-term-${t.term}`}
-      >
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
-            <h2 className="text-lg font-bold leading-tight text-[#1A2B4A] dark:text-blue-100">
-              {t.term}
-              {t.abbr && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({t.abbr})
-                </span>
-              )}
-            </h2>
-            <Badge
-              variant="secondary"
-              className={`${CATEGORY_STYLES[t.category]} border-0 text-[11px] font-medium shrink-0`}
-            >
-              {t.category}
-            </Badge>
-          </div>
-          <p className="text-sm text-muted-foreground leading-relaxed">{t.definition}</p>
-        </CardContent>
-      </Card>
-    );
+  function toggleCategory(cat: string) {
+    setCollapsed(prev => ({ ...prev, [cat]: !prev[cat] }));
   }
 
   return (
@@ -323,17 +147,22 @@ export default function GlossaryPage() {
         Definitions for mortgage and CLR industry terms.
       </PageTooltip>
 
-      <div className="flex items-center gap-3 mb-1">
-        <BookOpen className="w-6 h-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 text-[#1A2B4A] dark:text-blue-100">
-          Glossary
-          <HelpIcon title="Glossary">
-            Definitions for mortgage and CLR industry terms.
-          </HelpIcon>
-        </h1>
+      <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
+        <div className="flex items-center gap-3">
+          <BookOpen className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 text-[#1A2B4A] dark:text-blue-100">
+            Glossary
+            <HelpIcon title="Glossary">Definitions for mortgage and CLR industry terms.</HelpIcon>
+          </h1>
+        </div>
+        {isAdmin && (
+          <Button size="sm" onClick={() => setAdding(true)} className="gap-1.5" data-testid="glossary-add-term">
+            <Plus className="w-4 h-4" /> Add Term
+          </Button>
+        )}
       </div>
       <p className="text-sm text-muted-foreground mb-5">
-        Mortgage and CLR Connection Center terminology. Search, jump by letter, or pick a category.
+        Mortgage and CLR Connection Center terminology. {isAdmin ? "Click the pencil or trash icons to manage terms." : ""}
       </p>
 
       {/* Search */}
@@ -341,7 +170,7 @@ export default function GlossaryPage() {
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
-          placeholder="Search terms, abbreviations, or definitions…"
+          placeholder="Search terms, definitions, or category…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="pl-9"
@@ -349,110 +178,249 @@ export default function GlossaryPage() {
         />
       </div>
 
-      {/* Alphabet jump (hidden while searching) */}
-      {!isSearching && (
-        <div className="flex flex-wrap gap-1 mb-5">
-          {ALPHABET.map(letter => {
-            const has = availableLetters.has(letter);
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+        </div>
+      ) : terms.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-sm text-muted-foreground text-center">
+            No glossary terms yet.{isAdmin && " Click \"Add Term\" to create the first one."}
+          </CardContent>
+        </Card>
+      ) : filtered.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-sm text-muted-foreground text-center">
+            No terms match "{query}".
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          {groupedCategories.map(cat => {
+            const isCollapsed = !!collapsed[cat];
+            const list = grouped[cat];
             return (
-              <button
-                key={letter}
-                type="button"
-                disabled={!has}
-                onClick={() => {
-                  const firstTerm = sortedTerms.find(t => t.term[0].toUpperCase() === letter);
-                  if (firstTerm) scrollTo(`term-${firstTerm.term.toLowerCase().replace(/[^a-z0-9]/g, "-")}`);
-                }}
-                className={`w-7 h-7 text-xs font-semibold rounded transition-colors ${
-                  has
-                    ? "bg-muted hover:bg-primary hover:text-primary-foreground text-foreground cursor-pointer"
-                    : "bg-muted/40 text-muted-foreground/40 cursor-not-allowed"
-                }`}
-                aria-label={`Jump to letter ${letter}`}
-              >
-                {letter}
-              </button>
+              <section key={cat} id={`cat-${slug(cat)}`} className="scroll-mt-4">
+                <button
+                  type="button"
+                  onClick={() => toggleCategory(cat)}
+                  className="w-full flex items-center gap-2 mb-3 pb-2 border-b hover:bg-muted/30 rounded px-1 -mx-1 transition-colors"
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className={`inline-block w-4 text-center text-muted-foreground text-xs`}>{isCollapsed ? "▶" : "▼"}</span>
+                  <h2 className="text-lg font-bold text-[#1A2B4A] dark:text-blue-100">{cat}</h2>
+                  <Badge variant="secondary" className={`${categoryColor(cat)} border-0 text-[10px]`}>
+                    {list.length}
+                  </Badge>
+                </button>
+                {!isCollapsed && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {list.map(t => (
+                      <TermCard
+                        key={t.id}
+                        term={t}
+                        isAdmin={isAdmin}
+                        onEdit={() => setEditing(t)}
+                        onDelete={() => setDeleting(t)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
             );
           })}
         </div>
       )}
 
-      {/* Mobile category filter row (horizontal scroll) */}
-      {!isSearching && (
-        <div className="lg:hidden overflow-x-auto mb-4 -mx-4 px-4">
-          <div className="flex gap-2 min-w-min">
-            {CATEGORIES.map(c => (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => scrollTo(`cat-${slugCategory(c.key)}`)}
-                className={`whitespace-nowrap px-3 py-1.5 text-xs font-semibold rounded-full border ${CATEGORY_STYLES[c.key]} hover:opacity-80 transition-opacity`}
-              >
-                {c.label} ({byCategory[c.key].length})
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {isSearching ? (
-        // Search results: flat list
-        filtered.length === 0 ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-muted-foreground text-center">
-              No terms match "{query}".
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {filtered.map(t => <TermCard key={t.term} t={t} />)}
-          </div>
-        )
-      ) : (
-        // Default view: sidebar + grouped categories
-        <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6">
-          {/* Desktop sidebar */}
-          <aside className="hidden lg:block sticky top-4 self-start">
-            <div className="space-y-1">
-              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">Categories</p>
-              {CATEGORIES.map(c => (
-                <button
-                  key={c.key}
-                  type="button"
-                  onClick={() => scrollTo(`cat-${slugCategory(c.key)}`)}
-                  className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-muted transition-colors flex items-center justify-between group"
-                >
-                  <span className="font-medium">{c.label}</span>
-                  <span className="text-xs text-muted-foreground group-hover:text-foreground">{byCategory[c.key].length}</span>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          {/* Main content — grouped by category */}
-          <div className="space-y-8">
-            {CATEGORIES.map(c => (
-              byCategory[c.key].length > 0 && (
-                <section key={c.key} id={`cat-${slugCategory(c.key)}`} className="scroll-mt-4">
-                  <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                    <h2 className="text-lg font-bold text-[#1A2B4A] dark:text-blue-100">{c.label}</h2>
-                    <Badge variant="secondary" className={`${CATEGORY_STYLES[c.key]} border-0 text-[10px]`}>
-                      {byCategory[c.key].length}
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {byCategory[c.key].map(t => <TermCard key={t.term} t={t} />)}
-                  </div>
-                </section>
-              )
-            ))}
-          </div>
-        </div>
-      )}
-
       <p className="text-xs text-muted-foreground text-center mt-8">
-        {isSearching ? filtered.length : TERMS.length} of {TERMS.length} terms
+        {filtered.length} of {terms.length} terms
       </p>
+
+      {/* Add/Edit dialog */}
+      {(adding || editing) && (
+        <TermDialog
+          initial={editing}
+          categories={categories}
+          onClose={() => { setAdding(false); setEditing(null); }}
+          onSave={(data) => {
+            if (editing) updateMutation.mutate({ id: editing.id, data });
+            else createMutation.mutate(data);
+          }}
+          saving={createMutation.isPending || updateMutation.isPending}
+        />
+      )}
+
+      {/* Delete confirm */}
+      <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{deleting?.term}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the term from the glossary for everyone in your organization. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleting && deleteMutation.mutate(deleting.id)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+function TermCard({
+  term, isAdmin, onEdit, onDelete,
+}: {
+  term: GlossaryTerm;
+  isAdmin: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const cat = (term.category || UNCATEGORIZED).trim() || UNCATEGORIZED;
+  return (
+    <Card
+      id={`term-${slug(term.term)}`}
+      className="hover:shadow-md transition-shadow"
+      data-testid={`glossary-term-${term.term}`}
+    >
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+          <h2 className="text-lg font-bold leading-tight text-[#1A2B4A] dark:text-blue-100">
+            {term.term}
+          </h2>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Badge variant="secondary" className={`${categoryColor(cat)} border-0 text-[11px] font-medium`}>
+              {cat}
+            </Badge>
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={`Edit ${term.term}`}
+                  data-testid={`glossary-edit-${term.term}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                  aria-label={`Delete ${term.term}`}
+                  data-testid={`glossary-delete-${term.term}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+          {term.definition}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TermDialog({
+  initial, categories, onClose, onSave, saving,
+}: {
+  initial: GlossaryTerm | null;
+  categories: string[];
+  onClose: () => void;
+  onSave: (data: { term: string; definition: string; category: string | null }) => void;
+  saving: boolean;
+}) {
+  const [term, setTerm] = useState(initial?.term ?? "");
+  const [definition, setDefinition] = useState(initial?.definition ?? "");
+  const initialCat = initial?.category ?? "";
+  const [categorySelect, setCategorySelect] = useState<string>(
+    initialCat && categories.includes(initialCat) ? initialCat
+    : initialCat ? NEW_CATEGORY_SENTINEL
+    : (categories[0] ?? NEW_CATEGORY_SENTINEL)
+  );
+  const [newCategory, setNewCategory] = useState(
+    initialCat && !categories.includes(initialCat) ? initialCat : ""
+  );
+
+  function submit() {
+    const t = term.trim();
+    const d = definition.trim();
+    if (!t || !d) return;
+    const cat = categorySelect === NEW_CATEGORY_SENTINEL
+      ? (newCategory.trim() || null)
+      : categorySelect || null;
+    onSave({ term: t, definition: d, category: cat });
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{initial ? "Edit Term" : "Add Term"}</DialogTitle>
+          <DialogDescription>
+            {initial ? "Update the term, definition, or category." : "Add a new glossary term for your organization."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="gloss-term">Term</Label>
+            <Input
+              id="gloss-term"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="e.g. APR"
+              autoFocus
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="gloss-def">Definition</Label>
+            <Textarea
+              id="gloss-def"
+              value={definition}
+              onChange={(e) => setDefinition(e.target.value)}
+              placeholder="Clear, practical definition (2–4 sentences)."
+              rows={5}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Category</Label>
+            <Select value={categorySelect} onValueChange={setCategorySelect}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a category" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map(c => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+                <SelectItem value={NEW_CATEGORY_SENTINEL}>+ New category…</SelectItem>
+              </SelectContent>
+            </Select>
+            {categorySelect === NEW_CATEGORY_SENTINEL && (
+              <Input
+                className="mt-2"
+                placeholder="New category name"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+              />
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={submit} disabled={saving || !term.trim() || !definition.trim()}>
+            {saving ? "Saving…" : (initial ? "Save Changes" : "Add Term")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

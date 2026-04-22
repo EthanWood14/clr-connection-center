@@ -3440,6 +3440,55 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // ── Glossary (public read, admin write) ────────────────────────────────────
+  app.get("/api/glossary", requireAuth, (_req: any, res) => {
+    res.json(storageExtra.listGlossaryTerms());
+  });
+
+  app.post("/api/glossary", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    try {
+      const term = storageExtra.createGlossaryTerm({
+        term: req.body?.term,
+        definition: req.body?.definition,
+        category: req.body?.category ?? null,
+      });
+      res.json(term);
+    } catch (e: any) {
+      const msg = String(e?.message ?? "Failed to create term");
+      const status = /UNIQUE/i.test(msg) ? 409 : 400;
+      res.status(status).json({ error: /UNIQUE/i.test(msg) ? "A term with that name already exists." : msg });
+    }
+  });
+
+  app.patch("/api/glossary/:id", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      const term = storageExtra.updateGlossaryTerm(id, {
+        ...(req.body?.term !== undefined ? { term: req.body.term } : {}),
+        ...(req.body?.definition !== undefined ? { definition: req.body.definition } : {}),
+        ...(req.body?.category !== undefined ? { category: req.body.category } : {}),
+      });
+      if (!term) return res.status(404).json({ error: "Term not found" });
+      res.json(term);
+    } catch (e: any) {
+      const msg = String(e?.message ?? "Failed to update term");
+      const status = /UNIQUE/i.test(msg) ? 409 : 400;
+      res.status(status).json({ error: /UNIQUE/i.test(msg) ? "A term with that name already exists." : msg });
+    }
+  });
+
+  app.delete("/api/glossary/:id", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const ok = storageExtra.deleteGlossaryTerm(id);
+    if (!ok) return res.status(404).json({ error: "Term not found" });
+    res.json({ ok: true });
+  });
+
   // ── Scheduled report recipients (per daily/weekly/monthly) ──────────────────
   app.get("/api/report-schedules", requireAuth, (req: any, res) => {
     if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });

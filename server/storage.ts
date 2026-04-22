@@ -3162,3 +3162,58 @@ export function getLastMojoSync() {
 export function getRunningMojoSync() {
   return sqlite.prepare(`SELECT * FROM mojo_sync_log WHERE status='running' ORDER BY started_at DESC LIMIT 1`).get() as any;
 }
+// ── Glossary storage helpers ───────────────────────────────────────────────
+export type GlossaryTerm = {
+  id: number;
+  org_id: number;
+  term: string;
+  definition: string;
+  category: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function listGlossaryTerms(): GlossaryTerm[] {
+  const oid = currentOrgId() ?? 1;
+  return sqlite
+    .prepare(`SELECT * FROM glossary_terms WHERE org_id = ? ORDER BY category COLLATE NOCASE, term COLLATE NOCASE`)
+    .all(oid) as GlossaryTerm[];
+}
+
+export function createGlossaryTerm(data: { term: string; definition: string; category?: string | null }): GlossaryTerm {
+  const oid = currentOrgId() ?? 1;
+  const term = String(data.term || "").trim();
+  const definition = String(data.definition || "").trim();
+  const category = data.category ? String(data.category).trim() : null;
+  if (!term) throw new Error("term is required");
+  if (!definition) throw new Error("definition is required");
+  const info = sqlite
+    .prepare(`INSERT INTO glossary_terms (org_id, term, definition, category) VALUES (?, ?, ?, ?)`)
+    .run(oid, term, definition, category);
+  return sqlite.prepare(`SELECT * FROM glossary_terms WHERE id = ?`).get(info.lastInsertRowid) as GlossaryTerm;
+}
+
+export function updateGlossaryTerm(id: number, data: Partial<{ term: string; definition: string; category: string | null }>): GlossaryTerm | null {
+  const oid = currentOrgId() ?? 1;
+  const existing = sqlite.prepare(`SELECT * FROM glossary_terms WHERE id = ? AND org_id = ?`).get(id, oid) as GlossaryTerm | undefined;
+  if (!existing) return null;
+  const fields: string[] = [];
+  const vals: any[] = [];
+  if (data.term !== undefined) { fields.push("term = ?"); vals.push(String(data.term).trim()); }
+  if (data.definition !== undefined) { fields.push("definition = ?"); vals.push(String(data.definition).trim()); }
+  if (data.category !== undefined) {
+    fields.push("category = ?");
+    vals.push(data.category === null ? null : String(data.category).trim() || null);
+  }
+  if (!fields.length) return existing;
+  fields.push("updated_at = datetime('now')");
+  vals.push(id, oid);
+  sqlite.prepare(`UPDATE glossary_terms SET ${fields.join(", ")} WHERE id = ? AND org_id = ?`).run(...vals);
+  return sqlite.prepare(`SELECT * FROM glossary_terms WHERE id = ?`).get(id) as GlossaryTerm;
+}
+
+export function deleteGlossaryTerm(id: number): boolean {
+  const oid = currentOrgId() ?? 1;
+  const info = sqlite.prepare(`DELETE FROM glossary_terms WHERE id = ? AND org_id = ?`).run(id, oid);
+  return info.changes > 0;
+}
