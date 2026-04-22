@@ -1534,10 +1534,11 @@ export function createScriptResponse(data: { nodeId: number; label: string; colo
   );
   return sqlite.prepare(`SELECT * FROM script_responses WHERE id=?`).get(r.lastInsertRowid);
 }
-export function updateScriptResponse(id: number, data: { label?: string; color?: string; nextNodeId?: number | null }): any {
+export function updateScriptResponse(id: number, data: { label?: string; color?: string; nextNodeId?: number | null; responseOrder?: number }): any {
   if (data.label !== undefined) sqlite.prepare(`UPDATE script_responses SET label=? WHERE id=?`).run(data.label, id);
   if (data.color !== undefined) sqlite.prepare(`UPDATE script_responses SET color=? WHERE id=?`).run(data.color, id);
   if (data.nextNodeId !== undefined) sqlite.prepare(`UPDATE script_responses SET next_node_id=? WHERE id=?`).run(data.nextNodeId, id);
+  if (data.responseOrder !== undefined) sqlite.prepare(`UPDATE script_responses SET response_order=? WHERE id=?`).run(data.responseOrder, id);
   return sqlite.prepare(`SELECT * FROM script_responses WHERE id=?`).get(id);
 }
 export function deleteScriptResponse(id: number): void {

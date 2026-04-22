@@ -17,8 +17,12 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
+  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
@@ -203,106 +207,517 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   );
 }
 
+// ─── Node type inference & color ──────────────────────────────────────────────
+type NodeKind = "opening" | "objection" | "transfer" | "voicemail" | "dnc" | "default";
+
+function inferNodeKind(text: string): NodeKind {
+  const t = (text || "").toLowerCase();
+  if (/\b(open|introdu|hi|hello|this is|calling from)/.test(t) && t.length < 220) return "opening";
+  if (/objection|not interested|busy|no thank|don.?t want|remove me/.test(t)) return "objection";
+  if (/transfer|warm transfer|hand off|loan officer/.test(t)) return "transfer";
+  if (/voicemail|leave.*message|vm\b/.test(t)) return "voicemail";
+  if (/\bdnc\b|do not call|remove.*list/.test(t)) return "dnc";
+  return "default";
+}
+
+const NODE_KIND_STYLES: Record<NodeKind, { bar: string; badge: string; label: string }> = {
+  opening:   { bar: "bg-blue-900",     badge: "border-blue-900 text-blue-900 dark:text-blue-300 dark:border-blue-300", label: "Opening" },
+  objection: { bar: "bg-rose-500",     badge: "border-rose-500 text-rose-600 dark:text-rose-400", label: "Objection" },
+  transfer:  { bar: "bg-emerald-500",  badge: "border-emerald-500 text-emerald-600 dark:text-emerald-400", label: "Transfer" },
+  voicemail: { bar: "bg-zinc-400",     badge: "border-zinc-400 text-zinc-600 dark:text-zinc-400", label: "Voicemail" },
+  dnc:       { bar: "bg-red-900",      badge: "border-red-900 text-red-900 dark:text-red-300 dark:border-red-300", label: "DNC" },
+  default:   { bar: "bg-primary/40",   badge: "border-border text-muted-foreground", label: "Node" },
+};
+
+const RESPONSE_COLORS = [
+  { value: "green",  label: "Green" },
+  { value: "red",    label: "Red" },
+  { value: "yellow", label: "Yellow" },
+  { value: "blue",   label: "Blue" },
+  { value: "gray",   label: "Gray" },
+  { value: "default",label: "Default" },
+];
+
+function responseBadgeClass(color: string) {
+  switch (color) {
+    case "green":  return "border-emerald-400 text-emerald-700 dark:text-emerald-400";
+    case "red":    return "border-rose-400 text-rose-700 dark:text-rose-400";
+    case "yellow": return "border-amber-400 text-amber-700 dark:text-amber-400";
+    case "blue":   return "border-blue-400 text-blue-700 dark:text-blue-400";
+    case "gray":   return "border-zinc-400 text-zinc-700 dark:text-zinc-400";
+    default:       return "border-border text-muted-foreground";
+  }
+}
+
+function highlight(text: string, q: string): React.ReactNode {
+  if (!q.trim()) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(needle, i);
+    if (idx === -1) { parts.push(text.slice(i)); break; }
+    if (idx > i) parts.push(text.slice(i, idx));
+    parts.push(<mark key={idx} className="bg-yellow-200 dark:bg-yellow-900/60 rounded px-0.5">{text.slice(idx, idx + needle.length)}</mark>);
+    i = idx + needle.length;
+  }
+  return parts;
+}
+
+// ─── Inline Node Editor ───────────────────────────────────────────────────────
+function InlineNodeBlock({
+  node, responses, allNodes, depth, scriptId, expanded, onToggle, searchQuery, childNodesByParent, autoEdit,
+  onEditStarted, onChildExpand, expandedIds,
+}: {
+  node: any;
+  responses: any[];
+  allNodes: any[];
+  depth: number;
+  scriptId: number;
+  expanded: boolean;
+  onToggle: () => void;
+  searchQuery: string;
+  childNodesByParent: Map<number | null, any[]>;
+  autoEdit: boolean;
+  onEditStarted: () => void;
+  onChildExpand: (id: number) => void;
+  expandedIds: Set<number>;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(node.text);
+  const [hint, setHint] = useState(node.hint ?? "");
+
+  useEffect(() => { setText(node.text); setHint(node.hint ?? ""); }, [node.id, node.text, node.hint]);
+
+  useEffect(() => {
+    if (autoEdit) { setEditing(true); onEditStarted(); }
+  }, [autoEdit, onEditStarted]);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
+    queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/root`] });
+  };
+
+  const updateNodeMut = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/script-nodes/${node.id}`, { text, hint }),
+    onSuccess: () => { invalidate(); setEditing(false); toast({ title: "Node updated" }); },
+  });
+
+  const addResponseMut = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/script-nodes/${node.id}/responses`, {
+      label: "New response", color: "default", nextNodeId: null,
+      responseOrder: (responses[responses.length - 1]?.response_order ?? -1) + 1,
+    }),
+    onSuccess: () => invalidate(),
+  });
+
+  const createLinkedNodeMut = useMutation({
+    mutationFn: async (responseId: number) => {
+      const newNode = await apiRequest("POST", `/api/call-scripts/${scriptId}/nodes`, {
+        text: "New script text…", hint: "", parentNodeId: node.id, parentResponseId: responseId,
+        nodeOrder: (allNodes[allNodes.length - 1]?.node_order ?? -1) + 1,
+      });
+      await apiRequest("PATCH", `/api/script-responses/${responseId}`, { nextNodeId: (newNode as any).id });
+      return newNode as any;
+    },
+    onSuccess: (newNode) => {
+      invalidate();
+      onChildExpand(newNode.id);
+      toast({ title: "Branch created", description: "Edit the new node below." });
+    },
+  });
+
+  const deleteNodeMut = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/script-nodes/${node.id}`, undefined),
+    onSuccess: () => { invalidate(); toast({ title: "Node deleted" }); },
+  });
+
+  const kind = inferNodeKind(node.text);
+  const style = NODE_KIND_STYLES[kind];
+  const childNodes = childNodesByParent.get(node.id) ?? [];
+  const otherNodes = allNodes.filter(n => n.id !== node.id);
+
+  const hasSearchHit = !!searchQuery && (
+    node.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (node.hint ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    responses.some((r: any) => r.label.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  return (
+    <div className="relative" style={{ marginLeft: depth === 0 ? 0 : 12 }}>
+      {depth > 0 && (
+        <div aria-hidden className="absolute left-[-12px] top-0 bottom-0 w-px bg-border" />
+      )}
+      <Card className={`border border-border overflow-hidden ${hasSearchHit ? "ring-2 ring-yellow-300 dark:ring-yellow-700" : ""}`}>
+        <div className="flex">
+          <div className={`w-1.5 shrink-0 ${style.bar}`} aria-hidden />
+          <CardContent className="p-3 flex-1 space-y-2">
+            <div className="flex items-start gap-2">
+              <button onClick={onToggle} className="mt-0.5 shrink-0 rounded hover:bg-muted p-0.5" aria-label={expanded ? "Collapse" : "Expand"}>
+                {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${style.badge}`}>{style.label}</Badge>
+                  {node.parent_node_id === null && <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-primary text-primary">Root</Badge>}
+                  <span className="text-[10px] text-muted-foreground">#{node.id}</span>
+                </div>
+                {!editing ? (
+                  <p className="text-sm leading-snug mt-1 whitespace-pre-line">
+                    {highlight(node.text, searchQuery)}
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <Textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="What do you say at this step?" />
+                    <Input value={hint} onChange={e => setHint(e.target.value)} placeholder="Coaching hint (optional)" />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => updateNodeMut.mutate()} disabled={updateNodeMut.isPending || !text.trim()}>
+                        {updateNodeMut.isPending ? "Saving…" : "Save"}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => { setEditing(false); setText(node.text); setHint(node.hint ?? ""); }}>Cancel</Button>
+                    </div>
+                  </div>
+                )}
+                {!editing && node.hint && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 italic mt-1">💡 {highlight(node.hint, searchQuery)}</p>
+                )}
+              </div>
+              {!editing && (
+                <div className="flex gap-1 shrink-0">
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditing(true)} title="Edit">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  {node.parent_node_id !== null && (
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => { if (confirm("Delete this node and its descendants?")) deleteNodeMut.mutate(); }} title="Delete">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {expanded && (
+              <div className="pl-6 space-y-1.5 pt-1">
+                {responses.map((r: any, idx: number) => (
+                  <ResponseRow key={r.id} response={r} index={idx} total={responses.length}
+                    siblings={responses}
+                    otherNodes={otherNodes} scriptId={scriptId} searchQuery={searchQuery}
+                    onCreateLinked={() => createLinkedNodeMut.mutate(r.id)}
+                    creatingLinked={createLinkedNodeMut.isPending}
+                  />
+                ))}
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => addResponseMut.mutate()} disabled={addResponseMut.isPending}>
+                  <Plus className="w-3 h-3" /> {addResponseMut.isPending ? "Adding…" : "Add Response"}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </div>
+      </Card>
+      {expanded && childNodes.length > 0 && (
+        <div className="pl-4 mt-2 space-y-2">
+          {childNodes.map((child: any) => (
+            <InlineNodeBlock
+              key={child.id}
+              node={child}
+              responses={(child._responses as any[]) ?? []}
+              allNodes={allNodes}
+              depth={depth + 1}
+              scriptId={scriptId}
+              expanded={expandedIds.has(child.id)}
+              onToggle={() => onChildExpand(child.id)}
+              searchQuery={searchQuery}
+              childNodesByParent={childNodesByParent}
+              autoEdit={false}
+              onEditStarted={() => {}}
+              onChildExpand={onChildExpand}
+              expandedIds={expandedIds}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResponseRow({ response, index, total, siblings, otherNodes, scriptId, searchQuery, onCreateLinked, creatingLinked }: {
+  response: any; index: number; total: number; siblings: any[]; otherNodes: any[]; scriptId: number; searchQuery: string;
+  onCreateLinked: () => void; creatingLinked: boolean;
+}) {
+  const { toast } = useToast();
+  const [label, setLabel] = useState(response.label);
+  const [color, setColor] = useState(response.color ?? "default");
+  const [nextId, setNextId] = useState<string>(response.next_node_id == null ? "none" : String(response.next_node_id));
+  const [edit, setEdit] = useState(false);
+
+  useEffect(() => {
+    setLabel(response.label); setColor(response.color ?? "default");
+    setNextId(response.next_node_id == null ? "none" : String(response.next_node_id));
+  }, [response.id, response.label, response.color, response.next_node_id]);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
+    queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/root`] });
+  };
+
+  const saveMut = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/script-responses/${response.id}`, {
+      label, color, nextNodeId: nextId === "none" ? null : parseInt(nextId),
+    }),
+    onSuccess: () => { invalidate(); setEdit(false); },
+  });
+
+  const reorderPairMut = useMutation({
+    mutationFn: async (opts: { aId: number; aOrder: number; bId: number; bOrder: number }) => {
+      await apiRequest("PATCH", `/api/script-responses/${opts.aId}`, { responseOrder: opts.aOrder });
+      await apiRequest("PATCH", `/api/script-responses/${opts.bId}`, { responseOrder: opts.bOrder });
+    },
+    onSuccess: () => invalidate(),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/script-responses/${response.id}`, undefined),
+    onSuccess: () => { invalidate(); toast({ title: "Response deleted" }); },
+  });
+
+  const swap = (direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= total) return;
+    const other = siblings[target];
+    reorderPairMut.mutate({
+      aId: response.id, aOrder: other.response_order,
+      bId: other.id, bOrder: response.response_order,
+    });
+  };
+
+  const targetNode = otherNodes.find(n => n.id === response.next_node_id);
+  const targetLabel = response.next_node_id == null ? "— end of script —" : (targetNode ? `→ ${targetNode.text.slice(0, 40)}${targetNode.text.length > 40 ? "…" : ""}` : "→ (unknown)");
+
+  if (!edit) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs group">
+        <CornerDownRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <Badge variant="outline" className={`text-[11px] px-2 py-0 ${responseBadgeClass(response.color)}`}>
+          {highlight(response.label, searchQuery)}
+        </Badge>
+        <span className="text-muted-foreground truncate max-w-[180px]">{targetLabel}</span>
+        <div className="flex gap-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Move up"
+            onClick={() => swap(-1)} disabled={index === 0 || reorderPairMut.isPending}>
+            <ArrowUp className="w-3 h-3" />
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Move down"
+            onClick={() => swap(1)} disabled={index === total - 1 || reorderPairMut.isPending}>
+            <ArrowDown className="w-3 h-3" />
+          </Button>
+          {response.next_node_id == null && (
+            <Button size="sm" variant="ghost" className="h-6 px-1.5 py-0 text-[10px] gap-0.5" title="Create new node and link"
+              onClick={onCreateLinked} disabled={creatingLinked}>
+              <Plus className="w-3 h-3" /> New Node
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Edit" onClick={() => setEdit(true)}>
+            <Pencil className="w-3 h-3" />
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" title="Delete"
+            onClick={() => { if (confirm("Delete this response?")) deleteMut.mutate(); }}>
+            <X className="w-3 h-3" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-start gap-1.5 py-1 pl-4 border-l-2 border-primary/40">
+      <Input value={label} onChange={e => setLabel(e.target.value)} className="h-7 text-xs w-40" placeholder="Response text" />
+      <Select value={color} onValueChange={setColor}>
+        <SelectTrigger className="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+        <SelectContent>{RESPONSE_COLORS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+      </Select>
+      <Select value={nextId} onValueChange={setNextId}>
+        <SelectTrigger className="h-7 text-xs w-52"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">— end of script —</SelectItem>
+          {otherNodes.map(n => (
+            <SelectItem key={n.id} value={String(n.id)}>
+              #{n.id} {n.text.slice(0, 40)}{n.text.length > 40 ? "…" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="flex gap-1">
+        <Button size="sm" className="h-7 text-xs" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !label.trim()}>
+          {saveMut.isPending ? "…" : "Save"}
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEdit(false)}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Node Editor ──────────────────────────────────────────────────────────────
 function NodeEditor({ scriptId, onClose }: { scriptId: number; onClose: () => void }) {
   const { toast } = useToast();
   const { data: tree, isLoading } = useQuery<any>({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
-  const [editNode, setEditNode] = useState<any | null>(null);
-  const [editText, setEditText] = useState("");
-  const [editHint, setEditHint] = useState("");
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [rootsInitialized, setRootsInitialized] = useState(false);
+  const [autoEditId, setAutoEditId] = useState<number | null>(null);
 
-  const updateNodeMut = useMutation({
-    mutationFn: (data: { id: number; text: string; hint: string }) =>
-      apiRequest("PATCH", `/api/script-nodes/${data.id}`, { text: data.text, hint: data.hint }),
-    onSuccess: () => {
+  const toggle = (id: number) => setExpanded(s => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const expandOne = (id: number) => setExpanded(s => new Set(s).add(id));
+
+  const addNodeMut = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/call-scripts/${scriptId}/nodes`, {
+      text: "New script text…", hint: "", parentNodeId: null, parentResponseId: null,
+      nodeOrder: ((tree?.nodes ?? []).length),
+    }),
+    onSuccess: (n: any) => {
       queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/tree`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/call-scripts/${scriptId}/root`] });
-      setEditNode(null);
-      toast({ title: "Node updated" });
+      setAutoEditId(n.id);
+      expandOne(n.id);
+      toast({ title: "Node added" });
     },
   });
+
+  const nodes: any[] = tree?.nodes ?? [];
+  const responses: any[] = tree?.responses ?? [];
+
+  useEffect(() => {
+    if (rootsInitialized || nodes.length === 0) return;
+    const roots = nodes.filter((n: any) => n.parent_node_id == null);
+    setExpanded(s => { const next = new Set(s); roots.forEach(r => next.add(r.id)); return next; });
+    setRootsInitialized(true);
+  }, [nodes, rootsInitialized]);
 
   if (isLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>;
 
   const responseMap = new Map<number, any[]>();
-  (tree?.responses ?? []).forEach((r: any) => {
+  responses.forEach((r: any) => {
     if (!responseMap.has(r.node_id)) responseMap.set(r.node_id, []);
     responseMap.get(r.node_id)!.push(r);
   });
+  responseMap.forEach(list => list.sort((a, b) => a.response_order - b.response_order));
+
+  // Build child map: parent_node_id → children
+  const childMap = new Map<number | null, any[]>();
+  nodes.forEach((n: any) => {
+    const parent = n.parent_node_id ?? null;
+    if (!childMap.has(parent)) childMap.set(parent, []);
+    childMap.get(parent)!.push({ ...n, _responses: responseMap.get(n.id) ?? [] });
+  });
+  childMap.forEach(list => list.sort((a, b) => (a.node_order ?? 0) - (b.node_order ?? 0)));
+
+  // Root-level nodes are those with parent_node_id == null. In legacy data some nodes may be orphans; treat null-parent as roots.
+  const rootNodes = childMap.get(null) ?? [];
+
+  const searchLower = search.trim().toLowerCase();
+  const searchFilter = (n: any) => {
+    if (!searchLower) return true;
+    if (n.text.toLowerCase().includes(searchLower)) return true;
+    if ((n.hint ?? "").toLowerCase().includes(searchLower)) return true;
+    return (responseMap.get(n.id) ?? []).some((r: any) => r.label.toLowerCase().includes(searchLower));
+  };
+
+  // When searching, show flat list of matches so nothing is hidden behind a collapsed parent
+  const flatMatches = searchLower ? nodes.filter(searchFilter) : [];
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Your Script Nodes</p>
-        <Button size="sm" variant="ghost" onClick={onClose} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Script Nodes</p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => addNodeMut.mutate()} disabled={addNodeMut.isPending} className="text-xs gap-1">
+            <Plus className="w-3 h-3" /> {addNodeMut.isPending ? "Adding…" : "Add Node"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onClose} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
+        </div>
       </div>
 
-      {/* Under construction: visual flow editor */}
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search nodes, hints, responses…"
+          className="pl-8 h-9 text-sm"
+        />
+        {search && (
+          <Button size="sm" variant="ghost" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0" onClick={() => setSearch("")}>
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
+
       <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-700 p-4 flex items-center gap-3">
         <Construction className="w-5 h-5 text-amber-500 shrink-0" />
         <div>
           <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Visual Flow Editor</p>
-          <p className="text-xs text-muted-foreground">Drag-and-drop node graph — ask for development</p>
+          <p className="text-xs text-muted-foreground">Drag-and-drop node graph — coming soon. For now, use the tree below.</p>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {tree?.nodes?.map((node: any) => {
-          const responses = responseMap.get(node.id) ?? [];
-          return (
-            <Card key={node.id} className="border border-border">
-              <CardContent className="p-4 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium leading-snug flex-1 whitespace-pre-line line-clamp-3">{node.text}</p>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0"
-                    onClick={() => { setEditNode(node); setEditText(node.text); setEditHint(node.hint ?? ""); }}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-                {node.hint && <p className="text-xs text-amber-600 dark:text-amber-400 italic">💡 {node.hint}</p>}
-                {responses.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {responses.sort((a: any, b: any) => a.response_order - b.response_order).map((r: any) => (
-                      <Badge key={r.id} variant="outline" className={`text-xs px-2 py-0.5 ${
-                        r.color === "green" ? "border-emerald-400 text-emerald-700 dark:text-emerald-400" :
-                        r.color === "red" ? "border-rose-400 text-rose-700 dark:text-rose-400" :
-                        r.color === "yellow" ? "border-amber-400 text-amber-700 dark:text-amber-400" :
-                        r.color === "blue" ? "border-blue-400 text-blue-700 dark:text-blue-400" : "border-border text-muted-foreground"
-                      }`}>{r.label}</Badge>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      <Dialog open={!!editNode} onOpenChange={o => !o && setEditNode(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Script Node</DialogTitle>
-            <DialogDescription>Update what you say at this step.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Script text</label>
-              <Textarea value={editText} onChange={e => setEditText(e.target.value)} rows={5} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Coaching hint (optional)</label>
-              <Input value={editHint} onChange={e => setEditHint(e.target.value)} placeholder="Tips shown under the script line…" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditNode(null)}>Cancel</Button>
-            <Button onClick={() => updateNodeMut.mutate({ id: editNode.id, text: editText, hint: editHint })}
-              disabled={updateNodeMut.isPending || !editText.trim()}>
-              {updateNodeMut.isPending ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {searchLower ? (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            {flatMatches.length} match{flatMatches.length === 1 ? "" : "es"} for "{search}"
+          </p>
+          {flatMatches.map((n: any) => (
+            <InlineNodeBlock
+              key={n.id}
+              node={n}
+              responses={responseMap.get(n.id) ?? []}
+              allNodes={nodes}
+              depth={0}
+              scriptId={scriptId}
+              expanded={true}
+              onToggle={() => toggle(n.id)}
+              searchQuery={search}
+              childNodesByParent={childMap}
+              autoEdit={autoEditId === n.id}
+              onEditStarted={() => setAutoEditId(null)}
+              onChildExpand={expandOne}
+              expandedIds={expanded}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rootNodes.length === 0 && (
+            <Card className="border-dashed"><CardContent className="py-8 text-center text-sm text-muted-foreground">
+              No nodes yet. Click "Add Node" to get started.
+            </CardContent></Card>
+          )}
+          {rootNodes.map((n: any) => (
+            <InlineNodeBlock
+              key={n.id}
+              node={n}
+              responses={responseMap.get(n.id) ?? []}
+              allNodes={nodes}
+              depth={0}
+              scriptId={scriptId}
+              expanded={expanded.has(n.id)}
+              onToggle={() => toggle(n.id)}
+              searchQuery=""
+              childNodesByParent={childMap}
+              autoEdit={autoEditId === n.id}
+              onEditStarted={() => setAutoEditId(null)}
+              onChildExpand={expandOne}
+              expandedIds={expanded}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

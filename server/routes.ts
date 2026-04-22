@@ -2997,7 +2997,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.delete('/api/script-responses/:id', requireAuth, (req: any, res: any) => {
-    if (!req.session_user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+    const script = storageExtra.getScriptByResponseId(parseInt(req.params.id));
+    if (!script || !canEditScript(req.session_user, script)) return res.status(403).json({ error: 'Not allowed' });
     storageExtra.deleteScriptResponse(parseInt(req.params.id));
     res.json({ ok: true });
   });
