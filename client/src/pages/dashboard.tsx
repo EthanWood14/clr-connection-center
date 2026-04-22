@@ -469,9 +469,11 @@ function TabAppointments() {
   const { data: losData = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const [search, setSearch] = useState("");
 
-  // Only keep future appointments: today OR not yet past
+  // Only keep future appointments: today OR not yet past; outcome must be an appointment or callback request
   const appointments = useMemo(() =>
     outcomes.filter((o: any) => {
+      const t = o.outcomeType || o.outcome_type;
+      if (t !== "appointment" && t !== "callback_requested") return false;
       const d = o.followUpDate || o.follow_up_date;
       if (!d) return false;
       const parsed = parseISO(d);

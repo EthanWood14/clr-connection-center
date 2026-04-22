@@ -1835,8 +1835,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // Recent activity widget for dashboard home page.
   // Returns last 3 transfers + last 3 fell-throughs for the current user.
   app.get("/api/dashboard/recent-activity", requireAuth, (req: any, res) => {
-    const userId = req.session.userId as number;
-    const outcomes = storage.getLeadOutcomes({ assistantId: userId }) as any[];
+    const userId = req.session_user?.userId as number | undefined;
+    const role = req.session_user?.role as string | undefined;
+    // Admins see all recent activity; CLRs see only their own
+    const outcomes = (role === "admin"
+      ? storage.getLeadOutcomes({})
+      : storage.getLeadOutcomes({ assistantId: userId })) as any[];
     const los = storage.getLoanOfficers() as any[];
     const users = storage.getUsers() as any[];
 
@@ -3571,7 +3575,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
     if (bestDay && bestDay.transfers === 0) bestDay = null;
 
-    // Current streak: consecutive days up to today with >=1 transfer (from daily series + broader search)
+    // Current streak: consecutive weekdays (Mon-Fri) up to today with >=1 transfer
     let streak = 0;
     const transfersByDate: Record<string, number> = {};
     const allMyOutcomes = storage.getLeadOutcomes({ assistantId: userId }) as any[];
@@ -3581,12 +3585,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
         if (d) transfersByDate[d] = (transfersByDate[d] || 0) + 1;
       }
     }
-    const cursor = new Date(todayStr + "T00:00:00");
+    const toPrevWeekday = (d: Date): Date => {
+      const r = new Date(d);
+      r.setDate(r.getDate() - 1);
+      while (r.getDay() === 0 || r.getDay() === 6) r.setDate(r.getDate() - 1);
+      return r;
+    };
+    let cursor = new Date(todayStr + "T00:00:00");
+    while (cursor.getDay() === 0 || cursor.getDay() === 6) {
+      cursor.setDate(cursor.getDate() - 1);
+    }
     while (true) {
       const key = cursor.toISOString().split("T")[0];
       if ((transfersByDate[key] || 0) >= 1) {
         streak += 1;
-        cursor.setDate(cursor.getDate() - 1);
+        cursor = toPrevWeekday(cursor);
       } else {
         break;
       }
