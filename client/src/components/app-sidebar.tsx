@@ -174,20 +174,17 @@ const mainItems: NavItem[] = [
   { title: "My Report",       url: "/my-report",   icon: BarChart2,       help: help.myReport },
   { title: "Directory",       url: "/directory",   icon: Users,           help: help.directory },
   { title: "Assignments",     url: "/assignments", icon: CalendarCheck,   help: help.assignments },
+  { title: "Call History",    url: "/outcomes",     icon: ClipboardList,  help: help.callHistory },
+  { title: "EOD Report",      url: "/eod-report",   icon: FileText,       help: help.eodReport },
+  { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
+  { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
+  { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
 ];
 
 const teamItems: NavItem[] = [
   { title: "Stats",           url: "/leaderboard", icon: Trophy,          help: help.stats },
   { title: "Chat",            url: "/chat",        icon: MessageCircle,   badge: "chat", help: help.chat },
   { title: "Forum",           url: "/forum",       icon: MessagesSquare,  help: help.forum },
-];
-
-const reportItems: NavItem[] = [
-  { title: "Call History",    url: "/outcomes",     icon: ClipboardList,  help: help.callHistory },
-  { title: "EOD Report",      url: "/eod-report",   icon: FileText,       help: help.eodReport },
-  { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
-  { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
-  { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
 ];
 
 const toolItems: NavItem[] = [
@@ -377,16 +374,6 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(teamItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* REPORTS */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Reports
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(reportItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
