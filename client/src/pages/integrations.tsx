@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { Copy, Eye, EyeOff, Save, CheckCircle2, Circle, Plug, RefreshCw, Lock } from "lucide-react";
 import { useLocation } from "wouter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoBanner } from "@/components/info-banner";
 
 const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
 const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
@@ -387,6 +388,9 @@ export default function IntegrationsPage() {
       <p className="text-sm text-muted-foreground">
         Connect external software to the CLR Connection Center. CLRs are matched by phone number (primary) then name (fallback). Make sure each CLR has their phone number set in their profile.
       </p>
+      <InfoBanner storageKey="integrations_status" variant="info" title="Integration Status">
+        Webhooks for Bonzo and Mojo are live and ready to receive real-time events. To activate full data sync, configure your credentials below. Zapier support is built in for Mojo — paste your Zapier webhook URL to enable outbound triggers.
+      </InfoBanner>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <IntegrationCard

@@ -957,7 +957,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     });
     storageExtra.resetLoginAttempts(ip);
     const u = user as any;
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password) } });
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password), hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample) } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -974,7 +974,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
       const u = user as any;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }

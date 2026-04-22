@@ -243,7 +243,7 @@ export default function MyReport() {
                 )}
                 {data.goals.appointments > 0 && (
                   <div>
-                    <GoalProgressRow label="Appointments" current={data.weekToDate.appointments} goal={data.goals.appointments} color="" />
+                    <GoalProgressRow label="Appointments" current={(data.weekToDate.appointments ?? 0) + (data.weekToDate.transfers ?? 0) + (data.weekToDate.fellThrough ?? 0)} goal={data.goals.appointments} color="" />
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground pt-1">
                       <span>Appointments: <span className="font-semibold text-foreground tabular-nums">{data.weekToDate.appointments ?? 0}</span></span>
                       <span>Transfers: <span className="font-semibold text-foreground tabular-nums">{data.weekToDate.transfers ?? 0}</span></span>

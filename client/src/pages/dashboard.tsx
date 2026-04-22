@@ -79,7 +79,10 @@ function GoalStripe() {
   const rows: Array<{ key: string; label: string; cur: number; goal: number; color: string }> = [];
   if (data.goals.calls > 0) rows.push({ key: "calls", label: "Calls", cur: wtd.calls, goal: data.goals.calls, color: "bg-blue-500" });
   if (data.goals.transfers > 0) rows.push({ key: "transfers", label: "Transfers", cur: wtd.transfers, goal: data.goals.transfers, color: "bg-green-500" });
-  if (data.goals.appointments > 0) rows.push({ key: "appointments", label: "Appts", cur: wtd.appointments, goal: data.goals.appointments, color: "bg-purple-500" });
+  if (data.goals.appointments > 0) {
+    const apptsCombined = (wtd.appointments ?? 0) + (wtd.transfers ?? 0) + (wtd.fellThrough ?? 0);
+    rows.push({ key: "appointments", label: "Appts", cur: apptsCombined, goal: data.goals.appointments, color: "bg-purple-500" });
+  }
 
   return (
     <Card className="border-dashed">

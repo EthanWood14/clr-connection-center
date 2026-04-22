@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { Users, Search, Lock, RefreshCw, Mail, Phone } from "lucide-react";
+import { InfoBanner } from "@/components/info-banner";
 
 type Prospect = {
   id: number;
@@ -136,6 +137,15 @@ export default function BonzoProspectsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl">
+      {hasToken ? (
+        <InfoBanner storageKey="bonzo_connected" variant="success" title="Bonzo Connected">
+          API sync is active. Last synced: {syncStatus?.last ? new Date(syncStatus.last).toLocaleString() : "—"}. Click Sync Now to refresh.
+        </InfoBanner>
+      ) : (
+        <InfoBanner storageKey="bonzo_no_token" variant="warning" title="Bonzo API Not Connected">
+          Real-time webhook events are active (stage changes appear automatically). To import your full prospect history, go to <strong>Integrations → Bonzo</strong> and add your Personal Access Token, then click Sync Now.
+        </InfoBanner>
+      )}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2">

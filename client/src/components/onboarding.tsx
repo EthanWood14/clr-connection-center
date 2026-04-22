@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CheckCircle2, Circle, HelpCircle, Sparkles, X, ChevronDown, ChevronUp } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
@@ -261,8 +262,23 @@ export const SAMPLE_STATS = {
 };
 
 export function useSampleDataMode(realOutcomeCount: number): boolean {
-  const { user } = useAuth();
+  const { user, markSampleDismissed } = useAuth();
+
+  // When real data appears, permanently mark dismissed on the server.
+  useEffect(() => {
+    if (!user) return;
+    if (user.hasDismissedSample) return;
+    if (realOutcomeCount <= 0) return;
+    (async () => {
+      try {
+        await apiRequest("PATCH", `/api/users/${user.id}`, { hasDismissedSample: true });
+        markSampleDismissed();
+      } catch {}
+    })();
+  }, [user?.id, user?.hasDismissedSample, realOutcomeCount]);
+
   if (!user) return false;
+  if (user.hasDismissedSample) return false;
   const age = daysSince(user.createdAt);
   if (age > 7) return false;
   if (realOutcomeCount > 0) return false;
@@ -272,11 +288,15 @@ export function useSampleDataMode(realOutcomeCount: number): boolean {
 }
 
 export function SampleDataBanner({ onDismiss }: { onDismiss?: () => void }) {
-  const { user } = useAuth();
+  const { user, markSampleDismissed } = useAuth();
   if (!user) return null;
 
-  function dismiss() {
+  async function dismiss() {
     lsSetBool(lsKey(user!.id, "sample_data_dismissed"), true);
+    try {
+      await apiRequest("PATCH", `/api/users/${user!.id}`, { hasDismissedSample: true });
+      markSampleDismissed();
+    } catch {}
     onDismiss?.();
   }
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, FileSpreadsheet, CheckCircle2, Loader2, X } from "lucide-react";
+import { InfoBanner } from "@/components/info-banner";
 
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(l => l.length > 0);
@@ -177,6 +178,9 @@ export default function MojoImportPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 w-full max-w-4xl mx-auto">
+      <InfoBanner storageKey="mojo_import_info" variant="info" title="Mojo CSV Import">
+        Export your call logs or contacts from Mojo Dialer (Reports → Export), then drag and drop the CSV file below. Data will be matched to CLRs by phone number and name.
+      </InfoBanner>
       <div>
         <h1 className="text-2xl font-bold">Mojo CSV Import</h1>
         <p className="text-muted-foreground text-sm">Drag-and-drop export files from Mojo to backfill call logs and contacts.</p>

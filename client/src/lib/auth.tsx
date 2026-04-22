@@ -8,6 +8,7 @@ export interface AuthUser {
   role: string;
   isClr: boolean;
   hasSeenIntro: boolean;
+  hasDismissedSample?: boolean;
   mustChangePassword: boolean;
   createdAt: string | null;
   scriptCompanyName?: string | null;
@@ -20,6 +21,7 @@ interface AuthContextValue {
   isLoading: boolean;
   logout: () => Promise<void>;
   markIntroSeen: () => Promise<void>;
+  markSampleDismissed: () => void;
   clearMustChangePassword: () => void;
   refetchUser: () => Promise<void>;
 }
@@ -29,6 +31,7 @@ const AuthContext = createContext<AuthContextValue>({
   isLoading: true,
   logout: async () => {},
   markIntroSeen: async () => {},
+  markSampleDismissed: () => {},
   clearMustChangePassword: () => {},
   refetchUser: async () => {},
 });
@@ -62,6 +65,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((u) => u ? { ...u, hasSeenIntro: true } : u);
   }, []);
 
+  const markSampleDismissed = useCallback(() => {
+    setUser((u) => u ? { ...u, hasDismissedSample: true } : u);
+  }, []);
+
   const clearMustChangePassword = useCallback(() => {
     setUser((u) => u ? { ...u, mustChangePassword: false } : u);
   }, []);
@@ -76,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, clearMustChangePassword, refetchUser }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, markSampleDismissed, clearMustChangePassword, refetchUser }}>
       {children}
     </AuthContext.Provider>
   );

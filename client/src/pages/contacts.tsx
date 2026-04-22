@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Users, Phone, Mail, X } from "lucide-react";
+import { InfoBanner } from "@/components/info-banner";
 
 type Contact = {
   id: number;
@@ -93,6 +94,9 @@ export default function ContactsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 w-full max-w-full">
+      <InfoBanner storageKey="contacts_hub_info" variant="info" title="Contact Hub">
+        Contacts are automatically populated from Bonzo webhooks, Mojo webhooks, and CSV imports. To see your full contact list, connect Bonzo (via API token in Integrations) and set up Mojo webhooks. Contacts are matched across platforms by phone number.
+      </InfoBanner>
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-2">

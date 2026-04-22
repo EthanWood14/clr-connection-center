@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { Phone, Lock, RefreshCw } from "lucide-react";
+import { InfoBanner } from "@/components/info-banner";
 
 type Session = {
   id: number;
@@ -124,6 +125,9 @@ export default function MojoSessionsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl">
+      <InfoBanner storageKey="mojo_sessions_status" variant="info" title="Mojo Session Tracking">
+        Call data flows in automatically via webhook whenever a disposition is logged in Mojo. To backfill historical call data, use the <strong>Mojo CSV Import</strong> tool. Full API sync will be available when Mojo releases their public API.
+      </InfoBanner>
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2">

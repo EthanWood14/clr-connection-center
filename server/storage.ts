@@ -194,6 +194,7 @@ try {
 }
 
 // ── Migration: per-CLR weekly goals ───────────────────────────────────
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_dismissed_sample INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_calls_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_transfers_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_appointments_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
