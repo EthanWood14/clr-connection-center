@@ -13,6 +13,7 @@ import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
 import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers } from "./push";
+import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1172,7 +1173,37 @@ export function registerRoutes(httpServer: Server, app: Express) {
   registerSaConsole(app);
 
   // ── Health check (Railway) ────────────────────────────────────────────────
-  app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  app.get("/api/health", (_req, res) => {
+    let dbOk = true;
+    try {
+      const sqliteDb = storageExtra.getRawSqlite();
+      sqliteDb.prepare(`SELECT 1 AS ok`).get();
+    } catch {
+      dbOk = false;
+    }
+    res.json({ status: dbOk ? "ok" : "degraded", uptime: getProcessUptimeSec(), db: dbOk });
+  });
+
+  // ── Public status page + API (no auth) ────────────────────────────────────
+  app.get("/status", (_req, res) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(STATUS_HTML);
+  });
+
+  app.get("/api/status", (_req, res) => {
+    try {
+      const services = runAllChecks();
+      res.json({
+        services,
+        overall: getOverallStatus(services),
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "status failed" });
+    }
+  });
+
+  try { startUptimeCron(); } catch (e: any) { console.error("[status] cron init failed:", e?.message ?? e); }
 
   // ── Web Push (VAPID) ──────────────────────────────────────────────────────
   try { initPush(); } catch (e: any) { console.error("[push] init failed:", e?.message ?? e); }
