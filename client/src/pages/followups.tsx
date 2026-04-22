@@ -137,7 +137,10 @@ function AppointmentCard({
               {outcome.followUpDate && (
                 <span>
                   <span className="font-medium text-foreground/70">Follow-up:</span>{" "}
-                  {format(parseISO(outcome.followUpDate), "MMM d, yyyy")}
+                  {format(
+                    parseISO(outcome.followUpDate),
+                    outcome.followUpDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy",
+                  )}
                 </span>
               )}
             </div>
@@ -151,15 +154,18 @@ function AppointmentCard({
 
             {/* Reschedule inline input */}
             {rescheduling && (
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <Input
-                  type="date"
+                  type="datetime-local"
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
-                  className="h-8 text-xs w-40"
-                  min={new Date().toISOString().split("T")[0]}
+                  className="h-8 text-xs w-52"
+                  min={new Date().toISOString().slice(0, 16)}
                   data-testid={`input-reschedule-${outcome.id}`}
                 />
+                <span className="text-[10px] text-muted-foreground">
+                  {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                </span>
                 <Button
                   size="sm"
                   className="h-8 text-xs px-3"
@@ -340,20 +346,22 @@ export default function Appointments() {
   // Build LO name map
   const loMap = new Map<number, string>(los.map((lo) => [lo.id, lo.fullName]));
 
-  // Filter: followUpDate not null AND followUpDate <= today
+  // Filter: followUpDate not null AND date portion <= today
   const todayStr = new Date().toISOString().split("T")[0];
+  // Extract the YYYY-MM-DD portion so datetime values compare correctly.
+  const datePart = (s: string) => (s.length >= 10 ? s.slice(0, 10) : s);
 
   const dueOutcomes = outcomes.filter(
-    (o) => o.followUpDate != null && o.followUpDate <= todayStr
+    (o) => o.followUpDate != null && datePart(o.followUpDate) <= todayStr
   );
 
   // Separate today vs overdue
-  const todayOutcomes = dueOutcomes.filter((o) => o.followUpDate === todayStr);
-  const overdueOutcomes = dueOutcomes.filter((o) => o.followUpDate! < todayStr);
+  const todayOutcomes = dueOutcomes.filter((o) => datePart(o.followUpDate!) === todayStr);
+  const overdueOutcomes = dueOutcomes.filter((o) => datePart(o.followUpDate!) < todayStr);
 
-  // Group overdue by date, oldest first
+  // Group overdue by date (date portion only), oldest first
   const overdueByDate = overdueOutcomes.reduce<Map<string, Outcome[]>>((acc, o) => {
-    const key = o.followUpDate!;
+    const key = datePart(o.followUpDate!);
     if (!acc.has(key)) acc.set(key, []);
     acc.get(key)!.push(o);
     return acc;

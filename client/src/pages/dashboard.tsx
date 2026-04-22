@@ -515,7 +515,9 @@ function TabAppointments() {
   function ApptRow({ o }: { o: any }) {
     const fDate = o.followUpDate || o.follow_up_date;
     const label = fDate ? formatDistanceToNow(parseISO(fDate), { addSuffix: true }) : "";
-    const exact = fDate ? format(parseISO(fDate), "MMM d, yyyy") : "";
+    const exact = fDate
+      ? format(parseISO(fDate), fDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy")
+      : "";
     const isTd = fDate && isToday(parseISO(fDate));
     return (
       <div className="flex items-start justify-between py-2.5 border-b last:border-0 gap-3">

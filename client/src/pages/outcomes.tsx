@@ -54,6 +54,19 @@ const OUTCOME_COLORS: Record<string, string> = {
 const TRANSFER_TYPES = ["direct", "appointment"] as const;
 type TransferType = typeof TRANSFER_TYPES[number];
 
+// Format an ISO-ish follow-up value (either "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM")
+// for compact display, showing time only when present.
+function formatFollowUp(value: string): string {
+  if (!value) return "";
+  if (!value.includes("T")) return value;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+}
+
 const TIMEFRAME_OPTIONS = [
   { value: "ready_now", label: "Ready now" },
   { value: "1_2_weeks", label: "1-2 weeks" },
@@ -399,8 +412,13 @@ function OutcomeFormDialog({
             </div>
             <FormField control={form.control} name="followUpDate" render={({ field }) => (
               <FormItem>
-                <FormLabel>Follow-up Date (optional)</FormLabel>
-                <FormControl><Input type="date" {...field} data-testid="input-appointment-date" /></FormControl>
+                <FormLabel>
+                  Follow-up Date &amp; Time (optional){" "}
+                  <span className="text-[11px] font-normal text-muted-foreground">
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                  </span>
+                </FormLabel>
+                <FormControl><Input type="datetime-local" {...field} data-testid="input-appointment-date" /></FormControl>
               </FormItem>
             )} />
             {!isTransfer && (
@@ -476,8 +494,13 @@ function OutcomeFormDialog({
                   )} />
                   <FormField control={form.control} name="followupDate" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Follow-up date</FormLabel>
-                      <FormControl><Input type="date" {...field} /></FormControl>
+                      <FormLabel>
+                        Follow-up date &amp; time{" "}
+                        <span className="text-[11px] font-normal text-muted-foreground">
+                          ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                        </span>
+                      </FormLabel>
+                      <FormControl><Input type="datetime-local" {...field} /></FormControl>
                     </FormItem>
                   )} />
                 </div>
@@ -802,8 +825,13 @@ function EditOutcomeDialog({
             {showFollowUp && (
               <FormField control={form.control} name="followUpDate" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Follow-up Date</FormLabel>
-                  <FormControl><Input type="date" {...field} data-testid="input-edit-followup-date" /></FormControl>
+                  <FormLabel>
+                    Follow-up Date &amp; Time{" "}
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    </span>
+                  </FormLabel>
+                  <FormControl><Input type="datetime-local" {...field} data-testid="input-edit-followup-date" /></FormControl>
                 </FormItem>
               )} />
             )}
@@ -853,8 +881,52 @@ export default function Outcomes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any | null>(null);
   const [filterType, setFilterType] = useState("all");
-  const [filterAssistant, setFilterAssistant] = useState("all");
+
+  // Read initial assistant filter from URL hash params (?user=…) so a shared
+  // link preserves the viewer's selection. Default: current user's own calls.
+  const initialAssistant = (() => {
+    try {
+      const hash = window.location.hash || "";
+      const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+      const params = new URLSearchParams(q);
+      const u = params.get("user");
+      if (u) return u;
+    } catch {}
+    return authUser?.id ? String(authUser.id) : "all";
+  })();
+  const [filterAssistant, setFilterAssistant] = useState<string>(initialAssistant);
   const [search, setSearch] = useState("");
+
+  // Sync filter to current user once auth resolves (default "My Calls").
+  useEffect(() => {
+    if (authUser?.id && filterAssistant === "all") {
+      // Only auto-switch if the URL didn't explicitly request "all".
+      try {
+        const hash = window.location.hash || "";
+        const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+        if (new URLSearchParams(q).get("user") !== "all") {
+          setFilterAssistant(String(authUser.id));
+        }
+      } catch {
+        setFilterAssistant(String(authUser.id));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id]);
+
+  // Reflect filter changes back into the URL hash query so sharing works.
+  useEffect(() => {
+    try {
+      const hash = window.location.hash || "#/outcomes";
+      const [path, q = ""] = hash.replace(/^#/, "").split("?");
+      const params = new URLSearchParams(q);
+      params.set("user", filterAssistant);
+      const next = `#${path}?${params.toString()}`;
+      if (next !== window.location.hash) {
+        window.history.replaceState(null, "", next);
+      }
+    } catch {}
+  }, [filterAssistant]);
 
   const { data: outcomes = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
@@ -981,17 +1053,32 @@ export default function Outcomes() {
         </Select>
         <Select value={filterAssistant} onValueChange={setFilterAssistant}>
           <SelectTrigger className="w-40" data-testid="select-filter-assistant">
-            <SelectValue placeholder="All assistants" />
+            <SelectValue placeholder="My Calls" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Assistants</SelectItem>
-            {users.map((u: any) => (
-              <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
-            ))}
+            {authUser?.id && (
+              <SelectItem value={String(authUser.id)}>My Calls</SelectItem>
+            )}
+            {users
+              .filter((u: any) => u.id !== authUser?.id)
+              .map((u: any) => (
+                <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+              ))}
+            {authUser?.role === "admin" && (
+              <SelectItem value="all">All Users</SelectItem>
+            )}
           </SelectContent>
         </Select>
-        {(search || filterType !== "all" || filterAssistant !== "all") && (
-          <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setFilterType("all"); setFilterAssistant("all"); }}>
+        {(search || filterType !== "all" || filterAssistant !== (authUser?.id ? String(authUser.id) : "all")) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSearch("");
+              setFilterType("all");
+              setFilterAssistant(authUser?.id ? String(authUser.id) : "all");
+            }}
+          >
             Clear
           </Button>
         )}
@@ -1052,7 +1139,7 @@ export default function Outcomes() {
                   </span>
                   {o.followUpDate && (
                     <Badge variant="outline" className="w-fit text-[10px] px-1 py-0 text-purple-600 border-purple-300">
-                      Follow-up {o.followUpDate}
+                      Follow-up {formatFollowUp(o.followUpDate)}
                     </Badge>
                   )}
                 </div>

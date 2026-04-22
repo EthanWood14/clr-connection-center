@@ -223,8 +223,13 @@ function EditDialog({
             {/* Appointment / Follow-up Date */}
             <FormField control={form.control} name="followUpDate" render={({ field }) => (
               <FormItem>
-                <FormLabel>Appointment Date</FormLabel>
-                <FormControl><Input type="date" {...field} /></FormControl>
+                <FormLabel>
+                  Appointment Date &amp; Time{" "}
+                  <span className="text-[11px] font-normal text-muted-foreground">
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                  </span>
+                </FormLabel>
+                <FormControl><Input type="datetime-local" {...field} /></FormControl>
               </FormItem>
             )} />
 
@@ -417,7 +422,10 @@ function AppointmentCard({
               {outcome.followUpDate && (
                 <span>
                   <span className="font-medium text-foreground/70">Scheduled:</span>{" "}
-                  {format(parseISO(outcome.followUpDate), "MMM d, yyyy")}
+                  {format(
+                    parseISO(outcome.followUpDate),
+                    outcome.followUpDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy",
+                  )}
                 </span>
               )}
             </div>
@@ -526,13 +534,16 @@ function AppointmentCard({
 
             {/* Inline reschedule picker */}
             {rescheduling && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Input
-                  type="date"
+                  type="datetime-local"
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
-                  className="h-8 text-xs w-44"
+                  className="h-8 text-xs w-52"
                 />
+                <span className="text-[10px] text-muted-foreground">
+                  {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                </span>
                 <Button size="sm" className="h-8 text-xs px-3" onClick={handleReschedule} disabled={!newDate || isPendingReschedule}>
                   {isPendingReschedule ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Save"}
                 </Button>

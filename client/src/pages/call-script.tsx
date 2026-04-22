@@ -1172,7 +1172,8 @@ function CallRecorder({
         payload.appointmentDatetime = wizardScheduled;
       }
       if (outcomeChoice.outcomeType === "callback_requested" && wizardScheduled) {
-        payload.followUpDate = wizardScheduled.split("T")[0];
+        // Preserve full datetime so reminders can trigger at the requested time.
+        payload.followUpDate = wizardScheduled;
       }
       if (outcomeChoice.key === "transfer_appointment" && wizardScheduled) {
         payload.appointmentDatetime = wizardScheduled;
@@ -1301,7 +1302,10 @@ function CallRecorder({
             {needsScheduled && (
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Scheduled date/time <span className="text-rose-500">*</span>
+                  Scheduled date/time <span className="text-rose-500">*</span>{" "}
+                  <span className="normal-case font-normal text-[10px] text-muted-foreground/70">
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                  </span>
                 </label>
                 <Input type="datetime-local" value={wizardScheduled} onChange={e => setWizardScheduled(e.target.value)} className="h-9 text-sm mt-1" />
               </div>
