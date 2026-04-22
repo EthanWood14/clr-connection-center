@@ -36,6 +36,37 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Push: show a notification
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+  const title = data.title || "CLR Connection Center";
+  const options = {
+    body: data.body || "",
+    icon: "/favicon-192.png",
+    badge: "/favicon-192.png",
+    data: { url: data.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Notification click: focus or open the target URL
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      for (const w of wins) {
+        if ("focus" in w) {
+          w.navigate(targetUrl).catch(() => {});
+          return w.focus();
+        }
+      }
+      return clients.openWindow(targetUrl);
+    })
+  );
+});
+
 // Fetch: network-first for API, cache-first for static assets
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);

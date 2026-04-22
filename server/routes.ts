@@ -12,6 +12,7 @@ import crypto from "crypto";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
+import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers } from "./push";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -966,14 +967,17 @@ cron.schedule("30 8 * * *", () => {
       if (!check.assigned_to) continue;
       const lo = los.find((l: any) => l.id === check.lo_id);
       if (!lo) continue;
+      const title = "NMLS License Check Reminder";
+      const message = `Reminder: Please verify ${lo.fullName}'s NMLS license is still active. Click here to confirm.`;
       // Create a fresh unread notification so it appears daily
       storage.createNotification({
         userId: check.assigned_to,
         type: "nmls_check",
-        title: "NMLS License Check Reminder",
-        message: `Reminder: Please verify ${lo.fullName}'s NMLS license is still active. Click here to confirm.`,
+        title,
+        message,
         isRead: false,
       });
+      sendPushToUser(check.assigned_to, { title, body: message, url: "/nmls-checks" }).catch(() => {});
     }
   } catch (e) { console.error("NMLS daily reminder error:", e); }
 });
@@ -1169,6 +1173,56 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Health check (Railway) ────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  // ── Web Push (VAPID) ──────────────────────────────────────────────────────
+  try { initPush(); } catch (e: any) { console.error("[push] init failed:", e?.message ?? e); }
+
+  app.get("/api/push/vapid-public-key", (_req, res) => {
+    const key = getVapidPublicKey();
+    if (!key) return res.status(503).json({ error: "Push not configured" });
+    res.json({ publicKey: key });
+  });
+
+  app.post("/api/push/subscribe", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const sub = req.body?.subscription ?? req.body;
+    if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
+      return res.status(400).json({ error: "Invalid subscription" });
+    }
+    const user = storage.getUserById(userId) as any;
+    const orgId = user?.orgId ?? 1;
+    try {
+      saveSubscription(userId, orgId, sub);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "save failed" });
+    }
+  });
+
+  app.delete("/api/push/unsubscribe", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const endpoint = (req.body?.endpoint ?? req.query?.endpoint) as string | undefined;
+    if (!endpoint) return res.status(400).json({ error: "Missing endpoint" });
+    removeSubscription(userId, endpoint);
+    res.json({ ok: true });
+  });
+
+  // Internal-ish helper: admins can send a push to any user; users can self-test
+  app.post("/api/push/send", requireAuth, async (req: any, res) => {
+    const me = req.session_user?.userId;
+    if (!me) return res.status(401).json({ error: "Unauthorized" });
+    const meUser = storage.getUserById(me) as any;
+    const targetId = Number(req.body?.userId ?? me);
+    if (targetId !== me && meUser?.role !== "admin") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    const { title, body, url } = req.body ?? {};
+    if (!title || !body) return res.status(400).json({ error: "title and body required" });
+    const result = await sendPushToUser(targetId, { title, body, url });
+    res.json(result);
+  });
 
   // ── Public marketing landing page ──────────────────────────────────────────
   app.get("/landing", (_req, res) => {
@@ -2236,8 +2290,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ count: storage.getUnreadCount(userId) });
   });
 
-  app.post("/api/notifications", (req, res) => {
-    res.json(storage.createNotification(req.body));
+  app.post("/api/notifications", async (req, res) => {
+    const notif = storage.createNotification(req.body);
+    // Mirror as push
+    try {
+      const payload = { title: notif.title, body: notif.message, url: "/" };
+      if (notif.userId) {
+        sendPushToUser(notif.userId, payload).catch(() => {});
+      } else {
+        // Broadcast: send to all active users
+        const all = (storage.getUsers() as any[]).filter((u: any) => u.isActive);
+        sendPushToUsers(all.map((u: any) => u.id), payload).catch(() => {});
+      }
+    } catch {}
+    res.json(notif);
   });
 
   app.patch("/api/notifications/:id/read", (req, res) => {
@@ -4993,15 +5059,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Notify admins
     try {
       const admins = storage.getUsers().filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId);
+      const pushPayload = {
+        title: `New Forum Question: ${post.title}`,
+        body: `${authorName} asked: ${post.title}`,
+        url: `/forum`,
+      };
       for (const admin of admins) {
         storage.createNotification({
           userId: admin.id,
           type: "announcement",
-          title: `New Forum Question: ${post.title}`,
-          message: `${authorName} asked: ${post.title}`,
+          title: pushPayload.title,
+          message: pushPayload.body,
           isRead: false,
         });
       }
+      sendPushToUsers(admins.map((a: any) => a.id), pushPayload).catch(() => {});
     } catch (e) { console.error("forum admin notify failed:", e); }
     res.json({ post });
   });
@@ -5063,15 +5135,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Notify all subscribers except the answerer
     try {
       const subscriberIds = storageExtra.getForumSubscribers(postId).filter((uid) => uid !== userId);
+      const pushPayload = {
+        title: `New answer on: ${post.title}`,
+        body: `${authorName} answered your question`,
+        url: `/forum`,
+      };
       for (const subId of subscriberIds) {
         storage.createNotification({
           userId: subId,
           type: "announcement",
-          title: `New answer on: ${post.title}`,
-          message: `${authorName} answered your question`,
+          title: pushPayload.title,
+          message: pushPayload.body,
           isRead: false,
         });
       }
+      sendPushToUsers(subscriberIds, pushPayload).catch(() => {});
     } catch (e) { console.error("forum subscriber notify failed:", e); }
     res.json({ answer });
   });

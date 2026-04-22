@@ -1461,6 +1461,23 @@ function runNewMigrations() {
       UNIQUE(entity_type, entity_id, user_id)
     )`);
   } catch {}
+
+  // ── Push notifications (Web Push / VAPID) ──────────────────────────────
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN vapid_public_key TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN vapid_private_key TEXT`); } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      org_id INTEGER NOT NULL DEFAULT 1,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, endpoint)
+    )`);
+  } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`); } catch {}
 }
 runNewMigrations();
 

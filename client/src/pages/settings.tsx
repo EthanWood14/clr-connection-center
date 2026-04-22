@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
+import { PushNotificationsCard } from "@/components/push-notifications-card";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -1871,6 +1872,7 @@ export default function Settings() {
 
   const appTab = (
     <div className="space-y-6">
+      <PushNotificationsCard />
       {isAdmin && <NmlsScheduleCard />}
       {isAdmin && (
         <div className="space-y-4">
@@ -1883,13 +1885,6 @@ export default function Settings() {
           </div>
           <BroadcastNotifications />
         </div>
-      )}
-      {!isAdmin && (
-        <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No app-wide settings available for your account.
-          </CardContent>
-        </Card>
       )}
     </div>
   );

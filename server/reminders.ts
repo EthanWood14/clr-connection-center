@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { getRawSqlite, storage } from "./storage";
+import { sendPushToUser } from "./push";
 
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
 const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
@@ -182,6 +183,14 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
       insertLog.run(o.outcome_id, o.assistant_id);
       stats.sent++;
       console.log(`[reminders] sent outcome=${o.outcome_id} to=${o.clr_email} id=${result?.data?.id}`);
+      // Mirror to push notifications (best-effort)
+      try {
+        await sendPushToUser(o.assistant_id, {
+          title: subject,
+          body: `Reminder for ${(o as any).borrower_name || "this lead"}`,
+          url: "/followups",
+        });
+      } catch {}
     } catch (e: any) {
       stats.errors++;
       console.error(`[reminders] exception outcome=${o.outcome_id}:`, e?.message ?? e);
