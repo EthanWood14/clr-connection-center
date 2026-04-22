@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUpIcon, ArrowDownIcon, MinusIcon, ArrowUpDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -189,6 +190,25 @@ export default function TeamStats() {
             {data.startDate} → {data.endDate}
           </p>
         </div>
+
+        {/* Primary period tabs: Daily / Weekly / All-Time */}
+        <Tabs
+          value={period === "today" ? "today" : period === "alltime" ? "alltime" : period === "week" ? "week" : "other"}
+          onValueChange={(v) => {
+            if (v === "today" || v === "week" || v === "alltime") setPeriod(v as Period);
+          }}
+        >
+          <TabsList data-testid="tabs-period">
+            <TabsTrigger value="today" data-testid="tab-daily">Daily</TabsTrigger>
+            <TabsTrigger value="week" data-testid="tab-weekly">Weekly</TabsTrigger>
+            <TabsTrigger value="alltime" data-testid="tab-alltime">All-Time</TabsTrigger>
+            {period !== "today" && period !== "week" && period !== "alltime" && (
+              <TabsTrigger value="other" data-testid="tab-other">
+                {PERIOD_OPTIONS.find(o => o.value === period)?.label ?? "Custom"}
+              </TabsTrigger>
+            )}
+          </TabsList>
+        </Tabs>
 
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>

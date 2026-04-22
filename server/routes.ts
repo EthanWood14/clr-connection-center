@@ -2065,9 +2065,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const prevAppointments = outcomesPrevFiltered.filter(o => isAppt(ot(o))).length;
     const prevTransferRate = prevCalls > 0 ? (prevTransfers / prevCalls) * 100 : 0;
 
-    // Build daily breakdown
+    // Build daily breakdown. For alltime (very long ranges), clamp the start to
+    // the earliest date that actually has data so we don't iterate thousands of
+    // empty days.
+    let effectiveStart = start;
+    if (periodName === "alltime") {
+      const firstOutcomeDate = outcomes.reduce<string | null>((min, o: any) => {
+        const d = o.date as string | undefined;
+        if (!d) return min;
+        return !min || d < min ? d : min;
+      }, null);
+      const firstLogDate = callLogs.reduce<string | null>((min, l: any) => {
+        const d = (l.logDate ?? l.log_date) as string | undefined;
+        if (!d) return min;
+        return !min || d < min ? d : min;
+      }, null);
+      const earliest = [firstOutcomeDate, firstLogDate].filter(Boolean).sort()[0];
+      if (earliest) effectiveStart = new Date(earliest + "T00:00:00");
+    }
     const days: string[] = [];
-    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + dayMs)) {
+    for (let d = new Date(effectiveStart); d <= end; d = new Date(d.getTime() + dayMs)) {
       days.push(d.toISOString().split("T")[0]);
     }
     const daily = days.map(day => {

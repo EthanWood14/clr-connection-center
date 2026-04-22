@@ -1065,26 +1065,100 @@ export default function CallScriptPage() {
     queryFn: () => fetch("/api/assignments/today", { credentials: "include" }).then(r => r.ok ? r.json() : []),
   });
 
-  const assignedLoName: string = useMemo(() => {
+  // Fallback: all active LOs if no assignments today
+  const { data: allLoanOfficers = [] } = useQuery<any[]>({
+    queryKey: ["/api/loan-officers"],
+  });
+
+  const loDropdownOptions: { name: string; source: "assigned" | "active" }[] = useMemo(() => {
+    const assigned = (Array.isArray(todayAssignments) ? todayAssignments : [])
+      .map((a: any) => a?.lo?.fullName ?? a?.lo?.full_name)
+      .filter((n: string | undefined): n is string => !!n && n.trim().length > 0);
+    if (assigned.length > 0) {
+      return Array.from(new Set(assigned)).map(name => ({ name, source: "assigned" as const }));
+    }
+    const active = (Array.isArray(allLoanOfficers) ? allLoanOfficers : [])
+      .filter((lo: any) => (lo.internalStatus ?? lo.internal_status) === "active")
+      .map((lo: any) => lo.fullName ?? lo.full_name)
+      .filter((n: string | undefined): n is string => !!n && n.trim().length > 0);
+    return Array.from(new Set(active)).map(name => ({ name, source: "active" as const }));
+  }, [todayAssignments, allLoanOfficers]);
+
+  const hasAssignedToday = useMemo(
+    () => Array.isArray(todayAssignments) && todayAssignments.some((a: any) => (a?.lo?.fullName ?? a?.lo?.full_name)),
+    [todayAssignments],
+  );
+
+  // LO selection state. Initial value derives from stored override or first assignment.
+  // Special sentinel "__manual__" means the user chose "Other (type manually)".
+  const [loSelection, setLoSelection] = useState<string>("");
+  const [manualLoName, setManualLoName] = useState<string>("");
+  const [loInitialized, setLoInitialized] = useState(false);
+
+  useEffect(() => {
+    if (loInitialized) return;
+    if (!user) return;
+    const u = user as any;
+    const stored = (u.scriptLoOverride ?? "").trim();
+    if (stored && loDropdownOptions.some(o => o.name === stored)) {
+      setLoSelection(stored);
+    } else if (stored) {
+      setLoSelection("__manual__");
+      setManualLoName(stored);
+    } else if (loDropdownOptions.length > 0) {
+      setLoSelection(loDropdownOptions[0].name);
+    }
+    setLoInitialized(true);
+  }, [user, loDropdownOptions, loInitialized]);
+
+  // Persist LO override to server when it changes (debounced via mutation on commit)
+  const loSaveMut = useMutation({
+    mutationFn: (loName: string | null) =>
+      apiRequest("PATCH", `/api/users/${(user as any)?.id}`, {
+        scriptLoOverride: loName && loName.trim() ? loName.trim() : null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    },
+  });
+
+  const effectiveLoName: string = useMemo(() => {
+    if (loSelection === "__manual__") return manualLoName.trim();
+    if (loSelection) return loSelection;
+    // fallback: first assignment → stored override
     const first = Array.isArray(todayAssignments) && todayAssignments.length > 0 ? todayAssignments[0] : null;
-    const name = first?.lo?.fullName ?? first?.lo?.full_name ?? "";
-    return name ?? "";
-  }, [todayAssignments]);
+    const firstName = first?.lo?.fullName ?? first?.lo?.full_name ?? "";
+    const stored = ((user as any)?.scriptLoOverride ?? "").trim();
+    return firstName || stored || "";
+  }, [loSelection, manualLoName, todayAssignments, user]);
+
+  const handleLoSelect = (value: string) => {
+    setLoSelection(value);
+    if (value === "__manual__") {
+      // don't save until manual text typed + committed
+      return;
+    }
+    loSaveMut.mutate(value);
+  };
+
+  const handleManualCommit = () => {
+    const v = manualLoName.trim();
+    loSaveMut.mutate(v || null);
+  };
 
   const placeholders: PlaceholderValues = useMemo(() => {
     const u = user as any;
     const scriptNameOverride = (u?.scriptNameOverride ?? "").trim();
-    const scriptLoOverride = (u?.scriptLoOverride ?? "").trim();
     const scriptCompany = (u?.scriptCompanyName ?? "").trim();
     return {
       yourName: scriptNameOverride || u?.name || "",
-      loName: assignedLoName || scriptLoOverride || "your loan officer",
+      loName: effectiveLoName || "your loan officer",
       company: scriptCompany || "West Capital Lending",
       borrowerName: borrowerName.trim(),
       timeOfDay: computeTimeOfDay(timezone),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, assignedLoName, borrowerName, timezone, timeTick]);
+  }, [user, effectiveLoName, borrowerName, timezone, timeTick]);
 
   // Load defaults, personal script, and all scripts (for browsing across CLRs)
   const { data: defaults = [], isLoading: loadingDefaults } = useQuery<CallScript[]>({
@@ -1220,6 +1294,46 @@ export default function CallScriptPage() {
               className="h-8 text-sm w-56"
               data-testid="script-borrower-name"
             />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">
+              {hasAssignedToday ? "Today's LO:" : "LO (no assignments today):"}
+            </label>
+            {loDropdownOptions.length > 0 ? (
+              <Select value={loSelection || undefined} onValueChange={handleLoSelect}>
+                <SelectTrigger className="h-8 text-sm w-56" data-testid="script-lo-select">
+                  <SelectValue placeholder="Select LO" />
+                </SelectTrigger>
+                <SelectContent>
+                  {loDropdownOptions.map(opt => (
+                    <SelectItem key={opt.name} value={opt.name}>{opt.name}</SelectItem>
+                  ))}
+                  <SelectItem value="__manual__">Other (type manually)…</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={manualLoName}
+                onChange={e => setManualLoName(e.target.value)}
+                onBlur={handleManualCommit}
+                placeholder="Enter LO name"
+                className="h-8 text-sm w-56"
+                data-testid="script-lo-manual"
+              />
+            )}
+            {loSelection === "__manual__" && (
+              <Input
+                value={manualLoName}
+                onChange={e => setManualLoName(e.target.value)}
+                onBlur={handleManualCommit}
+                placeholder="Type LO name"
+                className="h-8 text-sm w-48"
+                data-testid="script-lo-manual-text"
+              />
+            )}
+            <span className="text-[11px] text-muted-foreground">
+              Fills <code>[lo name]</code> in script
+            </span>
           </div>
         </CardContent>
       </Card>
