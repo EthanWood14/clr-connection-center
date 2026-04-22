@@ -2318,6 +2318,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return header.trim() === stored.trim();
   }
 
+  const normalizePhone = (p: any): string => String(p ?? '').replace(/\D/g, '');
+
+  function findUserByWebhookPhoneOrName(phoneGuess: any, nameGuess: any): any | null {
+    const normalizedIncoming = normalizePhone(phoneGuess);
+    if (normalizedIncoming) {
+      const users = storage.getUsers() as any[];
+      const phoneMatch = users.find((u: any) =>
+        u.isActive && (u.role === "assistant" || u.role === "admin") &&
+        normalizePhone(u.phone) && normalizePhone(u.phone) === normalizedIncoming
+      );
+      if (phoneMatch) return phoneMatch;
+    }
+    return storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
+  }
+
   app.post("/api/webhook/mojo", (req, res) => {
     const body = req.body ?? {};
     const settings = storageExtra.getWebhookSettings();
@@ -2328,8 +2343,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
 
     const rawDisp = String(body.disposition || body.call_disposition || body.status || body.result || "").toLowerCase().trim();
+    const phoneGuess = body.agent_phone || body.user_phone || body.rep_phone || body.phone || body.caller_id || null;
     const nameGuess = body.agent_name || body.user_name || body.rep_name || body.name || body.agent || body.user || null;
-    const matched = storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
+    const matched = findUserByWebhookPhoneOrName(phoneGuess, nameGuess);
     const today = new Date().toISOString().split("T")[0];
 
     let action = "ignored";
@@ -2394,8 +2410,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
 
     const eventType = String(body.event || body.type || body.webhook_type || "").toLowerCase().trim();
+    const phoneGuess = body.agent_phone || body.user_phone || body.rep_phone || body.phone || body.caller_id || null;
     const nameGuess = body.agent_name || body.user_name || body.rep_name || body.name || body.assigned_to || body.owner || null;
-    const matched = storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
+    const matched = findUserByWebhookPhoneOrName(phoneGuess, nameGuess);
 
     let handled = false;
     if (eventType === "prospect.created" || eventType === "contact.created") {

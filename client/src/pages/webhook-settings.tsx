@@ -134,7 +134,7 @@ export default function WebhookSettingsPage() {
         <h1 className="text-2xl font-bold tracking-tight">Webhooks</h1>
       </div>
       <p className="text-sm text-muted-foreground">
-        Configure inbound webhooks from Mojo Dialer and Bonzo CRM. Events are matched to CLRs by name and logged for debugging.
+        Configure inbound webhooks from Mojo Dialer and Bonzo CRM. CLRs are matched by phone number (primary) then name (fallback). Make sure each CLR has their phone number set in their profile.
       </p>
 
       <Card>
