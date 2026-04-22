@@ -736,8 +736,22 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const dateLabel = format(parseISO(r.report_date), "EEE, MMM d, yyyy");
           const isOpen = expanded === r.id;
           const calls = r.calls_made ?? 0;
-          const xfers = r.transfers ?? 0;
-          const appts = r.appointments ?? 0;
+          const breakdown = r.outcomeBreakdown ?? {};
+          const xfers = breakdown.transfer ?? r.transfers ?? 0;
+          const appts = breakdown.appointment ?? r.appointments ?? 0;
+          const fellThrough = breakdown.fell_through ?? 0;
+          const callbacks = breakdown.callback_requested ?? 0;
+          const future = breakdown.future_contact ?? 0;
+          const noAnswer = breakdown.no_answer ?? 0;
+          const summaryChips: Array<{ label: string; val: number; cls: string }> = [
+            { label: "calls",        val: calls,       cls: "text-muted-foreground" },
+            { label: "transfers",    val: xfers,       cls: "text-emerald-600 font-medium" },
+            { label: "appts",        val: appts,       cls: "text-blue-600" },
+            { label: "fell through", val: fellThrough, cls: "text-rose-600" },
+            { label: "callbacks",    val: callbacks,   cls: "text-amber-600" },
+            { label: "future",       val: future,      cls: "text-indigo-600" },
+            { label: "no answer",    val: noAnswer,    cls: "text-muted-foreground" },
+          ].filter(c => c.val > 0);
 
           return (
             <Card key={r.id} className="border border-border overflow-hidden">
@@ -756,10 +770,14 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 mt-0.5">
-                      <span className="text-xs text-muted-foreground">{calls} calls</span>
-                      <span className="text-xs text-emerald-600 font-medium">{xfers} transfers</span>
-                      <span className="text-xs text-blue-600">{appts} appts</span>
+                    <div className="flex items-center gap-x-3 gap-y-0.5 mt-0.5 flex-wrap">
+                      {summaryChips.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">No activity</span>
+                      ) : (
+                        summaryChips.map(c => (
+                          <span key={c.label} className={`text-xs ${c.cls}`}>{c.val} {c.label}</span>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
@@ -770,12 +788,16 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
 
               {isOpen && (
                 <div className="px-4 pb-4 pt-1 border-t border-border bg-muted/20 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {/* Stats */}
-                  <div className="grid grid-cols-3 gap-2">
+                  {/* Stats — full outcome breakdown */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {[
-                      { label: "Calls", val: calls, color: "text-foreground" },
-                      { label: "Transfers", val: xfers, color: "text-emerald-600" },
-                      { label: "Appointments", val: appts, color: "text-blue-600" },
+                      { label: "Calls",        val: calls,       color: "text-foreground" },
+                      { label: "Transfers",    val: xfers,       color: "text-emerald-600" },
+                      { label: "Appointments", val: appts,       color: "text-blue-600" },
+                      { label: "Fell Through", val: fellThrough, color: "text-rose-600" },
+                      { label: "Callbacks",    val: callbacks,   color: "text-amber-600" },
+                      { label: "Future",       val: future,      color: "text-indigo-600" },
+                      { label: "No Answer",    val: noAnswer,    color: "text-muted-foreground" },
                     ].map(s => (
                       <div key={s.label} className="rounded-lg bg-background border border-border px-3 py-2 text-center">
                         <div className={`text-xl font-bold ${s.color}`}>{s.val}</div>
