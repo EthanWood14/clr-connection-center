@@ -201,6 +201,22 @@ try {
 } catch {
   // Column already exists — ignore
 }
+
+// Transfer wizard fields — all nullable, only populated for transfer outcomes
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN conversation_notes TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lo_action_plan TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lead_timeframe TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN requires_followup INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN followup_reason TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN followup_date TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lead_type TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN appointment_datetime TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lead_goal TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN prequalification_notes TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN missed_reason TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN rescheduled INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN reschedule_datetime TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN next_steps TEXT`); } catch {}
 try {
   sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}

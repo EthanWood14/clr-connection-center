@@ -47,6 +47,10 @@ import {
   ArrowUpRight,
   XCircle,
   Pencil,
+  ChevronDown,
+  ChevronUp,
+  StickyNote,
+  Save,
 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -327,21 +331,30 @@ function AppointmentCard({
   outcome,
   loName,
   onComplete,
+  onQuickComplete,
   onEdit,
   onReschedule,
+  onSaveNotes,
   isPendingComplete,
   isPendingReschedule,
+  isPendingNotes,
 }: {
   outcome: Outcome;
   loName: string;
   onComplete: (outcome: Outcome) => void;
+  onQuickComplete: (id: number) => void;
   onEdit: (outcome: Outcome) => void;
   onReschedule: (id: number, date: string) => void;
+  onSaveNotes: (id: number, notes: string) => void;
   isPendingComplete: boolean;
   isPendingReschedule: boolean;
+  isPendingNotes: boolean;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
   const [newDate, setNewDate] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(outcome.notes ?? "");
 
   const handleReschedule = () => {
     if (!newDate) return;
@@ -350,18 +363,23 @@ function AppointmentCard({
     setNewDate("");
   };
 
+  const handleSaveNotes = () => {
+    onSaveNotes(outcome.id, noteDraft);
+    setEditingNotes(false);
+  };
+
   const dateStr = outcome.followUpDate ?? "";
   const todayStr = new Date().toISOString().split("T")[0];
-  const isOverdue = dateStr < todayStr;
-  const isUpcoming = dateStr > todayStr;
+  const isOverdue = !!dateStr && dateStr < todayStr;
+  const isUpcoming = !!dateStr && dateStr > todayStr;
   const isTodayAppt = dateStr === todayStr;
 
   return (
-    <Card className="border border-border hover:border-primary/30 transition-colors">
+    <Card className={`border transition-colors ${isOverdue ? "border-red-200 dark:border-red-900/50" : "border-border hover:border-primary/30"}`}>
       <CardContent className="p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {/* Left */}
-          <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex-1 min-w-0 space-y-2 cursor-pointer" onClick={() => setExpanded(e => !e)}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold truncate">{outcome.borrowerName || "Unknown Borrower"}</span>
               {isOverdue && (
@@ -385,6 +403,12 @@ function AppointmentCard({
               >
                 {OUTCOME_LABELS[outcome.outcomeType] ?? outcome.outcomeType}
               </Badge>
+              {outcome.notes && !expanded && (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 gap-1">
+                  <StickyNote className="w-3 h-3" />
+                  Note
+                </Badge>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -398,17 +422,116 @@ function AppointmentCard({
               )}
             </div>
 
-            {outcome.notes && (
+            {outcome.notes && !expanded && (
               <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{outcome.notes}</p>
             )}
+          </div>
 
+          {/* Right: Actions */}
+          <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant="default"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => onQuickComplete(outcome.id)}
+              disabled={isPendingComplete}
+              title="Mark complete immediately"
+            >
+              {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+              Complete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => setExpanded(e => !e)}
+              aria-label="Expand details"
+            >
+              {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {expanded ? "Less" : "Details"}
+            </Button>
+          </div>
+        </div>
+
+        {/* Expanded detail panel */}
+        {expanded && (
+          <div className="mt-4 pt-4 border-t border-border space-y-3">
+            {/* Inline notes editor */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-foreground/70 flex items-center gap-1">
+                  <StickyNote className="w-3 h-3" />
+                  Notes
+                </span>
+                {!editingNotes && (
+                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => { setEditingNotes(true); setNoteDraft(outcome.notes ?? ""); }}>
+                    <Pencil className="w-3 h-3 mr-1" />
+                    {outcome.notes ? "Edit" : "Add"}
+                  </Button>
+                )}
+              </div>
+              {editingNotes ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={noteDraft}
+                    onChange={e => setNoteDraft(e.target.value)}
+                    rows={3}
+                    placeholder='e.g. "Called 3x, no answer. Try afternoon."'
+                    className="text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-7 text-xs" onClick={handleSaveNotes} disabled={isPendingNotes}>
+                      {isPendingNotes ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+                      Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setEditingNotes(false); setNoteDraft(outcome.notes ?? ""); }}>Cancel</Button>
+                  </div>
+                </div>
+              ) : outcome.notes ? (
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{outcome.notes}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground/70 italic">No notes yet.</p>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs gap-1.5"
+                onClick={() => onComplete(outcome)}
+                disabled={isPendingComplete}
+                title="Complete with outcome (Transfer or Fell Through)"
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Mark Complete…
+              </Button>
+              {!rescheduling && (
+                <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={() => setRescheduling(true)}>
+                  <CalendarClock className="w-3 h-3" />
+                  Reschedule
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs gap-1.5"
+                onClick={() => onEdit(outcome)}
+              >
+                <Pencil className="w-3 h-3" />
+                Edit Details
+              </Button>
+            </div>
+
+            {/* Inline reschedule picker */}
             {rescheduling && (
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2">
                 <Input
                   type="date"
                   value={newDate}
                   onChange={(e) => setNewDate(e.target.value)}
-                  className="h-8 text-xs w-40"
+                  className="h-8 text-xs w-44"
                 />
                 <Button size="sm" className="h-8 text-xs px-3" onClick={handleReschedule} disabled={!newDate || isPendingReschedule}>
                   {isPendingReschedule ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Save"}
@@ -419,36 +542,7 @@ function AppointmentCard({
               </div>
             )}
           </div>
-
-          {/* Right: Actions */}
-          <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant="default"
-              className="h-8 text-xs gap-1.5"
-              onClick={() => onComplete(outcome)}
-              disabled={isPendingComplete}
-            >
-              {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-              Complete
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs gap-1.5"
-              onClick={() => onEdit(outcome)}
-            >
-              <Pencil className="w-3 h-3" />
-              Edit
-            </Button>
-            {!rescheduling && (
-              <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5" onClick={() => setRescheduling(true)}>
-                <CalendarClock className="w-3 h-3" />
-                Reschedule
-              </Button>
-            )}
-          </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -527,7 +621,13 @@ export default function Appointments() {
 
   const totalCount = allAppointments.length;
 
-  // Complete mutation
+  // Stats counts (respects current filter since allAppointments is filtered)
+  const apptCount = allAppointments.filter(o => o.outcomeType === "appointment").length;
+  const callbackCount = allAppointments.filter(o => o.outcomeType === "callback_requested").length;
+  const deferralCount = allAppointments.filter(o => o.outcomeType === "deferral" || o.outcomeType === "future_contact").length;
+  const overdueCount = overdueList.length;
+
+  // Complete mutation — opens dialog flow (Transfer vs Fell Through)
   const completeMutation = useMutation({
     mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
       setPendingCompleteId(id);
@@ -543,6 +643,42 @@ export default function Appointments() {
     onError: () => {
       setPendingCompleteId(null);
       toast({ title: "Error completing appointment", variant: "destructive" });
+    },
+  });
+
+  // Quick complete — one-click, marks as transfer without a dialog
+  const quickCompleteMutation = useMutation({
+    mutationFn: (id: number) => {
+      setPendingCompleteId(id);
+      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", followUpDate: null });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      setPendingCompleteId(null);
+      toast({ title: "✓ Marked complete" });
+    },
+    onError: () => {
+      setPendingCompleteId(null);
+      toast({ title: "Error completing appointment", variant: "destructive" });
+    },
+  });
+
+  // Notes-only mutation
+  const [pendingNotesId, setPendingNotesId] = useState<number | null>(null);
+  const notesMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: number; notes: string }) => {
+      setPendingNotesId(id);
+      return apiRequest("PATCH", `/api/outcomes/${id}`, { notes });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      setPendingNotesId(null);
+      toast({ title: "Notes saved" });
+    },
+    onError: () => {
+      setPendingNotesId(null);
+      toast({ title: "Error saving notes", variant: "destructive" });
     },
   });
 
@@ -585,8 +721,10 @@ export default function Appointments() {
   });
 
   const handleComplete = (outcome: Outcome) => setCompleteTarget(outcome);
+  const handleQuickComplete = (id: number) => quickCompleteMutation.mutate(id);
   const handleConfirmComplete = (id: number, type: "transfer" | "fell_through") => completeMutation.mutate({ id, type });
   const handleReschedule = (id: number, date: string) => rescheduleMutation.mutate({ id, date });
+  const handleSaveNotes = (id: number, notes: string) => notesMutation.mutate({ id, notes });
   const handleEdit = (outcome: Outcome) => setEditTarget(outcome);
   const handleSubmitEdit = (values: EditValues) => {
     if (!editTarget) return;
@@ -639,6 +777,27 @@ export default function Appointments() {
         })}
       </div>
 
+      {/* Stats bar */}
+      {!isLoading && totalCount > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs px-3 py-2 rounded-md border border-border bg-muted/30">
+          <span className="font-semibold text-foreground">
+            {apptCount} <span className="text-muted-foreground font-normal">Appointment{apptCount === 1 ? "" : "s"}</span>
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="font-semibold text-foreground">
+            {callbackCount} <span className="text-muted-foreground font-normal">Callback{callbackCount === 1 ? "" : "s"}</span>
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="font-semibold text-foreground">
+            {deferralCount} <span className="text-muted-foreground font-normal">Deferral{deferralCount === 1 ? "" : "s"}</span>
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className={`font-semibold ${overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
+            {overdueCount} <span className="font-normal opacity-70">Overdue</span>
+          </span>
+        </div>
+      )}
+
       {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
@@ -669,9 +828,11 @@ export default function Appointments() {
             {overdueList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-                onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}
+                onComplete={handleComplete} onQuickComplete={handleQuickComplete}
+                onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
+                isPendingNotes={pendingNotesId === o.id}
               />
             ))}
           </div>
@@ -686,9 +847,11 @@ export default function Appointments() {
             {todayList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-                onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}
+                onComplete={handleComplete} onQuickComplete={handleQuickComplete}
+                onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
+                isPendingNotes={pendingNotesId === o.id}
               />
             ))}
           </div>
@@ -703,9 +866,11 @@ export default function Appointments() {
             {upcomingList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-                onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}
+                onComplete={handleComplete} onQuickComplete={handleQuickComplete}
+                onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
+                isPendingNotes={pendingNotesId === o.id}
               />
             ))}
           </div>
@@ -720,9 +885,11 @@ export default function Appointments() {
             {undatedList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
-                onComplete={handleComplete} onEdit={handleEdit} onReschedule={handleReschedule}
+                onComplete={handleComplete} onQuickComplete={handleQuickComplete}
+                onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
+                isPendingNotes={pendingNotesId === o.id}
               />
             ))}
           </div>

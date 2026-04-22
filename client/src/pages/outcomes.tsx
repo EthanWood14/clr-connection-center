@@ -15,7 +15,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck } from "lucide-react";
+import { Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck, ChevronLeft, ChevronRight, Check } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 
@@ -54,6 +54,19 @@ const OUTCOME_COLORS: Record<string, string> = {
 const TRANSFER_TYPES = ["direct", "appointment"] as const;
 type TransferType = typeof TRANSFER_TYPES[number];
 
+const TIMEFRAME_OPTIONS = [
+  { value: "ready_now", label: "Ready now" },
+  { value: "1_2_weeks", label: "1-2 weeks" },
+  { value: "1_3_months", label: "1-3 months" },
+  { value: "3_6_months", label: "3-6 months" },
+  { value: "6_plus_months", label: "6+ months" },
+] as const;
+
+const LEAD_TYPE_OPTIONS = [
+  { value: "appointment_transfer", label: "Appointment Transfer" },
+  { value: "missed_appointment", label: "Missed Appointment" },
+] as const;
+
 const outcomeFormSchema = z.object({
   date: z.string().min(1, "Date required"),
   assistantId: z.coerce.number().min(1, "Select an assistant"),
@@ -64,6 +77,21 @@ const outcomeFormSchema = z.object({
   journeyId: z.string().optional(),
   notes: z.string().optional(),
   followUpDate: z.string().optional(),
+  // Wizard fields (all optional — filled for transfers if not skipped)
+  conversationNotes: z.string().optional(),
+  loActionPlan: z.string().optional(),
+  leadTimeframe: z.string().optional(),
+  requiresFollowup: z.boolean().optional(),
+  followupReason: z.string().optional(),
+  followupDate: z.string().optional(),
+  leadType: z.string().optional(),
+  appointmentDatetime: z.string().optional(),
+  leadGoal: z.string().optional(),
+  prequalificationNotes: z.string().optional(),
+  missedReason: z.string().optional(),
+  rescheduled: z.boolean().optional(),
+  rescheduleDatetime: z.string().optional(),
+  nextSteps: z.string().optional(),
 }).superRefine((val, ctx) => {
   if (val.outcomeType === "transfer" && val.transferType !== "direct" && val.transferType !== "appointment") {
     ctx.addIssue({
@@ -112,6 +140,35 @@ function TransferTypeOption({
   );
 }
 
+function StepIndicator({ step, total }: { step: number; total: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-1">
+      {Array.from({ length: total }).map((_, i) => {
+        const n = i + 1;
+        const done = n < step;
+        const active = n === step;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <div
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold border ${
+                done
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : active
+                  ? "bg-primary/10 text-primary border-primary"
+                  : "bg-muted text-muted-foreground border-border"
+              }`}
+            >
+              {done ? <Check className="w-3 h-3" /> : n}
+            </div>
+            {i < total - 1 && <div className={`w-8 h-px ${done ? "bg-primary" : "bg-border"}`} />}
+          </div>
+        );
+      })}
+      <span className="ml-2 text-xs text-muted-foreground">Step {step} of {total}</span>
+    </div>
+  );
+}
+
 function OutcomeFormDialog({
   open,
   onClose,
@@ -139,13 +196,32 @@ function OutcomeFormDialog({
       journeyId: "",
       notes: "",
       followUpDate: "",
+      conversationNotes: "",
+      loActionPlan: "",
+      leadTimeframe: "",
+      requiresFollowup: false,
+      followupReason: "",
+      followupDate: "",
+      leadType: "",
+      appointmentDatetime: "",
+      leadGoal: "",
+      prequalificationNotes: "",
+      missedReason: "",
+      rescheduled: false,
+      rescheduleDatetime: "",
+      nextSteps: "",
     },
   });
 
   const [bonzoLogged, setBonzoLogged] = useState(false);
+  const [step, setStep] = useState(1);
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
+  const watchedRequiresFollowup = form.watch("requiresFollowup");
+  const watchedLeadType = form.watch("leadType");
+  const watchedRescheduled = form.watch("rescheduled");
   const isTransfer = watchedType === "transfer";
+  const totalSteps = isTransfer ? 3 : 1;
 
   // Clear transferType whenever outcome moves away from "transfer" so stale
   // values don't trip the superRefine on a later transfer selection.
@@ -153,11 +229,53 @@ function OutcomeFormDialog({
     if (watchedType !== "transfer" && form.getValues("transferType") != null) {
       form.setValue("transferType", null, { shouldValidate: false });
     }
-  }, [watchedType, form]);
+    if (watchedType !== "transfer" && step !== 1) setStep(1);
+  }, [watchedType, form, step]);
 
   useEffect(() => {
-    if (open) setBonzoLogged(false);
+    if (open) { setBonzoLogged(false); setStep(1); }
   }, [open]);
+
+  const canAdvanceFromStep1 = !isTransfer || (
+    form.getValues("loId") > 0 &&
+    (watchedTransferType === "direct" || watchedTransferType === "appointment")
+  );
+
+  const handleNext = async () => {
+    if (step === 1) {
+      // Validate step 1 fields before advancing
+      const ok = await form.trigger(["date", "assistantId", "loId", "outcomeType", "transferType"]);
+      if (!ok) return;
+      setStep(2);
+    } else if (step === 2) {
+      setStep(3);
+    }
+  };
+
+  const handleBack = () => { if (step > 1) setStep(step - 1); };
+
+  const handleSkip = () => {
+    // Clear the fields on the current step then advance (or submit from step 3)
+    if (step === 2) {
+      form.setValue("conversationNotes", "");
+      form.setValue("loActionPlan", "");
+      form.setValue("leadTimeframe", "");
+      form.setValue("requiresFollowup", false);
+      form.setValue("followupReason", "");
+      form.setValue("followupDate", "");
+      setStep(3);
+    } else if (step === 3) {
+      form.setValue("leadType", "");
+      form.setValue("appointmentDatetime", "");
+      form.setValue("leadGoal", "");
+      form.setValue("prequalificationNotes", "");
+      form.setValue("missedReason", "");
+      form.setValue("rescheduled", false);
+      form.setValue("rescheduleDatetime", "");
+      form.setValue("nextSteps", "");
+      form.handleSubmit(onSubmit)();
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
@@ -165,8 +283,11 @@ function OutcomeFormDialog({
         <DialogHeader>
           <DialogTitle>Log Outcome</DialogTitle>
         </DialogHeader>
+        {isTransfer && <StepIndicator step={step} total={totalSteps} />}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {step === 1 && (
+          <>
             <div className="grid grid-cols-2 gap-3">
               <FormField control={form.control} name="date" render={({ field }) => (
                 <FormItem>
@@ -282,13 +403,182 @@ function OutcomeFormDialog({
                 <FormControl><Input type="date" {...field} data-testid="input-appointment-date" /></FormControl>
               </FormItem>
             )} />
-            <FormField control={form.control} name="notes" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Notes</FormLabel>
-                <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-outcome-notes" /></FormControl>
-              </FormItem>
-            )} />
-            {isTransfer && (
+            {!isTransfer && (
+              <FormField control={form.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes</FormLabel>
+                  <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-outcome-notes" /></FormControl>
+                </FormItem>
+              )} />
+            )}
+          </>
+          )}
+
+          {/* ── Step 2: Conversation Notes ───────────────────────── */}
+          {isTransfer && step === 2 && (
+            <>
+              <p className="text-sm font-semibold text-foreground">Conversation Notes</p>
+              <FormField control={form.control} name="conversationNotes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Summary of conversation with lead</FormLabel>
+                  <FormControl><Textarea {...field} rows={3} placeholder="What did the lead say? Main questions or concerns?" /></FormControl>
+                  <p className="text-xs text-muted-foreground">What did the lead say? What were their main questions or concerns?</p>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="loActionPlan" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>LO's action plan with this lead</FormLabel>
+                  <FormControl><Textarea {...field} rows={3} placeholder="e.g. send rate quote, schedule call, run credit" /></FormControl>
+                  <p className="text-xs text-muted-foreground">What will the LO do next? (e.g. send rate quote, schedule call, run credit)</p>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="leadTimeframe" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Timeframe</FormLabel>
+                  <Select value={field.value || ""} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger><SelectValue placeholder="Select timeframe" /></SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {TIMEFRAME_OPTIONS.map(t => (
+                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="requiresFollowup" render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center gap-3">
+                    <FormLabel className="mb-0">Requires follow-up?</FormLabel>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => field.onChange(true)}
+                        className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === true ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
+                      >Yes</button>
+                      <button
+                        type="button"
+                        onClick={() => field.onChange(false)}
+                        className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === false ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
+                      >No</button>
+                    </div>
+                  </div>
+                </FormItem>
+              )} />
+              {watchedRequiresFollowup === true && (
+                <div className="grid grid-cols-1 gap-3 pl-2 border-l-2 border-primary/30">
+                  <FormField control={form.control} name="followupReason" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Why follow-up needed</FormLabel>
+                      <FormControl><Textarea {...field} rows={2} placeholder="Reason for follow-up" /></FormControl>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="followupDate" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Follow-up date</FormLabel>
+                      <FormControl><Input type="date" {...field} /></FormControl>
+                    </FormItem>
+                  )} />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Step 3: Lead Information ────────────────────────── */}
+          {isTransfer && step === 3 && (
+            <>
+              <p className="text-sm font-semibold text-foreground">Lead Information</p>
+              <FormField control={form.control} name="leadType" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Lead type</FormLabel>
+                  <Select value={field.value || ""} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger><SelectValue placeholder="Select lead type" /></SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {LEAD_TYPE_OPTIONS.map(t => (
+                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )} />
+
+              {watchedLeadType === "appointment_transfer" && (
+                <>
+                  <FormField control={form.control} name="appointmentDatetime" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Appointment date & time</FormLabel>
+                      <FormControl><Input type="datetime-local" {...field} /></FormControl>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="leadGoal" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Lead's stated goal</FormLabel>
+                      <FormControl><Input {...field} placeholder="e.g. Buy first home, Refinance" /></FormControl>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="prequalificationNotes" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Any pre-qualification info?</FormLabel>
+                      <FormControl><Textarea {...field} rows={2} placeholder="Income range, credit score range, etc." /></FormControl>
+                    </FormItem>
+                  )} />
+                </>
+              )}
+
+              {watchedLeadType === "missed_appointment" && (
+                <>
+                  <FormField control={form.control} name="missedReason" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Why was the appointment missed?</FormLabel>
+                      <FormControl><Textarea {...field} rows={2} placeholder="Reason" /></FormControl>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="rescheduled" render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center gap-3">
+                        <FormLabel className="mb-0">Rescheduled?</FormLabel>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => field.onChange(true)}
+                            className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === true ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
+                          >Yes</button>
+                          <button
+                            type="button"
+                            onClick={() => field.onChange(false)}
+                            className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === false ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
+                          >No</button>
+                        </div>
+                      </div>
+                    </FormItem>
+                  )} />
+                  {watchedRescheduled === true && (
+                    <FormField control={form.control} name="rescheduleDatetime" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>New appointment date & time</FormLabel>
+                        <FormControl><Input type="datetime-local" {...field} /></FormControl>
+                      </FormItem>
+                    )} />
+                  )}
+                  <FormField control={form.control} name="nextSteps" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Next steps</FormLabel>
+                      <FormControl><Textarea {...field} rows={2} placeholder="What happens next?" /></FormControl>
+                    </FormItem>
+                  )} />
+                </>
+              )}
+
+              <FormField control={form.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Additional notes</FormLabel>
+                  <FormControl><Textarea {...field} rows={2} placeholder="Any other notes…" /></FormControl>
+                </FormItem>
+              )} />
+
               <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3">
                 <Checkbox
                   id="bonzo-logged"
@@ -300,21 +590,50 @@ function OutcomeFormDialog({
                   I have recorded this transfer in Bonzo using the appropriate notation.
                 </label>
               </div>
-            )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-              <Button
-                type="submit"
-                disabled={
-                  isPending ||
-                  (isTransfer && !bonzoLogged) ||
-                  (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
-                }
-                data-testid="button-save-outcome"
-              >
-                {isPending ? "Saving…" : "Log Outcome"}
-              </Button>
-            </DialogFooter>
+            </>
+          )}
+
+          {/* Footer */}
+          <DialogFooter className="flex flex-wrap items-center gap-2 sm:justify-between">
+            <div className="flex gap-2">
+              {isTransfer && step > 1 && (
+                <Button type="button" variant="outline" size="sm" onClick={handleBack}>
+                  <ChevronLeft className="w-4 h-4 mr-1" /> Back
+                </Button>
+              )}
+              <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+            </div>
+            <div className="flex gap-2">
+              {isTransfer && (step === 2 || step === 3) && (
+                <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
+                  Skip for now
+                </Button>
+              )}
+              {isTransfer && step < totalSteps && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleNext}
+                  disabled={step === 1 && !canAdvanceFromStep1}
+                >
+                  Next <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              )}
+              {(!isTransfer || step === totalSteps) && (
+                <Button
+                  type="submit"
+                  disabled={
+                    isPending ||
+                    (isTransfer && !bonzoLogged) ||
+                    (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
+                  }
+                  data-testid="button-save-outcome"
+                >
+                  {isPending ? "Saving…" : "Log Outcome"}
+                </Button>
+              )}
+            </div>
+          </DialogFooter>
           </form>
         </Form>
       </DialogContent>

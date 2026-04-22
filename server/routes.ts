@@ -353,6 +353,60 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   const teamMissed      = clrStats.reduce((s, r) => s + r.missed, 0);
   const teamRatio       = teamCalls > 0 ? ((teamTransfers / teamCalls) * 100).toFixed(1) + "%" : "—";
 
+  // Transfers in this period with their conversation notes / LO plan / timeframe / follow-up flag
+  const transferDetails = outcomes
+    .filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer")
+    .map((o: any) => {
+      const lo = los.find((l: any) => l.id === (o.loId ?? o.lo_id));
+      const assistant = users.find((u: any) => u.id === (o.assistantId ?? o.assistant_id));
+      return {
+        date: o.date as string,
+        borrowerName: (o.borrowerName ?? o.borrower_name ?? "").toString().trim(),
+        loName: lo ? ((lo as any).fullName ?? (lo as any).full_name ?? `LO #${lo.id}`) : "—",
+        assistantName: assistant ? (assistant as any).name : "—",
+        transferType: (o.transferType ?? o.transfer_type) as string | null,
+        conversationNotes: (o.conversationNotes ?? o.conversation_notes) as string | null,
+        loActionPlan: (o.loActionPlan ?? o.lo_action_plan) as string | null,
+        leadTimeframe: (o.leadTimeframe ?? o.lead_timeframe) as string | null,
+        requiresFollowup: (o.requiresFollowup ?? o.requires_followup) as number | null,
+        followupReason: (o.followupReason ?? o.followup_reason) as string | null,
+        followupDate: (o.followupDate ?? o.followup_date) as string | null,
+      };
+    });
+
+  const transferDetailsHtml = transferDetails.length > 0 ? (() => {
+    const esc = (s: string) => (s ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+    const detailLine = (label: string, val: string | null | undefined) =>
+      val && String(val).trim() ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:#166534">${label}:</strong> ${esc(String(val).trim())}</div>` : "";
+    const rows = transferDetails.map((t, i) => {
+      const tt = t.transferType === "direct" ? "Direct" : t.transferType === "appointment" ? "Appt" : null;
+      const tf = t.leadTimeframe ? String(t.leadTimeframe).replace(/_/g, " ") : null;
+      const followup = t.requiresFollowup
+        ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${t.followupDate ? ` by ${t.followupDate}` : ""}</strong>${t.followupReason ? ` — ${esc(t.followupReason)}` : ""}</div>`
+        : "";
+      return `<div style="padding:10px 0;${i < transferDetails.length - 1 ? "border-bottom:1px solid #dcfce7" : ""}">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
+          <span style="font-size:13px;font-weight:600;color:#14532d">${esc(t.borrowerName) || "—"}</span>
+          <span style="font-size:12px;color:#15803d">&rarr; ${esc(t.loName)}</span>
+          ${tt ? `<span style="font-size:12px;color:#4b5563;font-weight:500">(${tt})</span>` : ""}
+          ${tf ? `<span style="font-size:11px;color:#64748b;background:#ecfccb;border:1px solid #bef264;border-radius:999px;padding:2px 8px;font-weight:500">${tf}</span>` : ""}
+          <span style="font-size:11px;color:#94a3b8;margin-left:auto">${t.date} · ${esc(t.assistantName)}</span>
+        </div>
+        ${detailLine("Summary", t.conversationNotes)}
+        ${detailLine("LO Plan", t.loActionPlan)}
+        ${followup}
+      </div>`;
+    }).join("");
+    return `
+    <div style="margin-top:28px">
+      <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Transfer Details (${transferDetails.length})</h2>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 16px">
+        ${rows}
+      </div>
+    </div>`;
+  })() : "";
+
   const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
   // Stat card helper — 25% wide (4 cards)
@@ -550,6 +604,8 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
     </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
     `}
+
+    ${transferDetailsHtml}
 
     <!-- Active LOs callout -->
     <div style="margin-top:28px;padding:14px 18px;background:#eff6ff;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
@@ -2727,7 +2783,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
         // Fetch today's outcomes for this user to get transfer prospect names + LO names + fell through count
         const sqlite2 = (storageExtra as any).getSqlite ? (storageExtra as any).getSqlite() : null;
-        let transferProspects: Array<{ name: string; loName: string | null; transferType: string | null }> = [];
+        let transferProspects: Array<{
+          name: string;
+          loName: string | null;
+          transferType: string | null;
+          conversationNotes?: string | null;
+          loActionPlan?: string | null;
+          leadTimeframe?: string | null;
+          requiresFollowup?: number | null;
+          followupReason?: string | null;
+          followupDate?: string | null;
+        }> = [];
         let fellThroughCount = 0;
         if (sqlite2) {
           try {
@@ -2744,6 +2810,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
                 name: (o.borrower_name || '').trim(),
                 loName: (o.lo_full_name || '').trim() || null,
                 transferType: (o.transfer_type as string | null) ?? null,
+                conversationNotes: (o.conversation_notes as string | null) ?? null,
+                loActionPlan: (o.lo_action_plan as string | null) ?? null,
+                leadTimeframe: (o.lead_timeframe as string | null) ?? null,
+                requiresFollowup: (o.requires_followup as number | null) ?? null,
+                followupReason: (o.followup_reason as string | null) ?? null,
+                followupDate: (o.followup_date as string | null) ?? null,
               }))
               .filter((p: any) => p.name.length > 0);
             fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
@@ -2797,16 +2869,29 @@ export function registerRoutes(httpServer: Server, app: Express) {
             <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfer Prospects (${xfers})</p>
             ${transferProspects.length > 0
               ? transferProspects.map((p, i) => {
+                  const escHtml = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
                   const safeName = p.name.replace(/</g,'&lt;').replace(/>/g,'&gt;');
                   const safeLo = p.loName ? p.loName.replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
                   const tt = p.transferType === 'direct' ? 'Direct'
                            : p.transferType === 'appointment' ? 'Appt'
                            : null;
-                  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
-                    <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
-                    <span style="font-size:13px;font-weight:600;color:#14532d">${safeName}</span>
-                    ${safeLo ? `<span style="font-size:13px;color:#15803d">&rarr;</span><span style="font-size:13px;font-weight:600;color:#166534">${safeLo}</span>` : ''}
-                    ${tt ? `<span style="font-size:12px;color:#4b5563;font-weight:500">(${tt})</span>` : ''}
+                  const tf = p.leadTimeframe ? String(p.leadTimeframe).replace(/_/g, ' ') : null;
+                  const detailLine = (label: string, val: string | null | undefined) =>
+                    val && String(val).trim() ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:#166534">${label}:</strong> ${escHtml(String(val).trim())}</div>` : '';
+                  const followupLine = p.requiresFollowup
+                    ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${p.followupDate ? ` by ${p.followupDate}` : ''}</strong>${p.followupReason ? ` — ${escHtml(p.followupReason)}` : ''}</div>`
+                    : '';
+                  return `<div style="padding:10px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="display:inline-block;width:22px;height:22px;background:#16a34a;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
+                      <span style="font-size:13px;font-weight:600;color:#14532d">${safeName}</span>
+                      ${safeLo ? `<span style="font-size:13px;color:#15803d">&rarr;</span><span style="font-size:13px;font-weight:600;color:#166534">${safeLo}</span>` : ''}
+                      ${tt ? `<span style="font-size:12px;color:#4b5563;font-weight:500">(${tt})</span>` : ''}
+                      ${tf ? `<span style="font-size:11px;color:#64748b;background:#ecfccb;border:1px solid #bef264;border-radius:999px;padding:2px 8px;font-weight:500">${tf}</span>` : ''}
+                    </div>
+                    ${detailLine('Summary', p.conversationNotes)}
+                    ${detailLine('LO Plan', p.loActionPlan)}
+                    ${followupLine}
                   </div>`;
                 }).join('')
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`

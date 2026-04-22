@@ -110,6 +110,21 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   notes: text("notes"),
   followUpDate: text("follow_up_date"),
   tags: text("tags").notNull().default("[]"),
+  // Transfer wizard fields — only populated for transfer outcomes, all nullable
+  conversationNotes: text("conversation_notes"),
+  loActionPlan: text("lo_action_plan"),
+  leadTimeframe: text("lead_timeframe"),
+  requiresFollowup: integer("requires_followup"),
+  followupReason: text("followup_reason"),
+  followupDate: text("followup_date"),
+  leadType: text("lead_type"), // 'appointment_transfer' | 'missed_appointment'
+  appointmentDatetime: text("appointment_datetime"),
+  leadGoal: text("lead_goal"),
+  prequalificationNotes: text("prequalification_notes"),
+  missedReason: text("missed_reason"),
+  rescheduled: integer("rescheduled"),
+  rescheduleDatetime: text("reschedule_datetime"),
+  nextSteps: text("next_steps"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
 });
