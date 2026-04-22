@@ -1691,8 +1691,149 @@ function runNewMigrations() {
     )`);
   } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`); } catch {}
+
+  // ── Glossary terms (admin-editable, per-org) ────────────────────────────
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS glossary_terms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL DEFAULT 1,
+        term TEXT NOT NULL,
+        definition TEXT NOT NULL,
+        category TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(org_id, term)
+      )
+    `);
+  } catch {}
+  try { seedGlossaryTerms(); } catch (e) { console.error("[glossary seed]", e); }
 }
 runNewMigrations();
+
+function seedGlossaryTerms() {
+  const SEED: Array<{ term: string; category: string; definition: string }> = [
+    // ── Mortgage Basics (20) ─────────────────────────────────────────────
+    { term: "Principal", category: "Mortgage Basics", definition: "The original loan amount a borrower owes before interest. Each monthly payment reduces principal over time through amortization." },
+    { term: "Interest Rate", category: "Mortgage Basics", definition: "The annual percentage the lender charges for borrowing money, expressed as a rate. Does not include fees — see APR for the all-in cost." },
+    { term: "APR", category: "Mortgage Basics", definition: "Annual Percentage Rate. The total yearly cost of a loan including interest plus most fees (origination, points, mortgage insurance). Always higher than the note rate." },
+    { term: "Amortization", category: "Mortgage Basics", definition: "The schedule by which a loan is paid off over time. Early payments are mostly interest; later payments are mostly principal." },
+    { term: "Equity", category: "Mortgage Basics", definition: "The difference between a home's current market value and the remaining mortgage balance. Grows as the borrower pays down principal or the home appreciates." },
+    { term: "LTV", category: "Mortgage Basics", definition: "Loan-to-Value ratio. The loan amount divided by the property's appraised value, expressed as a percentage. LTV above 80% typically requires mortgage insurance." },
+    { term: "DTI", category: "Mortgage Basics", definition: "Debt-to-Income ratio. The percentage of a borrower's gross monthly income that goes to debt payments. Most lenders cap DTI around 43–50% depending on program." },
+    { term: "PITI", category: "Mortgage Basics", definition: "Principal, Interest, Taxes, and Insurance. The four components of a typical monthly mortgage payment when taxes and insurance are escrowed." },
+    { term: "Escrow", category: "Mortgage Basics", definition: "An account the lender holds to pay property taxes and homeowners insurance on the borrower's behalf. Funded monthly as part of PITI." },
+    { term: "Down Payment", category: "Mortgage Basics", definition: "Cash the borrower pays upfront toward the home's purchase price. Typical minimums range from 0% (VA/USDA) to 3–5% (conventional, FHA) to 20% (to avoid PMI)." },
+    { term: "Closing Costs", category: "Mortgage Basics", definition: "Fees paid at loan closing — usually 2–5% of the loan amount. Includes lender fees, title, appraisal, recording, and prepaid escrow items." },
+    { term: "Title", category: "Mortgage Basics", definition: "Legal ownership of a property. A title search confirms the seller has the right to transfer it; title insurance protects against hidden defects." },
+    { term: "Appraisal", category: "Mortgage Basics", definition: "A licensed appraiser's independent estimate of a home's market value. Required by lenders to confirm the loan amount is supported by collateral." },
+    { term: "Underwriting", category: "Mortgage Basics", definition: "The lender's review of a borrower's credit, income, assets, and the property to decide whether to approve the loan and at what terms." },
+    { term: "Pre-qualification", category: "Mortgage Basics", definition: "An informal estimate of how much a borrower might qualify to borrow, based on self-reported income and debts. Not a commitment to lend." },
+    { term: "Pre-approval", category: "Mortgage Basics", definition: "A conditional commitment from a lender based on verified credit, income, and asset documents. Stronger than a pre-qualification when making an offer." },
+    { term: "Rate Lock", category: "Mortgage Basics", definition: "A lender's guarantee to hold a specific interest rate for a fixed window (typically 30–60 days) while the loan is being processed." },
+    { term: "Points", category: "Mortgage Basics", definition: "Upfront fees paid at closing to lower the note rate (discount points) or to compensate the originator (origination points). Each point equals 1% of the loan amount." },
+    { term: "Origination Fee", category: "Mortgage Basics", definition: "The lender's charge for processing, underwriting, and funding the loan. Disclosed on the Loan Estimate and Closing Disclosure." },
+    { term: "PMI", category: "Mortgage Basics", definition: "Private Mortgage Insurance. Required on conventional loans with LTV above 80%. Protects the lender if the borrower defaults; can be removed once LTV reaches 78–80%." },
+
+    // ── Loan Types (15) ──────────────────────────────────────────────────
+    { term: "Conventional Loan", category: "Loan Types", definition: "A standard mortgage not insured or guaranteed by the federal government. Follows Fannie Mae/Freddie Mac guidelines if conforming. Typically needs 3–5% down and a 620+ score." },
+    { term: "FHA Loan", category: "Loan Types", definition: "A mortgage insured by the Federal Housing Administration. Lower credit and down payment requirements (3.5% down with 580+ score) but carries mortgage insurance for the life of the loan in most cases." },
+    { term: "VA Loan", category: "Loan Types", definition: "A mortgage guaranteed by the U.S. Department of Veterans Affairs for eligible service members, veterans, and surviving spouses. No down payment, no PMI, capped closing costs." },
+    { term: "USDA Loan", category: "Loan Types", definition: "A USDA-backed mortgage for low- to moderate-income buyers in eligible rural and suburban areas. No down payment required; has income and geographic limits." },
+    { term: "Jumbo Loan", category: "Loan Types", definition: "A mortgage that exceeds the conforming loan limit set by the FHFA (above $766,550 in most areas for 2024). Requires stronger credit, larger reserves, and bigger down payments." },
+    { term: "Conforming Loan", category: "Loan Types", definition: "A conventional loan that meets Fannie Mae / Freddie Mac underwriting standards, including the maximum loan limit. Conforming loans generally get the best rates." },
+    { term: "ARM", category: "Loan Types", definition: "Adjustable Rate Mortgage. Rate is fixed for an initial period (3, 5, 7, or 10 years) then adjusts periodically based on an index plus a margin. Lower initial rates than fixed; payment risk later." },
+    { term: "Fixed-Rate Mortgage", category: "Loan Types", definition: "A loan whose interest rate stays the same for the entire term. 30-year and 15-year fixed are the most common products." },
+    { term: "Interest-Only Loan", category: "Loan Types", definition: "A loan where the borrower pays only interest for an initial period (usually 5–10 years). Principal balance doesn't drop during that window; payments jump when principal amortization begins." },
+    { term: "Reverse Mortgage", category: "Loan Types", definition: "A loan for homeowners 62+ that converts home equity into cash. No monthly payments required; balance is repaid when the borrower sells, moves out, or passes away." },
+    { term: "HELOC", category: "Loan Types", definition: "Home Equity Line of Credit. A revolving line secured by home equity, like a credit card. Typically has a draw period (interest-only) then a repayment period with variable rates." },
+    { term: "Home Equity Loan", category: "Loan Types", definition: "A second mortgage with a fixed rate and fixed payment, funded as a lump sum. Unlike a HELOC, the borrower gets all the money upfront and repays on a schedule." },
+    { term: "Bridge Loan", category: "Loan Types", definition: "A short-term loan that lets a buyer tap equity in their current home to purchase a new one before the old one sells. Typically higher rate and fees." },
+    { term: "Construction Loan", category: "Loan Types", definition: "A short-term loan funded in draws to pay for building or renovating a home. Often converts to a permanent mortgage once construction is complete." },
+    { term: "Refinance", category: "Loan Types", definition: "Replacing an existing mortgage with a new one — usually to lower the rate, change the term, switch programs, or tap equity (cash-out refinance)." },
+
+    // ── CLR Operations (20) ──────────────────────────────────────────────
+    { term: "Transfer", category: "CLR Operations", definition: "The act of connecting a qualified lead to a Loan Officer. Can be a warm transfer (introduced live) or a direct transfer (cold hand-off). Counted as a key CLR performance metric." },
+    { term: "Fell Through", category: "CLR Operations", definition: "A transfer or appointment that did not convert — e.g. the LO could not reach the prospect, the prospect declined, or the deal collapsed after hand-off." },
+    { term: "Callback", category: "CLR Operations", definition: "A prospect who asked to be called back at a specific time, or whom the CLR must re-attempt after initially failing to reach. Tracked for follow-up discipline." },
+    { term: "Future Contact", category: "CLR Operations", definition: "A lead that isn't ready to apply now but is worth nurturing (e.g. rate watching, lease ending in 6 months). Flagged for scheduled outreach." },
+    { term: "No Answer", category: "CLR Operations", definition: "A dial attempt where the prospect didn't pick up and voicemail either failed or was skipped. Logged so the auto-dialer/CLR can retry later per cadence rules." },
+    { term: "Deferral", category: "CLR Operations", definition: "A lead intentionally skipped for now — usually because the prospect asked to be contacted at a later date, or circumstances (credit, income) aren't yet workable." },
+    { term: "Lead", category: "CLR Operations", definition: "Any inbound or sourced prospect record assigned to a CLR for outreach. Leads progress through stages: new → attempted → contacted → qualified → transferred." },
+    { term: "Prospect", category: "CLR Operations", definition: "A lead with whom the CLR has had contact and who has expressed potential interest. Prospects are candidates for transfer to an LO." },
+    { term: "Cold Call", category: "CLR Operations", definition: "An unsolicited outbound call to a lead with whom no prior contact exists. Contrast with warm leads that came from a referral, web form, or prior interaction." },
+    { term: "Warm Transfer", category: "CLR Operations", definition: "A live three-way introduction where the CLR stays on the line, introduces the prospect to the LO, and then drops off. The highest-converting transfer type." },
+    { term: "Direct Transfer", category: "CLR Operations", definition: "A transfer where the CLR hands the call off to the LO without a live three-way introduction (e.g. routed through a queue). Lower conversion than warm transfers." },
+    { term: "LO", category: "CLR Operations", definition: "Loan Officer. The licensed mortgage professional who takes the application, quotes rates, and shepherds the loan through closing after a CLR transfer." },
+    { term: "CLR", category: "CLR Operations", definition: "Client Lending Representative. The team member who handles first contact with leads, qualifies them, and transfers them to the appropriate LO." },
+    { term: "Pipeline", category: "CLR Operations", definition: "The collective set of active leads/prospects a CLR or LO is working. Health of the pipeline (count, stages, aging) predicts future closings." },
+    { term: "Conversion Rate", category: "CLR Operations", definition: "The percentage of leads that progress from one stage to the next — e.g. calls-to-transfers, transfers-to-applications, applications-to-closed." },
+    { term: "Daily Assignment", category: "CLR Operations", definition: "The LO a CLR is paired with for a given shift. Drives where transfers go that day. Managed by the assignment algorithm in Settings." },
+    { term: "EOD Report", category: "CLR Operations", definition: "End-of-Day Report. Each CLR submits their shift totals (calls, transfers, appointments, fell-through, notes) at the end of their shift. Triggers an email to managers." },
+    { term: "Call History", category: "CLR Operations", definition: "The full record of dial attempts and outcomes against a given lead. Used to enforce cadence rules and to avoid over-calling." },
+    { term: "Outcome", category: "CLR Operations", definition: "The disposition a CLR marks after each attempt — e.g. Transfer, No Answer, Callback, Fell Through, Deferral, Future Contact. Feeds dashboards and conversion metrics." },
+    { term: "Script", category: "CLR Operations", definition: "An approved talk track CLRs use for specific call scenarios — intros, objections, qualifying questions, transfer hand-offs. Maintained in the Resources section." },
+
+    // ── Credit & Finance (15) ─────────────────────────────────────────────
+    { term: "Credit Score", category: "Credit & Finance", definition: "A three-digit number (usually 300–850) summarizing a borrower's creditworthiness. FICO and VantageScore are the two main scoring models." },
+    { term: "FICO Score", category: "Credit & Finance", definition: "The credit score model most mortgage lenders use. Ranges 300–850; 740+ is generally considered excellent for mortgage pricing." },
+    { term: "Credit Report", category: "Credit & Finance", definition: "The detailed record of a borrower's credit accounts, balances, payment history, and inquiries — maintained by the three bureaus (Equifax, Experian, TransUnion)." },
+    { term: "Hard Inquiry", category: "Credit & Finance", definition: "A credit pull tied to a credit application (e.g. mortgage, auto, credit card). Can lower the score a few points and stays on the report for two years." },
+    { term: "Soft Inquiry", category: "Credit & Finance", definition: "A credit pull that does not affect the score — e.g. a borrower checking their own credit, pre-qualification, or employer background check." },
+    { term: "Debt Consolidation", category: "Credit & Finance", definition: "Combining multiple debts into a single loan, often at a lower rate. Cash-out refinances and HELOCs are commonly used for this." },
+    { term: "Bankruptcy", category: "Credit & Finance", definition: "A legal filing that discharges or restructures debts. Seasoning periods apply before a borrower can qualify for a new mortgage — typically 2–4 years post-discharge." },
+    { term: "Foreclosure", category: "Credit & Finance", definition: "The legal process a lender uses to take and sell a property after the borrower defaults. Makes qualifying for a new mortgage difficult for 3–7 years depending on program." },
+    { term: "Short Sale", category: "Credit & Finance", definition: "A sale where the lender agrees to accept less than the full mortgage balance to avoid foreclosure. Less damaging to credit than foreclosure but still requires a seasoning period." },
+    { term: "Default", category: "Credit & Finance", definition: "The failure to make mortgage payments as agreed. Triggers late fees, credit reporting, and eventually foreclosure proceedings if not cured." },
+    { term: "Collections", category: "Credit & Finance", definition: "An account that has been turned over to a third-party collection agency after the borrower failed to pay. Large collections can block mortgage approval until resolved." },
+    { term: "Charge-off", category: "Credit & Finance", definition: "A debt the original creditor has written off as uncollectible — usually after 180 days of non-payment. The debt is still owed and severely damages credit." },
+    { term: "Derogatory Mark", category: "Credit & Finance", definition: "Any negative item on a credit report — late payment, collection, charge-off, foreclosure, bankruptcy, judgment. Each drags the score down and complicates approval." },
+    { term: "Credit Utilization", category: "Credit & Finance", definition: "The percentage of available revolving credit currently used. Below 30% is healthy; below 10% optimizes the score. A major factor in FICO calculation." },
+    { term: "Credit History", category: "Credit & Finance", definition: "The length and depth of a borrower's credit record. Longer history with on-time payments improves scores; thin files (few accounts) can hurt mortgage approval." },
+
+    // ── Property & Title (15) ────────────────────────────────────────────
+    { term: "Title Insurance", category: "Property & Title", definition: "A policy that protects against losses from title defects (liens, boundary disputes, forged deeds). Lenders require their own policy; owners' policies are optional but recommended." },
+    { term: "Clear Title", category: "Property & Title", definition: "A title free of liens, disputes, or encumbrances that would prevent transfer of ownership. Must be established before closing." },
+    { term: "Lien", category: "Property & Title", definition: "A legal claim on a property used as security for a debt (mortgage lien, tax lien, mechanic's lien). Must usually be paid off or subordinated before a sale." },
+    { term: "Deed", category: "Property & Title", definition: "The legal document that transfers ownership of real estate from one party to another. Recorded in the county to put the public on notice of ownership." },
+    { term: "Deed of Trust", category: "Property & Title", definition: "A security instrument used in many states instead of a mortgage. Involves three parties — borrower, lender, and trustee — and typically allows non-judicial foreclosure." },
+    { term: "Mortgage Note", category: "Property & Title", definition: "The promissory note the borrower signs promising to repay the loan. Paired with the mortgage/deed of trust which pledges the property as collateral." },
+    { term: "Easement", category: "Property & Title", definition: "A right allowing another party to use a portion of the property for a specific purpose (e.g. a utility easement, shared driveway). Survives title transfers." },
+    { term: "Encumbrance", category: "Property & Title", definition: "Any claim, lien, restriction, or easement on a property that may affect its use or transfer. Includes mortgages, tax liens, HOA covenants, and easements." },
+    { term: "Chain of Title", category: "Property & Title", definition: "The historical record of every owner of a property since it was first recorded. A break in the chain can cloud title and must be cured before sale." },
+    { term: "Abstract of Title", category: "Property & Title", definition: "A condensed written history of a property's chain of title and any recorded encumbrances. Used by attorneys or title companies to certify marketability." },
+    { term: "Survey", category: "Property & Title", definition: "A licensed surveyor's drawing showing property boundaries, improvements, and encroachments. Often required by lenders on certain property types." },
+    { term: "Plat Map", category: "Property & Title", definition: "A recorded map showing how a tract of land is subdivided into lots, streets, and easements. Referenced in legal descriptions." },
+    { term: "Zoning", category: "Property & Title", definition: "Municipal rules that dictate how land can be used (residential, commercial, mixed-use) and what can be built. Zoning violations can derail a closing." },
+    { term: "HOA", category: "Property & Title", definition: "Homeowners Association. A governing body for a planned community or condo that enforces covenants and collects dues. HOA dues count against DTI." },
+    { term: "Condo Association", category: "Property & Title", definition: "The governing body of a condominium project, which manages shared areas and collects assessments. Lenders review the association's financials before approving a condo loan." },
+
+    // ── Regulatory & Compliance (15) ─────────────────────────────────────
+    { term: "RESPA", category: "Regulatory & Compliance", definition: "Real Estate Settlement Procedures Act. Federal law regulating mortgage disclosures and prohibiting kickbacks or referral fees between settlement service providers." },
+    { term: "TILA", category: "Regulatory & Compliance", definition: "Truth in Lending Act. Federal law requiring clear disclosure of loan costs and APR so consumers can comparison-shop. The parent statute behind the Loan Estimate and Closing Disclosure." },
+    { term: "TRID", category: "Regulatory & Compliance", definition: "TILA-RESPA Integrated Disclosure. The 2015 rule combining TILA and RESPA disclosures into two forms: the Loan Estimate (early) and Closing Disclosure (final)." },
+    { term: "GFE", category: "Regulatory & Compliance", definition: "Good Faith Estimate. The pre-TRID form that disclosed expected loan costs. Replaced by the Loan Estimate in October 2015 but still referenced colloquially." },
+    { term: "Loan Estimate", category: "Regulatory & Compliance", definition: "The three-page form a lender must deliver within three business days of application. Shows the rate, payment, and estimated closing costs so buyers can comparison-shop." },
+    { term: "Closing Disclosure", category: "Regulatory & Compliance", definition: "The five-page form delivered at least three business days before closing. Shows the final loan terms and exact closing costs — and must match the Loan Estimate within tight tolerances." },
+    { term: "ATR", category: "Regulatory & Compliance", definition: "Ability to Repay. The Dodd-Frank requirement that lenders make a reasonable, good-faith determination a borrower can repay the loan before funding it." },
+    { term: "QM", category: "Regulatory & Compliance", definition: "Qualified Mortgage. A loan category that meets specific ATR safe-harbor criteria (no risky features, capped fees, DTI limits). Gives lenders liability protection." },
+    { term: "HMDA", category: "Regulatory & Compliance", definition: "Home Mortgage Disclosure Act. Requires lenders to collect and report data on mortgage applications and originations, used to monitor fair lending and community investment." },
+    { term: "Fair Lending", category: "Regulatory & Compliance", definition: "The federal framework (ECOA, FHA) prohibiting discrimination in credit decisions based on race, color, religion, national origin, sex, marital status, age, or public assistance status." },
+    { term: "ECOA", category: "Regulatory & Compliance", definition: "Equal Credit Opportunity Act. Federal law making it illegal to discriminate in any aspect of a credit transaction on protected-class grounds." },
+    { term: "FCRA", category: "Regulatory & Compliance", definition: "Fair Credit Reporting Act. Governs how consumer credit information is collected, shared, and used. Requires adverse-action notices when credit is denied." },
+    { term: "NMLS", category: "Regulatory & Compliance", definition: "Nationwide Multistate Licensing System. The registry where loan officers and mortgage companies are licensed. Each LO has a unique NMLS ID that must appear on disclosures." },
+    { term: "Licensing", category: "Regulatory & Compliance", definition: "The state and federal credentials a mortgage professional must hold to originate loans. Maintained via NMLS; renewed annually with continuing education." },
+    { term: "Compliance", category: "Regulatory & Compliance", definition: "The discipline of ensuring all loan activities follow applicable federal, state, and investor rules. Violations can trigger penalties, rescission, or repurchase demands." },
+  ];
+
+  const stmt = sqlite.prepare(
+    `INSERT OR IGNORE INTO glossary_terms (org_id, term, definition, category) VALUES (1, ?, ?, ?)`
+  );
+  const tx = sqlite.transaction((rows: typeof SEED) => {
+    for (const r of rows) stmt.run(r.term, r.definition, r.category);
+  });
+  tx(SEED);
+}
 
 // ── Forum storage helpers ──────────────────────────────────────────────────
 export function listForumPosts(currentUserId: number, search?: string) {
