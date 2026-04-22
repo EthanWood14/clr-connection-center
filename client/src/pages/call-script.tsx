@@ -23,6 +23,7 @@ import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
   Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Users,
+  Play, Square, Clock, Radio,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 
@@ -1025,6 +1026,342 @@ function ScriptFlowchart({ scriptId }: { scriptId: number }) {
   );
 }
 
+// ─── Call Recorder ────────────────────────────────────────────────────────────
+type RecorderStep = "idle" | "recording" | "outcome_selected" | "wizard" | "verify" | "done";
+type RecorderOutcomeKey =
+  | "transfer_direct"
+  | "transfer_appointment"
+  | "appointment"
+  | "callback_requested"
+  | "fell_through"
+  | "no_answer"
+  | "future_contact";
+
+const OUTCOME_CHOICES: {
+  key: RecorderOutcomeKey;
+  label: string;
+  btn: string;
+  outcomeType: string;
+  transferType?: "direct" | "appointment";
+}[] = [
+  { key: "transfer_direct", label: "Transfer (Direct)", btn: "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600", outcomeType: "transfer", transferType: "direct" },
+  { key: "transfer_appointment", label: "Transfer (Appointment)", btn: "bg-teal-500 hover:bg-teal-600 text-white border-teal-600", outcomeType: "transfer", transferType: "appointment" },
+  { key: "appointment", label: "Appointment Scheduled", btn: "bg-blue-500 hover:bg-blue-600 text-white border-blue-600", outcomeType: "appointment" },
+  { key: "callback_requested", label: "Callback Requested", btn: "bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500", outcomeType: "callback_requested" },
+  { key: "fell_through", label: "Fell Through", btn: "bg-rose-500 hover:bg-rose-600 text-white border-rose-600", outcomeType: "fell_through" },
+  { key: "no_answer", label: "No Answer", btn: "bg-zinc-400 hover:bg-zinc-500 text-white border-zinc-500", outcomeType: "no_answer" },
+  { key: "future_contact", label: "Future Contact", btn: "bg-purple-500 hover:bg-purple-600 text-white border-purple-600", outcomeType: "future_contact" },
+];
+
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+function CallRecorder({
+  borrowerName,
+  onBorrowerNameChange,
+  loDropdownOptions,
+  currentLoName,
+  onStartRecording,
+  isRecording,
+  recordingStartedAt,
+}: {
+  borrowerName: string;
+  onBorrowerNameChange: (v: string) => void;
+  loDropdownOptions: { name: string; source: "assigned" | "active" }[];
+  currentLoName: string;
+  onStartRecording: (started: boolean) => void;
+  isRecording: boolean;
+  recordingStartedAt: number | null;
+}) {
+  const { toast } = useToast();
+  const [step, setStep] = useState<RecorderStep>("idle");
+  const [chosenOutcome, setChosenOutcome] = useState<RecorderOutcomeKey | null>(null);
+  const [wizardLoName, setWizardLoName] = useState<string>("");
+  const [wizardScheduled, setWizardScheduled] = useState<string>("");
+  const [wizardTransferType, setWizardTransferType] = useState<"direct" | "appointment" | "">("");
+  const [wizardNotes, setWizardNotes] = useState<string>("");
+  const [wizardBorrower, setWizardBorrower] = useState<string>("");
+  const [durationTick, setDurationTick] = useState(0);
+
+  const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const id = setInterval(() => setDurationTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isRecording]);
+
+  const durationMs = recordingStartedAt ? Date.now() - recordingStartedAt : 0;
+
+  const handleStart = () => {
+    if (!borrowerName.trim()) {
+      toast({ title: "Enter borrower name first", variant: "destructive" });
+      return;
+    }
+    onStartRecording(true);
+    setStep("recording");
+  };
+
+  const handleCancel = () => {
+    setStep("idle");
+    setChosenOutcome(null);
+    setWizardLoName("");
+    setWizardScheduled("");
+    setWizardTransferType("");
+    setWizardNotes("");
+    setWizardBorrower("");
+    onStartRecording(false);
+  };
+
+  const handleOutcomePick = (key: RecorderOutcomeKey) => {
+    setChosenOutcome(key);
+    const choice = OUTCOME_CHOICES.find(c => c.key === key)!;
+    // Pre-fill wizard state
+    setWizardLoName(currentLoName || "");
+    setWizardBorrower(borrowerName);
+    setWizardTransferType(choice.transferType ?? "");
+    setWizardScheduled("");
+    setWizardNotes("");
+    setStep("wizard");
+  };
+
+  const outcomeChoice = chosenOutcome ? OUTCOME_CHOICES.find(c => c.key === chosenOutcome)! : null;
+  const needsLo = outcomeChoice && (outcomeChoice.outcomeType === "transfer" || outcomeChoice.outcomeType === "appointment");
+  const needsScheduled = outcomeChoice && (outcomeChoice.outcomeType === "appointment" || outcomeChoice.outcomeType === "callback_requested" || outcomeChoice.key === "transfer_appointment");
+  const needsTransferConfirm = outcomeChoice && outcomeChoice.outcomeType === "transfer";
+
+  const resolvedLoId = useMemo(() => {
+    if (!wizardLoName) return null;
+    const name = wizardLoName.trim().toLowerCase();
+    const match = (Array.isArray(loanOfficers) ? loanOfficers : []).find((lo: any) => {
+      const full = (lo.fullName ?? lo.full_name ?? "").toLowerCase();
+      return full === name;
+    });
+    return match?.id ?? null;
+  }, [wizardLoName, loanOfficers]);
+
+  const canProceedFromWizard = () => {
+    if (needsLo && !resolvedLoId) return false;
+    if (needsScheduled && !wizardScheduled) return false;
+    if (needsTransferConfirm && wizardTransferType !== "direct" && wizardTransferType !== "appointment") return false;
+    if (!wizardBorrower.trim()) return false;
+    return true;
+  };
+
+  const submitMut = useMutation({
+    mutationFn: async () => {
+      if (!outcomeChoice) throw new Error("No outcome selected");
+      const payload: Record<string, unknown> = {
+        date: new Date().toISOString().split("T")[0],
+        assistantId: 1,
+        outcomeType: outcomeChoice.outcomeType,
+        borrowerName: wizardBorrower.trim(),
+        notes: wizardNotes.trim(),
+      };
+      if (needsLo) {
+        payload.loId = resolvedLoId;
+      }
+      if (needsTransferConfirm) {
+        payload.transferType = wizardTransferType;
+      }
+      if (outcomeChoice.outcomeType === "appointment" && wizardScheduled) {
+        payload.appointmentDatetime = wizardScheduled;
+      }
+      if (outcomeChoice.outcomeType === "callback_requested" && wizardScheduled) {
+        payload.followUpDate = wizardScheduled.split("T")[0];
+      }
+      if (outcomeChoice.key === "transfer_appointment" && wizardScheduled) {
+        payload.appointmentDatetime = wizardScheduled;
+      }
+      return apiRequest("POST", "/api/outcomes", payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      toast({ title: "Call logged to history" });
+      setStep("idle");
+      setChosenOutcome(null);
+      setWizardLoName("");
+      setWizardScheduled("");
+      setWizardTransferType("");
+      setWizardNotes("");
+      setWizardBorrower("");
+      onBorrowerNameChange("");
+      onStartRecording(false);
+    },
+    onError: (e: any) => toast({ title: "Failed to log call", description: e?.message, variant: "destructive" }),
+  });
+
+  if (step === "idle") {
+    return (
+      <Card className="border-2 border-dashed border-primary/30">
+        <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="rounded-full bg-primary/10 p-2"><Radio className="w-4 h-4 text-primary" /></div>
+            <div>
+              <p className="text-sm font-semibold">Ready to call</p>
+              <p className="text-xs text-muted-foreground">Start the call to begin recording for call history.</p>
+            </div>
+          </div>
+          <Button size="sm" className="gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white" onClick={handleStart} data-testid="script-start-call">
+            <Play className="w-3.5 h-3.5" /> Start Call
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (step === "verify") {
+    const prettyOutcome = outcomeChoice?.label ?? "";
+    return (
+      <Card className="border-2 border-primary/40">
+        <CardContent className="p-5 space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Call Summary</p>
+            <div className="my-2 h-px bg-border" />
+            <dl className="text-sm space-y-1.5">
+              <div className="flex gap-2"><dt className="w-24 text-muted-foreground">Borrower:</dt><dd className="font-medium">{wizardBorrower}</dd></div>
+              <div className="flex gap-2"><dt className="w-24 text-muted-foreground">Outcome:</dt><dd className="font-medium">{prettyOutcome}</dd></div>
+              {needsLo && (
+                <div className="flex gap-2"><dt className="w-24 text-muted-foreground">LO:</dt><dd className="font-medium">{wizardLoName}</dd></div>
+              )}
+              {needsScheduled && (
+                <div className="flex gap-2"><dt className="w-24 text-muted-foreground">Scheduled:</dt><dd className="font-medium">{new Date(wizardScheduled).toLocaleString()}</dd></div>
+              )}
+              <div className="flex gap-2"><dt className="w-24 text-muted-foreground">Duration:</dt><dd className="font-medium">{formatDuration(durationMs)}</dd></div>
+              {wizardNotes.trim() && (
+                <div className="flex gap-2"><dt className="w-24 text-muted-foreground">Notes:</dt><dd className="font-medium whitespace-pre-wrap">"{wizardNotes.trim()}"</dd></div>
+              )}
+            </dl>
+            <div className="my-2 h-px bg-border" />
+          </div>
+          <div className="flex gap-2 justify-end flex-wrap">
+            <Button size="sm" variant="outline" onClick={() => setStep("wizard")} disabled={submitMut.isPending}>
+              <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+            </Button>
+            <Button size="sm" onClick={() => submitMut.mutate()} disabled={submitMut.isPending} data-testid="script-confirm-log">
+              <Check className="w-3.5 h-3.5 mr-1.5" /> {submitMut.isPending ? "Logging…" : "Confirm & Log"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (step === "wizard") {
+    return (
+      <Card className="border-2 border-primary/30">
+        <CardContent className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Complete call details</p>
+            <span className="text-xs text-muted-foreground">{outcomeChoice?.label}</span>
+          </div>
+          <div className="space-y-2.5">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Borrower name</label>
+              <Input value={wizardBorrower} onChange={e => setWizardBorrower(e.target.value)} className="h-9 text-sm mt-1" />
+            </div>
+            {needsLo && (
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  LO <span className="text-rose-500">*</span>
+                </label>
+                <Select value={wizardLoName || undefined} onValueChange={v => setWizardLoName(v)}>
+                  <SelectTrigger className="h-9 text-sm mt-1"><SelectValue placeholder="Select LO" /></SelectTrigger>
+                  <SelectContent>
+                    {loDropdownOptions.map(opt => (
+                      <SelectItem key={opt.name} value={opt.name}>{opt.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {wizardLoName && !resolvedLoId && (
+                  <p className="text-[11px] text-rose-600 mt-1">Could not match "{wizardLoName}" to an active LO.</p>
+                )}
+              </div>
+            )}
+            {needsTransferConfirm && (
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Transfer type <span className="text-rose-500">*</span>
+                </label>
+                <Select value={wizardTransferType || undefined} onValueChange={v => setWizardTransferType(v as any)}>
+                  <SelectTrigger className="h-9 text-sm mt-1"><SelectValue placeholder="Direct or Appointment" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="direct">Direct</SelectItem>
+                    <SelectItem value="appointment">Appointment / Callback</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {needsScheduled && (
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Scheduled date/time <span className="text-rose-500">*</span>
+                </label>
+                <Input type="datetime-local" value={wizardScheduled} onChange={e => setWizardScheduled(e.target.value)} className="h-9 text-sm mt-1" />
+              </div>
+            )}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes (optional)</label>
+              <Textarea value={wizardNotes} onChange={e => setWizardNotes(e.target.value)} rows={2} className="text-sm mt-1" placeholder="Anything worth remembering…" />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end flex-wrap pt-1">
+            <Button size="sm" variant="ghost" onClick={handleCancel}>Cancel</Button>
+            <Button size="sm" variant="outline" onClick={() => setStep("recording")}>Back</Button>
+            <Button size="sm" disabled={!canProceedFromWizard()} onClick={() => setStep("verify")}>
+              Review <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // step === "recording"
+  return (
+    <Card className="border-2 border-emerald-500/40">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Recording</span>
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {formatDuration(durationMs)}
+            </span>
+          </div>
+          <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={handleCancel}>
+            <Square className="w-3 h-3 mr-1" /> Cancel
+          </Button>
+        </div>
+        <div>
+          <p className="text-sm font-semibold mb-2">How did the call end?</p>
+          <div className="flex flex-wrap gap-2">
+            {OUTCOME_CHOICES.map(choice => (
+              <button
+                key={choice.key}
+                onClick={() => handleOutcomePick(choice.key)}
+                className={`px-3 py-2 rounded-full text-xs font-semibold border shadow-sm transition-all hover:scale-105 active:scale-95 ${choice.btn}`}
+                data-testid={`script-outcome-${choice.key}`}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function CallScriptPage() {
   const { user } = useAuth();
@@ -1051,6 +1388,18 @@ export default function CallScriptPage() {
   }, [timezone]);
 
   const [borrowerName, setBorrowerName] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+
+  const handleStartRecording = (started: boolean) => {
+    if (started) {
+      setIsRecording(true);
+      setRecordingStartedAt(Date.now());
+    } else {
+      setIsRecording(false);
+      setRecordingStartedAt(null);
+    }
+  };
 
   // Re-compute time-of-day once per minute so it drifts between buckets mid-session
   const [timeTick, setTimeTick] = useState(0);
@@ -1291,7 +1640,7 @@ export default function CallScriptPage() {
               value={borrowerName}
               onChange={e => setBorrowerName(e.target.value)}
               placeholder="Enter borrower's first name"
-              className="h-8 text-sm w-56"
+              className={`h-8 text-sm w-56 ${isRecording && !borrowerName.trim() ? "ring-2 ring-emerald-500 border-emerald-500" : ""}`}
               data-testid="script-borrower-name"
             />
           </div>
@@ -1467,10 +1816,33 @@ export default function CallScriptPage() {
       {/* Main content */}
       {!isLoading && activeScript && (
         view === "run"
-          ? <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
+          ? (
+            <>
+              <CallRecorder
+                borrowerName={borrowerName}
+                onBorrowerNameChange={setBorrowerName}
+                loDropdownOptions={loDropdownOptions}
+                currentLoName={effectiveLoName}
+                onStartRecording={handleStartRecording}
+                isRecording={isRecording}
+                recordingStartedAt={recordingStartedAt}
+              />
+              <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
+            </>
+          )
           : view === "flowchart"
             ? <ScriptFlowchart key={activeScript.id} scriptId={activeScript.id} />
             : <NodeEditor key={activeScript.id} scriptId={activeScript.id} onClose={() => setView("run")} canEdit={canEditActive} />
+      )}
+
+      {isRecording && view === "run" && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-1.5 bg-emerald-500/90 text-white text-xs font-semibold px-2.5 py-1 rounded-full shadow-lg">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+          </span>
+          Recording
+        </div>
       )}
 
       {/* Reset confirmation */}
