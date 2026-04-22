@@ -14,6 +14,7 @@ import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
 import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers } from "./push";
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
+import { runWithOrg } from "./orgContext";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1134,6 +1135,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Cookie parser ──────────────────────────────────────────────────────────
   app.use(cookieParser(SESSION_SECRET));
 
+  // ── Per-request org context (AsyncLocalStorage): scopes all storage queries.
+  // Super-admin and SA console routes bypass scope (they intentionally cross orgs).
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    let orgId = 1;
+    let superAdmin = false;
+    try {
+      const raw = (req as any).signedCookies?.[COOKIE_NAME];
+      if (raw) {
+        const session = JSON.parse(raw);
+        orgId = Number(session?.orgId ?? 1) || 1;
+        superAdmin = !!session?.superAdmin;
+      }
+    } catch {}
+    const path = req.path || "";
+    const bypassScope = path.startsWith("/api/super-admin")
+      || path.startsWith("/api/sa/")
+      || path.startsWith("/__sa/");
+    runWithOrg({ orgId, superAdmin, bypassScope }, () => next());
+  });
+
   // ── Demo guard: block mutations for users whose org is flagged is_demo=1 ──
   // Exceptions: auth/login and auth/logout must always work.
   const demoOrgCache = new Map<number, boolean>();
@@ -1159,6 +1180,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const raw = (req as any).signedCookies?.[COOKIE_NAME];
       if (!raw) return next();
       const session = JSON.parse(raw);
+      // Super-admins are never demo-locked, even if impersonating a demo org.
+      if (session?.superAdmin) return next();
       const orgId = Number(session?.orgId ?? 0);
       if (orgId && isDemoOrg(orgId)) {
         return res.status(403).json({ error: "Demo mode is read-only. Sign up for full access." });

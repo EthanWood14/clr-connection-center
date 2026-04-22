@@ -51,6 +51,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apiRequest("GET", "/api/auth/me")
       .then((data: any) => {
         setUser(data.user ?? null);
+        try {
+          const w = window as any;
+          w.__clrIsSuperAdmin = !!data?.user?.superAdmin;
+          w.__clrIsImpersonating = !!data?.user?.isImpersonating;
+        } catch {}
       })
       .catch(() => {
         setUser(null);
@@ -84,6 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data: any = await apiRequest("GET", "/api/auth/me");
       setUser(data.user ?? null);
+      try {
+        const w = window as any;
+        w.__clrIsSuperAdmin = !!data?.user?.superAdmin;
+        w.__clrIsImpersonating = !!data?.user?.isImpersonating;
+      } catch {}
     } catch {
       setUser(null);
     }

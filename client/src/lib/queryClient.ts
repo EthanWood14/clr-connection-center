@@ -7,6 +7,13 @@ const DEMO_READONLY_MSG = "Demo mode is read-only. Sign up for full access.";
 
 let lastDemoToastAt = 0;
 function showDemoToast() {
+  // Never show the demo toast for super-admins (e.g. after exiting impersonation,
+  // some in-flight mutations may still 403 with the demo message).
+  try {
+    const w = window as any;
+    if (w.__clrIsSuperAdmin === true) return;
+    if (w.__clrIsImpersonating === false && w.__clrIsDemoOrg === false) return;
+  } catch {}
   const now = Date.now();
   if (now - lastDemoToastAt < 3000) return;
   lastDemoToastAt = now;

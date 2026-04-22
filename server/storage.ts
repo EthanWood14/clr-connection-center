@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { currentOrgId } from "./orgContext";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
   leadOutcomes, dailyCallLogs, notifications, algorithmSettings, auditLogs,
@@ -779,12 +780,20 @@ export interface IStorage {
 
 export class Storage implements IStorage {
   getUsers() {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return db.select().from(users).where(eq(users.orgId, oid)).all();
+    }
     return db.select().from(users).all();
   }
   getUserById(id: number) {
+    // getUserById is typically invoked with a trusted session.userId;
+    // do not enforce org-scope here — callers that need cross-user lookup
+    // (e.g. admin listing users of a different org) would be broken.
     return db.select().from(users).where(eq(users.id, id)).get();
   }
   getUserByEmail(email: string) {
+    // Login lookup must not be org-scoped — server determines org from user record.
     return sqlite.prepare(`SELECT *, password_hash FROM users WHERE email = ? LIMIT 1`).get(email) as (User & { password_hash: string | null }) | undefined;
   }
   setUserPassword(id: number, hash: string) {
@@ -805,28 +814,65 @@ export class Storage implements IStorage {
     ).get(token) as (User & { password_hash: string | null; reset_token: string | null; reset_token_expiry: number | null }) | undefined;
   }
   createUser(data: InsertUser) {
-    return db.insert(users).values({ ...data, createdAt: new Date().toISOString() }).returning().get();
+    const oid = currentOrgId();
+    const values: any = { ...data, createdAt: new Date().toISOString() };
+    if (oid != null && values.orgId == null) values.orgId = oid;
+    return db.insert(users).values(values).returning().get();
   }
   updateUser(id: number, data: Partial<InsertUser>) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM users WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return undefined as any;
+    }
     return db.update(users).set(data).where(eq(users.id, id)).returning().get();
   }
   deleteUser(id: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM users WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return { changes: 0 } as any;
+    }
     return db.delete(users).where(eq(users.id, id)).run();
   }
 
   getLoanOfficers() {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT * FROM loan_officers WHERE org_id = ?`).all(oid) as any[];
+    }
     return db.select().from(loanOfficers).all();
   }
   getLoanOfficerById(id: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT * FROM loan_officers WHERE id = ? AND org_id = ? LIMIT 1`).get(id, oid) as any;
+    }
     return db.select().from(loanOfficers).where(eq(loanOfficers.id, id)).get();
   }
   createLoanOfficer(data: InsertLoanOfficer) {
-    return db.insert(loanOfficers).values({ ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).returning().get();
+    const oid = currentOrgId();
+    const values: any = { ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const result = db.insert(loanOfficers).values(values).returning().get();
+    if (oid != null && result?.id != null) {
+      sqlite.prepare(`UPDATE loan_officers SET org_id = ? WHERE id = ?`).run(oid, result.id);
+    }
+    return result;
   }
   updateLoanOfficer(id: number, data: Partial<InsertLoanOfficer>) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM loan_officers WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return undefined as any;
+    }
     return db.update(loanOfficers).set({ ...data, updatedAt: new Date().toISOString() }).where(eq(loanOfficers.id, id)).returning().get();
   }
   archiveLoanOfficer(id: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM loan_officers WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return;
+    }
     db.update(loanOfficers).set({ internalStatus: "archived", updatedAt: new Date().toISOString() }).where(eq(loanOfficers.id, id)).run();
   }
 
@@ -841,9 +887,17 @@ export class Storage implements IStorage {
   }
 
   getDailyAssignments(date: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT a.* FROM daily_assignments a INNER JOIN loan_officers lo ON lo.id = a.lo_id WHERE a.assignment_date = ? AND lo.org_id = ?`).all(date, oid) as any[];
+    }
     return db.select().from(dailyAssignments).where(eq(dailyAssignments.assignmentDate, date)).all();
   }
   getAssignmentsByRange(from: string, to: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT a.* FROM daily_assignments a INNER JOIN loan_officers lo ON lo.id = a.lo_id WHERE a.assignment_date >= ? AND a.assignment_date <= ? AND lo.org_id = ?`).all(from, to, oid) as any[];
+    }
     return db.select().from(dailyAssignments)
       .where(and(gte(dailyAssignments.assignmentDate, from), lte(dailyAssignments.assignmentDate, to)))
       .all();
@@ -853,34 +907,64 @@ export class Storage implements IStorage {
     return db.insert(dailyAssignments).values(assignments.map(a => ({ ...a, createdAt: new Date().toISOString() }))).returning().all();
   }
   updateAssignmentStatus(id: number, status: string, notes?: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT a.id FROM daily_assignments a INNER JOIN loan_officers lo ON lo.id = a.lo_id WHERE a.id = ? AND lo.org_id = ?`).get(id, oid);
+      if (!existing) return undefined as any;
+    }
     return db.update(dailyAssignments).set({ status, notes }).where(eq(dailyAssignments.id, id)).returning().get();
   }
   getAssignmentById(id: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT a.* FROM daily_assignments a INNER JOIN loan_officers lo ON lo.id = a.lo_id WHERE a.id = ? AND lo.org_id = ? LIMIT 1`).get(id, oid) as any;
+    }
     return db.select().from(dailyAssignments).where(eq(dailyAssignments.id, id)).get();
   }
   clearDailyAssignments(date: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      sqlite.prepare(`DELETE FROM daily_assignments WHERE assignment_date = ? AND lo_id IN (SELECT id FROM loan_officers WHERE org_id = ?)`).run(date, oid);
+      return;
+    }
     db.delete(dailyAssignments).where(eq(dailyAssignments.assignmentDate, date)).run();
   }
 
   getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number }) {
-    let query = db.select().from(leadOutcomes);
-    const conditions = [];
-    if (filters?.startDate) conditions.push(gte(leadOutcomes.date, filters.startDate));
-    if (filters?.endDate) conditions.push(lte(leadOutcomes.date, filters.endDate));
-    if (filters?.assistantId) conditions.push(eq(leadOutcomes.assistantId, filters.assistantId));
-    if (filters?.loId) conditions.push(eq(leadOutcomes.loId, filters.loId));
-    if (conditions.length > 0) {
-      return db.select().from(leadOutcomes).where(and(...conditions)).orderBy(desc(leadOutcomes.date)).all();
-    }
-    return db.select().from(leadOutcomes).orderBy(desc(leadOutcomes.date)).all();
+    const oid = currentOrgId();
+    const wheres: string[] = [];
+    const params: any[] = [];
+    if (filters?.startDate) { wheres.push(`date >= ?`); params.push(filters.startDate); }
+    if (filters?.endDate)   { wheres.push(`date <= ?`); params.push(filters.endDate); }
+    if (filters?.assistantId) { wheres.push(`assistant_id = ?`); params.push(filters.assistantId); }
+    if (filters?.loId) { wheres.push(`lo_id = ?`); params.push(filters.loId); }
+    if (oid != null) { wheres.push(`org_id = ?`); params.push(oid); }
+    const whereSql = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
+    const rows = sqlite.prepare(`SELECT * FROM lead_outcomes ${whereSql} ORDER BY date DESC`).all(...params);
+    return rows as any[];
   }
   createLeadOutcome(data: InsertLeadOutcome) {
-    return db.insert(leadOutcomes).values({ ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).returning().get();
+    const oid = currentOrgId();
+    const result = db.insert(leadOutcomes).values({ ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).returning().get();
+    if (oid != null && result?.id != null) {
+      sqlite.prepare(`UPDATE lead_outcomes SET org_id = ? WHERE id = ?`).run(oid, result.id);
+    }
+    return result;
   }
   updateLeadOutcome(id: number, data: Partial<InsertLeadOutcome>) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM lead_outcomes WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return undefined as any;
+    }
     return db.update(leadOutcomes).set({ ...data, updatedAt: new Date().toISOString() }).where(eq(leadOutcomes.id, id)).returning().get();
   }
   deleteLeadOutcome(id: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT id FROM lead_outcomes WHERE id = ? AND org_id = ?`).get(id, oid);
+      if (!existing) return;
+    }
     db.delete(leadOutcomes).where(eq(leadOutcomes.id, id)).run();
   }
 
@@ -953,48 +1037,51 @@ export class Storage implements IStorage {
   }
 
   getDashboardStats(startDate: string, endDate: string) {
-    const outcomes = db.select().from(leadOutcomes)
-      .where(and(gte(leadOutcomes.date, startDate), lte(leadOutcomes.date, endDate))).all();
+    const oid = currentOrgId();
+    const orgWhere = oid != null ? ` AND org_id = ${Number(oid)}` : "";
+    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}`).all(startDate, endDate) as any[];
 
     const total = outcomes.length;
-    const transfers = outcomes.filter(o => o.outcomeType === "transfer").length;
-    const appointments = outcomes.filter(o => o.outcomeType === "appointment").length;
-    const fellThrough = outcomes.filter(o => o.outcomeType === "fell_through").length;
-    const noAnswer = outcomes.filter(o => o.outcomeType === "no_answer").length;
+    const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer").length;
+    const appointments = outcomes.filter((o: any) => o.outcome_type === "appointment").length;
+    const fellThrough = outcomes.filter((o: any) => o.outcome_type === "fell_through").length;
+    const noAnswer = outcomes.filter((o: any) => o.outcome_type === "no_answer").length;
     const conversionRate = total > 0 ? Math.round((transfers / total) * 100) : 0;
 
     const outcomesByType: Record<string, number> = {};
-    outcomes.forEach(o => {
-      outcomesByType[o.outcomeType] = (outcomesByType[o.outcomeType] || 0) + 1;
+    outcomes.forEach((o: any) => {
+      outcomesByType[o.outcome_type] = (outcomesByType[o.outcome_type] || 0) + 1;
     });
 
     // Today's call totals
     const todayStr = new Date().toISOString().split("T")[0];
-    const todayLogs = db.select().from(dailyCallLogs).where(eq(dailyCallLogs.logDate, todayStr)).all();
-    const totalCallsToday = todayLogs.reduce((sum, l) => sum + l.callsMade, 0);
+    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}`).all(todayStr) as any[];
+    const totalCallsToday = todayLogs.reduce((sum: number, l: any) => sum + (l.calls_made ?? 0), 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
 
     // Count upcoming appointments: outcomeType='appointment' with followUpDate >= today
-    const allOutcomes = db.select().from(leadOutcomes).all();
+    const allOutcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE 1=1${orgWhere}`).all() as any[];
     const upcomingAppointments = allOutcomes.filter(
-      o => o.outcomeType === "appointment" && o.followUpDate != null && o.followUpDate >= todayStr
+      (o: any) => o.outcome_type === "appointment" && o.follow_up_date != null && o.follow_up_date >= todayStr
     ).length;
 
     return { total, transfers, appointments, fellThrough, noAnswer, conversionRate, outcomesByType, totalCallsToday, callTransferRatio, upcomingAppointments };
   }
 
   getLeaderboard(startDate: string, endDate: string) {
-    const outcomes = db.select().from(leadOutcomes)
-      .where(and(gte(leadOutcomes.date, startDate), lte(leadOutcomes.date, endDate))).all();
+    const oid = currentOrgId();
+    const orgWhere = oid != null ? ` AND org_id = ${Number(oid)}` : "";
+    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}`).all(startDate, endDate) as any[];
 
-    const allUsers = db.select().from(users).where(
-      sql`(${users.role} = 'assistant' OR ${users.role} = 'admin') AND ${users.isActive} = 1`
-    ).all();
+    const usersQuery = oid != null
+      ? sqlite.prepare(`SELECT * FROM users WHERE (role = 'assistant' OR role = 'admin') AND is_active = 1 AND org_id = ?`).all(oid)
+      : db.select().from(users).where(sql`(${users.role} = 'assistant' OR ${users.role} = 'admin') AND ${users.isActive} = 1`).all();
+    const allUsers = usersQuery as any[];
 
-    const stats = allUsers.map(user => {
-      const userOutcomes = outcomes.filter(o => o.assistantId === user.id);
-      const transfers = userOutcomes.filter(o => o.outcomeType === "transfer").length;
-      const appointments = userOutcomes.filter(o => o.outcomeType === "appointment").length;
+    const stats = allUsers.map((user: any) => {
+      const userOutcomes = outcomes.filter((o: any) => (o.assistant_id ?? o.assistantId) === user.id);
+      const transfers = userOutcomes.filter((o: any) => (o.outcome_type ?? o.outcomeType) === "transfer").length;
+      const appointments = userOutcomes.filter((o: any) => (o.outcome_type ?? o.outcomeType) === "appointment").length;
       const total = userOutcomes.length;
       const rate = total > 0 ? Math.round((transfers / total) * 100) : 0;
       return { userId: user.id, name: user.name, transfers, appointments, total, conversionRate: rate };
@@ -1004,27 +1091,40 @@ export class Storage implements IStorage {
   }
 
   getDailyCallLogs(date: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ? AND org_id = ?`).all(date, oid) as any[];
+    }
     return db.select().from(dailyCallLogs).where(eq(dailyCallLogs.logDate, date)).all();
   }
 
   getCallLogsByRange(from: string, to: string) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date >= ? AND log_date <= ? AND org_id = ?`).all(from, to, oid) as any[];
+    }
     return db.select().from(dailyCallLogs)
       .where(and(gte(dailyCallLogs.logDate, from), lte(dailyCallLogs.logDate, to)))
       .all();
   }
 
   upsertDailyCallLog(data: InsertDailyCallLog) {
+    const oid = currentOrgId();
     const existing = db.select().from(dailyCallLogs)
       .where(and(eq(dailyCallLogs.logDate, data.logDate), eq(dailyCallLogs.assistantId, data.assistantId)))
       .get();
     const now = new Date().toISOString();
     if (existing) {
-      return db.update(dailyCallLogs)
+      const result = db.update(dailyCallLogs)
         .set({ callsMade: data.callsMade, notes: data.notes ?? null, updatedAt: now })
         .where(eq(dailyCallLogs.id, existing.id))
         .returning().get()!;
+      if (oid != null) sqlite.prepare(`UPDATE daily_call_logs SET org_id = ? WHERE id = ?`).run(oid, result.id);
+      return result;
     }
-    return db.insert(dailyCallLogs).values({ ...data, updatedAt: now }).returning().get()!;
+    const result = db.insert(dailyCallLogs).values({ ...data, updatedAt: now }).returning().get()!;
+    if (oid != null) sqlite.prepare(`UPDATE daily_call_logs SET org_id = ? WHERE id = ?`).run(oid, result.id);
+    return result;
   }
 
   createAuditLog(data: InsertAuditLog) {
