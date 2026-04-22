@@ -797,19 +797,46 @@ function NotificationsCard() {
   const isAdmin = authUser?.role === "admin";
 
   const [userEnabled, setUserEnabled] = useState<boolean>(true);
+  const [smsEnabled, setSmsEnabled] = useState<boolean>(false);
+  const [smsConfigured, setSmsConfigured] = useState<boolean>(false);
   const [orgEnabled, setOrgEnabled] = useState<boolean>(true);
   const [runningNow, setRunningNow] = useState(false);
 
   useEffect(() => {
-    if (authUser) setUserEnabled(authUser.reminderEmailEnabled ?? true);
-  }, [authUser?.reminderEmailEnabled]);
+    if (authUser) {
+      setUserEnabled(authUser.reminderEmailEnabled ?? true);
+      setSmsEnabled(!!authUser.smsRemindersEnabled);
+    }
+  }, [authUser?.reminderEmailEnabled, authUser?.smsRemindersEnabled]);
 
   useEffect(() => {
     fetch("/api/settings/reminders", { credentials: "include" })
       .then(r => r.json())
       .then(d => { if (typeof d?.remindersEnabled === "boolean") setOrgEnabled(d.remindersEnabled); })
       .catch(() => {});
+    fetch("/api/sms/status", { credentials: "include" })
+      .then(r => r.json())
+      .then(d => setSmsConfigured(!!d?.configured))
+      .catch(() => {});
   }, []);
+
+  async function saveSms(enabled: boolean) {
+    setSmsEnabled(enabled);
+    try {
+      const r = await fetch("/api/users/me/sms-reminders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      toast({ title: enabled ? "SMS reminders on" : "SMS reminders off" });
+      await refetchUser();
+    } catch (e: any) {
+      setSmsEnabled(!enabled);
+      toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
+    }
+  }
 
   async function saveUser(enabled: boolean) {
     setUserEnabled(enabled);
@@ -881,6 +908,22 @@ function NotificationsCard() {
           </div>
           <Switch checked={userEnabled} onCheckedChange={saveUser} data-testid="toggle-reminder-email" />
         </div>
+
+        {smsConfigured && (
+          <>
+            <Separator />
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">SMS Reminders</p>
+                <p className="text-xs text-muted-foreground">
+                  Get a text message reminder 24 hours before appointments and callbacks.
+                  Requires your phone number to be set in your profile.
+                </p>
+              </div>
+              <Switch checked={smsEnabled} onCheckedChange={saveSms} data-testid="toggle-reminder-sms" />
+            </div>
+          </>
+        )}
 
         {isAdmin && (
           <>

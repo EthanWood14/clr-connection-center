@@ -50,6 +50,7 @@ export const users = sqliteTable("users", {
   scriptNameOverride: text("script_name_override"),
   scriptLoOverride: text("script_lo_override"),
   superAdmin: integer("super_admin", { mode: "boolean" }).notNull().default(false),
+  smsRemindersEnabled: integer("sms_reminders_enabled", { mode: "boolean" }).notNull().default(false),
   orgId: integer("org_id").notNull().default(1),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });

@@ -1465,6 +1465,12 @@ function runNewMigrations() {
   // ── Push notifications (Web Push / VAPID) ──────────────────────────────
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN vapid_public_key TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN vapid_private_key TEXT`); } catch {}
+
+  // ── SMS notifications (Twilio) ─────────────────────────────────────────
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_account_sid TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_auth_token TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_from_number TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1255,6 +1255,104 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(result);
   });
 
+  // ── SMS (Twilio) ────────────────────────────────────────────────────────────
+  // Whether SMS is configured for the current user's org — used by clients to
+  // decide whether to show the "SMS Reminders" toggle.
+  app.get("/api/sms/status", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const user = storage.getUserById(userId) as any;
+    const orgId = user?.orgId ?? 1;
+    const { isTwilioConfigured } = require("./sms");
+    res.json({ configured: isTwilioConfigured(orgId) });
+  });
+
+  // Admin: load Twilio creds (auth token redacted)
+  app.get("/api/sms/settings", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    try {
+      const row = (require("./storage").getRawSqlite() as any)
+        .prepare(`SELECT twilio_account_sid, twilio_auth_token, twilio_from_number FROM webhook_settings WHERE id=1`)
+        .get();
+      res.json({
+        twilioAccountSid: row?.twilio_account_sid ?? "",
+        twilioAuthToken: row?.twilio_auth_token ? "••••••••" : "",
+        twilioAuthTokenSet: !!row?.twilio_auth_token,
+        twilioFromNumber: row?.twilio_from_number ?? "",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load settings" });
+    }
+  });
+
+  // Admin: update Twilio creds. Auth token omitted/empty preserves existing value.
+  app.patch("/api/sms/settings", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { twilioAccountSid, twilioAuthToken, twilioFromNumber } = req.body ?? {};
+    try {
+      const sqlite = (require("./storage").getRawSqlite() as any);
+      // Only update non-undefined fields. Empty string clears.
+      const sets: string[] = [];
+      const vals: any[] = [];
+      if (typeof twilioAccountSid === "string") {
+        sets.push("twilio_account_sid = ?");
+        vals.push(twilioAccountSid.trim() || null);
+      }
+      if (typeof twilioAuthToken === "string" && twilioAuthToken !== "••••••••") {
+        sets.push("twilio_auth_token = ?");
+        vals.push(twilioAuthToken.trim() || null);
+      }
+      if (typeof twilioFromNumber === "string") {
+        sets.push("twilio_from_number = ?");
+        vals.push(twilioFromNumber.trim() || null);
+      }
+      if (sets.length) {
+        sqlite.prepare(`UPDATE webhook_settings SET ${sets.join(", ")}, updated_at = ? WHERE id = 1`)
+          .run(...vals, new Date().toISOString());
+      }
+      const row = sqlite
+        .prepare(`SELECT twilio_account_sid, twilio_auth_token, twilio_from_number FROM webhook_settings WHERE id=1`)
+        .get();
+      res.json({
+        twilioAccountSid: row?.twilio_account_sid ?? "",
+        twilioAuthToken: row?.twilio_auth_token ? "••••••••" : "",
+        twilioAuthTokenSet: !!row?.twilio_auth_token,
+        twilioFromNumber: row?.twilio_from_number ?? "",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to save settings" });
+    }
+  });
+
+  // Admin: send a test SMS to their own phone number.
+  app.post("/api/sms/test", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const userId = req.session_user?.userId;
+    const user = storage.getUserById(userId) as any;
+    const orgId = user?.orgId ?? 1;
+    const to = (req.body?.to as string | undefined)?.trim() || user?.phone;
+    if (!to) return res.status(400).json({ error: "No phone number on profile; set one or pass 'to' in body." });
+    const { sendSms } = require("./sms");
+    const result = await sendSms(to, "CLR Connection Center: This is a test SMS. Twilio is configured correctly.", orgId);
+    if (!result.ok) return res.status(400).json({ error: result.error ?? "SMS failed", skipped: result.skipped });
+    res.json({ ok: true, sid: result.sid });
+  });
+
+  // Per-user SMS reminders toggle
+  app.patch("/api/users/me/sms-reminders", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const enabled = !!req.body?.enabled;
+    try {
+      (require("./storage").getRawSqlite() as any)
+        .prepare(`UPDATE users SET sms_reminders_enabled = ? WHERE id = ?`)
+        .run(enabled ? 1 : 0, userId);
+      res.json({ ok: true, enabled });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update" });
+    }
+  });
+
   // ── Public marketing landing page ──────────────────────────────────────────
   app.get("/landing", (_req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");

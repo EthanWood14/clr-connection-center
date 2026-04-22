@@ -519,6 +519,8 @@ export default function IntegrationsPage() {
         </CardContent>
       </Card>
 
+      <TwilioCard toast={toast} />
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -591,5 +593,152 @@ export default function IntegrationsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ── Twilio / SMS card ─────────────────────────────────────────────────────────
+type TwilioSettings = {
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioAuthTokenSet: boolean;
+  twilioFromNumber: string;
+};
+
+function TwilioCard({ toast }: { toast: ReturnType<typeof useToast>["toast"] }) {
+  const { data, isLoading } = useQuery<TwilioSettings>({
+    queryKey: ["/api/sms/settings"],
+  });
+  const [sid, setSid] = useState("");
+  const [token, setToken] = useState("");
+  const [from, setFrom] = useState("");
+  const [testTo, setTestTo] = useState("");
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (data) {
+      setSid(data.twilioAccountSid ?? "");
+      setToken(data.twilioAuthTokenSet ? "••••••••" : "");
+      setFrom(data.twilioFromNumber ?? "");
+    }
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: (next: Partial<TwilioSettings>) => apiRequest("PATCH", "/api/sms/settings", next),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sms/settings"] });
+      toast({ title: "Saved", description: "Twilio settings updated." });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  async function sendTest() {
+    setTesting(true);
+    try {
+      const body: any = {};
+      if (testTo.trim()) body.to = testTo.trim();
+      const r = await fetch("/api/sms/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error ?? "Failed");
+      toast({ title: "Test SMS sent", description: j.sid ? `sid=${j.sid}` : "Sent" });
+    } catch (e: any) {
+      toast({ title: "Test failed", description: e?.message ?? String(e), variant: "destructive" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const configured = !!(data?.twilioAccountSid?.trim()) && !!(data?.twilioAuthTokenSet) && !!(data?.twilioFromNumber?.trim());
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-md flex items-center justify-center text-white font-bold text-lg shrink-0 bg-red-500">
+            T
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <CardTitle className="text-base">Twilio SMS</CardTitle>
+              <StatusBadge status={configured ? "connected" : "not_connected"} />
+            </div>
+            <CardDescription className="mt-1">
+              Send text-message reminders to CLRs before their upcoming appointments and callbacks.
+              Enter your Twilio credentials below. Each CLR can opt in via Settings → Notifications.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Account SID</label>
+          <Input
+            value={sid}
+            onChange={(e) => setSid(e.target.value)}
+            placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            className="font-mono text-xs mt-1.5"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Auth Token</label>
+          <div className="mt-1.5">
+            <SecretInput value={token} onChange={setToken} placeholder="(leave blank to keep current value)" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">From Number (E.164)</label>
+          <Input
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="+15551234567"
+            className="font-mono text-xs mt-1.5"
+          />
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <Button
+            onClick={() =>
+              saveMutation.mutate({
+                twilioAccountSid: sid,
+                twilioAuthToken: token,
+                twilioFromNumber: from,
+              })
+            }
+            disabled={isLoading || saveMutation.isPending}
+          >
+            <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+          </Button>
+        </div>
+
+        <div className="pt-3 border-t space-y-2">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Send Test SMS
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Defaults to your profile's phone number. Format: E.164 (e.g. +15551234567) or a 10-digit US number.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              value={testTo}
+              onChange={(e) => setTestTo(e.target.value)}
+              placeholder="+15551234567 (optional — your profile number if blank)"
+              className="font-mono text-xs"
+            />
+            <Button onClick={sendTest} disabled={testing || !configured} variant="outline">
+              {testing ? "Sending…" : "Send Test"}
+            </Button>
+          </div>
+          {!configured && (
+            <p className="text-xs text-muted-foreground">
+              Save your credentials first, then send a test.
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

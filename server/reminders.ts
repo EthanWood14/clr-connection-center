@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { getRawSqlite, storage } from "./storage";
 import { sendPushToUser } from "./push";
+import { sendSms, isTwilioConfigured, normalizePhone } from "./sms";
 
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
 const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
@@ -37,13 +38,16 @@ function fmtDateTime(iso: string): string {
 type PendingOutcome = {
   outcome_id: number;
   assistant_id: number;
+  org_id: number;
   outcome_type: string;
   borrower_name: string | null;
   notes: string | null;
   scheduled_date: string;
   clr_name: string;
   clr_email: string;
+  clr_phone: string | null;
   clr_reminder_enabled: number;
+  clr_sms_enabled: number;
   lo_name: string;
 };
 
@@ -75,7 +79,10 @@ function findPendingReminders(): PendingOutcome[] {
       ) AS scheduled_date,
       u.name AS clr_name,
       u.email AS clr_email,
+      u.phone AS clr_phone,
       u.reminder_email_enabled AS clr_reminder_enabled,
+      u.sms_reminders_enabled AS clr_sms_enabled,
+      COALESCE(u.org_id, 1) AS org_id,
       loff.full_name AS lo_name
     FROM lead_outcomes lo
     JOIN users u ON u.id = lo.assistant_id
@@ -95,13 +102,14 @@ function findPendingReminders(): PendingOutcome[] {
 
   const existingReminderStmt = sqlite.prepare(`
     SELECT sent_at FROM reminder_log
-    WHERE outcome_id = ? AND reminder_type = 'email'
+    WHERE outcome_id = ? AND reminder_type IN ('email','sms')
     ORDER BY sent_at DESC LIMIT 1
   `);
 
   return rows.filter(r => {
-    if (!r.clr_reminder_enabled) return false;
-    if (!r.clr_email) return false;
+    const emailOk = !!r.clr_reminder_enabled && !!r.clr_email;
+    const smsOk = !!r.clr_sms_enabled && !!r.clr_phone;
+    if (!emailOk && !smsOk) return false;
     const t = Date.parse(r.scheduled_date);
     if (!Number.isFinite(t)) return false;
     if (t <= now || t > in24h) return false; // must be in the future, within 24h
@@ -170,19 +178,45 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
     INSERT OR REPLACE INTO reminder_log (outcome_id, user_id, reminder_type, sent_at)
     VALUES (?, ?, 'email', datetime('now'))
   `);
+  const insertSmsLog = sqlite.prepare(`
+    INSERT OR REPLACE INTO reminder_log (outcome_id, user_id, reminder_type, sent_at)
+    VALUES (?, ?, 'sms', datetime('now'))
+  `);
 
   for (const o of pending) {
     const { subject, html } = buildEmail(o);
+    const emailEligible = !!o.clr_reminder_enabled && !!o.clr_email;
     try {
-      const result = await resend.emails.send({ from, to: [o.clr_email], subject, html });
-      if (result?.error) {
-        stats.errors++;
-        console.error(`[reminders] send failed outcome=${o.outcome_id} to=${o.clr_email}:`, result.error);
-        continue;
+      if (emailEligible) {
+        const result = await resend.emails.send({ from, to: [o.clr_email], subject, html });
+        if (result?.error) {
+          stats.errors++;
+          console.error(`[reminders] send failed outcome=${o.outcome_id} to=${o.clr_email}:`, result.error);
+        } else {
+          insertLog.run(o.outcome_id, o.assistant_id);
+          stats.sent++;
+          console.log(`[reminders] sent outcome=${o.outcome_id} to=${o.clr_email} id=${result?.data?.id}`);
+        }
       }
-      insertLog.run(o.outcome_id, o.assistant_id);
-      stats.sent++;
-      console.log(`[reminders] sent outcome=${o.outcome_id} to=${o.clr_email} id=${result?.data?.id}`);
+      // SMS (best-effort, only if Twilio configured AND user has sms enabled + phone)
+      if (
+        o.clr_sms_enabled &&
+        o.clr_phone &&
+        normalizePhone(o.clr_phone) &&
+        isTwilioConfigured(o.org_id)
+      ) {
+        const kind = o.outcome_type === "appointment" ? "appointment" : "callback";
+        const when = fmtDateTime(o.scheduled_date);
+        const borrower = o.borrower_name?.trim() || "Unknown";
+        const smsBody = `CLR Connection Center: Reminder — you have a ${kind} scheduled at ${when} with borrower ${borrower}. Log in: https://www.wlc.it.com`;
+        const smsResult = await sendSms(o.clr_phone, smsBody, o.org_id);
+        if (smsResult.ok) {
+          insertSmsLog.run(o.outcome_id, o.assistant_id);
+          console.log(`[reminders] sms sent outcome=${o.outcome_id} to=${o.clr_phone} sid=${smsResult.sid}`);
+        } else if (!smsResult.skipped) {
+          stats.errors++;
+        }
+      }
       // Mirror to push notifications (best-effort)
       try {
         await sendPushToUser(o.assistant_id, {

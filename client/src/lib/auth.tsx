@@ -17,6 +17,8 @@ export interface AuthUser {
   superAdmin?: boolean;
   orgId?: number;
   reminderEmailEnabled?: boolean;
+  smsRemindersEnabled?: boolean;
+  phone?: string | null;
 }
 
 interface AuthContextValue {
