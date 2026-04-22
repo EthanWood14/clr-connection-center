@@ -76,10 +76,10 @@ function GoalStripe() {
   if (!hasGoals) return null;
   const wtd = data.weekToDate ?? { calls: 0, transfers: 0, appointments: 0 };
 
-  const rows: Array<{ label: string; cur: number; goal: number; color: string }> = [];
-  if (data.goals.calls > 0) rows.push({ label: "Calls", cur: wtd.calls, goal: data.goals.calls, color: "bg-blue-500" });
-  if (data.goals.transfers > 0) rows.push({ label: "Transfers", cur: wtd.transfers, goal: data.goals.transfers, color: "bg-green-500" });
-  if (data.goals.appointments > 0) rows.push({ label: "Appts", cur: wtd.appointments, goal: data.goals.appointments, color: "bg-purple-500" });
+  const rows: Array<{ key: string; label: string; cur: number; goal: number; color: string }> = [];
+  if (data.goals.calls > 0) rows.push({ key: "calls", label: "Calls", cur: wtd.calls, goal: data.goals.calls, color: "bg-blue-500" });
+  if (data.goals.transfers > 0) rows.push({ key: "transfers", label: "Transfers", cur: wtd.transfers, goal: data.goals.transfers, color: "bg-green-500" });
+  if (data.goals.appointments > 0) rows.push({ key: "appointments", label: "Appts", cur: wtd.appointments, goal: data.goals.appointments, color: "bg-purple-500" });
 
   return (
     <Card className="border-dashed">
@@ -104,6 +104,13 @@ function GoalStripe() {
                 <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
                   <div className={`h-full ${met ? "bg-green-500" : r.color} transition-all`} style={{ width: `${pct}%` }} />
                 </div>
+                {r.key === "appointments" && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground pt-0.5">
+                    <span>Appointments: <span className="font-semibold text-foreground tabular-nums">{wtd.appointments ?? 0}</span></span>
+                    <span>Transfers: <span className="font-semibold text-foreground tabular-nums">{wtd.transfers ?? 0}</span></span>
+                    <span>Fell Throughs: <span className="font-semibold text-foreground tabular-nums">{wtd.fellThrough ?? 0}</span></span>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -904,17 +911,12 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" accent="green" sub={subLabel} href="/outcomes" />
             <StatCard
-              title="Appointments"
+              title="Upcoming Appointments"
               value={displayStats?.upcomingAppointments ?? 0}
               icon={Calendar}
               color="primary"
               accent="purple"
               href="/appointments"
-              breakdown={[
-                { icon: "📅", label: "Appointments", value: displayStats?.appointments ?? 0 },
-                { icon: "🔄", label: "Transfers", value: displayStats?.transfers ?? 0 },
-                { icon: "❌", label: "Fell Throughs", value: displayStats?.fellThrough ?? 0 },
-              ]}
             />
             <StatCard title={scope === "team" ? "Team Calls Today" : "My Calls Today"} value={displayStats?.myCallsToday ?? "—"} icon={PhoneCall} color="default" accent="blue" sub={displayStats?.myCallsToday != null ? "logged at EOD" : "log at end of day"} href="/eod-report" />
             <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" accent="red" sub={subLabel} href="/outcomes" />

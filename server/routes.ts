@@ -3616,6 +3616,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       calls: sumCalls(wtdLogs),
       transfers: wtdOutcomes.filter((o: any) => ot(o) === "transfer").length,
       appointments: wtdOutcomes.filter((o: any) => ot(o) === "appointment").length,
+      fellThrough: wtdOutcomes.filter((o: any) => ot(o) === "fell_through").length,
     };
 
     res.json({
