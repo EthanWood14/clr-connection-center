@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 interface CheckResult {
   hasLog: boolean;
   date: string;
+  exempt?: boolean;
 }
 
 function formatDate(dateStr: string) {
@@ -38,11 +39,13 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  // Only check once user is loaded and is an actual user (not admin bypass option yet — gate all)
+  // Admins and non-CLRs are exempt from the daily report gate.
+  const isClr = !!(user && (user as any).isClr && user.role !== "admin");
+
   const { data: checkData, isLoading: checkLoading } = useQuery<CheckResult>({
     queryKey: ["/api/call-logs/check-previous-day"],
-    enabled: !!user && !authLoading,
-    staleTime: 5 * 60 * 1000, // 5 min
+    enabled: !!user && !authLoading && isClr,
+    staleTime: 60 * 1000, // 1 min — fresh enough across navigation, not every request
     retry: false,
   });
 
@@ -84,15 +87,18 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   // While loading auth or check, just show children (no flash)
   if (authLoading || checkLoading || !user) return <>{children}</>;
 
+  // Admins / non-CLR users never see the gate.
+  if (!isClr) return <>{children}</>;
+
   // Skip the gate entirely for brand-new users (they've never seen the intro yet)
   if (!user.hasSeenIntro) return <>{children}</>;
 
-  // If already has log, or was just submitted, show app normally
-  const gated = !submitted && checkData !== undefined && !checkData.hasLog;
+  // If the server says the user is exempt, already has a log, or was just submitted, show app normally.
+  const gated = !submitted && checkData !== undefined && !checkData.exempt && !checkData.hasLog;
 
   if (!gated) return <>{children}</>;
 
-  const prevDateLabel = checkData ? formatDate(checkData.date) : "the previous business day";
+  const todayLabel = checkData ? formatDate(checkData.date) : "today";
 
   return (
     <>
@@ -115,9 +121,9 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
               <DialogTitle className="text-lg">Daily Report Required</DialogTitle>
             </div>
             <DialogDescription className="text-sm text-muted-foreground">
-              You haven't filed a call report for{" "}
-              <span className="font-medium text-foreground">{prevDateLabel}</span>.
-              Please submit your report before using the system.
+              Please file your call report for{" "}
+              <span className="font-medium text-foreground">{todayLabel}</span>{" "}
+              before using the system.
             </DialogDescription>
           </DialogHeader>
 
