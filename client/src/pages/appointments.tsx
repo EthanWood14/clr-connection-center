@@ -631,7 +631,9 @@ export default function Appointments() {
   const completeMutation = useMutation({
     mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
       setPendingCompleteId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: type, followUpDate: null });
+      const payload: Record<string, any> = { outcomeType: type, followUpDate: null };
+      if (type === "transfer") payload.transferType = "appointment";
+      return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
@@ -650,7 +652,7 @@ export default function Appointments() {
   const quickCompleteMutation = useMutation({
     mutationFn: (id: number) => {
       setPendingCompleteId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", followUpDate: null });
+      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", transferType: "appointment", followUpDate: null });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
