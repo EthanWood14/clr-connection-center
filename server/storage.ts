@@ -644,6 +644,63 @@ try {
   console.error('purge_west_capital_samples_v1 failed:', e);
 }
 
+// ── Aggressive cleanup v2: catch any remaining fake LOs by name, email, or nmls_id ──
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'purge_west_capital_samples_v2'`).get();
+  if (!done) {
+    const fakeNames = [
+      'Alex Thompson','Jordan Rivera','Taylor Morgan','Casey Bennett',
+      'Michael Chen','Sarah Johnson','David Park','Emily Rodriguez',
+      'Robert Chen','Maria Gonzalez','James Wilson','Lisa Anderson','Kevin Martinez',
+    ];
+    const fakeNmls = ['100001','100002','100003','100004','100005','111111','222222','333333','444444','555555'];
+    const namePh = fakeNames.map(() => '?').join(',');
+    const nmlsPh = fakeNmls.map(() => '?').join(',');
+
+    try {
+      sqlite.prepare(
+        `DELETE FROM loan_officers WHERE org_id = 1 AND (
+          full_name IN (${namePh})
+          OR email LIKE '%@westcapital.com'
+          OR email LIKE '%@example.com'
+          OR email LIKE '%@demo.com'
+          OR nmls_id IN (${nmlsPh})
+        )`
+      ).run(...fakeNames, ...fakeNmls);
+    } catch (e) { console.error('v2 LO delete failed:', e); }
+
+    try {
+      sqlite.prepare(
+        `DELETE FROM lo_assignments WHERE org_id = 1 AND lo_id NOT IN (SELECT id FROM loan_officers)`
+      ).run();
+    } catch (e) { console.error('v2 lo_assignments delete failed:', e); }
+
+    try {
+      sqlite.prepare(
+        `DELETE FROM lead_outcomes WHERE org_id = 1 AND lo_id NOT IN (SELECT id FROM loan_officers)`
+      ).run();
+    } catch (e) { console.error('v2 lead_outcomes delete failed:', e); }
+
+    try {
+      sqlite.prepare(
+        `DELETE FROM daily_assignments WHERE lo_id NOT IN (SELECT id FROM loan_officers)`
+      ).run();
+    } catch (e) { console.error('v2 daily_assignments delete failed:', e); }
+
+    try {
+      sqlite.prepare(
+        `DELETE FROM lo_availability WHERE lo_id NOT IN (SELECT id FROM loan_officers)`
+      ).run();
+    } catch (e) { console.error('v2 lo_availability delete failed:', e); }
+
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+      .run('purge_west_capital_samples_v2', new Date().toISOString());
+  }
+} catch (e) {
+  console.error('purge_west_capital_samples_v2 failed:', e);
+}
+
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
   db.insert(algorithmSettings).values({
