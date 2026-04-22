@@ -22,7 +22,7 @@ import {
 import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
-  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Users,
+  Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Unlock, Users,
   Play, Square, Clock, Radio,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
@@ -1375,6 +1375,8 @@ export default function CallScriptPage() {
 
   const [view, setView] = useState<"run" | "edit" | "flowchart">("run");
   const [confirmReset, setConfirmReset] = useState(false);
+  const [adminOverrideScriptId, setAdminOverrideScriptId] = useState<number | null>(null);
+  const [confirmOverride, setConfirmOverride] = useState(false);
 
   useEffect(() => { markStep(userId, "view_script"); }, [userId]);
   useEffect(() => { document.title = "Scripts · WCLCC"; }, []);
@@ -1543,8 +1545,16 @@ export default function CallScriptPage() {
 
   const hasPersonalCopy = !!myScript;
   const isUsingDefault = activeScript ? activeScript.owner_id == null : !hasPersonalCopy;
+  // Clear admin override if the active script changes to a different one
+  useEffect(() => {
+    if (adminOverrideScriptId != null && activeScript && activeScript.id !== adminOverrideScriptId) {
+      setAdminOverrideScriptId(null);
+    }
+  }, [activeScript?.id, adminOverrideScriptId]);
   const isMine = !!(activeScript && myScript && activeScript.id === myScript.id);
-  const canEditActive = !!activeScript && (isAdmin || isMine);
+  const isOtherUserScript = !!(activeScript && activeScript.owner_id != null && !isMine);
+  const hasAdminOverride = !!(isAdmin && activeScript && adminOverrideScriptId === activeScript.id);
+  const canEditActive = !!activeScript && (isMine || (isAdmin && isUsingDefault) || hasAdminOverride);
 
   // Clone default → personal copy
   const cloneMut = useMutation({
@@ -1598,24 +1608,37 @@ export default function CallScriptPage() {
           <Button size="sm" variant={view === "flowchart" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("flowchart")}>
             <GitBranch className="w-3.5 h-3.5" /> Flowchart
           </Button>
-          <Button
-            size="sm"
-            variant={view === "edit" ? "default" : "outline"}
-            className="gap-1.5"
-            onClick={() => {
-              // If viewing the default and user has no personal copy, cloning gives them an editable script.
-              if (!canEditActive && isUsingDefault && !isAdmin && !hasPersonalCopy) {
-                cloneMut.mutate();
-              } else {
-                setView("edit");
-              }
-            }}
-            disabled={cloneMut.isPending || (!canEditActive && !(isUsingDefault && !isAdmin && !hasPersonalCopy))}
-            title={!canEditActive ? "You don't have permission to edit this script" : undefined}
-          >
-            {canEditActive ? <Pencil className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-            {cloneMut.isPending ? "Copying…" : canEditActive ? "Edit Script" : (isUsingDefault && !isAdmin && !hasPersonalCopy ? "Customize My Copy" : "View Only")}
-          </Button>
+          {isAdmin && isOtherUserScript && !hasAdminOverride ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-amber-500 bg-amber-50 hover:bg-amber-100 text-amber-900 dark:bg-amber-950/30 dark:hover:bg-amber-950/50 dark:text-amber-200 dark:border-amber-700"
+              onClick={() => setConfirmOverride(true)}
+              title="Unlock this CLR's script for editing"
+              data-testid="button-admin-override"
+            >
+              <Unlock className="w-3.5 h-3.5" /> Admin Override
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant={view === "edit" ? "default" : "outline"}
+              className="gap-1.5"
+              onClick={() => {
+                // If viewing the default and user has no personal copy, cloning gives them an editable script.
+                if (!canEditActive && isUsingDefault && !isAdmin && !hasPersonalCopy) {
+                  cloneMut.mutate();
+                } else {
+                  setView("edit");
+                }
+              }}
+              disabled={cloneMut.isPending || (!canEditActive && !(isUsingDefault && !isAdmin && !hasPersonalCopy))}
+              title={!canEditActive ? "You don't have permission to edit this script" : undefined}
+            >
+              {canEditActive ? <Pencil className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+              {cloneMut.isPending ? "Copying…" : canEditActive ? "Edit Script" : (isUsingDefault && !isAdmin && !hasPersonalCopy ? "Customize My Copy" : "View Only")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1817,6 +1840,16 @@ export default function CallScriptPage() {
         </div>
       )}
 
+      {/* Admin override — editing another CLR's personal script */}
+      {!isLoading && activeScript && isAdmin && isOtherUserScript && hasAdminOverride && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3 flex items-start gap-2 text-sm text-amber-900 dark:text-amber-200" data-testid="admin-override-banner">
+          <Unlock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>
+            You are editing <strong>{activeScript.owner_name ? `${activeScript.owner_name}'s` : "another CLR's"}</strong> personal script. Changes will affect their script only.
+          </span>
+        </div>
+      )}
+
       {/* Main content */}
       {!isLoading && activeScript && (
         view === "run"
@@ -1848,6 +1881,34 @@ export default function CallScriptPage() {
           Recording
         </div>
       )}
+
+      {/* Admin override confirmation */}
+      <AlertDialog open={confirmOverride} onOpenChange={setConfirmOverride}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Unlock className="w-4 h-4 text-amber-600" /> Admin Override
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You are editing <strong>{activeScript?.owner_name ? `${activeScript.owner_name}'s` : "another CLR's"}</strong> personal script. Changes will affect their script only.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (activeScript) setAdminOverrideScriptId(activeScript.id);
+                setConfirmOverride(false);
+                setView("edit");
+              }}
+              className="bg-amber-500 text-amber-950 hover:bg-amber-600"
+              data-testid="button-confirm-override"
+            >
+              Unlock & Edit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Reset confirmation */}
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
