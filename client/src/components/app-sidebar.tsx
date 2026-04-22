@@ -39,6 +39,7 @@ const reportItems = [
 const toolItems = [
   { title: "State Lookup",    url: "/state-lookup",  icon: MapPin },
   { title: "NMLS",            url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
+  { title: "NMLS License",    url: "/nmls-status",   icon: ShieldCheck },
   { title: "Reports",         url: "/reporting",     icon: BarChart },
   { title: "Script",          url: "/call-script",   icon: PhoneCall },
   { title: "Glossary",        url: "/glossary",      icon: BookOpen },

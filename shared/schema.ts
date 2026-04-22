@@ -43,6 +43,10 @@ export const loanOfficers = sqliteTable("loan_officers", {
   snoozeReason: text("snooze_reason"),
   lastWorkedDate: text("last_worked_date"),
   totalTimesWorked: integer("total_times_worked").notNull().default(0),
+  nmlsStatus: text("nmls_status"), // Active | Inactive | Expired | Unknown | null
+  nmlsStates: text("nmls_states").notNull().default("[]"), // JSON array of state codes
+  nmlsLastChecked: text("nmls_last_checked"), // ISO date string
+  nmlsLicenseExpiration: text("nmls_license_expiration"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
 });

@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
 import crypto from "crypto";
+import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -686,6 +687,84 @@ cron.schedule("30 8 * * *", () => {
       });
     }
   } catch (e) { console.error("NMLS daily reminder error:", e); }
+});
+
+// ── NMLS license auto-verification (Consumer Access) ────────────────────────
+// Hits NMLS Consumer Access for each LO with an NMLS ID, stores status + licensed
+// states. Consumer Access is usually behind Cloudflare Turnstile; when blocked
+// we mark status "Unknown" and the UI surfaces a direct link for manual verify.
+async function verifyLoNmls(loId: number): Promise<{ ok: boolean; status: string; states: string[]; blocked: boolean; error?: string }> {
+  const lo = storage.getLoanOfficerById(loId) as any;
+  if (!lo) return { ok: false, status: "Unknown", states: [], blocked: false, error: "LO not found" };
+  if (!lo.nmlsId) return { ok: false, status: "Unknown", states: [], blocked: false, error: "No NMLS ID" };
+
+  const prevStatus = lo.nmlsStatus ?? null;
+  const result = await checkNmlsLicense(lo.nmlsId);
+
+  const updates: any = {
+    nmlsStatus: result.status,
+    nmlsLastChecked: new Date().toISOString(),
+  };
+  // Only overwrite states list if we got a real page (not blocked)
+  if (!result.blocked) {
+    updates.nmlsStates = JSON.stringify(result.states);
+    if (result.licenseExpiration) updates.nmlsLicenseExpiration = result.licenseExpiration;
+  }
+  storage.updateLoanOfficer(loId, updates);
+
+  // Alert admins if status flipped to Inactive/Expired
+  const flaggedStatuses = new Set(["Inactive", "Expired"]);
+  if (!result.blocked && flaggedStatuses.has(result.status) && prevStatus !== result.status) {
+    try {
+      const admins = storage.getUsers().filter((u: any) => u.role === "admin" && u.isActive);
+      const adminEmails = admins.map((a: any) => a.email).filter(Boolean);
+      if (adminEmails.length > 0) {
+        const subject = `⚠️ NMLS License Alert: ${lo.fullName} is ${result.status}`;
+        const body = `
+          <h2>NMLS License Status Changed</h2>
+          <p><strong>${lo.fullName}</strong> (NMLS #${lo.nmlsId}) has been flagged as <strong>${result.status}</strong>.</p>
+          <p>Previous status: ${prevStatus ?? "Unknown"}</p>
+          <p><a href="${nmlsProfileUrl(lo.nmlsId)}">View NMLS Consumer Access record</a></p>
+          <p>Please review in the CLR Connection Center directory.</p>
+        `;
+        const html = buildEmail({ subject, body });
+        await sendEmail({ to: adminEmails, subject, html });
+      }
+      // Also create an in-app broadcast notification
+      storage.createNotification({
+        userId: null as any,
+        type: "license_alert",
+        title: `NMLS Alert: ${lo.fullName} is ${result.status}`,
+        message: `${lo.fullName}'s NMLS license is now ${result.status}. Verify at nmlsconsumeraccess.org.`,
+        isRead: false,
+      });
+    } catch (e) { console.error("NMLS alert email failed:", e); }
+  }
+
+  return { ok: true, status: result.status, states: result.states, blocked: result.blocked, error: result.rawError };
+}
+
+async function verifyAllLoNmls(): Promise<{ checked: number; blocked: number; flagged: number }> {
+  const los = storage.getLoanOfficers().filter((lo: any) => lo.nmlsId && lo.internalStatus === "active");
+  let checked = 0, blocked = 0, flagged = 0;
+  for (const lo of los) {
+    const r = await verifyLoNmls(lo.id);
+    checked++;
+    if (r.blocked) blocked++;
+    if (r.status === "Inactive" || r.status === "Expired") flagged++;
+    // Tiny delay to avoid hammering
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  return { checked, blocked, flagged };
+}
+
+// Nightly NMLS license check — 2am UTC
+cron.schedule("0 2 * * *", async () => {
+  try {
+    console.log("[nmls] starting nightly license verification");
+    const result = await verifyAllLoNmls();
+    console.log(`[nmls] nightly verify complete: checked=${result.checked} blocked=${result.blocked} flagged=${result.flagged}`);
+  } catch (e) { console.error("NMLS nightly verify error:", e); }
 });
 
 // ── Incomplete LO profile notifications ─────────────────────────────────────
@@ -2063,6 +2142,68 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const user = req.session_user;
     if (user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
     triggerNmlsChecks();
+    res.json({ ok: true });
+  });
+
+  // ── NMLS license auto-verification ──────────────────────────────────────────
+  // Returns every LO's current stored license status + profile-link helper.
+  app.get("/api/nmls/status", requireAuth, (_req, res) => {
+    const los = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus !== "archived");
+    const items = los.map((lo: any) => ({
+      id: lo.id,
+      fullName: lo.fullName,
+      nmlsId: lo.nmlsId,
+      nmlsStatus: lo.nmlsStatus ?? null,
+      nmlsStates: (() => { try { return JSON.parse(lo.nmlsStates || "[]"); } catch { return []; } })(),
+      nmlsLastChecked: lo.nmlsLastChecked ?? null,
+      nmlsLicenseExpiration: lo.nmlsLicenseExpiration ?? null,
+      profileUrl: lo.nmlsId ? nmlsProfileUrl(lo.nmlsId) : null,
+    }));
+    res.json({ items });
+  });
+
+  // Check all LOs (admin only)
+  app.post("/api/nmls/check-all", requireAuth, async (req: any, res) => {
+    const user = req.session_user;
+    if (user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    try {
+      const result = await verifyAllLoNmls();
+      audit({ userId: user.userId, userName: user.name ?? "Admin", action: "verify", entityType: "nmls_license", entityId: null as any, entityLabel: "bulk check", details: JSON.stringify(result) });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "verify failed" });
+    }
+  });
+
+  // Check a single LO
+  app.post("/api/nmls/check/:loId", requireAuth, async (req: any, res) => {
+    const loId = parseInt(req.params.loId, 10);
+    if (Number.isNaN(loId)) return res.status(400).json({ error: "Invalid LO id" });
+    try {
+      const result = await verifyLoNmls(loId);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "verify failed" });
+    }
+  });
+
+  // Manual verify — admin/CLR stamps nmls_last_checked without hitting NMLS
+  app.post("/api/nmls/mark-verified/:loId", requireAuth, (req: any, res) => {
+    const loId = parseInt(req.params.loId, 10);
+    if (Number.isNaN(loId)) return res.status(400).json({ error: "Invalid LO id" });
+    const user = req.session_user;
+    const lo = storage.getLoanOfficerById(loId) as any;
+    if (!lo) return res.status(404).json({ error: "LO not found" });
+    const updates: any = { nmlsLastChecked: new Date().toISOString() };
+    // If admin also marked active, bump status
+    if (req.body?.status && ["Active", "Inactive", "Expired", "Unknown"].includes(req.body.status)) {
+      updates.nmlsStatus = req.body.status;
+    }
+    if (Array.isArray(req.body?.states)) {
+      updates.nmlsStates = JSON.stringify(req.body.states.filter((s: any) => typeof s === "string"));
+    }
+    storage.updateLoanOfficer(loId, updates);
+    audit({ userId: user.userId, userName: user.name ?? "User", action: "verify", entityType: "nmls_license", entityId: loId, entityLabel: lo.fullName, details: JSON.stringify(updates) });
     res.json({ ok: true });
   });
 

@@ -30,6 +30,7 @@ import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
 import AuditLog from "@/pages/audit-log";
 import NmlsChecks from "@/pages/nmls-checks";
+import NmlsStatus from "@/pages/nmls-status";
 import LoPerformance from "@/pages/lo-performance";
 import PrivacyPolicy from "@/pages/privacy-policy";
 import TermsOfUse from "@/pages/terms-of-use";
@@ -70,6 +71,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/state-lookup": "State Lookup",
   "/snooze":       "Snooze Manager",
   "/nmls-checks":  "NMLS Checks",
+  "/nmls-status":  "NMLS License Status",
   "/reporting":    "Reporting",
   "/settings":     "Settings",
   "/audit-log":    "Audit Log",
@@ -111,6 +113,7 @@ function AppRouter() {
       <Route path="/audit-log" component={AuditLog} />
       <Route path="/lo-performance" component={LoPerformance} />
       <Route path="/nmls-checks" component={NmlsChecks} />
+      <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
       <Route path="/install" component={InstallApp} />
       <Route path="/support" component={Support} />
