@@ -230,7 +230,7 @@ export function registerSaConsole(app: Express) {
     res.cookie(MAIN_COOKIE, payload, {
       signed: true,
       httpOnly: true,
-      sameSite: isProduction ? "lax" : "none",
+      sameSite: isProduction ? "strict" : "none",
       secure: isProduction,
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,

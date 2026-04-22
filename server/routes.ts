@@ -1130,16 +1130,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return res.status(429).json({ error: "Too many failed attempts. Please wait 15 minutes before trying again." });
     }
     const { email, password } = req.body ?? {};
-    if (!email || !password) {
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
       return res.status(400).json({ error: "Email and password are required" });
     }
-    const trimmedEmail = typeof email === "string" ? email.trim() : email;
-    const trimmedPassword = typeof password === "string" ? password.trim() : password;
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
     const user = storage.getUserByEmail(trimmedEmail);
-    if (!user) return res.status(401).json({ error: "Invalid email or password" });
+    if (!user) {
+      audit({ action: "login_failed", entityType: "auth", entityLabel: trimmedEmail, details: JSON.stringify({ ip, reason: "no_user" }) });
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
     if (!user.password_hash) return res.status(401).json({ error: "Account has no password set" });
     const valid = await bcrypt.compare(trimmedPassword, user.password_hash);
-    if (!valid) return res.status(401).json({ error: `Invalid email or password${rateCheck.remaining <= 2 ? ` (${rateCheck.remaining} attempt${rateCheck.remaining === 1 ? "" : "s"} remaining)` : ""}` });
+    if (!valid) {
+      audit({ userId: user.id, userName: user.name, action: "login_failed", entityType: "auth", entityId: user.id, entityLabel: user.email, details: JSON.stringify({ ip, reason: "bad_password" }) });
+      return res.status(401).json({ error: `Invalid email or password${rateCheck.remaining <= 2 ? ` (${rateCheck.remaining} attempt${rateCheck.remaining === 1 ? "" : "s"} remaining)` : ""}` });
+    }
 
     const isProduction = process.env.NODE_ENV === "production";
     const u = user as any;
@@ -1149,12 +1159,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.cookie(COOKIE_NAME, payload, {
       signed: true,
       httpOnly: true,
-      sameSite: isProduction ? "lax" : "none",
+      sameSite: isProduction ? "strict" : "none",
       secure: isProduction,
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
+    audit({ userId: user.id, userName: user.name, action: "login", entityType: "auth", entityId: user.id, entityLabel: user.email, details: JSON.stringify({ ip }) });
     return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password), hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), superAdmin, orgId } });
   });
 
@@ -4957,7 +4968,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
-      sameSite: isProduction ? "lax" : "none",
+      sameSite: isProduction ? "strict" : "none",
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -4972,7 +4983,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
-      sameSite: isProduction ? "lax" : "none",
+      sameSite: isProduction ? "strict" : "none",
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -5071,7 +5082,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/invite/:token/accept", async (req, res) => {
     const token = req.params.token;
     const { name, password } = req.body ?? {};
-    if (!name || !password || String(password).length < 8) {
+    const trimmedName = typeof name === "string" ? name.trim() : "";
+    if (!trimmedName || typeof password !== "string" || password.trim().length < 8) {
       return res.status(400).json({ error: "Name and password (min 8 chars) are required" });
     }
     const row = sqliteRaw.prepare(`SELECT * FROM invite_tokens WHERE token = ?`).get(token) as any;
@@ -5082,15 +5094,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const existing = storage.getUserByEmail(row.email);
     if (existing) return res.status(400).json({ error: "An account with that email already exists" });
 
-    const hash = await bcrypt.hash(String(password).trim(), 10);
+    const hash = await bcrypt.hash(password.trim(), 10);
     const role = row.role === "admin" ? "admin" : "assistant";
     const isClr = row.role !== "admin" ? 1 : 1;
-    sqliteRaw.prepare(`
+    const info = sqliteRaw.prepare(`
       INSERT INTO users (name, email, role, is_active, is_clr, password_hash, must_change_password, org_id, created_at)
       VALUES (?, ?, ?, 1, ?, ?, 0, ?, ?)
-    `).run(name, row.email, role, isClr, hash, row.org_id, new Date().toISOString());
+    `).run(trimmedName, row.email, role, isClr, hash, row.org_id, new Date().toISOString());
 
     sqliteRaw.prepare(`UPDATE invite_tokens SET used = 1 WHERE id = ?`).run(row.id);
+    audit({ userId: Number(info.lastInsertRowid), userName: trimmedName, action: "user_created", entityType: "user", entityId: Number(info.lastInsertRowid), entityLabel: row.email, details: JSON.stringify({ via: "invite", orgId: row.org_id, role }) });
     res.json({ ok: true });
   });
 

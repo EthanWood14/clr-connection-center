@@ -1,14 +1,70 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+
+// ── Session secret check ──────────────────────────────────────────────────────
+// Enforced here at startup so a misconfigured production deploy fails fast
+// instead of silently using a default secret. The fallback remains in routes.ts
+// for dev convenience.
+const DEFAULT_SESSION_SECRET = "clr-secret-2026";
+if (process.env.NODE_ENV === "production") {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret === DEFAULT_SESSION_SECRET) {
+    throw new Error(
+      "SESSION_SECRET env var must be set to a non-default value in production",
+    );
+  }
+}
 
 const app = express();
 const httpServer = createServer(app);
 
 // Trust Railway's reverse proxy so req.secure works correctly for cookie settings
 app.set("trust proxy", 1);
+
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Vite handles this
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+const rateLimitMessage = { error: "Too many requests, please try again later." };
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: rateLimitMessage,
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: rateLimitMessage,
+});
+
+const generalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: rateLimitMessage,
+});
+
+app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/register", registerLimiter);
+app.use("/api/invite/accept", registerLimiter);
+app.use("/api", generalApiLimiter);
 
 declare module "http" {
   interface IncomingMessage {
