@@ -10,6 +10,7 @@ import { Resend } from "resend";
 import cron from "node-cron";
 import crypto from "crypto";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
+import { registerSaConsole } from "./saConsole";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1114,6 +1115,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Cookie parser ──────────────────────────────────────────────────────────
   app.use(cookieParser(SESSION_SECRET));
+
+  // ── Standalone private SA console (separate from main app) ────────────────
+  registerSaConsole(app);
 
   // ── Health check (Railway) ────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
