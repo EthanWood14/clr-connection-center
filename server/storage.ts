@@ -521,12 +521,6 @@ if (existingUsers.length === 0) {
     createdAt: new Date().toISOString(),
   }).run();
 
-  // Seed a few sample assistants
-  db.insert(users).values([
-    { name: "Jessica Torres", email: "jessica@westcapital.com", role: "assistant", isActive: true, createdAt: new Date().toISOString() },
-    { name: "Marcus Lee", email: "marcus@westcapital.com", role: "assistant", isActive: true, createdAt: new Date().toISOString() },
-    { name: "Priya Sharma", email: "priya@westcapital.com", role: "assistant", isActive: true, createdAt: new Date().toISOString() },
-  ]).run();
 }
 
 // ── Seed password for Ethan Wood if not set ────────────────────────────────────
@@ -587,6 +581,69 @@ try {
   sqlite.prepare(`UPDATE users SET super_admin = 1 WHERE LOWER(email) = ?`).run("ethan.anthony.wood@gmail.com");
 } catch {}
 
+// ── One-time cleanup: purge fake sample data from West Capital (org_id=1) ─────
+// Old seeds inserted demo-looking LOs, assistants, outcomes, and call logs into
+// the live West Capital org. Remove them permanently. Demo org (org_id=2) is
+// intentionally left untouched.
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'purge_west_capital_samples_v1'`).get();
+  if (!done) {
+    // Demo-org LO names that were previously seeded into org_id=1 as well
+    const fakeLoNames = [
+      'Alex Thompson','Jordan Rivera','Taylor Morgan','Casey Bennett','Morgan Ellis',
+      'Michael Chen','Sarah Johnson','David Park','Emily Rodriguez',
+      'Robert Chen','Maria Gonzalez','James Williams','Ashley Kim','Sandra Davis','Michael Torres',
+    ];
+    // Look up matching LO ids in org_id=1 so we can clean up dependent rows too
+    const placeholders = fakeLoNames.map(() => '?').join(',');
+    const loRows = sqlite.prepare(
+      `SELECT id FROM loan_officers WHERE org_id = 1 AND full_name IN (${placeholders})`
+    ).all(...fakeLoNames) as Array<{ id: number }>;
+    const loIds = loRows.map(r => r.id);
+
+    if (loIds.length > 0) {
+      const loPh = loIds.map(() => '?').join(',');
+      try { sqlite.prepare(`DELETE FROM lead_outcomes WHERE org_id = 1 AND lo_id IN (${loPh})`).run(...loIds); } catch {}
+      try { sqlite.prepare(`DELETE FROM lo_assignments WHERE org_id = 1 AND lo_id IN (${loPh})`).run(...loIds); } catch {}
+      try { sqlite.prepare(`DELETE FROM daily_assignments WHERE lo_id IN (${loPh})`).run(...loIds); } catch {}
+      try { sqlite.prepare(`DELETE FROM lo_availability WHERE lo_id IN (${loPh})`).run(...loIds); } catch {}
+    }
+    try {
+      sqlite.prepare(
+        `DELETE FROM loan_officers WHERE org_id = 1 AND full_name IN (${placeholders})`
+      ).run(...fakeLoNames);
+    } catch {}
+
+    // Fake sample assistants seeded for West Capital
+    const fakeAssistantEmails = [
+      'jessica@westcapital.com',
+      'marcus@westcapital.com',
+      'priya@westcapital.com',
+    ];
+    const emailPh = fakeAssistantEmails.map(() => '?').join(',');
+    try {
+      const assistRows = sqlite.prepare(
+        `SELECT id FROM users WHERE role = 'assistant' AND LOWER(email) IN (${emailPh})`
+      ).all(...fakeAssistantEmails) as Array<{ id: number }>;
+      const aIds = assistRows.map(r => r.id);
+      if (aIds.length > 0) {
+        const aPh = aIds.map(() => '?').join(',');
+        try { sqlite.prepare(`DELETE FROM lead_outcomes WHERE org_id = 1 AND assistant_id IN (${aPh})`).run(...aIds); } catch {}
+        try { sqlite.prepare(`DELETE FROM daily_call_logs WHERE org_id = 1 AND assistant_id IN (${aPh})`).run(...aIds); } catch {}
+        try { sqlite.prepare(`DELETE FROM daily_assignments WHERE assistant_id IN (${aPh})`).run(...aIds); } catch {}
+        try { sqlite.prepare(`DELETE FROM lo_assignments WHERE org_id = 1 AND assistant_id IN (${aPh})`).run(...aIds); } catch {}
+        try { sqlite.prepare(`DELETE FROM users WHERE id IN (${aPh})`).run(...aIds); } catch {}
+      }
+    } catch {}
+
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+      .run('purge_west_capital_samples_v1', new Date().toISOString());
+  }
+} catch (e) {
+  console.error('purge_west_capital_samples_v1 failed:', e);
+}
+
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
   db.insert(algorithmSettings).values({
@@ -601,20 +658,8 @@ if (existingSettings.length === 0) {
   }).run();
 }
 
-// ── Seed sample LOs if none exist ─────────────────────────────────────────────
-const existingLOs = db.select().from(loanOfficers).all();
-if (existingLOs.length === 0) {
-  const sampleLOs = [
-    { fullName: "Robert Chen", nmlsId: "1234567", phone: "(323) 555-0101", email: "rchen@loans.com", licensedStates: JSON.stringify(["CA","TX","FL"]), bonzoUsername: "rchen_bonzo", bonzoPassword: "pass123", leadMailboxUsername: "rchen@leads.com", leadMailboxPassword: "leadpass1", otherCredentials: "{}", notes: "Top performer, prefers morning calls", specialRequests: "", tags: JSON.stringify(["top-producer","referral"]), internalStatus: "active", boostScore: 8, priorityTier: 1, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-10", totalTimesWorked: 45, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "Maria Gonzalez", nmlsId: "2345678", phone: "(310) 555-0202", email: "mgonzalez@loans.com", licensedStates: JSON.stringify(["CA","AZ","NV"]), bonzoUsername: "mgonz_bonzo", bonzoPassword: "pass456", leadMailboxUsername: "mgonz@leads.com", leadMailboxPassword: "leadpass2", otherCredentials: "{}", notes: "", specialRequests: "Only work leads from CA", tags: JSON.stringify(["ca-specialist"]), internalStatus: "active", boostScore: 5, priorityTier: 2, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-14", totalTimesWorked: 32, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "James Williams", nmlsId: "3456789", phone: "(213) 555-0303", email: "jwilliams@loans.com", licensedStates: JSON.stringify(["CA","WA","OR"]), bonzoUsername: "jwill_bonzo", bonzoPassword: "pass789", leadMailboxUsername: "jwill@leads.com", leadMailboxPassword: "leadpass3", otherCredentials: "{}", notes: "Available Mon-Fri only", specialRequests: "", tags: JSON.stringify([]), internalStatus: "active", boostScore: 0, priorityTier: 2, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-08", totalTimesWorked: 28, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "Ashley Kim", nmlsId: "4567890", phone: "(626) 555-0404", email: "akim@loans.com", licensedStates: JSON.stringify(["CA","TX"]), bonzoUsername: "akim_bonzo", bonzoPassword: "passabc", leadMailboxUsername: "akim@leads.com", leadMailboxPassword: "leadpass4", otherCredentials: "{}", notes: "", specialRequests: "", tags: JSON.stringify(["new-lo"]), internalStatus: "active", boostScore: 2, priorityTier: 2, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-15", totalTimesWorked: 12, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "David Park", nmlsId: "5678901", phone: "(818) 555-0505", email: "dpark@loans.com", licensedStates: JSON.stringify(["CA"]), bonzoUsername: "dpark_bonzo", bonzoPassword: "passdef", leadMailboxUsername: "dpark@leads.com", leadMailboxPassword: "leadpass5", otherCredentials: "{}", notes: "License renewal pending", specialRequests: "", tags: JSON.stringify(["pending-renewal"]), internalStatus: "active", boostScore: 0, priorityTier: 3, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-05", totalTimesWorked: 8, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "Sandra Davis", nmlsId: "6789012", phone: "(562) 555-0606", email: "sdavis@loans.com", licensedStates: JSON.stringify(["CA","FL","TX","NY"]), bonzoUsername: "sdavis_bonzo", bonzoPassword: "passghi", leadMailboxUsername: "sdavis@leads.com", leadMailboxPassword: "leadpass6", otherCredentials: "{}", notes: "Multi-state specialist", specialRequests: "", tags: JSON.stringify(["multi-state","experienced"]), internalStatus: "active", boostScore: 7, priorityTier: 1, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-04-12", totalTimesWorked: 55, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { fullName: "Michael Torres", nmlsId: "7890123", phone: "(714) 555-0707", email: "mtorres@loans.com", licensedStates: JSON.stringify(["CA","AZ"]), bonzoUsername: "mtorres_bonzo", bonzoPassword: "passjkl", leadMailboxUsername: "mtorres@leads.com", leadMailboxPassword: "leadpass7", otherCredentials: "{}", notes: "", specialRequests: "", tags: JSON.stringify([]), internalStatus: "inactive", boostScore: 0, priorityTier: 2, snoozeUntil: null, snoozeReason: null, lastWorkedDate: "2026-03-20", totalTimesWorked: 15, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  ];
-  db.insert(loanOfficers).values(sampleLOs as any).run();
-}
+// West Capital (org_id=1) starts with zero LOs — admins add real ones manually.
+// Demo org (org_id=2) LO seeding happens earlier, gated by migrations_applied.
 
 export interface IStorage {
   // Users

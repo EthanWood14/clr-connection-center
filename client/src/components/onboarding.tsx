@@ -278,6 +278,9 @@ export function useSampleDataMode(realOutcomeCount: number): boolean {
   }, [user?.id, user?.hasDismissedSample, realOutcomeCount]);
 
   if (!user) return false;
+  // Sample data is only for the demo org (org_id=2). Real tenants (e.g. West
+  // Capital, org_id=1) always see true empty states.
+  if (user.orgId !== 2) return false;
   if (user.hasDismissedSample) return false;
   const age = daysSince(user.createdAt);
   if (age > 7) return false;
