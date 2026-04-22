@@ -149,15 +149,29 @@ export function registerSaConsole(app: Express) {
   });
 
   // ── Organizations ──────────────────────────────────────────────────────────
-  app.get("/api/sa/orgs", requireSaAuth, (_req, res) => {
+  app.get("/api/sa/orgs", requireSaAuth, (req: any, res) => {
     const rows = sqliteRaw.prepare(`
-      SELECT o.id, o.name, o.slug, o.company_name, o.plan, o.created_at,
+      SELECT o.id, o.name, o.slug, o.company_name, o.plan, o.is_demo, o.created_at,
         (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id) AS user_count,
-        (SELECT COUNT(*) FROM loan_officers l WHERE l.org_id = o.id) AS clr_count
+        (SELECT COUNT(*) FROM loan_officers l WHERE l.org_id = o.id) AS clr_count,
+        (SELECT COUNT(*) FROM lead_outcomes lo WHERE lo.org_id = o.id) AS outcome_count
       FROM organizations o
       ORDER BY o.id ASC
     `).all();
-    res.json(rows);
+    // Determine current impersonation state from main cookie, if present
+    let currentOrgId: number | null = null;
+    let isImpersonating = false;
+    try {
+      const raw = (req as any).signedCookies?.[MAIN_COOKIE];
+      if (raw) {
+        const session = JSON.parse(raw);
+        if (session?.isImpersonating) {
+          currentOrgId = Number(session.orgId) || null;
+          isImpersonating = true;
+        }
+      }
+    } catch {}
+    res.json({ orgs: rows, currentOrgId, isImpersonating });
   });
 
   app.post("/api/sa/orgs", requireSaAuth, async (req, res) => {
@@ -221,10 +235,38 @@ export function registerSaConsole(app: Express) {
     const isProduction = process.env.NODE_ENV === "production";
     const sa = req.sa_session;
     const u = storage.getUserById(sa.userId) as any;
+    // Super admin's home org defaults to 1 (West Capital) if not set.
+    const originalOrgId = Number(u?.orgId ?? u?.org_id ?? 1) || 1;
     const payload = JSON.stringify({
       userId: sa.userId,
       role: u?.role ?? "admin",
       orgId: id,
+      superAdmin: true,
+      originalOrgId,
+      isImpersonating: id !== originalOrgId,
+      impersonatingOrgName: id !== originalOrgId ? org.name : null,
+    });
+    res.cookie(MAIN_COOKIE, payload, {
+      signed: true,
+      httpOnly: true,
+      sameSite: isProduction ? "strict" : "none",
+      secure: isProduction,
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.json({ ok: true, orgId: id, orgName: org.name, isImpersonating: id !== originalOrgId });
+  });
+
+  // Exit impersonation from SA Console: clear the main cookie's impersonation state
+  app.post("/api/sa/exit-impersonate", requireSaAuth, (req: any, res) => {
+    const isProduction = process.env.NODE_ENV === "production";
+    const sa = req.sa_session;
+    const u = storage.getUserById(sa.userId) as any;
+    const originalOrgId = Number(u?.orgId ?? u?.org_id ?? 1) || 1;
+    const payload = JSON.stringify({
+      userId: sa.userId,
+      role: u?.role ?? "admin",
+      orgId: originalOrgId,
       superAdmin: true,
     });
     res.cookie(MAIN_COOKIE, payload, {
@@ -235,7 +277,7 @@ export function registerSaConsole(app: Express) {
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    res.json({ ok: true, orgId: id, orgName: org.name });
+    res.json({ ok: true, orgId: originalOrgId });
   });
 
   // ── Users ──────────────────────────────────────────────────────────────────
@@ -353,6 +395,10 @@ export function registerSaConsole(app: Express) {
 // Self-contained HTML (vanilla JS — no bundle)
 // ───────────────────────────────────────────────────────────────────────────
 function renderSaConsoleHtml(): string {
+  return renderSaConsoleHtmlV2();
+}
+
+function renderSaConsoleHtmlOld(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -800,6 +846,813 @@ async function onOrgAction(act, id) {
     try {
       await api('/api/sa/orgs/' + id + '/impersonate', { method: 'POST' });
       window.open('/', '_blank');
+    } catch (e) { alert(e.message); }
+  }
+}
+function editOrg(org) {
+  const body = el('div');
+  body.innerHTML = \`
+    <div class="field"><label>Name</label><input id="eoName" value="\${escapeHtml(org.name)}" /></div>
+    <div class="field"><label>Company Name</label><input id="eoCompany" value="\${escapeHtml(org.company_name || '')}" /></div>
+    <div class="field"><label>Plan</label>
+      <select id="eoPlan">
+        <option value="trial"\${org.plan==='trial'?' selected':''}>trial</option>
+        <option value="active"\${org.plan==='active'?' selected':''}>active</option>
+        <option value="suspended"\${org.plan==='suspended'?' selected':''}>suspended</option>
+      </select>
+    </div>
+  \`;
+  const cancel = el('button', { class: 'secondary', onClick: closeModal }, 'Cancel');
+  const save = el('button', { onClick: async () => {
+    try {
+      await api('/api/sa/orgs/' + org.id, { method: 'PATCH', body: JSON.stringify({
+        name: body.querySelector('#eoName').value,
+        companyName: body.querySelector('#eoCompany').value,
+        plan: body.querySelector('#eoPlan').value,
+      }) });
+      closeModal(); loadOrgs();
+    } catch (e) { alert(e.message); }
+  } }, 'Save');
+  openModal('Edit Org #' + org.id, body, [cancel, save]);
+}
+$('#newOrgBtn').addEventListener('click', () => {
+  const body = el('div');
+  body.innerHTML = \`
+    <div class="field"><label>Org Name</label><input id="noName" placeholder="Acme Mortgage" /></div>
+    <div class="field"><label>Company Name</label><input id="noCompany" placeholder="Acme Mortgage LLC" /></div>
+    <div class="field"><label>Admin Name</label><input id="noAdminName" placeholder="Jane Doe" /></div>
+    <div class="field"><label>Admin Email</label><input id="noAdminEmail" type="email" placeholder="jane@acme.com" /></div>
+    <div class="hint">A temporary password will be generated and shown.</div>
+  \`;
+  const cancel = el('button', { class: 'secondary', onClick: closeModal }, 'Cancel');
+  const create = el('button', { onClick: async () => {
+    try {
+      const r = await api('/api/sa/orgs', { method: 'POST', body: JSON.stringify({
+        name: body.querySelector('#noName').value.trim(),
+        companyName: body.querySelector('#noCompany').value.trim(),
+        adminName: body.querySelector('#noAdminName').value.trim(),
+        adminEmail: body.querySelector('#noAdminEmail').value.trim(),
+      }) });
+      closeModal();
+      alert('Org #' + r.id + ' created.\\n\\nAdmin: ' + r.adminEmail + '\\nTemp password: ' + r.tempPassword + '\\n\\nCopy it now — it will not be shown again.');
+      loadOrgs();
+    } catch (e) { alert(e.message); }
+  } }, 'Create');
+  openModal('New Organization', body, [cancel, create]);
+});
+$('#refreshOrgs').addEventListener('click', loadOrgs);
+
+// ── Users ─────────────────────────────────────────────────────────────────
+let _users = [];
+async function loadUsers() {
+  const tbody = $('#usersTable tbody');
+  tbody.innerHTML = '<tr><td colspan="9" class="spinner">Loading…</td></tr>';
+  const orgId = $('#userOrgFilter').value;
+  try {
+    _users = await api('/api/sa/users' + (orgId ? ('?orgId=' + orgId) : ''));
+    renderUsers();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="9" class="spinner">Error: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+function renderUsers() {
+  const q = $('#userSearch').value.toLowerCase().trim();
+  const rows = _users.filter(u =>
+    !q || (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q)
+  );
+  const tbody = $('#usersTable tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="spinner">No users.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(u => \`
+    <tr>
+      <td>\${u.id}</td>
+      <td>\${escapeHtml(u.name || '')}</td>
+      <td>\${escapeHtml(u.email || '')}</td>
+      <td>\${escapeHtml(u.org_name || ('org ' + u.org_id))}</td>
+      <td><span class="badge badge-admin">\${escapeHtml(u.role || '')}</span></td>
+      <td>\${u.super_admin ? '<span class="badge badge-sa">SA</span>' : '—'}</td>
+      <td>\${u.is_active ? '✓' : '✗'}</td>
+      <td>\${fmtDate(u.created_at)}</td>
+      <td>
+        <div class="row-actions">
+          <button class="secondary" data-act="reset" data-id="\${u.id}">Reset PW</button>
+          <button class="secondary" data-act="toggle-active" data-id="\${u.id}">\${u.is_active ? 'Deactivate' : 'Activate'}</button>
+          <button class="secondary" data-act="toggle-sa" data-id="\${u.id}">\${u.super_admin ? 'Remove SA' : 'Make SA'}</button>
+        </div>
+      </td>
+    </tr>
+  \`).join('');
+  tbody.querySelectorAll('button[data-act]').forEach(b => {
+    b.addEventListener('click', () => onUserAction(b.dataset.act, parseInt(b.dataset.id)));
+  });
+}
+async function onUserAction(act, id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  try {
+    if (act === 'reset') {
+      if (!confirm('Reset password for ' + u.email + '?')) return;
+      const r = await api('/api/sa/users/' + id, { method: 'PATCH',
+        body: JSON.stringify({ action: 'reset-password' }) });
+      alert('Temp password for ' + u.email + ':\\n\\n' + r.tempPassword + '\\n\\nCopy it now.');
+    } else if (act === 'toggle-active') {
+      await api('/api/sa/users/' + id, { method: 'PATCH',
+        body: JSON.stringify({ isActive: !u.is_active }) });
+      loadUsers();
+    } else if (act === 'toggle-sa') {
+      if (!confirm((u.super_admin ? 'Remove' : 'Grant') + ' super_admin for ' + u.email + '?')) return;
+      await api('/api/sa/users/' + id, { method: 'PATCH',
+        body: JSON.stringify({ superAdmin: !u.super_admin }) });
+      loadUsers();
+    }
+  } catch (e) { alert(e.message); }
+}
+$('#refreshUsers').addEventListener('click', loadUsers);
+$('#userOrgFilter').addEventListener('change', loadUsers);
+$('#userSearch').addEventListener('input', renderUsers);
+
+// ── DB Viewer ─────────────────────────────────────────────────────────────
+let _dbRows = [];
+let _dbCols = [];
+async function loadTables() {
+  try {
+    const tables = await api('/api/sa/db/tables');
+    $('#tableSelect').innerHTML = '<option value="">Select a table…</option>' +
+      tables.map(t => '<option value="' + t + '">' + t + '</option>').join('');
+  } catch (e) {
+    $('#tableSelect').innerHTML = '<option>Error loading</option>';
+  }
+}
+$('#tableSelect').addEventListener('change', async () => {
+  const t = $('#tableSelect').value;
+  if (!t) return;
+  const tbody = $('#dbTable tbody');
+  tbody.innerHTML = '<tr><td class="spinner">Loading…</td></tr>';
+  try {
+    const r = await api('/api/sa/db/' + encodeURIComponent(t));
+    _dbRows = r.rows; _dbCols = r.columns;
+    renderDb();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td class="spinner">Error: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+});
+$('#dbFilter').addEventListener('input', renderDb);
+function renderDb() {
+  const q = $('#dbFilter').value.toLowerCase().trim();
+  const thead = $('#dbTable thead');
+  const tbody = $('#dbTable tbody');
+  if (!_dbCols.length) {
+    thead.innerHTML = '<tr><th>No data</th></tr>';
+    tbody.innerHTML = '';
+    return;
+  }
+  thead.innerHTML = '<tr>' + _dbCols.map(c => '<th>' + escapeHtml(c) + '</th>').join('') + '</tr>';
+  const rows = _dbRows.filter(r => {
+    if (!q) return true;
+    return _dbCols.some(c => String(r[c] ?? '').toLowerCase().includes(q));
+  });
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="' + _dbCols.length + '" class="spinner">No rows.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => '<tr>' + _dbCols.map(c => {
+    let v = r[c];
+    if (v === null || v === undefined) v = '—';
+    else if (typeof v === 'object') v = JSON.stringify(v);
+    else v = String(v);
+    if (v.length > 120) v = v.slice(0, 120) + '…';
+    return '<td>' + escapeHtml(v) + '</td>';
+  }).join('') + '</tr>').join('');
+}
+
+// ── Health ────────────────────────────────────────────────────────────────
+async function loadHealth() {
+  const grid = $('#statsGrid');
+  grid.innerHTML = '<div class="spinner">Loading…</div>';
+  try {
+    const t0 = Date.now();
+    const healthPing = await fetch('/api/health', { credentials: 'same-origin' });
+    await healthPing.json().catch(() => ({}));
+    const ping = Date.now() - t0;
+
+    const h = await api('/api/sa/health');
+    const s = h.stats;
+    grid.innerHTML = [
+      stat('Organizations', s.orgs),
+      stat('Users', s.users),
+      stat('Loan Officers', s.clrs),
+      stat('Outcomes Logged', s.outcomes),
+      stat('DB File Size', fmtBytes(s.dbSizeBytes)),
+      stat('Uptime', fmtUptime(s.uptimeSec)),
+      stat('NODE_ENV', s.nodeEnv || '—'),
+      stat('Railway Env', s.railwayEnv || '—'),
+      stat('/api/health ping', ping + ' ms', 'ok'),
+    ].join('');
+
+    const tbody = $('#webhooksTable tbody');
+    if (!h.recentWebhooks?.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="spinner">No recent webhooks.</td></tr>';
+    } else {
+      tbody.innerHTML = h.recentWebhooks.map(w => \`
+        <tr>
+          <td>\${w.id}</td>
+          <td>\${escapeHtml(w.source || '')}</td>
+          <td>\${escapeHtml(w.event_type || '')}</td>
+          <td>\${w.processed ? '✓' : '⏳'}</td>
+          <td>\${fmtDate(w.created_at)}</td>
+        </tr>
+      \`).join('');
+    }
+  } catch (e) {
+    grid.innerHTML = '<div class="spinner">Error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function stat(label, value, sub) {
+  return '<div class="stat"><div class="label">' + escapeHtml(label) + '</div>' +
+    '<div class="value">' + escapeHtml(String(value)) + '</div>' +
+    (sub ? '<div class="sub">' + escapeHtml(sub) + '</div>' : '') + '</div>';
+}
+$('#refreshHealth').addEventListener('click', loadHealth);
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+// Boot
+checkSession();
+</script>
+</body>
+</html>`;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// V2 HTML — polished UI with card layout and better impersonation UX
+// ───────────────────────────────────────────────────────────────────────────
+function renderSaConsoleHtmlV2(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Super Admin Console</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0b1220; color: #e2e8f0; -webkit-font-smoothing: antialiased; }
+a { color: #60a5fa; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; border-radius: 6px; padding: 8px 14px;
+  font-size: 13px; font-weight: 500; background: #1e3a8a; color: #fff; transition: background .15s, transform .05s; }
+button:hover { background: #2563eb; }
+button:active { transform: translateY(1px); }
+button.secondary { background: #1f2937; color: #e2e8f0; }
+button.secondary:hover { background: #374151; }
+button.danger { background: #991b1b; }
+button.danger:hover { background: #b91c1c; }
+button.success { background: #065f46; }
+button.success:hover { background: #047857; }
+button.ghost { background: transparent; color: #94a3b8; padding: 6px 10px; }
+button.ghost:hover { background: #1f2937; color: #e2e8f0; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+input, select { font-family: inherit; font-size: 13px; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid #334155; background: #0f172a; color: #e2e8f0; width: 100%; }
+input:focus, select:focus { outline: none; border-color: #3b82f6; }
+label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+.field { margin-bottom: 14px; }
+
+/* Login screen */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.login-card { width: 100%; max-width: 400px; background: #111827; border: 1px solid #1f2937;
+  border-radius: 12px; padding: 32px; }
+.login-card .lock-icon { width: 48px; height: 48px; background: linear-gradient(135deg, #7c2d12, #991b1b);
+  border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 16px; }
+.login-card h1 { font-size: 20px; margin-bottom: 6px; }
+.login-card .sub { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+.login-card button { width: 100%; padding: 10px; }
+.err { background: #450a0a; border: 1px solid #991b1b; color: #fecaca; padding: 8px 12px;
+  border-radius: 6px; font-size: 12px; margin-bottom: 14px; }
+
+/* Main layout */
+.app { display: none; min-height: 100vh; flex-direction: column; }
+.app.active { display: flex; }
+
+/* Impersonation sticky banner */
+.imp-banner { position: sticky; top: 0; z-index: 50; background: linear-gradient(90deg, #f59e0b, #ea580c);
+  color: #fff; padding: 10px 24px; display: flex; align-items: center; gap: 14px; font-size: 13px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+.imp-banner .eye { font-size: 16px; }
+.imp-banner strong { font-weight: 700; }
+.imp-banner .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-banner button { background: rgba(0,0,0,.2); color: #fff; border: 1px solid rgba(255,255,255,.3); }
+.imp-banner button:hover { background: rgba(0,0,0,.35); }
+
+header.topbar { background: #0f172a; border-bottom: 1px solid #1f2937; padding: 14px 24px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.topbar .brand { display: flex; align-items: center; gap: 12px; }
+.topbar .brand .shield { width: 36px; height: 36px; background: linear-gradient(135deg, #991b1b, #7c2d12);
+  border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #fff; }
+.topbar .brand .title { font-weight: 700; font-size: 16px; letter-spacing: 0.3px; color: #fff; }
+.topbar .brand .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.topbar .actions { display: flex; align-items: center; gap: 10px; }
+.topbar .me { font-size: 12px; color: #94a3b8; text-align: right; }
+.topbar .me .email { color: #e2e8f0; font-weight: 500; }
+
+nav.tabs { background: #0f172a; border-bottom: 1px solid #1f2937; padding: 0 24px; display: flex; gap: 4px;
+  overflow-x: auto; }
+nav.tabs button { background: transparent; color: #94a3b8; border-radius: 0;
+  border-bottom: 2px solid transparent; padding: 12px 16px; white-space: nowrap; }
+nav.tabs button:hover { color: #e2e8f0; background: transparent; }
+nav.tabs button.active { color: #e2e8f0; border-bottom-color: #3b82f6; }
+
+main { padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 16px; flex-wrap: wrap; }
+.section-head h2 { font-size: 18px; font-weight: 600; }
+.section-head .sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+/* Org cards grid */
+.org-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.org-card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 18px;
+  display: flex; flex-direction: column; gap: 14px; transition: border-color .15s, transform .1s; }
+.org-card:hover { border-color: #334155; }
+.org-card.impersonating { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+.org-card .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.org-card .head .name { font-size: 15px; font-weight: 600; color: #f1f5f9; line-height: 1.3; }
+.org-card .head .company { font-size: 11px; color: #64748b; margin-top: 2px; }
+.org-card .head .badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.org-card .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  background: #0b1220; border: 1px solid #1f2937; border-radius: 8px; padding: 10px; }
+.org-card .stat-cell { text-align: center; }
+.org-card .stat-cell .v { font-size: 16px; font-weight: 700; color: #f1f5f9; }
+.org-card .stat-cell .l { font-size: 10px; color: #64748b; text-transform: uppercase;
+  letter-spacing: 0.3px; margin-top: 2px; }
+.org-card .meta { font-size: 11px; color: #64748b; display: flex; justify-content: space-between; }
+.org-card .actions-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.org-card .actions-row button { flex: 1; min-width: 0; }
+.org-card .impersonate-btn { background: #1e40af; }
+.org-card .impersonate-btn:hover { background: #2563eb; }
+.org-card.impersonating .impersonate-btn { background: #64748b; cursor: default; }
+
+/* Tables */
+.card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; overflow: hidden; }
+.card-header { padding: 14px 18px; border-bottom: 1px solid #1f2937;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card-header h2 { font-size: 14px; font-weight: 600; }
+.card-body { padding: 18px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead { background: #0f172a; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #1f2937;
+  vertical-align: middle; white-space: nowrap; }
+th { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #64748b;
+  letter-spacing: 0.3px; }
+tbody tr:hover { background: #0f172a; }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+.row-actions { display: flex; gap: 6px; }
+.row-actions button { padding: 4px 10px; font-size: 11px; }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 10px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+.badge-trial { background: #422006; color: #fbbf24; }
+.badge-active { background: #064e3b; color: #6ee7b7; }
+.badge-suspended { background: #450a0a; color: #fca5a5; }
+.badge-demo { background: #1e3a8a; color: #93c5fd; }
+.badge-admin { background: #1e3a8a; color: #93c5fd; }
+.badge-sa { background: #7c2d12; color: #fdba74; }
+.badge-home { background: #065f46; color: #6ee7b7; }
+
+/* Stats grid */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat { background: #0f172a; border: 1px solid #1f2937; border-radius: 8px; padding: 14px; }
+.stat .label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.3px; }
+.stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; color: #e2e8f0; }
+.stat .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+
+/* Modal */
+.modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+.modal-backdrop.active { display: flex; }
+.modal { background: #111827; border: 1px solid #1f2937; border-radius: 12px;
+  width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid #1f2937; display: flex;
+  align-items: center; justify-content: space-between; }
+.modal-header h3 { font-size: 14px; }
+.modal-body { padding: 20px; }
+.modal-footer { padding: 14px 20px; border-top: 1px solid #1f2937; display: flex;
+  justify-content: flex-end; gap: 8px; }
+
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.toolbar input, .toolbar select { width: 240px; }
+
+.hint { font-size: 11px; color: #64748b; margin-top: 6px; }
+.pill { background: #0f172a; padding: 4px 10px; border-radius: 4px; font-family: monospace;
+  font-size: 12px; border: 1px solid #1f2937; }
+
+.spinner { text-align: center; padding: 40px; color: #64748b; font-size: 12px; }
+.empty { text-align: center; padding: 40px; color: #64748b; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <div class="lock-icon">🛡️</div>
+    <h1>Super Admin Console</h1>
+    <p class="sub">Authorized personnel only. All actions are logged.</p>
+    <div id="loginError" style="display:none" class="err"></div>
+    <form id="loginForm">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="password" autocomplete="current-password" required />
+      </div>
+      <div class="field">
+        <label>Console Access Code</label>
+        <input type="password" id="accessCode" autocomplete="off" required />
+      </div>
+      <button type="submit" id="loginBtn">Sign In</button>
+    </form>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app" class="app">
+  <!-- Impersonation banner (shown only when active) -->
+  <div id="impBanner" class="imp-banner" style="display:none">
+    <span class="eye">👁️</span>
+    <div class="grow">You are viewing as <strong id="impOrgName">—</strong></div>
+    <button id="impGoToApp" class="secondary">Open App</button>
+    <button id="impExit">Exit Impersonation</button>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="shield">🛡️</div>
+      <div>
+        <div class="title">Super Admin Console</div>
+        <div class="sub">Multi-tenant controls · restricted access</div>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="me"><div class="email" id="meLabel"></div><div>Super Admin</div></div>
+      <button class="secondary" id="exitAppBtn" title="Open the main app in your home org">Exit to Main App</button>
+      <button class="ghost" id="logoutBtn">Log out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="orgs">Organizations</button>
+    <button class="tab" data-tab="users">Users</button>
+    <button class="tab" data-tab="db">DB Viewer</button>
+    <button class="tab" data-tab="health">System Health</button>
+  </nav>
+
+  <main>
+    <!-- Orgs -->
+    <section id="tab-orgs" class="tab-panel">
+      <div class="section-head">
+        <div>
+          <h2>Organizations</h2>
+          <div class="sub">Switch context by impersonating an org. Your home org is highlighted as <span class="badge badge-home">HOME</span>.</div>
+        </div>
+        <div class="toolbar">
+          <button id="newOrgBtn">+ New Org</button>
+          <button class="secondary" id="refreshOrgs">Refresh</button>
+        </div>
+      </div>
+      <div id="orgsGrid" class="org-grid">
+        <div class="spinner">Loading organizations…</div>
+      </div>
+    </section>
+
+    <!-- Users -->
+    <section id="tab-users" class="tab-panel" style="display:none">
+      <div class="card">
+        <div class="card-header">
+          <h2>Users (all orgs)</h2>
+          <div class="toolbar">
+            <select id="userOrgFilter"><option value="">All orgs</option></select>
+            <input type="text" id="userSearch" placeholder="Search name/email…" />
+            <button class="secondary" id="refreshUsers">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div class="table-scroll">
+            <table id="usersTable">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Name</th><th>Email</th><th>Org</th><th>Role</th>
+                  <th>SA</th><th>Active</th><th>Created</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody><tr><td colspan="9" class="spinner">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DB Viewer -->
+    <section id="tab-db" class="tab-panel" style="display:none">
+      <div class="card">
+        <div class="card-header">
+          <h2>DB Viewer <span style="color:#64748b;font-size:11px;font-weight:400">(read-only, first 100 rows)</span></h2>
+          <div class="toolbar">
+            <select id="tableSelect"><option>Loading…</option></select>
+            <input type="text" id="dbFilter" placeholder="Filter rows…" />
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div class="table-scroll">
+            <table id="dbTable">
+              <thead><tr><th>Select a table</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Health -->
+    <section id="tab-health" class="tab-panel" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <h2>System Health</h2>
+          <div class="toolbar">
+            <button class="secondary" id="refreshHealth">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="stats" id="statsGrid"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h2>Recent Webhook Events (last 10)</h2></div>
+        <div class="card-body" style="padding:0">
+          <div class="table-scroll">
+            <table id="webhooksTable">
+              <thead>
+                <tr><th>ID</th><th>Source</th><th>Event</th><th>Processed</th><th>Created</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Modal container -->
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle"></h3>
+      <button class="ghost" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<script>
+const HOME_ORG_ID = 1; // Super admin's home org = West Capital
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+};
+
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, props = {}, ...kids) => {
+  const n = document.createElement(tag);
+  Object.entries(props).forEach(([k, v]) => {
+    if (k === 'class') n.className = v;
+    else if (k === 'onClick') n.addEventListener('click', v);
+    else if (k === 'html') n.innerHTML = v;
+    else n.setAttribute(k, v);
+  });
+  kids.flat().forEach(k => n.appendChild(typeof k === 'string' ? document.createTextNode(k) : k));
+  return n;
+};
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
+}
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const k = 1024;
+  const units = ['B','KB','MB','GB'];
+  const i = Math.min(units.length-1, Math.floor(Math.log(n)/Math.log(k)));
+  return (n/Math.pow(k,i)).toFixed(1) + ' ' + units[i];
+}
+function fmtUptime(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';
+}
+function planLabel(o) {
+  if (o.is_demo) return '<span class="badge badge-demo">DEMO</span>';
+  const p = o.plan || 'trial';
+  const cls = p === 'active' ? 'badge-active' : p === 'suspended' ? 'badge-suspended' : 'badge-trial';
+  return '<span class="badge ' + cls + '">' + p + '</span>';
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────
+function openModal(title, bodyNode, footerNodes = []) {
+  $('#modalTitle').textContent = title;
+  $('#modalBody').innerHTML = '';
+  $('#modalBody').appendChild(bodyNode);
+  $('#modalFooter').innerHTML = '';
+  footerNodes.forEach(n => $('#modalFooter').appendChild(n));
+  $('#modalBackdrop').classList.add('active');
+}
+function closeModal() { $('#modalBackdrop').classList.remove('active'); }
+$('#modalClose').addEventListener('click', closeModal);
+$('#modalBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#modalBackdrop')) closeModal();
+});
+
+// ── Login ─────────────────────────────────────────────────────────────────
+async function checkSession() {
+  try {
+    const me = await api('/api/sa/me');
+    showApp(me);
+  } catch {
+    showLogin();
+  }
+}
+function showLogin() {
+  $('#loginScreen').style.display = 'flex';
+  $('#app').classList.remove('active');
+}
+function showApp(me) {
+  $('#loginScreen').style.display = 'none';
+  $('#app').classList.add('active');
+  $('#meLabel').textContent = me.email;
+  loadOrgs();
+}
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errBox = $('#loginError');
+  errBox.style.display = 'none';
+  const btn = $('#loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const body = JSON.stringify({
+      email: $('#email').value,
+      password: $('#password').value,
+      accessCode: $('#accessCode').value,
+    });
+    const r = await api('/api/sa/login', { method: 'POST', body });
+    showApp(r.user);
+  } catch (err) {
+    errBox.textContent = 'Access denied';
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+$('#logoutBtn').addEventListener('click', async () => {
+  await api('/api/sa/logout', { method: 'POST' }).catch(() => {});
+  location.reload();
+});
+$('#exitAppBtn').addEventListener('click', async () => {
+  // Clear impersonation (if any), then open the main app in a new tab.
+  try { await api('/api/sa/exit-impersonate', { method: 'POST' }); } catch {}
+  window.open('/', '_blank');
+});
+
+// ── Impersonation banner state ───────────────────────────────────────────
+let _currentOrgId = null;
+let _isImpersonating = false;
+function renderImpBanner() {
+  const banner = $('#impBanner');
+  if (_isImpersonating && _currentOrgId) {
+    const o = _orgs.find(x => x.id === _currentOrgId);
+    $('#impOrgName').textContent = o ? (o.name + ' (org #' + o.id + ')') : ('org #' + _currentOrgId);
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+$('#impGoToApp').addEventListener('click', () => window.open('/#/', '_blank'));
+$('#impExit').addEventListener('click', async () => {
+  try {
+    await api('/api/sa/exit-impersonate', { method: 'POST' });
+    _currentOrgId = HOME_ORG_ID;
+    _isImpersonating = false;
+    renderImpBanner();
+    loadOrgs();
+  } catch (e) { alert(e.message); }
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const id = btn.dataset.tab;
+    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    $('#tab-' + id).style.display = 'block';
+    if (id === 'orgs') loadOrgs();
+    else if (id === 'users') loadUsers();
+    else if (id === 'db') loadTables();
+    else if (id === 'health') loadHealth();
+  });
+});
+
+// ── Orgs ──────────────────────────────────────────────────────────────────
+let _orgs = [];
+async function loadOrgs() {
+  const grid = $('#orgsGrid');
+  grid.innerHTML = '<div class="spinner">Loading organizations…</div>';
+  try {
+    const r = await api('/api/sa/orgs');
+    _orgs = r.orgs || r;
+    _currentOrgId = r.currentOrgId ?? null;
+    _isImpersonating = !!r.isImpersonating;
+    renderOrgs();
+    renderImpBanner();
+    const sel = $('#userOrgFilter');
+    sel.innerHTML = '<option value="">All orgs</option>' +
+      _orgs.map(o => '<option value="' + o.id + '">' + escapeHtml(o.name) + '</option>').join('');
+  } catch (e) {
+    grid.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function renderOrgs() {
+  const grid = $('#orgsGrid');
+  if (!_orgs.length) {
+    grid.innerHTML = '<div class="empty">No organizations.</div>';
+    return;
+  }
+  grid.innerHTML = _orgs.map(o => {
+    const isHome = o.id === HOME_ORG_ID;
+    const isCurrent = _isImpersonating && _currentOrgId === o.id;
+    const cardClass = isCurrent ? 'org-card impersonating' : 'org-card';
+    const impBtn = isCurrent
+      ? '<button class="impersonate-btn" disabled>👁 Currently Viewing</button>'
+      : '<button class="impersonate-btn" data-act="impersonate" data-id="' + o.id + '">👁 Impersonate</button>';
+    return \`
+    <div class="\${cardClass}">
+      <div class="head">
+        <div>
+          <div class="name">\${escapeHtml(o.name)}</div>
+          <div class="company">\${escapeHtml(o.company_name || o.slug || '')}</div>
+        </div>
+        <div class="badges">
+          \${planLabel(o)}
+          \${isHome ? '<span class="badge badge-home">HOME</span>' : ''}
+        </div>
+      </div>
+      <div class="stats-row">
+        <div class="stat-cell"><div class="v">\${o.user_count ?? 0}</div><div class="l">Users</div></div>
+        <div class="stat-cell"><div class="v">\${o.outcome_count ?? 0}</div><div class="l">Outcomes</div></div>
+        <div class="stat-cell"><div class="v">\${o.clr_count ?? 0}</div><div class="l">LOs</div></div>
+      </div>
+      <div class="meta">
+        <span>ID #\${o.id} · \${escapeHtml(o.slug || '')}</span>
+        <span>Created \${fmtDate(o.created_at)}</span>
+      </div>
+      <div class="actions-row">
+        \${impBtn}
+        <button class="secondary" data-act="edit" data-id="\${o.id}">Edit</button>
+        <button class="\${o.plan === 'suspended' ? 'success' : 'danger'}" data-act="suspend" data-id="\${o.id}">\${o.plan === 'suspended' ? 'Reactivate' : 'Suspend'}</button>
+      </div>
+    </div>
+    \`;
+  }).join('');
+  grid.querySelectorAll('button[data-act]').forEach(b => {
+    b.addEventListener('click', () => onOrgAction(b.dataset.act, parseInt(b.dataset.id)));
+  });
+}
+async function onOrgAction(act, id) {
+  const org = _orgs.find(o => o.id === id);
+  if (!org) return;
+  if (act === 'edit') editOrg(org);
+  else if (act === 'suspend') {
+    if (!confirm(\`\${org.plan === 'suspended' ? 'Reactivate' : 'Suspend'} "\${org.name}"?\`)) return;
+    try { await api('/api/sa/orgs/' + id + '/suspend', { method: 'POST' }); loadOrgs(); }
+    catch (e) { alert(e.message); }
+  } else if (act === 'impersonate') {
+    try {
+      const r = await api('/api/sa/orgs/' + id + '/impersonate', { method: 'POST' });
+      // Redirect straight into the main app dashboard as the target org.
+      window.location.href = '/#/';
     } catch (e) { alert(e.message); }
   }
 }

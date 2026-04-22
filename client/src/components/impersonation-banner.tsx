@@ -20,8 +20,8 @@ export function ImpersonationBanner() {
     try {
       await apiRequest("POST", "/api/super-admin/exit-impersonate");
       await queryClient.invalidateQueries();
-      window.location.hash = "#/";
-      window.location.reload();
+      // Return to the SA Console instead of the main app dashboard.
+      window.location.href = "/sa-console";
     } catch (e) {
       console.error(e);
     }
@@ -30,9 +30,9 @@ export function ImpersonationBanner() {
   const displayName = user?.impersonatingOrgName || org.name;
 
   return (
-    <div className="w-full bg-amber-500 text-white px-4 py-2 flex items-center gap-3 text-sm shadow">
+    <div className="w-full bg-amber-500 text-white px-4 py-2 flex items-center gap-3 text-sm shadow sticky top-0 z-50">
       <div className="flex-1 min-w-0 truncate">
-        <strong>Impersonating:</strong> {displayName}
+        <strong>You are viewing as:</strong> {displayName}
       </div>
       <Button
         variant="ghost"
@@ -41,7 +41,7 @@ export function ImpersonationBanner() {
         onClick={exitImpersonation}
         data-testid="button-exit-impersonation"
       >
-        <X className="w-3 h-3 mr-1" /> Exit
+        <X className="w-3 h-3 mr-1" /> Exit to SA Console
       </Button>
     </div>
   );

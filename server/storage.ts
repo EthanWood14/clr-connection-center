@@ -612,6 +612,12 @@ try {
   sqlite.prepare(`UPDATE users SET super_admin = 1 WHERE LOWER(email) = ?`).run("ethan.anthony.wood@gmail.com");
 } catch {}
 
+// Super admins always have a home org context — default to org 1 (West Capital)
+// if org_id is null/0. They can still impersonate other orgs temporarily.
+try {
+  sqlite.prepare(`UPDATE users SET org_id = 1 WHERE super_admin = 1 AND (org_id IS NULL OR org_id = 0)`).run();
+} catch {}
+
 // ── One-time cleanup: purge fake sample data from West Capital (org_id=1) ─────
 // Old seeds inserted demo-looking LOs, assistants, outcomes, and call logs into
 // the live West Capital org. Remove them permanently. Demo org (org_id=2) is
