@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
-  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
+  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
   FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,8 +26,8 @@ const mainItems = [
 
 const teamItems = [
   { title: "Stats",           url: "/leaderboard", icon: Trophy },
-  { title: "Chat",            url: "/chat",        icon: MessageSquare, badge: "chat" },
-  { title: "Forum",           url: "/forum",       icon: MessageSquare },
+  { title: "Chat",            url: "/chat",        icon: MessageCircle, badge: "chat" },
+  { title: "Forum",           url: "/forum",       icon: MessagesSquare },
 ];
 
 const reportItems = [
