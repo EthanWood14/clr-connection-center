@@ -2141,16 +2141,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Daily Assignments ────────────────────────────────────────────────────────
+  // getDailyAssignments/getLoanOfficers/getUsers may return camelCase (Drizzle)
+  // or snake_case (raw SQL, multi-org). Normalize reads across both shapes.
+  const normalizeLo = (l: any) => ({
+    ...l,
+    fullName: l.fullName ?? l.full_name ?? null,
+    nmlsId: l.nmlsId ?? l.nmls_id ?? null,
+    internalStatus: l.internalStatus ?? l.internal_status ?? null,
+    priorityTier: l.priorityTier ?? l.priority_tier ?? null,
+    boostScore: l.boostScore ?? l.boost_score ?? null,
+    licensedStates: l.licensedStates ?? l.licensed_states ?? null,
+  });
   app.get("/api/assignments", (req, res) => {
     const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
     const assignments = storage.getDailyAssignments(date);
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();
-    const enriched = assignments.map(a => ({
-      ...a,
-      lo: los.find(l => l.id === a.loId),
-      assistant: users.find(u => u.id === a.assistantId),
-    }));
+    const loById = new Map<number, any>();
+    for (const l of los as any[]) loById.set(l.id, normalizeLo(l));
+    const userById = new Map<number, any>();
+    for (const u of users as any[]) userById.set(u.id, u);
+    const enriched = (assignments as any[]).map(a => {
+      const loIdVal = a.loId ?? a.lo_id;
+      const assistantIdVal = a.assistantId ?? a.assistant_id;
+      return {
+        ...a,
+        loId: loIdVal,
+        assistantId: assistantIdVal,
+        assignmentDate: a.assignmentDate ?? a.assignment_date,
+        globalRank: a.globalRank ?? a.global_rank,
+        assistantRank: a.assistantRank ?? a.assistant_rank,
+        lo: loIdVal != null ? loById.get(loIdVal) : undefined,
+        assistant: assistantIdVal != null ? userById.get(assistantIdVal) : undefined,
+      };
+    });
     res.json(enriched);
   });
 
@@ -2159,12 +2183,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const date = new Date().toISOString().split("T")[0];
-    const assignments = storage.getDailyAssignments(date).filter(a => a.assistantId === userId);
+    const assignments = (storage.getDailyAssignments(date) as any[]).filter(
+      a => (a.assistantId ?? a.assistant_id) === userId,
+    );
     const los = storage.getLoanOfficers();
-    const enriched = assignments.map(a => ({
-      ...a,
-      lo: los.find(l => l.id === a.loId),
-    }));
+    const loById = new Map<number, any>();
+    for (const l of los as any[]) loById.set(l.id, normalizeLo(l));
+    const enriched = assignments.map(a => {
+      const loIdVal = a.loId ?? a.lo_id;
+      const assistantIdVal = a.assistantId ?? a.assistant_id;
+      return {
+        ...a,
+        loId: loIdVal,
+        assistantId: assistantIdVal,
+        assignmentDate: a.assignmentDate ?? a.assignment_date,
+        globalRank: a.globalRank ?? a.global_rank,
+        assistantRank: a.assistantRank ?? a.assistant_rank,
+        lo: loIdVal != null ? loById.get(loIdVal) : undefined,
+      };
+    });
     res.json(enriched);
   });
 
