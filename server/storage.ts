@@ -1097,8 +1097,184 @@ function runNewMigrations() {
       completed_at TEXT
     )`);
   } catch {}
+
+  // ── Forum tables ─────────────────────────────────────────────────────────
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      author_id INTEGER NOT NULL REFERENCES users(id),
+      author_name TEXT NOT NULL,
+      upvotes INTEGER DEFAULT 0,
+      is_answered INTEGER DEFAULT 0,
+      is_pinned INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_answers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+      body TEXT NOT NULL,
+      author_id INTEGER NOT NULL REFERENCES users(id),
+      author_name TEXT NOT NULL,
+      upvotes INTEGER DEFAULT 0,
+      is_accepted INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(post_id, user_id)
+    )`);
+  } catch {}
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(entity_type, entity_id, user_id)
+    )`);
+  } catch {}
 }
 runNewMigrations();
+
+// ── Forum storage helpers ──────────────────────────────────────────────────
+export function listForumPosts(currentUserId: number, search?: string) {
+  const searchLike = search ? `%${search.toLowerCase()}%` : null;
+  const rows = searchLike
+    ? sqlite.prepare(`SELECT * FROM forum_posts WHERE LOWER(title) LIKE ? OR LOWER(body) LIKE ? ORDER BY is_pinned DESC, created_at DESC`).all(searchLike, searchLike)
+    : sqlite.prepare(`SELECT * FROM forum_posts ORDER BY is_pinned DESC, created_at DESC`).all();
+  return (rows as any[]).map((p) => {
+    const answerCount = (sqlite.prepare(`SELECT COUNT(*) as c FROM forum_answers WHERE post_id = ?`).get(p.id) as any).c;
+    const hasAccepted = (sqlite.prepare(`SELECT COUNT(*) as c FROM forum_answers WHERE post_id = ? AND is_accepted = 1`).get(p.id) as any).c > 0;
+    const isSubscribed = (sqlite.prepare(`SELECT 1 FROM forum_subscriptions WHERE post_id = ? AND user_id = ?`).get(p.id, currentUserId) as any) ? 1 : 0;
+    const hasUpvoted = (sqlite.prepare(`SELECT 1 FROM forum_votes WHERE entity_type='post' AND entity_id = ? AND user_id = ?`).get(p.id, currentUserId) as any) ? 1 : 0;
+    return { ...p, answer_count: answerCount, has_accepted_answer: hasAccepted, is_subscribed: isSubscribed, has_upvoted: hasUpvoted };
+  });
+}
+
+export function getForumPostById(id: number, currentUserId: number) {
+  const post = sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(id) as any;
+  if (!post) return null;
+  const answers = sqlite.prepare(`SELECT * FROM forum_answers WHERE post_id = ? ORDER BY is_accepted DESC, upvotes DESC, created_at ASC`).all(id) as any[];
+  const isSubscribed = (sqlite.prepare(`SELECT 1 FROM forum_subscriptions WHERE post_id = ? AND user_id = ?`).get(id, currentUserId) as any) ? 1 : 0;
+  const hasUpvoted = (sqlite.prepare(`SELECT 1 FROM forum_votes WHERE entity_type='post' AND entity_id = ? AND user_id = ?`).get(id, currentUserId) as any) ? 1 : 0;
+  const enrichedAnswers = answers.map((a) => {
+    const upv = (sqlite.prepare(`SELECT 1 FROM forum_votes WHERE entity_type='answer' AND entity_id = ? AND user_id = ?`).get(a.id, currentUserId) as any) ? 1 : 0;
+    return { ...a, has_upvoted: upv };
+  });
+  return { ...post, is_subscribed: isSubscribed, has_upvoted: hasUpvoted, answers: enrichedAnswers };
+}
+
+export function createForumPost(data: { title: string; body: string; authorId: number; authorName: string }) {
+  const now = new Date().toISOString();
+  const info = sqlite.prepare(`INSERT INTO forum_posts (title, body, author_id, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(data.title, data.body, data.authorId, data.authorName, now, now);
+  sqlite.prepare(`INSERT OR IGNORE INTO forum_subscriptions (post_id, user_id, created_at) VALUES (?, ?, ?)`)
+    .run(info.lastInsertRowid, data.authorId, now);
+  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(info.lastInsertRowid) as any;
+}
+
+export function updateForumPost(id: number, data: Partial<{ title: string; body: string; is_pinned: number; is_answered: number }>) {
+  const fields: string[] = [];
+  const vals: any[] = [];
+  for (const k of Object.keys(data)) {
+    fields.push(`${k} = ?`);
+    vals.push((data as any)[k]);
+  }
+  if (!fields.length) return;
+  fields.push(`updated_at = ?`);
+  vals.push(new Date().toISOString());
+  vals.push(id);
+  sqlite.prepare(`UPDATE forum_posts SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(id) as any;
+}
+
+export function deleteForumPost(id: number) {
+  sqlite.prepare(`DELETE FROM forum_answers WHERE post_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM forum_subscriptions WHERE post_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM forum_votes WHERE entity_type='post' AND entity_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM forum_posts WHERE id = ?`).run(id);
+}
+
+export function createForumAnswer(data: { postId: number; body: string; authorId: number; authorName: string }) {
+  const now = new Date().toISOString();
+  const info = sqlite.prepare(`INSERT INTO forum_answers (post_id, body, author_id, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(data.postId, data.body, data.authorId, data.authorName, now, now);
+  return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(info.lastInsertRowid) as any;
+}
+
+export function getForumAnswerById(id: number) {
+  return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(id) as any;
+}
+
+export function updateForumAnswer(id: number, data: Partial<{ body: string; is_accepted: number }>) {
+  const fields: string[] = [];
+  const vals: any[] = [];
+  for (const k of Object.keys(data)) {
+    fields.push(`${k} = ?`);
+    vals.push((data as any)[k]);
+  }
+  if (!fields.length) return;
+  fields.push(`updated_at = ?`);
+  vals.push(new Date().toISOString());
+  vals.push(id);
+  sqlite.prepare(`UPDATE forum_answers SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+  return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(id) as any;
+}
+
+export function deleteForumAnswer(id: number) {
+  const a = sqlite.prepare(`SELECT post_id FROM forum_answers WHERE id = ?`).get(id) as any;
+  sqlite.prepare(`DELETE FROM forum_votes WHERE entity_type='answer' AND entity_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM forum_answers WHERE id = ?`).run(id);
+  return a;
+}
+
+export function toggleForumVote(entityType: "post" | "answer", entityId: number, userId: number) {
+  const existing = sqlite.prepare(`SELECT id FROM forum_votes WHERE entity_type = ? AND entity_id = ? AND user_id = ?`).get(entityType, entityId, userId) as any;
+  const table = entityType === "post" ? "forum_posts" : "forum_answers";
+  if (existing) {
+    sqlite.prepare(`DELETE FROM forum_votes WHERE id = ?`).run(existing.id);
+    sqlite.prepare(`UPDATE ${table} SET upvotes = MAX(0, upvotes - 1) WHERE id = ?`).run(entityId);
+    return { upvoted: false };
+  }
+  sqlite.prepare(`INSERT INTO forum_votes (entity_type, entity_id, user_id, created_at) VALUES (?, ?, ?, ?)`)
+    .run(entityType, entityId, userId, new Date().toISOString());
+  sqlite.prepare(`UPDATE ${table} SET upvotes = upvotes + 1 WHERE id = ?`).run(entityId);
+  return { upvoted: true };
+}
+
+export function toggleForumSubscription(postId: number, userId: number) {
+  const existing = sqlite.prepare(`SELECT id FROM forum_subscriptions WHERE post_id = ? AND user_id = ?`).get(postId, userId) as any;
+  if (existing) {
+    sqlite.prepare(`DELETE FROM forum_subscriptions WHERE id = ?`).run(existing.id);
+    return { subscribed: false };
+  }
+  sqlite.prepare(`INSERT INTO forum_subscriptions (post_id, user_id, created_at) VALUES (?, ?, ?)`)
+    .run(postId, userId, new Date().toISOString());
+  return { subscribed: true };
+}
+
+export function getForumSubscribers(postId: number): number[] {
+  const rows = sqlite.prepare(`SELECT user_id FROM forum_subscriptions WHERE post_id = ?`).all(postId) as any[];
+  return rows.map((r) => r.user_id);
+}
+
+export function acceptForumAnswer(postId: number, answerId: number) {
+  sqlite.prepare(`UPDATE forum_answers SET is_accepted = 0 WHERE post_id = ?`).run(postId);
+  sqlite.prepare(`UPDATE forum_answers SET is_accepted = 1 WHERE id = ?`).run(answerId);
+  sqlite.prepare(`UPDATE forum_posts SET is_answered = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), postId);
+}
 
 
 // ── Email Settings storage ─────────────────────────────────────────────────────

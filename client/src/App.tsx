@@ -47,6 +47,7 @@ import WebhookSettings from "@/pages/webhook-settings";
 import Integrations from "@/pages/integrations";
 import BonzoProspects from "@/pages/bonzo-prospects";
 import MojoSessions from "@/pages/mojo-sessions";
+import Forum from "@/pages/forum";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -95,6 +96,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/integrations":     "Integrations",
   "/bonzo-prospects":  "Bonzo Prospects",
   "/mojo-sessions":    "Mojo Sessions",
+  "/forum":            "Forum",
 };
 
 function usePageTitle() {
@@ -137,6 +139,7 @@ function AppRouter() {
       <Route path="/integrations" component={Integrations} />
       <Route path="/bonzo-prospects" component={BonzoProspects} />
       <Route path="/mojo-sessions" component={MojoSessions} />
+      <Route path="/forum" component={Forum} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />

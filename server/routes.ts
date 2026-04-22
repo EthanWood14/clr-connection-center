@@ -4012,6 +4012,185 @@ export function registerRoutes(httpServer: Server, app: Express) {
     });
   });
 
+  // ── Forum routes ─────────────────────────────────────────────────────────
+  app.get("/api/forum/posts", requireAuth, (req: any, res) => {
+    const userId = req.session_user.userId;
+    const search = (req.query.search as string | undefined)?.trim() || undefined;
+    const posts = storageExtra.listForumPosts(userId, search);
+    res.json({ posts });
+  });
+
+  app.post("/api/forum/posts", requireAuth, (req: any, res) => {
+    const { title, body } = req.body;
+    if (!title || typeof title !== "string" || !title.trim()) {
+      return res.status(400).json({ error: "Title is required" });
+    }
+    if (!body || typeof body !== "string" || !body.trim()) {
+      return res.status(400).json({ error: "Body is required" });
+    }
+    const userId = req.session_user.userId;
+    const user = storage.getUserById(userId) as any;
+    const authorName = user?.name ?? "Unknown";
+    const post = storageExtra.createForumPost({
+      title: title.trim(),
+      body: body.trim(),
+      authorId: userId,
+      authorName,
+    });
+    // Notify admins
+    try {
+      const admins = storage.getUsers().filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId);
+      for (const admin of admins) {
+        storage.createNotification({
+          userId: admin.id,
+          type: "announcement",
+          title: `New Forum Question: ${post.title}`,
+          message: `${authorName} asked: ${post.title}`,
+          isRead: false,
+        });
+      }
+    } catch (e) { console.error("forum admin notify failed:", e); }
+    res.json({ post });
+  });
+
+  app.get("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+    const userId = req.session_user.userId;
+    const id = parseInt(req.params.id);
+    const post = storageExtra.getForumPostById(id, userId);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    res.json({ post });
+  });
+
+  app.patch("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const user = req.session_user;
+    const existing = storageExtra.getForumPostById(id, user.userId);
+    if (!existing) return res.status(404).json({ error: "Post not found" });
+    const isAuthor = existing.author_id === user.userId;
+    const isAdmin = user.role === "admin";
+    if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
+    const { title, body, is_pinned } = req.body;
+    const updates: any = {};
+    if (typeof title === "string" && title.trim()) updates.title = title.trim();
+    if (typeof body === "string" && body.trim()) updates.body = body.trim();
+    if (isAdmin && (is_pinned === 0 || is_pinned === 1)) updates.is_pinned = is_pinned;
+    const updated = storageExtra.updateForumPost(id, updates);
+    res.json({ post: updated });
+  });
+
+  app.delete("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const user = req.session_user;
+    const existing = storageExtra.getForumPostById(id, user.userId);
+    if (!existing) return res.status(404).json({ error: "Post not found" });
+    const isAuthor = existing.author_id === user.userId;
+    const isAdmin = user.role === "admin";
+    if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
+    storageExtra.deleteForumPost(id);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/forum/posts/:id/answers", requireAuth, (req: any, res) => {
+    const postId = parseInt(req.params.id);
+    const { body } = req.body;
+    if (!body || typeof body !== "string" || !body.trim()) {
+      return res.status(400).json({ error: "Body is required" });
+    }
+    const userId = req.session_user.userId;
+    const userObj = storage.getUserById(userId) as any;
+    const authorName = userObj?.name ?? "Unknown";
+    const post = storageExtra.getForumPostById(postId, userId);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    const answer = storageExtra.createForumAnswer({
+      postId,
+      body: body.trim(),
+      authorId: userId,
+      authorName,
+    });
+    // Notify all subscribers except the answerer
+    try {
+      const subscriberIds = storageExtra.getForumSubscribers(postId).filter((uid) => uid !== userId);
+      for (const subId of subscriberIds) {
+        storage.createNotification({
+          userId: subId,
+          type: "announcement",
+          title: `New answer on: ${post.title}`,
+          message: `${authorName} answered your question`,
+          isRead: false,
+        });
+      }
+    } catch (e) { console.error("forum subscriber notify failed:", e); }
+    res.json({ answer });
+  });
+
+  app.patch("/api/forum/answers/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const user = req.session_user;
+    const existing = storageExtra.getForumAnswerById(id);
+    if (!existing) return res.status(404).json({ error: "Answer not found" });
+    const isAuthor = existing.author_id === user.userId;
+    const isAdmin = user.role === "admin";
+    if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
+    const { body, is_accepted } = req.body;
+    const updates: any = {};
+    if (typeof body === "string" && body.trim()) updates.body = body.trim();
+    if (isAdmin && (is_accepted === 0 || is_accepted === 1)) {
+      if (is_accepted === 1) {
+        storageExtra.acceptForumAnswer(existing.post_id, id);
+      } else {
+        updates.is_accepted = 0;
+      }
+    }
+    if (Object.keys(updates).length > 0) storageExtra.updateForumAnswer(id, updates);
+    res.json({ answer: storageExtra.getForumAnswerById(id) });
+  });
+
+  app.delete("/api/forum/answers/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const user = req.session_user;
+    const existing = storageExtra.getForumAnswerById(id);
+    if (!existing) return res.status(404).json({ error: "Answer not found" });
+    const isAuthor = existing.author_id === user.userId;
+    const isAdmin = user.role === "admin";
+    if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
+    storageExtra.deleteForumAnswer(id);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/forum/posts/:id/upvote", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const userId = req.session_user.userId;
+    const result = storageExtra.toggleForumVote("post", id, userId);
+    res.json(result);
+  });
+
+  app.post("/api/forum/answers/:id/upvote", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const userId = req.session_user.userId;
+    const result = storageExtra.toggleForumVote("answer", id, userId);
+    res.json(result);
+  });
+
+  app.post("/api/forum/posts/:id/subscribe", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const userId = req.session_user.userId;
+    const result = storageExtra.toggleForumSubscription(id, userId);
+    res.json(result);
+  });
+
+  app.post("/api/forum/posts/:id/accept-answer/:answerId", requireAuth, (req: any, res) => {
+    const postId = parseInt(req.params.id);
+    const answerId = parseInt(req.params.answerId);
+    const user = req.session_user;
+    const post = storageExtra.getForumPostById(postId, user.userId);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    const isAuthor = post.author_id === user.userId;
+    const isAdmin = user.role === "admin";
+    if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
+    storageExtra.acceptForumAnswer(postId, answerId);
+    res.json({ ok: true });
+  });
+
 }
 
 export function createHttpServer(app: Express): Server {
