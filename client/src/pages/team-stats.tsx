@@ -222,13 +222,14 @@ export default function TeamStats() {
               <BarChart data={dailyDisplay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <YAxis yAxisId="calls" orientation="left" tick={{ fontSize: 11 }} allowDecimals={false} stroke={COLORS.calls} label={{ value: "Calls", angle: -90, position: "insideLeft", fontSize: 10, fill: COLORS.calls }} />
+                <YAxis yAxisId="small" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} stroke={COLORS.transfers} label={{ value: "Transfers / Appts", angle: 90, position: "insideRight", fontSize: 10, fill: COLORS.transfers }} />
                 <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="calls" name="Calls" fill={COLORS.calls} radius={[2,2,0,0]} />
-                <Bar dataKey="transfers" name="Transfers" fill={COLORS.transfers} radius={[2,2,0,0]} />
-                <Bar dataKey="appointments" name="Appointments" fill={COLORS.appointments} radius={[2,2,0,0]} />
-                <Bar dataKey="fellThrough" name="Fell Through" fill={COLORS.fell_through} radius={[2,2,0,0]} />
+                <Bar yAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} radius={[2,2,0,0]} />
+                <Bar yAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} radius={[2,2,0,0]} />
+                <Bar yAxisId="small" dataKey="appointments" name="Appointments" fill={COLORS.appointments} radius={[2,2,0,0]} />
+                <Bar yAxisId="small" dataKey="fellThrough" name="Fell Through" fill={COLORS.fell_through} radius={[2,2,0,0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -318,13 +319,14 @@ export default function TeamStats() {
               <ResponsiveContainer width="100%" height={Math.max(300, data.perClr.length * 50)}>
                 <BarChart data={data.perClr} layout="vertical" margin={{ top: 8, right: 16, left: 16, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <XAxis xAxisId="calls" type="number" orientation="top" tick={{ fontSize: 10 }} allowDecimals={false} stroke={COLORS.calls} />
+                  <XAxis xAxisId="small" type="number" orientation="bottom" tick={{ fontSize: 10 }} allowDecimals={false} stroke={COLORS.transfers} />
                   <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
                   <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="calls" name="Calls" fill={COLORS.calls} />
-                  <Bar dataKey="transfers" name="Transfers" fill={COLORS.transfers} />
-                  <Bar dataKey="appointments" name="Appointments" fill={COLORS.appointments} />
+                  <Bar xAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} />
+                  <Bar xAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} />
+                  <Bar xAxisId="small" dataKey="appointments" name="Appointments" fill={COLORS.appointments} />
                 </BarChart>
               </ResponsiveContainer>
             )}

@@ -29,8 +29,9 @@ function daysSince(iso: string | null | undefined): number {
 // 1. HelpIcon — "?" button + popover for every page
 // ────────────────────────────────────────────────────────────────────────────
 export function HelpIcon({ title, children }: { title?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -42,9 +43,22 @@ export function HelpIcon({ title, children }: { title?: string; children: React.
           <HelpCircle className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" className="w-80 text-sm leading-relaxed">
-        {title && <p className="font-semibold mb-1">{title}</p>}
-        <div className="text-muted-foreground">{children}</div>
+      <PopoverContent
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        className="relative z-[60] max-w-sm w-80 text-sm leading-relaxed p-4 pr-8 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-lg backdrop-blur-none !opacity-100"
+      >
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-label="Close"
+          className="absolute top-2 right-2 p-1 rounded-md text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+        {title && <p className="font-semibold mb-1 pr-4">{title}</p>}
+        <div className="text-gray-600 dark:text-gray-400">{children}</div>
       </PopoverContent>
     </Popover>
   );

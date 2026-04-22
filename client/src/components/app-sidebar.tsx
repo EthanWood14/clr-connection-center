@@ -34,7 +34,7 @@ const reportItems = [
   { title: "EOD Report",      url: "/eod-report",  icon: FileText },
   { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments" },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp },
-  { title: "LO Breaks",       url: "/snooze",      icon: BedDouble },
+  { title: "LO Vacation",     url: "/snooze",      icon: BedDouble },
 ];
 
 const toolItems = [

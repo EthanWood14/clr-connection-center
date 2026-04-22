@@ -71,7 +71,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/appointments": "Appointments",
   "/leaderboard":  "Team Stats",
   "/state-lookup": "State Lookup",
-  "/snooze":       "Snooze Manager",
+  "/snooze":       "LO Vacation",
   "/nmls-checks":  "NMLS Checks",
   "/nmls-status":  "NMLS License Status",
   "/reporting":    "Reporting",
