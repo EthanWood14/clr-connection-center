@@ -315,6 +315,9 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     transfers: number;
     appointments: number;
     fellThrough: number;
+    callbacks: number;
+    futureContacts: number;
+    noAnswers: number;
     assigned: number;
     missed: number;
     ratio: string;
@@ -326,15 +329,22 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     const uid = u.id;
 
     // Calls from call logs
-    const myCalls = callLogs
+    const myCallsFromLogs = callLogs
       .filter((l: any) => l.assistantId === uid)
       .reduce((sum: number, l: any) => sum + (l.callsMade || 0), 0);
 
     // Outcomes
     const myOutcomes = outcomes.filter((o: any) => (o.assistantId || o.assistant_id) === uid);
-    const myTransfers    = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
-    const myAppointments = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "appointment").length;
-    const myFellThrough  = myOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "fell_through").length;
+    const outcomeTypeOf = (o: any) => (o.outcomeType || o.outcome_type) as string;
+    const myTransfers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "transfer").length;
+    const myAppointments    = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "appointment").length;
+    const myFellThrough     = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "fell_through").length;
+    const myCallbacks       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "callback_requested").length;
+    const myFutureContacts  = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "future_contact").length;
+    const myNoAnswers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "no_answer").length;
+
+    // Total calls — prefer call_logs count, fall back to outcome count if logs empty
+    const myCalls = myCallsFromLogs > 0 ? myCallsFromLogs : myOutcomes.length;
 
     // Assignments
     const myAssignments = assignments.filter((a: any) => (a.assistantId || a.assistant_id) === uid);
@@ -363,6 +373,9 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       transfers: myTransfers,
       appointments: myAppointments,
       fellThrough: myFellThrough,
+      callbacks: myCallbacks,
+      futureContacts: myFutureContacts,
+      noAnswers: myNoAnswers,
       assigned: myAssigned,
       missed: myMissed,
       ratio,
@@ -372,13 +385,16 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   }).sort((a, b) => b.transfers - a.transfers);
 
   // Team totals
-  const teamCalls       = clrStats.reduce((s, r) => s + r.calls, 0);
-  const teamTransfers   = clrStats.reduce((s, r) => s + r.transfers, 0);
-  const teamAppointments = clrStats.reduce((s, r) => s + r.appointments, 0);
-  const teamFellThrough = clrStats.reduce((s, r) => s + r.fellThrough, 0);
-  const teamAssigned    = clrStats.reduce((s, r) => s + r.assigned, 0);
-  const teamMissed      = clrStats.reduce((s, r) => s + r.missed, 0);
-  const teamRatio       = teamCalls > 0 ? ((teamTransfers / teamCalls) * 100).toFixed(1) + "%" : "—";
+  const teamCalls          = clrStats.reduce((s, r) => s + r.calls, 0);
+  const teamTransfers      = clrStats.reduce((s, r) => s + r.transfers, 0);
+  const teamAppointments   = clrStats.reduce((s, r) => s + r.appointments, 0);
+  const teamFellThrough    = clrStats.reduce((s, r) => s + r.fellThrough, 0);
+  const teamCallbacks      = clrStats.reduce((s, r) => s + r.callbacks, 0);
+  const teamFutureContacts = clrStats.reduce((s, r) => s + r.futureContacts, 0);
+  const teamNoAnswers      = clrStats.reduce((s, r) => s + r.noAnswers, 0);
+  const teamAssigned       = clrStats.reduce((s, r) => s + r.assigned, 0);
+  const teamMissed         = clrStats.reduce((s, r) => s + r.missed, 0);
+  const teamRatio          = teamCalls > 0 ? ((teamTransfers / teamCalls) * 100).toFixed(1) + "%" : "—";
 
   // Transfers in this period with their conversation notes / LO plan / timeframe / follow-up flag
   const transferDetails = outcomes
@@ -433,6 +449,69 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       </div>
     </div>`;
   })() : "";
+
+  // Full outcome breakdown per CLR — Total Calls, Transfers, Appointments,
+  // Fell Throughs, Callbacks, Future Contacts, No Answers.
+  const outcomeBreakdownHtml = (() => {
+    const visibleRows = clrStats.filter(r =>
+      r.calls > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0 ||
+      r.callbacks > 0 || r.futureContacts > 0 || r.noAnswers > 0,
+    );
+    if (visibleRows.length === 0) return "";
+    const title = type === "weekly" ? "Weekly Outcome Breakdown" : "Outcome Breakdown";
+    const cellHead = (label: string) =>
+      `<th style="padding:9px 10px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;white-space:nowrap">${label}</th>`;
+    const cell = (v: number | string, color = "#334155", bold = false) =>
+      `<td style="padding:9px 10px;text-align:center;font-size:13px;color:${color};${bold ? "font-weight:700" : ""}">${v}</td>`;
+
+    const rowsHtml = visibleRows.map((r, i) => {
+      const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
+      return `<tr style="background:${bg}">
+        <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
+        ${cell(r.calls, "#0369a1", true)}
+        ${cell(r.transfers, "#1A2B4A", true)}
+        ${cell(r.appointments, "#0f766e")}
+        ${cell(r.fellThrough, "#b45309")}
+        ${cell(r.callbacks, "#7c3aed")}
+        ${cell(r.futureContacts, "#0891b2")}
+        ${cell(r.noAnswers, "#64748b")}
+      </tr>`;
+    }).join("");
+
+    const totalsRow = type === "weekly" ? `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
+      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Totals</td>
+      ${cell(teamCalls, "#0369a1", true)}
+      ${cell(teamTransfers, "#1A2B4A", true)}
+      ${cell(teamAppointments, "#0f766e", true)}
+      ${cell(teamFellThrough, "#b45309", true)}
+      ${cell(teamCallbacks, "#7c3aed", true)}
+      ${cell(teamFutureContacts, "#0891b2", true)}
+      ${cell(teamNoAnswers, "#64748b", true)}
+    </tr>` : "";
+
+    return `
+    <div style="margin-top:28px">
+      <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">${title}</h2>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:12px">
+        <thead>
+          <tr style="background:#0F182D">
+            <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
+            ${cellHead("Total Calls")}
+            ${cellHead("Transfers")}
+            ${cellHead("Appointments")}
+            ${cellHead("Fell Throughs")}
+            ${cellHead("Callbacks")}
+            ${cellHead("Future Contacts")}
+            ${cellHead("No Answers")}
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+          ${totalsRow}
+        </tbody>
+      </table>
+    </div>`;
+  })();
 
   const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
@@ -631,6 +710,8 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
       * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
     </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
     `}
+
+    ${outcomeBreakdownHtml}
 
     ${transferDetailsHtml}
 
