@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -788,6 +788,162 @@ function WeeklyGoalsCard() {
 }
 
 // ── Script Defaults Card (per-user placeholder overrides) ───────────────────
+function ExportDataCard() {
+  const { toast } = useToast();
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  })();
+  const [outcomesFrom, setOutcomesFrom] = useState(thirtyDaysAgo);
+  const [outcomesTo, setOutcomesTo] = useState(today);
+  const [logsFrom, setLogsFrom] = useState(thirtyDaysAgo);
+  const [logsTo, setLogsTo] = useState(today);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  async function downloadCsv(url: string, filename: string, key: string) {
+    setDownloading(key);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Download failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objUrl);
+      toast({ title: "Download started", description: filename });
+    } catch (e: any) {
+      toast({ title: "Export failed", description: e.message, variant: "destructive" });
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <FileText className="w-4 h-4" /> Call Outcomes
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            All logged call outcomes (transfers, follow-ups, etc.) with CLR and LO names.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">From</label>
+              <Input type="date" value={outcomesFrom} onChange={(e) => setOutcomesFrom(e.target.value)} data-testid="input-outcomes-from" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">To</label>
+              <Input type="date" value={outcomesTo} onChange={(e) => setOutcomesTo(e.target.value)} data-testid="input-outcomes-to" />
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button
+            size="sm"
+            onClick={() => downloadCsv(`/api/export/outcomes?from=${outcomesFrom}&to=${outcomesTo}`, `outcomes_${outcomesFrom}_to_${outcomesTo}.csv`, "outcomes")}
+            disabled={downloading === "outcomes"}
+            data-testid="button-export-outcomes"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            {downloading === "outcomes" ? "Downloading…" : "Download CSV"}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Users className="w-4 h-4" /> Users
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            All users in your organization (name, email, role, status).
+          </p>
+        </CardHeader>
+        <CardFooter>
+          <Button
+            size="sm"
+            onClick={() => downloadCsv(`/api/export/users`, `users_${today}.csv`, "users")}
+            disabled={downloading === "users"}
+            data-testid="button-export-users"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            {downloading === "users" ? "Downloading…" : "Download CSV"}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Target className="w-4 h-4" /> Loan Officers
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            All LOs with NMLS IDs, contact info, licensed states, and status.
+          </p>
+        </CardHeader>
+        <CardFooter>
+          <Button
+            size="sm"
+            onClick={() => downloadCsv(`/api/export/loan-officers`, `loan_officers_${today}.csv`, "los")}
+            disabled={downloading === "los"}
+            data-testid="button-export-los"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            {downloading === "los" ? "Downloading…" : "Download CSV"}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <PhoneCall className="w-4 h-4" /> Daily Call Logs
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Daily call totals per CLR within the date range.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">From</label>
+              <Input type="date" value={logsFrom} onChange={(e) => setLogsFrom(e.target.value)} data-testid="input-logs-from" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">To</label>
+              <Input type="date" value={logsTo} onChange={(e) => setLogsTo(e.target.value)} data-testid="input-logs-to" />
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button
+            size="sm"
+            onClick={() => downloadCsv(`/api/export/daily-logs?from=${logsFrom}&to=${logsTo}`, `daily_call_logs_${logsFrom}_to_${logsTo}.csv`, "logs")}
+            disabled={downloading === "logs"}
+            data-testid="button-export-logs"
+          >
+            <Download className="w-3.5 h-3.5 mr-1.5" />
+            {downloading === "logs" ? "Downloading…" : "Download CSV"}
+          </Button>
+        </CardFooter>
+      </Card>
+    </div>
+  );
+}
+
 function ScriptDefaultsCard() {
   const { toast } = useToast();
   const { user, refetchUser } = useAuth();
@@ -1082,9 +1238,9 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window === "undefined") return "profile";
     const saved = localStorage.getItem("settings.activeTab");
-    const allowed = ["profile", "reports", "team", "algorithm", "app"];
+    const allowed = ["profile", "reports", "team", "algorithm", "export", "app"];
     if (saved && allowed.includes(saved)) {
-      if ((saved === "reports" || saved === "team" || saved === "algorithm") && authUser && authUser.role !== "admin") {
+      if ((saved === "reports" || saved === "team" || saved === "algorithm" || saved === "export") && authUser && authUser.role !== "admin") {
         return "profile";
       }
       return saved;
@@ -1100,7 +1256,7 @@ export default function Settings() {
 
   // If non-admin somehow lands on an admin tab (e.g. role changed), fall back.
   useEffect(() => {
-    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm")) {
+    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm" || activeTab === "export")) {
       setActiveTab("profile");
     }
   }, [isAdmin, activeTab]);
@@ -1561,6 +1717,11 @@ export default function Settings() {
               <Sliders className="w-3.5 h-3.5" /> Algorithm
             </TabsTrigger>
           )}
+          {isAdmin && (
+            <TabsTrigger value="export" className="gap-1.5" data-testid="tab-export">
+              <Download className="w-3.5 h-3.5" /> Export
+            </TabsTrigger>
+          )}
           <TabsTrigger value="script" className="gap-1.5" data-testid="tab-script">
             <PhoneCall className="w-3.5 h-3.5" /> Script
           </TabsTrigger>
@@ -1573,6 +1734,7 @@ export default function Settings() {
         {isAdmin && <TabsContent value="reports" className="mt-6">{reportsTab}</TabsContent>}
         {isAdmin && <TabsContent value="team" className="mt-6">{teamTab}</TabsContent>}
         {isAdmin && <TabsContent value="algorithm" className="mt-6">{algorithmTab}</TabsContent>}
+        {isAdmin && <TabsContent value="export" className="mt-6"><ExportDataCard /></TabsContent>}
         <TabsContent value="script" className="mt-6"><ScriptDefaultsCard /></TabsContent>
         <TabsContent value="app" className="mt-6">{appTab}</TabsContent>
       </Tabs>

@@ -5094,6 +5094,116 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Data Export (CSV) — admin only, scoped to current org
+  // ────────────────────────────────────────────────────────────────────────────
+  function csvEscape(v: any): string {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  function toCsv(headers: string[], rows: any[][]): string {
+    const head = headers.map(csvEscape).join(",");
+    const body = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+    return body ? `${head}\n${body}\n` : `${head}\n`;
+  }
+
+  function sendCsv(res: Response, filename: string, csv: string) {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(csv);
+  }
+
+  function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+  function daysAgoIso(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  app.get("/api/export/outcomes", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = getCurrentOrgId(req.session_user);
+    const from = String(req.query.from || daysAgoIso(30));
+    const to = String(req.query.to || todayIso());
+    const db = storageExtra.getSqlite();
+    const rows = db.prepare(`
+      SELECT o.date, u.name AS clr_name, o.outcome_type, lo.full_name AS lo_name,
+             o.transfer_type, o.notes, o.created_at
+      FROM lead_outcomes o
+      LEFT JOIN users u ON u.id = o.assistant_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      WHERE o.org_id = ? AND o.date >= ? AND o.date <= ?
+      ORDER BY o.date DESC, o.id DESC
+    `).all(orgId, from, to) as any[];
+    const csv = toCsv(
+      ["Date", "CLR Name", "Outcome Type", "LO Name", "Transfer Type", "Notes", "Logged At"],
+      rows.map((r) => [r.date, r.clr_name || "", r.outcome_type, r.lo_name || "", r.transfer_type || "", r.notes || "", r.created_at]),
+    );
+    sendCsv(res, `outcomes_${from}_to_${to}.csv`, csv);
+  });
+
+  app.get("/api/export/users", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = getCurrentOrgId(req.session_user);
+    const db = storageExtra.getSqlite();
+    const rows = db.prepare(`
+      SELECT id, name, email, role, is_clr, is_active, created_at
+      FROM users
+      WHERE org_id = ?
+      ORDER BY id ASC
+    `).all(orgId) as any[];
+    const csv = toCsv(
+      ["ID", "Name", "Email", "Role", "Is CLR", "Is Active", "Created At"],
+      rows.map((r) => [r.id, r.name, r.email, r.role, r.is_clr ? "yes" : "no", r.is_active ? "yes" : "no", r.created_at]),
+    );
+    sendCsv(res, `users_${todayIso()}.csv`, csv);
+  });
+
+  app.get("/api/export/loan-officers", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = getCurrentOrgId(req.session_user);
+    const db = storageExtra.getSqlite();
+    const rows = db.prepare(`
+      SELECT id, full_name, nmls_id, phone, email, licensed_states, internal_status,
+             priority_tier, boost_score, last_worked_date, total_times_worked, created_at
+      FROM loan_officers
+      WHERE org_id = ?
+      ORDER BY id ASC
+    `).all(orgId) as any[];
+    const csv = toCsv(
+      ["ID", "Full Name", "NMLS ID", "Phone", "Email", "Licensed States", "Status", "Priority Tier", "Boost Score", "Last Worked", "Total Times Worked", "Created At"],
+      rows.map((r) => {
+        let states = r.licensed_states;
+        try { const arr = JSON.parse(r.licensed_states || "[]"); if (Array.isArray(arr)) states = arr.join("; "); } catch {}
+        return [r.id, r.full_name, r.nmls_id, r.phone || "", r.email || "", states || "", r.internal_status, r.priority_tier, r.boost_score, r.last_worked_date || "", r.total_times_worked, r.created_at];
+      }),
+    );
+    sendCsv(res, `loan_officers_${todayIso()}.csv`, csv);
+  });
+
+  app.get("/api/export/daily-logs", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = getCurrentOrgId(req.session_user);
+    const from = String(req.query.from || daysAgoIso(30));
+    const to = String(req.query.to || todayIso());
+    const db = storageExtra.getSqlite();
+    const rows = db.prepare(`
+      SELECT d.log_date, u.name AS clr_name, d.calls_made, d.notes, d.updated_at
+      FROM daily_call_logs d
+      LEFT JOIN users u ON u.id = d.assistant_id
+      WHERE d.org_id = ? AND d.log_date >= ? AND d.log_date <= ?
+      ORDER BY d.log_date DESC, d.id DESC
+    `).all(orgId, from, to) as any[];
+    const csv = toCsv(
+      ["Log Date", "CLR Name", "Calls Made", "Notes", "Updated At"],
+      rows.map((r) => [r.log_date, r.clr_name || "", r.calls_made, r.notes || "", r.updated_at]),
+    );
+    sendCsv(res, `daily_call_logs_${from}_to_${to}.csv`, csv);
+  });
+
 }
 
 export function createHttpServer(app: Express): Server {
