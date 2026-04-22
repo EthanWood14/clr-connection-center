@@ -505,6 +505,11 @@ try {
   console.error("demo sample data seed failed:", e);
 }
 
+// Ensure columns referenced by the Drizzle `users` schema exist before we run
+// any `db.select().from(users)` — those queries read every column in the schema,
+// so if a later migration adds a column we must add it here too.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
