@@ -1758,6 +1758,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
       } else {
         body.transferType = null;
       }
+      const nullify = (v: any) => (v === undefined || v === '' ? null : v);
+      const nullableFields = [
+        "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
+        "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
+        "followupReason", "followupDate", "leadType", "appointmentDatetime",
+        "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",
+        "rescheduleDatetime", "nextSteps",
+      ];
+      for (const k of nullableFields) body[k] = nullify(body[k]);
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
@@ -1778,6 +1787,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
     } else if (body.outcomeType !== undefined) {
       // outcomeType is being changed away from transfer — clear transferType
       body.transferType = null;
+    }
+    const nullify = (v: any) => (v === undefined || v === '' ? null : v);
+    const nullableFields = [
+      "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
+      "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
+      "followupReason", "followupDate", "leadType", "appointmentDatetime",
+      "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",
+      "rescheduleDatetime", "nextSteps",
+    ];
+    for (const k of nullableFields) {
+      if (k in body) body[k] = nullify(body[k]);
     }
     const outcome = storage.updateLeadOutcome(id, body);
     if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
