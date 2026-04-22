@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target } from "lucide-react";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { Separator } from "@/components/ui/separator";
@@ -712,6 +712,81 @@ function EmailReportsCard() {
   );
 }
 
+// ── Weekly Goals card (own-profile only) ──────────────────────────────────
+function WeeklyGoalsCard() {
+  const { toast } = useToast();
+  const { data: me } = useQuery<any>({
+    queryKey: ["/api/me"],
+    queryFn: () => fetch("/api/me", { credentials: "include" }).then(r => r.json()),
+  });
+
+  const [calls, setCalls] = useState("");
+  const [transfers, setTransfers] = useState("");
+  const [appointments, setAppointments] = useState("");
+
+  useEffect(() => {
+    if (me) {
+      setCalls(String(me.goalCallsWeekly ?? me.goal_calls_weekly ?? 0));
+      setTransfers(String(me.goalTransfersWeekly ?? me.goal_transfers_weekly ?? 0));
+      setAppointments(String(me.goalAppointmentsWeekly ?? me.goal_appointments_weekly ?? 0));
+    }
+  }, [me?.goalCallsWeekly, me?.goal_calls_weekly, me?.goalTransfersWeekly, me?.goal_transfers_weekly, me?.goalAppointmentsWeekly, me?.goal_appointments_weekly]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      apiRequest("PUT", "/api/my-goals", {
+        goalCallsWeekly: parseInt(calls) || 0,
+        goalTransfersWeekly: parseInt(transfers) || 0,
+        goalAppointmentsWeekly: parseInt(appointments) || 0,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-report"] });
+      toast({ title: "Weekly goals saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to save", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Target className="w-4 h-4 text-muted-foreground" />
+          Weekly Goals
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Set personal weekly targets. Progress bars will appear on My Report and your dashboard. Enter 0 to disable a goal.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Weekly Calls</label>
+            <Input type="number" min={0} value={calls} onChange={e => setCalls(e.target.value)} placeholder="0" />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Weekly Transfers</label>
+            <Input type="number" min={0} value={transfers} onChange={e => setTransfers(e.target.value)} placeholder="0" />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Weekly Appointments</label>
+            <Input type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} placeholder="0" />
+          </div>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+          className="gap-1.5"
+        >
+          <Save className="w-3.5 h-3.5" />
+          {saveMut.isPending ? "Saving…" : "Save Goals"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Manager toggle button (admin-only, shown inline on each user row) ──────
 function ManagerToggleButton({ user }: { user: any }) {
   const { toast } = useToast();
@@ -1174,6 +1249,8 @@ export default function Settings() {
           )}
         </CardContent>
       </Card>
+
+      <WeeklyGoalsCard />
 
       <Card>
         <CardHeader className="pb-3">

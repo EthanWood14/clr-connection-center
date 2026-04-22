@@ -64,6 +64,55 @@ const ALL_STATES: { abbr: string; name: string }[] = [
   { abbr:"WI", name:"Wisconsin" },{ abbr:"WY", name:"Wyoming" },{ abbr:"DC", name:"Washington D.C." },
 ];
 
+// ── Weekly Goal Stripe (shown on dashboard if user has any goal set) ─────────
+function GoalStripe() {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/my-report", "week"],
+    queryFn: () => fetch(`/api/my-report?period=week`, { credentials: "include" }).then(r => r.json()),
+    staleTime: 60_000,
+  });
+  if (!data?.goals) return null;
+  const hasGoals = (data.goals.calls ?? 0) > 0 || (data.goals.transfers ?? 0) > 0 || (data.goals.appointments ?? 0) > 0;
+  if (!hasGoals) return null;
+  const wtd = data.weekToDate ?? { calls: 0, transfers: 0, appointments: 0 };
+
+  const rows: Array<{ label: string; cur: number; goal: number; color: string }> = [];
+  if (data.goals.calls > 0) rows.push({ label: "Calls", cur: wtd.calls, goal: data.goals.calls, color: "bg-blue-500" });
+  if (data.goals.transfers > 0) rows.push({ label: "Transfers", cur: wtd.transfers, goal: data.goals.transfers, color: "bg-green-500" });
+  if (data.goals.appointments > 0) rows.push({ label: "Appts", cur: wtd.appointments, goal: data.goals.appointments, color: "bg-purple-500" });
+
+  return (
+    <Card className="border-dashed">
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Trophy className="w-4 h-4 text-amber-500" />
+          <p className="text-xs font-semibold">Weekly Goal Progress</p>
+          <Link href="/my-report" className="ml-auto text-xs text-primary hover:underline">Details →</Link>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {rows.map(r => {
+            const pct = Math.min(100, Math.round((r.cur / r.goal) * 100));
+            const met = r.cur >= r.goal;
+            return (
+              <div key={r.label} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium">{r.label}</span>
+                  <span className={met ? "text-green-600 font-semibold" : "text-muted-foreground"}>
+                    {r.cur} / {r.goal} ({pct}%){met ? " ✓" : ""}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                  <div className={`h-full ${met ? "bg-green-500" : r.color} transition-all`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function CopyButton({ value, label }: { value: string; label: string }) {
   const { toast } = useToast();
@@ -777,6 +826,7 @@ export default function Dashboard() {
             <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" accent="teal" sub={subLabel} href="/outcomes" />
             <StatCard title={scope === "team" ? `Team ${callsTitle}` : callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" accent="blue" sub={scope === "team" ? `team calls ${subLabel}` : `my calls ${subLabel}`} href="/eod-report" />
           </div>
+          <GoalStripe />
           <OnboardingChecklist />
           <CallEntryWidget />
         </>

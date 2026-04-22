@@ -36,6 +36,7 @@ import PrivacyPolicy from "@/pages/privacy-policy";
 import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
+import MyReport from "@/pages/my-report";
 import InstallApp from "@/pages/install";
 import Support from "@/pages/support";
 import IntroVideo from "@/pages/intro-video";
@@ -79,6 +80,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/chat":           "Team Chat",
   "/call-script":    "Call Script",
   "/eod-report":     "EOD Reporting",
+  "/my-report":      "My Report",
   "/install":         "Install App",
   "/privacy-policy": "Privacy Policy",
   "/terms-of-use": "Terms of Use",
@@ -115,6 +117,7 @@ function AppRouter() {
       <Route path="/nmls-checks" component={NmlsChecks} />
       <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
+      <Route path="/my-report" component={MyReport} />
       <Route path="/install" component={InstallApp} />
       <Route path="/support" component={Support} />
       <Route path="/call-script" component={CallScript} />

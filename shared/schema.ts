@@ -13,6 +13,9 @@ export const users = sqliteTable("users", {
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
   isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),
+  goalCallsWeekly: integer("goal_calls_weekly").notNull().default(0),
+  goalTransfersWeekly: integer("goal_transfers_weekly").notNull().default(0),
+  goalAppointmentsWeekly: integer("goal_appointments_weekly").notNull().default(0),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 

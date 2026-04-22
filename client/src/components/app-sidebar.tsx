@@ -19,6 +19,7 @@ import { useAuth } from "@/lib/auth";
 
 const mainItems = [
   { title: "Dashboard",       url: "/",            icon: LayoutDashboard },
+  { title: "My Report",       url: "/my-report",   icon: BarChart2 },
   { title: "Directory",       url: "/directory",   icon: Users },
   { title: "Assignments",     url: "/assignments", icon: CalendarCheck },
 ];

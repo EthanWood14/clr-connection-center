@@ -952,6 +952,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Current user's full record (including goals etc.)
+  app.get("/api/me", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const user = storage.getUserById(userId) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  });
+
   // Mark intro video as seen for current user
   app.patch("/api/users/me/seen-intro", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
@@ -2839,6 +2848,47 @@ export function registerRoutes(httpServer: Server, app: Express) {
         const reportDateLong = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
         const reportDateShort = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
+        // ── Week-to-date summary (Sun–Sat containing the report date) ──
+        const rd = new Date(reportDate + "T00:00:00");
+        const dow = rd.getDay(); // 0=Sun..6=Sat
+        const wkStart = new Date(rd); wkStart.setDate(rd.getDate() - dow);
+        const wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate() + 6);
+        const wkStartStr = wkStart.toISOString().split("T")[0];
+        const wkEndStr = wkEnd.toISOString().split("T")[0];
+        const wtdOutcomes = storage.getLeadOutcomes({ startDate: wkStartStr, endDate: wkEndStr, assistantId: userId }) as any[];
+        const wtdLogs = (storage.getCallLogsByRange(wkStartStr, wkEndStr) as any[])
+          .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
+        const wtdCalls = wtdLogs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
+        const wtdTransfers = wtdOutcomes.filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer").length;
+        const wtdAppointments = wtdOutcomes.filter((o: any) => (o.outcomeType ?? o.outcome_type) === "appointment").length;
+
+        const goalCalls = Number((clrUser as any)?.goalCallsWeekly ?? (clrUser as any)?.goal_calls_weekly ?? 0);
+        const goalTransfers = Number((clrUser as any)?.goalTransfersWeekly ?? (clrUser as any)?.goal_transfers_weekly ?? 0);
+        const goalAppointments = Number((clrUser as any)?.goalAppointmentsWeekly ?? (clrUser as any)?.goal_appointments_weekly ?? 0);
+        const hasGoals = goalCalls > 0 || goalTransfers > 0 || goalAppointments > 0;
+
+        const wkStartLabel = wkStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const wkEndLabel = wkEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+        const progressBar = (current: number, goal: number, color: string) => {
+          if (goal <= 0) return "";
+          const pct = Math.min(100, Math.round((current / goal) * 100));
+          const met = current >= goal;
+          return `<div style="height:8px;background:#e2e8f0;border-radius:999px;margin-top:4px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${met ? '#16a34a' : color};border-radius:999px"></div>
+          </div>`;
+        };
+
+        const wtdRow = (label: string, current: number, goal: number, color: string) => {
+          const goalLabel = goal > 0
+            ? `<span style="font-size:12px;color:${current >= goal ? '#16a34a' : '#64748b'};font-weight:${current >= goal ? 700 : 500}">${current} / ${goal}${current >= goal ? ' ✓' : ''}</span>`
+            : `<span style="font-size:12px;color:#475569;font-weight:500">${current}</span>`;
+          return `<tr>
+            <td style="padding:8px 0;font-size:13px;color:#334155;font-weight:600;width:40%">${label}</td>
+            <td style="padding:8px 0;text-align:right">${goalLabel}${progressBar(current, goal, color)}</td>
+          </tr>`;
+        };
+
         const statBlock = (label: string, val: number | string, color: string, sub?: string) => `
           <td style="text-align:center;padding:16px 12px;background:#ffffff;border-radius:10px;border:1px solid #e2e8f0">
             <div style="font-size:28px;font-weight:800;color:${color};line-height:1">${val}</div>
@@ -2930,6 +2980,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
             <p style="margin:0;font-size:13px;color:#334155;line-height:1.7;white-space:pre-wrap">${safeNotes.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>
           </div>` : ""}
 
+          <!-- Week-to-date summary -->
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#1A2B4A">📊 ${clrName}'s Stats This Week</p>
+            <p style="margin:0 0 12px;font-size:11px;color:#64748b">${wkStartLabel} – ${wkEndLabel} (Sun–Sat)${hasGoals ? " · progress toward weekly goals" : ""}</p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              ${wtdRow("Calls", wtdCalls, goalCalls, "#3B82F6")}
+              ${wtdRow("Transfers", wtdTransfers, goalTransfers, "#16a34a")}
+              ${wtdRow("Appointments", wtdAppointments, goalAppointments, "#A855F7")}
+            </table>
+          </div>
+
           <p style="margin:24px 0 0;font-size:11px;color:#94a3b8;text-align:center">© 2026 West Capital Lending &middot; CLR Connection Center</p>
         `;
 
@@ -2959,6 +3020,200 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.delete('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
     storageExtra.deleteEodActivity(parseInt(req.params.id));
     res.json({ ok: true });
+  });
+
+  // ── Personal CLR report (per-user analytics for /my-report page) ───────────
+  app.get('/api/my-report', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const periodName = (req.query.period as string) || "week";
+    const { startDate, endDate } = resolveNamedPeriod(periodName);
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    const user = storage.getUserById(userId) as any;
+    const goals = {
+      calls: Number(user?.goalCallsWeekly ?? user?.goal_calls_weekly ?? 0),
+      transfers: Number(user?.goalTransfersWeekly ?? user?.goal_transfers_weekly ?? 0),
+      appointments: Number(user?.goalAppointmentsWeekly ?? user?.goal_appointments_weekly ?? 0),
+    };
+
+    const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
+    const callLogs = (storage.getCallLogsByRange(startDate, endDate) as any[])
+      .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
+
+    const ot = (o: any) => o.outcomeType ?? o.outcome_type;
+    const transferType = (o: any) => o.transferType ?? o.transfer_type;
+    const leadTf = (o: any) => o.leadTimeframe ?? o.lead_timeframe;
+    const sumCalls = (logs: any[]) => logs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
+
+    const totalCalls = sumCalls(callLogs);
+    const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
+    const totalAppointments = outcomes.filter(o => ot(o) === "appointment").length;
+    const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
+    const totalDeferrals = outcomes.filter(o => ot(o) === "deferral").length;
+    const transferRate = totalCalls > 0 ? +((totalTransfers / totalCalls) * 100).toFixed(1) : 0;
+
+    // Per-day breakdown for trend chart
+    const start = new Date(startDate + "T00:00:00");
+    const end = new Date(endDate + "T00:00:00");
+    const dayMs = 86400000;
+    const days: string[] = [];
+    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + dayMs)) {
+      days.push(d.toISOString().split("T")[0]);
+    }
+    const daily = days.map(day => {
+      const dayOutcomes = outcomes.filter((o: any) => o.date === day);
+      const dayLogs = callLogs.filter((l: any) => (l.logDate ?? l.log_date) === day);
+      return {
+        date: day,
+        calls: sumCalls(dayLogs),
+        transfers: dayOutcomes.filter(o => ot(o) === "transfer").length,
+        appointments: dayOutcomes.filter(o => ot(o) === "appointment").length,
+        fellThrough: dayOutcomes.filter(o => ot(o) === "fell_through").length,
+      };
+    });
+
+    const daysInPeriod = days.length;
+    const daysWithActivity = daily.filter(d => d.calls > 0 || d.transfers > 0 || d.appointments > 0).length;
+    const avgCallsPerDay = daysWithActivity > 0
+      ? +(totalCalls / daysWithActivity).toFixed(1)
+      : 0;
+
+    // Transfer breakdown: direct vs. appointment, + timeframe buckets
+    const transferOutcomes = outcomes.filter(o => ot(o) === "transfer");
+    const transferByType = {
+      direct: transferOutcomes.filter(o => transferType(o) === "direct").length,
+      appointment: transferOutcomes.filter(o => transferType(o) === "appointment").length,
+      unspecified: transferOutcomes.filter(o => !transferType(o)).length,
+    };
+    const transferByTimeframe: Record<string, number> = {};
+    for (const t of transferOutcomes) {
+      const tf = String(leadTf(t) ?? "unspecified");
+      transferByTimeframe[tf] = (transferByTimeframe[tf] || 0) + 1;
+    }
+
+    // Appointments summary
+    const appointmentOutcomes = outcomes.filter(o => ot(o) === "appointment");
+    const upcomingAppointments = (storage.getLeadOutcomes({ assistantId: userId }) as any[])
+      .filter((o: any) => ot(o) === "appointment")
+      .filter((o: any) => {
+        const fd = o.followUpDate ?? o.follow_up_date;
+        return fd && fd > todayStr;
+      }).length;
+    const overdueAppointments = (storage.getLeadOutcomes({ assistantId: userId }) as any[])
+      .filter((o: any) => ot(o) === "appointment")
+      .filter((o: any) => {
+        const fd = o.followUpDate ?? o.follow_up_date;
+        return fd && fd < todayStr;
+      }).length;
+    const completedThisPeriod = appointmentOutcomes.length;
+
+    // LO Coverage — count calls per LO from outcomes + assignments
+    const allLos = storage.getLoanOfficers() as any[];
+    const loCallTally: Record<number, { loId: number; name: string; outcomes: number }> = {};
+    for (const o of outcomes) {
+      const loId = (o.loId ?? o.lo_id) as number;
+      if (!Number.isFinite(loId)) continue;
+      if (!loCallTally[loId]) {
+        const lo = allLos.find(l => l.id === loId);
+        loCallTally[loId] = { loId, name: lo ? (lo.fullName ?? lo.full_name ?? `LO #${loId}`) : `LO #${loId}`, outcomes: 0 };
+      }
+      loCallTally[loId].outcomes += 1;
+    }
+    const loCoverage = Object.values(loCallTally).sort((a, b) => b.outcomes - a.outcomes);
+
+    // Personal best: day with highest transfers
+    let bestDay: { date: string; transfers: number } | null = null;
+    for (const d of daily) {
+      if (!bestDay || d.transfers > bestDay.transfers) bestDay = { date: d.date, transfers: d.transfers };
+    }
+    if (bestDay && bestDay.transfers === 0) bestDay = null;
+
+    // Current streak: consecutive days up to today with >=1 transfer (from daily series + broader search)
+    let streak = 0;
+    const transfersByDate: Record<string, number> = {};
+    const allMyOutcomes = storage.getLeadOutcomes({ assistantId: userId }) as any[];
+    for (const o of allMyOutcomes) {
+      if (ot(o) === "transfer") {
+        const d = (o.date || "").slice(0, 10);
+        if (d) transfersByDate[d] = (transfersByDate[d] || 0) + 1;
+      }
+    }
+    const cursor = new Date(todayStr + "T00:00:00");
+    while (true) {
+      const key = cursor.toISOString().split("T")[0];
+      if ((transfersByDate[key] || 0) >= 1) {
+        streak += 1;
+        cursor.setDate(cursor.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+
+    // Week-to-date totals (always Sun–Sat containing today) for EOD summary / header
+    const wtd = resolveNamedPeriod("week");
+    const wtdOutcomes = storage.getLeadOutcomes({ startDate: wtd.startDate, endDate: wtd.endDate, assistantId: userId }) as any[];
+    const wtdLogs = (storage.getCallLogsByRange(wtd.startDate, wtd.endDate) as any[])
+      .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
+    const weekToDate = {
+      startDate: wtd.startDate,
+      endDate: wtd.endDate,
+      calls: sumCalls(wtdLogs),
+      transfers: wtdOutcomes.filter((o: any) => ot(o) === "transfer").length,
+      appointments: wtdOutcomes.filter((o: any) => ot(o) === "appointment").length,
+    };
+
+    res.json({
+      user: { id: userId, name: user?.name ?? "", email: user?.email ?? "" },
+      period: periodName,
+      startDate,
+      endDate,
+      daysInPeriod,
+      goals,
+      totals: {
+        calls: totalCalls,
+        transfers: totalTransfers,
+        appointments: totalAppointments,
+        fellThrough: totalFellThrough,
+        deferrals: totalDeferrals,
+        transferRate,
+        avgCallsPerDay,
+      },
+      daily,
+      transferByType,
+      transferByTimeframe,
+      appointments: {
+        upcoming: upcomingAppointments,
+        overdue: overdueAppointments,
+        completedThisPeriod,
+      },
+      loCoverage,
+      bestDay,
+      streak,
+      weekToDate,
+    });
+  });
+
+  // Update weekly goals for the current user
+  app.put('/api/my-goals', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const toInt = (v: any): number => {
+      const n = parseInt(String(v ?? 0), 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    };
+    const goalCallsWeekly = toInt(req.body?.goalCallsWeekly);
+    const goalTransfersWeekly = toInt(req.body?.goalTransfersWeekly);
+    const goalAppointmentsWeekly = toInt(req.body?.goalAppointmentsWeekly);
+    try {
+      const sqlite = storageExtra.getSqlite();
+      sqlite.prepare(`UPDATE users SET goal_calls_weekly=?, goal_transfers_weekly=?, goal_appointments_weekly=? WHERE id=?`)
+        .run(goalCallsWeekly, goalTransfersWeekly, goalAppointmentsWeekly, userId);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message ?? "Failed to update goals" });
+    }
+    res.json({ ok: true, goals: { calls: goalCallsWeekly, transfers: goalTransfersWeekly, appointments: goalAppointmentsWeekly } });
   });
 
   // ── Call Scripts ────────────────────────────────────────────────────────────
