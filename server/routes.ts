@@ -2329,11 +2329,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();
-    const enriched = outcomes.map(o => ({
-      ...o,
-      lo: los.find(l => l.id === o.loId),
-      assistant: users.find(u => u.id === o.assistantId),
-    }));
+    // getLeadOutcomes uses raw SQL (snake_case), while getLoanOfficers/getUsers
+    // may return either camelCase (Drizzle) or snake_case (raw SQL, multi-org).
+    // Normalize reads across both shapes.
+    const loById = new Map<number, any>();
+    for (const l of los as any[]) {
+      const id = l.id;
+      const fullName = l.fullName ?? l.full_name ?? null;
+      loById.set(id, { ...l, id, fullName });
+    }
+    const userById = new Map<number, any>();
+    for (const u of users as any[]) {
+      userById.set(u.id, u);
+    }
+    const enriched = (outcomes as any[]).map(o => {
+      const loIdVal = o.loId ?? o.lo_id;
+      const assistantIdVal = o.assistantId ?? o.assistant_id;
+      const lo = loIdVal != null ? loById.get(loIdVal) : undefined;
+      const assistant = assistantIdVal != null ? userById.get(assistantIdVal) : undefined;
+      return {
+        ...o,
+        loId: loIdVal,
+        assistantId: assistantIdVal,
+        outcomeType: o.outcomeType ?? o.outcome_type,
+        transferType: o.transferType ?? o.transfer_type ?? null,
+        borrowerName: o.borrowerName ?? o.borrower_name ?? null,
+        followUpDate: o.followUpDate ?? o.follow_up_date ?? null,
+        journeyId: o.journeyId ?? o.journey_id ?? null,
+        lo,
+        assistant,
+      };
+    });
     res.json(enriched);
   });
 
