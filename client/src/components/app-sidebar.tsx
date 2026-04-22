@@ -229,6 +229,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* SUPER ADMIN (super-admin only) */}
+        {user?.superAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+              Super Admin
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {renderItems([
+                  { title: "Organizations", url: "/super-admin", icon: ShieldCheck },
+                ])}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
         {/* INTEGRATIONS (admin only) */}
         {user?.role === "admin" && (
           <SidebarGroup>

@@ -274,6 +274,54 @@ try {
   }
 } catch {}
 
+// ── Multi-tenancy: organizations, invite_tokens, super_admin, org_id (early) ──
+// MUST run before any Drizzle SELECT on users/etc, because schema.ts now
+// references super_admin and org_id columns.
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      logo_url TEXT,
+      company_name TEXT NOT NULL,
+      resend_api_key TEXT,
+      from_email TEXT,
+      manager_emails TEXT,
+      plan TEXT NOT NULL DEFAULT 'trial',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+} catch {}
+
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS invite_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT UNIQUE NOT NULL,
+      org_id INTEGER NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'clr',
+      used INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+} catch {}
+
+try {
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO organizations (id, name, slug, company_name, resend_api_key, from_email, manager_emails, plan)
+    VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', 're_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q', 'reports@wlc.it.com', ?, 'active')
+  `).run(JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"]));
+} catch {}
+
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+for (const t of ["users","loan_officers","lead_outcomes","daily_call_logs","forum_posts","forum_answers","forum_votes","forum_subscriptions","lo_assignments","unified_contacts","webhook_settings","webhook_events","bonzo_contacts","mojo_sessions","mojo_contacts"]) {
+  try { sqlite.exec(`ALTER TABLE ${t} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+}
+
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
 if (existingUsers.length === 0) {
@@ -345,6 +393,11 @@ try {
 } catch (e) {
   console.error("admin upsert migration failed:", e);
 }
+
+// Mark Ethan as super_admin (must run after admin upsert migration that guarantees the row)
+try {
+  sqlite.prepare(`UPDATE users SET super_admin = 1 WHERE LOWER(email) = ?`).run("ethan.anthony.wood@gmail.com");
+} catch {}
 
 const existingSettings = db.select().from(algorithmSettings).all();
 if (existingSettings.length === 0) {
@@ -701,6 +754,9 @@ export class Storage implements IStorage {
 }
 
 export const storage = new Storage();
+
+// Raw sqlite access for features that need direct SQL (super-admin, invites, etc.)
+export function getRawSqlite() { return sqlite; }
 
 // ── Migrations for new tables ──────────────────────────────────────────────────
 function runNewMigrations() {

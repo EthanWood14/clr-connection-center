@@ -1138,7 +1138,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!valid) return res.status(401).json({ error: `Invalid email or password${rateCheck.remaining <= 2 ? ` (${rateCheck.remaining} attempt${rateCheck.remaining === 1 ? "" : "s"} remaining)` : ""}` });
 
     const isProduction = process.env.NODE_ENV === "production";
-    const payload = JSON.stringify({ userId: user.id, role: user.role });
+    const u = user as any;
+    const orgId = Number(u.orgId ?? u.org_id ?? 1);
+    const superAdmin = !!(u.superAdmin ?? u.super_admin);
+    const payload = JSON.stringify({ userId: user.id, role: user.role, orgId, superAdmin });
     res.cookie(COOKIE_NAME, payload, {
       signed: true,
       httpOnly: true,
@@ -1148,8 +1151,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     storageExtra.resetLoginAttempts(ip);
-    const u = user as any;
-    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password), hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample) } });
+    return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password), hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), superAdmin, orgId } });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -1166,7 +1168,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const user = storage.getUserById(session.userId);
       if (!user) return res.status(401).json({ error: "User not found" });
       const u = user as any;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null } });
+      // Allow impersonation: session.orgId overrides user.orgId if super admin
+      const orgId = session.superAdmin && session.orgId ? Number(session.orgId) : Number(u.orgId ?? u.org_id ?? 1);
+      const superAdmin = !!(u.superAdmin ?? u.super_admin);
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, superAdmin, orgId } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -1367,9 +1372,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json({ ok: true });
   });
 
-  // ── Auth guard for all /api/* routes except /api/auth/* ────────────────────
+  // ── Auth guard for all /api/* routes except /api/auth/* and /api/invite/* ──
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
+    if (req.path.startsWith("/invite")) return next();
     requireAuth(req, res, next);
   });
 
@@ -4828,6 +4834,253 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const isAdmin = user.role === "admin";
     if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
     storageExtra.acceptForumAnswer(postId, answerId);
+    res.json({ ok: true });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Multi-tenancy: Organizations, Super-Admin, Invites
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const sqliteRaw = storageExtra.getRawSqlite();
+
+  function getCurrentOrgId(session: any): number {
+    if (session?.superAdmin && session?.orgId) return Number(session.orgId);
+    const u = storage.getUserById(session.userId) as any;
+    return Number(u?.orgId ?? u?.org_id ?? 1);
+  }
+
+  function requireSuperAdmin(req: any, res: any, next: any) {
+    const session = req.session_user;
+    if (!session?.superAdmin) return res.status(403).json({ error: "Super admin only" });
+    next();
+  }
+
+  // Current org settings (per-team branding, etc.)
+  app.get("/api/org/current", requireAuth, (req: any, res) => {
+    const orgId = getCurrentOrgId(req.session_user);
+    const org = sqliteRaw.prepare(`SELECT id, name, slug, logo_url, company_name, plan FROM organizations WHERE id = ?`).get(orgId) as any;
+    if (!org) return res.status(404).json({ error: "Organization not found" });
+    res.json({
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      logoUrl: org.logo_url,
+      companyName: org.company_name,
+      plan: org.plan,
+    });
+  });
+
+  // ── Super-admin routes ────────────────────────────────────────────────────
+  app.get("/api/super-admin/orgs", requireAuth, requireSuperAdmin, (_req: any, res) => {
+    const rows = sqliteRaw.prepare(`
+      SELECT o.id, o.name, o.slug, o.logo_url, o.company_name, o.plan, o.created_at,
+        (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id) AS user_count,
+        (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id AND u.is_clr = 1) AS clr_count
+      FROM organizations o
+      ORDER BY o.id ASC
+    `).all();
+    res.json(rows);
+  });
+
+  app.post("/api/super-admin/orgs", requireAuth, requireSuperAdmin, async (req: any, res) => {
+    const { name, companyName, adminEmail, adminName } = req.body ?? {};
+    if (!name || !companyName || !adminEmail || !adminName) {
+      return res.status(400).json({ error: "name, companyName, adminEmail, adminName are required" });
+    }
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `org-${Date.now()}`;
+    try {
+      const info = sqliteRaw.prepare(`
+        INSERT INTO organizations (name, slug, company_name, plan) VALUES (?, ?, ?, 'trial')
+      `).run(name, slug, companyName);
+      const orgId = Number(info.lastInsertRowid);
+
+      // Create first admin user for that org with temp password
+      const tempPassword = crypto.randomBytes(6).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, 10) + "!";
+      const hash = await bcrypt.hash(tempPassword, 10);
+      sqliteRaw.prepare(`
+        INSERT INTO users (name, email, role, is_active, is_clr, password_hash, must_change_password, org_id, created_at)
+        VALUES (?, ?, 'admin', 1, 0, ?, 1, ?, ?)
+      `).run(adminName, String(adminEmail).toLowerCase(), hash, orgId, new Date().toISOString());
+
+      res.json({ id: orgId, name, slug, adminEmail, tempPassword });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to create org" });
+    }
+  });
+
+  app.patch("/api/super-admin/orgs/:id", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const { name, plan, logoUrl, companyName, resendApiKey, fromEmail, managerEmails } = req.body ?? {};
+    const fields: string[] = [];
+    const vals: any[] = [];
+    if (name !== undefined) { fields.push("name = ?"); vals.push(name); }
+    if (plan !== undefined) { fields.push("plan = ?"); vals.push(plan); }
+    if (logoUrl !== undefined) { fields.push("logo_url = ?"); vals.push(logoUrl); }
+    if (companyName !== undefined) { fields.push("company_name = ?"); vals.push(companyName); }
+    if (resendApiKey !== undefined) { fields.push("resend_api_key = ?"); vals.push(resendApiKey); }
+    if (fromEmail !== undefined) { fields.push("from_email = ?"); vals.push(fromEmail); }
+    if (managerEmails !== undefined) {
+      const arr = Array.isArray(managerEmails) ? managerEmails : [];
+      fields.push("manager_emails = ?"); vals.push(JSON.stringify(arr));
+    }
+    if (!fields.length) return res.json({ ok: true });
+    vals.push(id);
+    sqliteRaw.prepare(`UPDATE organizations SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/super-admin/orgs/:id/suspend", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    sqliteRaw.prepare(`UPDATE organizations SET plan = 'suspended' WHERE id = ?`).run(id);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/super-admin/orgs/:id/impersonate", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const org = sqliteRaw.prepare(`SELECT id, name FROM organizations WHERE id = ?`).get(id) as any;
+    if (!org) return res.status(404).json({ error: "Org not found" });
+    const session = req.session_user;
+    const payload = JSON.stringify({ userId: session.userId, role: session.role, orgId: id, superAdmin: true });
+    const isProduction = process.env.NODE_ENV === "production";
+    res.cookie(COOKIE_NAME, payload, {
+      signed: true, httpOnly: true,
+      sameSite: isProduction ? "lax" : "none",
+      secure: isProduction, path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.json({ ok: true, orgId: id, orgName: org.name });
+  });
+
+  app.post("/api/super-admin/stop-impersonating", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const session = req.session_user;
+    const u = storage.getUserById(session.userId) as any;
+    const originalOrgId = Number(u?.orgId ?? u?.org_id ?? 1);
+    const payload = JSON.stringify({ userId: session.userId, role: session.role, orgId: originalOrgId, superAdmin: true });
+    const isProduction = process.env.NODE_ENV === "production";
+    res.cookie(COOKIE_NAME, payload, {
+      signed: true, httpOnly: true,
+      sameSite: isProduction ? "lax" : "none",
+      secure: isProduction, path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.json({ ok: true, orgId: originalOrgId });
+  });
+
+  // ── Invite flow ────────────────────────────────────────────────────────────
+  app.post("/api/orgs/:id/invite", requireAuth, (req: any, res) => {
+    const orgId = parseInt(req.params.id);
+    if (isNaN(orgId)) return res.status(400).json({ error: "Invalid org id" });
+    const session = req.session_user;
+    // Only admins of the same org or super-admins can invite
+    if (!session.superAdmin && (session.role !== "admin" || getCurrentOrgId(session) !== orgId)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const { email, role } = req.body ?? {};
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    const allowedRoles = ["clr", "assistant", "admin"];
+    const normalizedRole = allowedRoles.includes(role) ? role : "clr";
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    sqliteRaw.prepare(`
+      INSERT INTO invite_tokens (token, org_id, email, role, expires_at) VALUES (?, ?, ?, ?, ?)
+    `).run(token, orgId, String(email).toLowerCase(), normalizedRole, expiresAt);
+
+    // Build invite link (client uses hash routing)
+    const proto = (req.headers["x-forwarded-proto"] as string) ?? "https";
+    const host = req.headers.host;
+    const inviteLink = `${proto}://${host}/#/invite/${token}`;
+
+    // Attempt to send invite email via org's Resend key
+    try {
+      const org = sqliteRaw.prepare(`SELECT name, company_name, resend_api_key, from_email FROM organizations WHERE id = ?`).get(orgId) as any;
+      const apiKey = org?.resend_api_key || process.env.RESEND_API_KEY;
+      const from = org?.from_email || "reports@wlc.it.com";
+      if (apiKey) {
+        const resend = new Resend(apiKey);
+        resend.emails.send({
+          from: `${org?.company_name ?? "CLR Connection Center"} <${from}>`,
+          to: email,
+          subject: `You've been invited to join ${org?.name ?? "CLR Connection Center"}`,
+          html: `<p>You've been invited to join <strong>${org?.name ?? "CLR Connection Center"}</strong> on CLR Connection Center.</p><p><a href="${inviteLink}">Accept your invite</a></p><p>This link expires in 7 days.</p>`,
+        }).catch((e: any) => console.error("invite email failed:", e?.message ?? e));
+      }
+    } catch (e: any) {
+      console.error("invite email error:", e?.message ?? e);
+    }
+    res.json({ ok: true, token, inviteLink, expiresAt });
+  });
+
+  app.get("/api/orgs/:id/invites", requireAuth, (req: any, res) => {
+    const orgId = parseInt(req.params.id);
+    if (isNaN(orgId)) return res.status(400).json({ error: "Invalid org id" });
+    const session = req.session_user;
+    if (!session.superAdmin && (session.role !== "admin" || getCurrentOrgId(session) !== orgId)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const rows = sqliteRaw.prepare(`
+      SELECT id, token, email, role, used, expires_at, created_at FROM invite_tokens
+      WHERE org_id = ? ORDER BY created_at DESC LIMIT 100
+    `).all(orgId);
+    res.json(rows);
+  });
+
+  app.delete("/api/orgs/:id/invites/:inviteId", requireAuth, (req: any, res) => {
+    const orgId = parseInt(req.params.id);
+    const inviteId = parseInt(req.params.inviteId);
+    if (isNaN(orgId) || isNaN(inviteId)) return res.status(400).json({ error: "Invalid id" });
+    const session = req.session_user;
+    if (!session.superAdmin && (session.role !== "admin" || getCurrentOrgId(session) !== orgId)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    sqliteRaw.prepare(`DELETE FROM invite_tokens WHERE id = ? AND org_id = ?`).run(inviteId, orgId);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/invite/:token", (req, res) => {
+    const token = req.params.token;
+    const row = sqliteRaw.prepare(`
+      SELECT it.*, o.name AS org_name, o.company_name AS org_company_name
+      FROM invite_tokens it JOIN organizations o ON o.id = it.org_id
+      WHERE it.token = ?
+    `).get(token) as any;
+    if (!row) return res.status(404).json({ error: "Invite not found" });
+    if (row.used) return res.status(400).json({ error: "Invite already used" });
+    if (new Date(row.expires_at).getTime() < Date.now()) return res.status(400).json({ error: "Invite expired" });
+    res.json({
+      email: row.email,
+      role: row.role,
+      orgId: row.org_id,
+      orgName: row.org_name,
+      orgCompanyName: row.org_company_name,
+    });
+  });
+
+  app.post("/api/invite/:token/accept", async (req, res) => {
+    const token = req.params.token;
+    const { name, password } = req.body ?? {};
+    if (!name || !password || String(password).length < 8) {
+      return res.status(400).json({ error: "Name and password (min 8 chars) are required" });
+    }
+    const row = sqliteRaw.prepare(`SELECT * FROM invite_tokens WHERE token = ?`).get(token) as any;
+    if (!row) return res.status(404).json({ error: "Invite not found" });
+    if (row.used) return res.status(400).json({ error: "Invite already used" });
+    if (new Date(row.expires_at).getTime() < Date.now()) return res.status(400).json({ error: "Invite expired" });
+
+    const existing = storage.getUserByEmail(row.email);
+    if (existing) return res.status(400).json({ error: "An account with that email already exists" });
+
+    const hash = await bcrypt.hash(String(password).trim(), 10);
+    const role = row.role === "admin" ? "admin" : "assistant";
+    const isClr = row.role !== "admin" ? 1 : 1;
+    sqliteRaw.prepare(`
+      INSERT INTO users (name, email, role, is_active, is_clr, password_hash, must_change_password, org_id, created_at)
+      VALUES (?, ?, ?, 1, ?, ?, 0, ?, ?)
+    `).run(name, row.email, role, isClr, hash, row.org_id, new Date().toISOString());
+
+    sqliteRaw.prepare(`UPDATE invite_tokens SET used = 1 WHERE id = ?`).run(row.id);
     res.json({ ok: true });
   });
 

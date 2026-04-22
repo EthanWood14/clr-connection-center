@@ -14,6 +14,8 @@ export interface AuthUser {
   scriptCompanyName?: string | null;
   scriptNameOverride?: string | null;
   scriptLoOverride?: string | null;
+  superAdmin?: boolean;
+  orgId?: number;
 }
 
 interface AuthContextValue {

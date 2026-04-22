@@ -2,6 +2,33 @@ import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// ── Organizations (multi-tenancy) ──────────────────────────────────────────────
+export const organizations = sqliteTable("organizations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  logoUrl: text("logo_url"),
+  companyName: text("company_name").notNull(),
+  resendApiKey: text("resend_api_key"),
+  fromEmail: text("from_email"),
+  managerEmails: text("manager_emails"),
+  plan: text("plan").notNull().default("trial"),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+export type Organization = typeof organizations.$inferSelect;
+
+export const inviteTokens = sqliteTable("invite_tokens", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  token: text("token").notNull().unique(),
+  orgId: integer("org_id").notNull(),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("clr"),
+  used: integer("used").notNull().default(0),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+export type InviteToken = typeof inviteTokens.$inferSelect;
+
 // ── Users ──────────────────────────────────────────────────────────────────────
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -21,6 +48,8 @@ export const users = sqliteTable("users", {
   scriptCompanyName: text("script_company_name"),
   scriptNameOverride: text("script_name_override"),
   scriptLoOverride: text("script_lo_override"),
+  superAdmin: integer("super_admin", { mode: "boolean" }).notNull().default(false),
+  orgId: integer("org_id").notNull().default(1),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 

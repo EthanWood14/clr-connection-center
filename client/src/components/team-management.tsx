@@ -40,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, UserPlus, Pencil, Trash2, KeyRound, ShieldAlert } from "lucide-react";
+import { Users, UserPlus, Pencil, Trash2, KeyRound, ShieldAlert, Mail, Copy } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -271,6 +271,7 @@ export function TeamManagement() {
   const [editUser, setEditUser] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const { toast } = useToast();
   const { user: authUser } = useAuth();
 
@@ -342,10 +343,18 @@ export function TeamManagement() {
               <Users className="w-4 h-4" />
               Team Management
             </CardTitle>
-            <Button size="sm" onClick={openAddDialog} data-testid="button-add-team-member">
-              <UserPlus className="w-4 h-4 mr-2" />
-              Add Team Member
-            </Button>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)} data-testid="button-invite-user">
+                  <Mail className="w-4 h-4 mr-2" />
+                  Invite User
+                </Button>
+              )}
+              <Button size="sm" onClick={openAddDialog} data-testid="button-add-team-member">
+                <UserPlus className="w-4 h-4 mr-2" />
+                Add Team Member
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -501,6 +510,75 @@ export function TeamManagement() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} orgId={(authUser as any)?.orgId ?? 1} />
     </>
+  );
+}
+
+function InviteUserDialog({ open, onOpenChange, orgId }: { open: boolean; onOpenChange: (v: boolean) => void; orgId: number }) {
+  const { toast } = useToast();
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("clr");
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  const send = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/orgs/${orgId}/invite`, { email, role }),
+    onSuccess: (data: any) => {
+      setInviteLink(data.inviteLink);
+      toast({ title: "Invite created", description: "Invite link ready. Email sent if Resend is configured." });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function close() {
+    setEmail(""); setRole("clr"); setInviteLink(null);
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && close()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Invite User</DialogTitle></DialogHeader>
+        {!inviteLink ? (
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium">Email</label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} data-testid="input-invite-email" />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Role</label>
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger data-testid="select-invite-role"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="clr">CLR</SelectItem>
+                  <SelectItem value="assistant">Assistant</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <p>Invite created. Share this link with the user:</p>
+            <div className="font-mono text-xs break-all rounded-md border bg-muted/40 p-3">{inviteLink}</div>
+            <Button variant="outline" size="sm" onClick={() => {
+              navigator.clipboard.writeText(inviteLink);
+              toast({ title: "Copied" });
+            }}>
+              <Copy className="w-4 h-4 mr-2" /> Copy Link
+            </Button>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={close}>{inviteLink ? "Close" : "Cancel"}</Button>
+          {!inviteLink && (
+            <Button onClick={() => send.mutate()} disabled={!email || send.isPending} data-testid="button-send-invite">
+              {send.isPending ? "Sending…" : "Send Invite"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

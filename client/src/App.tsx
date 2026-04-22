@@ -55,6 +55,9 @@ import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
+import SuperAdmin from "@/pages/super-admin";
+import InviteAccept from "@/pages/invite";
+import { ImpersonationBanner } from "@/components/impersonation-banner";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() =>
@@ -146,6 +149,7 @@ function AppRouter() {
       <Route path="/contacts" component={Contacts} />
       <Route path="/mojo-import" component={MojoImport} />
       <Route path="/forum" component={Forum} />
+      <Route path="/super-admin" component={SuperAdmin} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />
@@ -199,7 +203,9 @@ function AuthenticatedApp() {
       {showIntro && <IntroModal />}
       <NmlsOverduePopup />
       <DailyReportGate>
-        <div className="flex h-screen w-full overflow-hidden">
+        <div className="flex h-screen w-full overflow-hidden flex-col">
+          <ImpersonationBanner />
+          <div className="flex flex-1 min-h-0 overflow-hidden">
           <AppSidebar />
           <div className="flex flex-col flex-1 min-w-0">
             <header className="sticky top-0 z-40 flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
@@ -216,6 +222,7 @@ function AuthenticatedApp() {
               <AppFooter />
             </main>
             <MobileBottomNav />
+          </div>
           </div>
         </div>
       </DailyReportGate>
@@ -234,6 +241,7 @@ export default function App() {
               <Route path="/change-password" component={ChangePassword} />
               <Route path="/forgot-password" component={ForgotPassword} />
               <Route path="/reset-password" component={ResetPassword} />
+              <Route path="/invite/:token" component={InviteAccept} />
               <Route>
                 <AuthenticatedApp />
               </Route>
