@@ -1788,6 +1788,40 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
+      // Update unified_contact + fire-and-forget Bonzo push
+      try {
+        storageExtra.updateUnifiedContactFromOutcome({
+          borrowerName: outcome.borrowerName,
+          outcomeType: outcome.outcomeType,
+          date: outcome.date,
+          loId: outcome.loId,
+          assistantId: outcome.assistantId,
+        });
+      } catch (e) { console.error("unified_contact update failed:", e); }
+      try {
+        const pusher = (globalThis as any).__pushOutcomeToBonzo;
+        if (typeof pusher === "function") {
+          pusher({
+            id: outcome.id,
+            borrowerName: outcome.borrowerName,
+            outcomeType: outcome.outcomeType,
+            appointmentDatetime: (outcome as any).appointmentDatetime,
+            followUpDate: outcome.followUpDate,
+            notes: outcome.notes,
+          }).catch((err: any) => console.error("bonzo push failed:", err?.message));
+        }
+      } catch (e) { /* never block outcome creation */ }
+      try {
+        const zapier = (globalThis as any).__triggerZapier;
+        if (typeof zapier === "function") {
+          zapier("outcome.logged", {
+            outcomeId: outcome.id,
+            outcomeType: outcome.outcomeType,
+            borrowerName: outcome.borrowerName,
+            loId: outcome.loId,
+          }).catch(() => {});
+        }
+      } catch {}
       res.json(outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2542,23 +2576,29 @@ export function registerRoutes(httpServer: Server, app: Express) {
       bonzoSecret: s.bonzo_secret ?? "",
       bonzoApiToken: s.bonzo_api_token ?? "",
       mojoApiKey: s.mojo_api_key ?? "",
+      zapierWebhookUrl: s.zapier_webhook_url ?? "",
+      zapierSecret: s.zapier_secret ?? "",
     });
   });
 
   app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey } = req.body ?? {};
+    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret } = req.body ?? {};
     const updated = storageExtra.updateWebhookSettings({
       mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
       bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
       bonzoApiToken: typeof bonzoApiToken === "string" ? bonzoApiToken : undefined,
       mojoApiKey: typeof mojoApiKey === "string" ? mojoApiKey : undefined,
+      zapierWebhookUrl: typeof zapierWebhookUrl === "string" ? zapierWebhookUrl : undefined,
+      zapierSecret: typeof zapierSecret === "string" ? zapierSecret : undefined,
     });
     res.json({
       mojoSecret: updated.mojo_secret ?? "",
       bonzoSecret: updated.bonzo_secret ?? "",
       bonzoApiToken: updated.bonzo_api_token ?? "",
       mojoApiKey: updated.mojo_api_key ?? "",
+      zapierWebhookUrl: updated.zapier_webhook_url ?? "",
+      zapierSecret: updated.zapier_secret ?? "",
     });
   });
 
@@ -4009,6 +4049,396 @@ export function registerRoutes(httpServer: Server, app: Express) {
       log: storageExtra.getMojoSyncLog(20),
       last: storageExtra.getLastMojoSync() ?? null,
       running: storageExtra.getRunningMojoSync() ?? null,
+    });
+  });
+
+  // ── Unified contacts routes ──────────────────────────────────────────────
+  app.get("/api/contacts", requireAuth, (req: any, res) => {
+    const q = req.query ?? {};
+    const result = storageExtra.getUnifiedContacts({
+      search: typeof q.search === "string" ? q.search : undefined,
+      clrUserId: q.clrUserId ? Number(q.clrUserId) : undefined,
+      loId: q.loId ? Number(q.loId) : undefined,
+      source: typeof q.source === "string" && q.source !== 'all' ? q.source : undefined,
+      limit: q.limit ? Number(q.limit) : 100,
+      offset: q.offset ? Number(q.offset) : 0,
+    });
+    res.json(result);
+  });
+
+  app.get("/api/contacts/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const contact = storageExtra.getUnifiedContactById(id);
+    if (!contact) return res.status(404).json({ error: "Contact not found" });
+    res.json(contact);
+  });
+
+  // ── CSV import route ─────────────────────────────────────────────────────
+  app.post("/api/mojo/import/csv", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { type, rows } = req.body ?? {};
+    if (type !== 'calls' && type !== 'contacts') {
+      return res.status(400).json({ error: "type must be 'calls' or 'contacts'" });
+    }
+    if (!Array.isArray(rows)) return res.status(400).json({ error: "rows must be an array" });
+    let imported = 0;
+    let matched = 0;
+    let unmatched = 0;
+
+    if (type === 'contacts') {
+      for (const r of rows) {
+        const firstName = r.first_name || r.firstName || r.First || r["First Name"] || null;
+        const lastName = r.last_name || r.lastName || r.Last || r["Last Name"] || null;
+        const phone = r.phone || r.Phone || r["Phone Number"] || null;
+        const email = r.email || r.Email || null;
+        const status = r.status || r.Status || null;
+        const listName = r.group || r.Group || r.list || r.List || null;
+        const mojoId = r.mojo_id || r.id || r.ID || null;
+        if (!firstName && !lastName && !phone && !email) { unmatched++; continue; }
+        const clr = storageExtra.findClrByPhone(phone);
+        storageExtra.upsertMojoContact({
+          mojoId: mojoId ? String(mojoId) : null,
+          firstName, lastName, phone, email, status, listName,
+          assignedClrId: clr?.id ?? null,
+        });
+        storageExtra.upsertUnifiedContact({
+          firstName, lastName, phone, email,
+          mojoContactId: mojoId ? String(mojoId) : null,
+          mojoGroup: listName, mojoStatus: status,
+          clrUserId: clr?.id ?? null,
+          source: 'csv',
+        });
+        imported++;
+        if (clr) matched++; else unmatched++;
+      }
+    } else {
+      // Calls: aggregate per (date, agent)
+      const sessionMap = new Map<string, any>();
+      for (const r of rows) {
+        const date = (r.date || r.Date || r["Call Date"] || "").toString().slice(0, 10);
+        const agent = (r.agent || r.rep || r.Agent || r.Rep || r["Agent Name"] || "").toString().trim();
+        const disposition = (r.disposition || r.Disposition || r.outcome || "").toString().toLowerCase();
+        const phone = r.phone || r.Phone || null;
+        const contactName = r.contact || r.Contact || r["Contact Name"] || null;
+        if (!date) { unmatched++; continue; }
+        const key = `${date}|${agent.toLowerCase()}`;
+        if (!sessionMap.has(key)) {
+          const clr = agent ? storageExtra.findUserByName(agent) : null;
+          sessionMap.set(key, {
+            sessionDate: date,
+            clrUserId: clr?.id ?? null,
+            clrName: agent || null,
+            totalCalls: 0, contactsReached: 0, dncHits: 0, transfers: 0, appointments: 0, voicemails: 0, noAnswers: 0,
+          });
+        }
+        const s = sessionMap.get(key);
+        s.totalCalls++;
+        if (disposition.includes("contact") || disposition.includes("reached") || disposition.includes("talk")) s.contactsReached++;
+        if (disposition.includes("dnc") || disposition.includes("do not call")) s.dncHits++;
+        if (disposition.includes("transfer")) s.transfers++;
+        if (disposition.includes("appointment") || disposition.includes("appt")) s.appointments++;
+        if (disposition.includes("voicemail") || disposition.includes("vm")) s.voicemails++;
+        if (disposition.includes("no answer") || disposition.includes("no-answer") || disposition === "na") s.noAnswers++;
+
+        // Also upsert the contact if we have their info
+        if (phone || contactName) {
+          const parts = (contactName || "").toString().trim().split(/\s+/);
+          const firstName = parts[0] || null;
+          const lastName = parts.slice(1).join(" ") || null;
+          const clr = storageExtra.findClrByPhone(phone);
+          storageExtra.upsertMojoContact({
+            mojoId: null, firstName, lastName, phone, email: null, status: disposition || null,
+            assignedClrId: clr?.id ?? null,
+          });
+          storageExtra.upsertUnifiedContact({
+            firstName, lastName, phone, email: null,
+            mojoStatus: disposition || null,
+            clrUserId: clr?.id ?? null,
+            source: 'csv',
+          });
+        }
+      }
+      for (const s of sessionMap.values()) {
+        s.source = 'csv';
+        storageExtra.upsertMojoSession(s);
+        imported++;
+        if (s.clrUserId) matched++; else unmatched++;
+      }
+    }
+
+    storageExtra.logWebhookEvent({
+      source: 'mojo_csv', eventType: `import_${type}`,
+      payload: { rowCount: rows.length, imported, matched, unmatched },
+      processed: true,
+    });
+    res.json({ imported, matched, unmatched });
+  });
+
+  // ── Bonzo outbound push ──────────────────────────────────────────────────
+  async function bonzoApiCall(token: string, method: string, path: string, body?: any): Promise<any> {
+    const url = `${BONZO_API_BASE}${path}`;
+    const r = await fetch(url, {
+      method,
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      throw new Error(`Bonzo API ${r.status}: ${text.slice(0, 200)}`);
+    }
+    return r.json().catch(() => ({}));
+  }
+
+  async function findBonzoProspectForContact(opts: { phone?: string | null; name?: string | null }): Promise<any | null> {
+    const db = storageExtra.getSqlite();
+    if (opts.phone) {
+      const p = String(opts.phone).replace(/\D+/g, "");
+      if (p) {
+        const row = db.prepare(`SELECT * FROM bonzo_prospects WHERE REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'-',''),' ',''),'(',''),')','') LIKE ? LIMIT 1`).get(`%${p}%`) as any;
+        if (row) return row;
+      }
+    }
+    if (opts.name) {
+      const n = opts.name.toLowerCase().trim();
+      const row = db.prepare(`SELECT * FROM bonzo_prospects WHERE LOWER(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) LIKE ? LIMIT 1`).get(`%${n}%`) as any;
+      if (row) return row;
+    }
+    return null;
+  }
+
+  app.post("/api/bonzo/push/note", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { prospectId, note } = req.body ?? {};
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return res.status(400).json({ error: "Bonzo API token not configured" });
+    if (!prospectId || !note) return res.status(400).json({ error: "prospectId and note required" });
+    try {
+      const out = await bonzoApiCall(token, "POST", `/prospects/${prospectId}/notes`, { note });
+      res.json({ ok: true, result: out });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/bonzo/push/stage", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { prospectId, stageName, pipelineId } = req.body ?? {};
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return res.status(400).json({ error: "Bonzo API token not configured" });
+    if (!prospectId || !stageName) return res.status(400).json({ error: "prospectId and stageName required" });
+    try {
+      const out = await bonzoApiCall(token, "PATCH", `/prospects/${prospectId}`, { stage: stageName, pipeline_id: pipelineId });
+      res.json({ ok: true, result: out });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  async function pushOutcomeToBonzo(outcome: any): Promise<{ attempted: boolean; ok: boolean; reason?: string }> {
+    const settings = storageExtra.getWebhookSettings();
+    const token = settings.bonzo_api_token?.trim();
+    if (!token) return { attempted: false, ok: false, reason: 'no_token' };
+    const prospect = await findBonzoProspectForContact({ name: outcome.borrowerName });
+    if (!prospect) return { attempted: false, ok: false, reason: 'no_prospect_match' };
+    const stageMap: Record<string, string> = {
+      transfer: "Transferred",
+      appointment: "Appointment Set",
+      fell_through: "Fell Through",
+    };
+    try {
+      if (stageMap[outcome.outcomeType]) {
+        await bonzoApiCall(token, "PATCH", `/prospects/${prospect.bonzo_id}`, { stage: stageMap[outcome.outcomeType] });
+      }
+      let note = `C3 outcome: ${outcome.outcomeType}`;
+      if (outcome.outcomeType === 'appointment' && outcome.appointmentDatetime) note += ` (${outcome.appointmentDatetime})`;
+      if (outcome.outcomeType === 'deferral' || outcome.outcomeType === 'future_contact') {
+        note += outcome.followUpDate ? ` — follow-up ${outcome.followUpDate}` : '';
+      }
+      if (outcome.notes) note += `\n${outcome.notes}`;
+      await bonzoApiCall(token, "POST", `/prospects/${prospect.bonzo_id}/notes`, { note });
+      storageExtra.logWebhookEvent({
+        source: 'bonzo_push', eventType: 'outcome',
+        payload: { outcomeId: outcome.id, prospectId: prospect.bonzo_id, outcomeType: outcome.outcomeType },
+        processed: true,
+      });
+      return { attempted: true, ok: true };
+    } catch (e: any) {
+      storageExtra.logWebhookEvent({
+        source: 'bonzo_push', eventType: 'outcome_error',
+        payload: { outcomeId: outcome.id, error: String(e?.message || e) },
+        processed: false,
+      });
+      return { attempted: true, ok: false, reason: e?.message };
+    }
+  }
+
+  app.post("/api/bonzo/push/outcome", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { outcomeId } = req.body ?? {};
+    if (!outcomeId) return res.status(400).json({ error: "outcomeId required" });
+    const outcome = (storageExtra.getSqlite().prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId)) as any;
+    if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+    const result = await pushOutcomeToBonzo({
+      id: outcome.id,
+      borrowerName: outcome.borrower_name,
+      outcomeType: outcome.outcome_type,
+      appointmentDatetime: outcome.appointment_datetime,
+      followUpDate: outcome.follow_up_date,
+      notes: outcome.notes,
+    });
+    res.json(result);
+  });
+
+  // Expose helper for outcome POST handler to call fire-and-forget
+  (globalThis as any).__pushOutcomeToBonzo = pushOutcomeToBonzo;
+
+  // ── Zapier inbound webhook (Mojo events via Zapier) ──────────────────────
+  app.post("/api/webhook/mojo/zapier", (req, res) => {
+    const body = req.body ?? {};
+    const settings = storageExtra.getWebhookSettings();
+    const providedSecret = (req.headers["x-zapier-secret"] as string) || (body.secret as string) || "";
+    if (settings.zapier_secret && providedSecret !== settings.zapier_secret) {
+      storageExtra.logWebhookEvent({ source: "zapier", eventType: "auth_failed", payload: body, processed: false });
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    // Unwrap Zapier envelopes
+    const payload = body.data ?? body.payload ?? body;
+
+    // Mirror core logic from /api/webhook/mojo
+    try {
+      const sessionDate = (payload.date || payload.session_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+      const agentName = payload.agent || payload.rep || payload.clr_name || null;
+      const clr = agentName ? storageExtra.findUserByName(agentName) : null;
+      const disposition = (payload.disposition || payload.event || "").toString().toLowerCase();
+
+      const existingRow = storageExtra.getSqlite().prepare(
+        `SELECT * FROM mojo_sessions WHERE session_date=? AND clr_user_id IS ?`
+      ).get(sessionDate, clr?.id ?? null) as any;
+
+      const inc = (field: string) => (existingRow?.[field] ?? 0) + 1;
+      const payloadSession: any = {
+        sessionDate,
+        clrUserId: clr?.id ?? null,
+        clrName: agentName || existingRow?.clr_name || null,
+        totalCalls: inc('total_calls'),
+        contactsReached: existingRow?.contacts_reached ?? 0,
+        dncHits: existingRow?.dnc_hits ?? 0,
+        transfers: existingRow?.transfers ?? 0,
+        appointments: existingRow?.appointments ?? 0,
+        voicemails: existingRow?.voicemails ?? 0,
+        noAnswers: existingRow?.no_answers ?? 0,
+        source: 'zapier',
+      };
+      if (disposition.includes("transfer")) payloadSession.transfers = inc('transfers');
+      if (disposition.includes("appointment")) payloadSession.appointments = inc('appointments');
+      if (disposition.includes("voicemail")) payloadSession.voicemails = inc('voicemails');
+      if (disposition.includes("no answer") || disposition.includes("no-answer")) payloadSession.noAnswers = inc('no_answers');
+      if (disposition.includes("dnc")) payloadSession.dncHits = inc('dnc_hits');
+      if (disposition.includes("contact") || disposition.includes("reached")) payloadSession.contactsReached = inc('contacts_reached');
+
+      storageExtra.upsertMojoSession(payloadSession);
+
+      // Contact upsert
+      const first = payload.first_name || payload.firstName || null;
+      const last = payload.last_name || payload.lastName || null;
+      const phone = payload.phone || null;
+      const email = payload.email || null;
+      if (first || last || phone || email) {
+        storageExtra.upsertMojoContact({
+          mojoId: payload.contact_id ? String(payload.contact_id) : null,
+          firstName: first, lastName: last, phone, email,
+          status: disposition || null, assignedClrId: clr?.id ?? null,
+        });
+        storageExtra.upsertUnifiedContact({
+          firstName: first, lastName: last, phone, email,
+          mojoContactId: payload.contact_id ? String(payload.contact_id) : null,
+          mojoStatus: disposition || null,
+          clrUserId: clr?.id ?? null,
+          source: 'mojo',
+        });
+      }
+    } catch (e) {
+      console.error("Zapier webhook processing failed:", e);
+    }
+
+    storageExtra.logWebhookEvent({
+      source: "zapier", eventType: (payload.disposition || payload.event || "event").toString(),
+      payload: body, processed: true,
+    });
+    res.json({ ok: true });
+  });
+
+  // ── Zapier outbound trigger ──────────────────────────────────────────────
+  async function triggerZapier(event: string, data: any): Promise<{ attempted: boolean; ok: boolean; reason?: string }> {
+    const settings = storageExtra.getWebhookSettings();
+    const url = settings.zapier_webhook_url?.trim();
+    if (!url) return { attempted: false, ok: false, reason: 'no_url' };
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, data, timestamp: new Date().toISOString() }),
+      });
+      storageExtra.logWebhookEvent({
+        source: 'zapier_out', eventType: event,
+        payload: { status: r.status, data },
+        processed: r.ok,
+      });
+      return { attempted: true, ok: r.ok, reason: r.ok ? undefined : `HTTP ${r.status}` };
+    } catch (e: any) {
+      storageExtra.logWebhookEvent({
+        source: 'zapier_out', eventType: `${event}_error`,
+        payload: { error: String(e?.message || e), data }, processed: false,
+      });
+      return { attempted: true, ok: false, reason: e?.message };
+    }
+  }
+
+  app.post("/api/zapier/trigger", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const { event, data } = req.body ?? {};
+    if (!event || typeof event !== "string") return res.status(400).json({ error: "event required" });
+    const result = await triggerZapier(event, data ?? {});
+    res.json(result);
+  });
+
+  (globalThis as any).__triggerZapier = triggerZapier;
+
+  // ── Integrations status ──────────────────────────────────────────────────
+  app.get("/api/integrations/status", requireAuth, (_req, res) => {
+    const settings = storageExtra.getWebhookSettings();
+    const db = storageExtra.getSqlite();
+    const bonzoEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='bonzo'`).get() as any).c;
+    const mojoEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='mojo'`).get() as any).c;
+    const zapierEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='zapier' OR source='zapier_out'`).get() as any).c;
+    const csvImports = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='mojo_csv'`).get() as any).c;
+    const lastBonzoSync = storageExtra.getLastBonzoSync?.();
+    res.json({
+      bonzo: {
+        webhookConfigured: !!settings.bonzo_secret,
+        webhookEvents: bonzoEvents,
+        apiTokenConfigured: !!settings.bonzo_api_token,
+        outboundPushReady: !!settings.bonzo_api_token,
+        lastSync: lastBonzoSync ?? null,
+      },
+      mojo: {
+        webhookConfigured: !!settings.mojo_secret,
+        webhookEvents: mojoEvents,
+        apiKeyConfigured: !!settings.mojo_api_key,
+        csvImports,
+        csvImportAvailable: true,
+      },
+      zapier: {
+        inboundConfigured: !!settings.zapier_secret,
+        outboundConfigured: !!settings.zapier_webhook_url,
+        events: zapierEvents,
+      },
     });
   });
 

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -54,8 +54,10 @@ const adminItems: { title: string; url: string; icon: any; badge?: string }[] = 
 
 const integrationItems: { title: string; url: string; icon: any; badge?: string }[] = [
   { title: "Integrations",    url: "/integrations", icon: Plug },
+  { title: "Contact Hub",     url: "/contacts", icon: Users },
   { title: "Bonzo Prospects", url: "/bonzo-prospects", icon: UserCheck },
   { title: "Mojo Sessions",   url: "/mojo-sessions", icon: PhoneIncoming },
+  { title: "Mojo Import",     url: "/mojo-import", icon: Upload },
 ];
 
 // ── Component ────────────────────────────────────────────────────────────────

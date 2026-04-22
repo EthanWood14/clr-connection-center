@@ -1099,6 +1099,42 @@ function runNewMigrations() {
   } catch {}
 
   // ── Forum tables ─────────────────────────────────────────────────────────
+  // ── Unified contacts table ────────────────────────────────────────────────
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS unified_contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name TEXT,
+      last_name TEXT,
+      full_name TEXT,
+      phone TEXT,
+      email TEXT,
+      bonzo_prospect_id TEXT,
+      bonzo_pipeline TEXT,
+      bonzo_stage TEXT,
+      bonzo_assigned_user TEXT,
+      mojo_contact_id TEXT,
+      mojo_group TEXT,
+      mojo_status TEXT,
+      clr_user_id INTEGER,
+      lo_id INTEGER,
+      total_calls INTEGER DEFAULT 0,
+      total_transfers INTEGER DEFAULT 0,
+      total_appointments INTEGER DEFAULT 0,
+      last_outcome_type TEXT,
+      last_outcome_date TEXT,
+      last_call_date TEXT,
+      source TEXT DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_unified_contacts_phone ON unified_contacts(phone)`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_unified_contacts_email ON unified_contacts(email)`); } catch {}
+
+  // ── Zapier webhook fields ─────────────────────────────────────────────────
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN zapier_webhook_url TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN zapier_secret TEXT`); } catch {}
+
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_posts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1778,7 +1814,7 @@ export function getRecentWebhookEvents(limit = 50) {
 
 export function getWebhookSettings() {
   const row = sqlite.prepare(`SELECT * FROM webhook_settings WHERE id=1`).get() as any;
-  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null };
+  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null, zapier_webhook_url: null, zapier_secret: null };
 }
 
 export function updateWebhookSettings(data: {
@@ -1786,6 +1822,8 @@ export function updateWebhookSettings(data: {
   bonzoSecret?: string | null;
   bonzoApiToken?: string | null;
   mojoApiKey?: string | null;
+  zapierWebhookUrl?: string | null;
+  zapierSecret?: string | null;
 }) {
   const now = new Date().toISOString();
   const existing = getWebhookSettings();
@@ -1793,11 +1831,252 @@ export function updateWebhookSettings(data: {
   const bonzo = data.bonzoSecret !== undefined ? (data.bonzoSecret || null) : existing.bonzo_secret;
   const bonzoToken = data.bonzoApiToken !== undefined ? (data.bonzoApiToken || null) : existing.bonzo_api_token;
   const mojoKey = data.mojoApiKey !== undefined ? (data.mojoApiKey || null) : existing.mojo_api_key;
+  const zapUrl = data.zapierWebhookUrl !== undefined ? (data.zapierWebhookUrl || null) : existing.zapier_webhook_url;
+  const zapSecret = data.zapierSecret !== undefined ? (data.zapierSecret || null) : existing.zapier_secret;
   sqlite.prepare(
-    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, updated_at=? WHERE id=1`
-  ).run(mojo, bonzo, bonzoToken, mojoKey, now);
+    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, zapier_webhook_url=?, zapier_secret=?, updated_at=? WHERE id=1`
+  ).run(mojo, bonzo, bonzoToken, mojoKey, zapUrl, zapSecret, now);
   return getWebhookSettings();
 }
+
+// ── Unified contacts storage helpers ────────────────────────────────────────
+function normPhone(p: string | null | undefined): string | null {
+  if (!p) return null;
+  const d = String(p).replace(/\D+/g, "");
+  if (!d) return null;
+  return d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+}
+
+function normEmail(e: string | null | undefined): string | null {
+  if (!e) return null;
+  const t = String(e).trim().toLowerCase();
+  return t || null;
+}
+
+export function upsertUnifiedContact(data: {
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  bonzoProspectId?: string | null;
+  bonzoPipeline?: string | null;
+  bonzoStage?: string | null;
+  bonzoAssignedUser?: string | null;
+  mojoContactId?: string | null;
+  mojoGroup?: string | null;
+  mojoStatus?: string | null;
+  clrUserId?: number | null;
+  loId?: number | null;
+  source?: string;
+}) {
+  const now = new Date().toISOString();
+  const phone = normPhone(data.phone);
+  const email = normEmail(data.email);
+  const fullName = data.fullName ||
+    [data.firstName, data.lastName].filter(Boolean).join(" ").trim() || null;
+
+  // Find existing: prefer bonzo id, mojo id, then phone, then email
+  let existing: any = null;
+  if (data.bonzoProspectId) {
+    existing = sqlite.prepare(`SELECT * FROM unified_contacts WHERE bonzo_prospect_id=? LIMIT 1`).get(data.bonzoProspectId);
+  }
+  if (!existing && data.mojoContactId) {
+    existing = sqlite.prepare(`SELECT * FROM unified_contacts WHERE mojo_contact_id=? LIMIT 1`).get(data.mojoContactId);
+  }
+  if (!existing && phone) {
+    existing = sqlite.prepare(`SELECT * FROM unified_contacts WHERE phone=? LIMIT 1`).get(phone);
+  }
+  if (!existing && email) {
+    existing = sqlite.prepare(`SELECT * FROM unified_contacts WHERE email=? LIMIT 1`).get(email);
+  }
+
+  if (existing) {
+    // Merge — keep existing values when new is null
+    const merged = {
+      first_name: data.firstName ?? existing.first_name,
+      last_name: data.lastName ?? existing.last_name,
+      full_name: fullName ?? existing.full_name,
+      phone: phone ?? existing.phone,
+      email: email ?? existing.email,
+      bonzo_prospect_id: data.bonzoProspectId ?? existing.bonzo_prospect_id,
+      bonzo_pipeline: data.bonzoPipeline ?? existing.bonzo_pipeline,
+      bonzo_stage: data.bonzoStage ?? existing.bonzo_stage,
+      bonzo_assigned_user: data.bonzoAssignedUser ?? existing.bonzo_assigned_user,
+      mojo_contact_id: data.mojoContactId ?? existing.mojo_contact_id,
+      mojo_group: data.mojoGroup ?? existing.mojo_group,
+      mojo_status: data.mojoStatus ?? existing.mojo_status,
+      clr_user_id: data.clrUserId ?? existing.clr_user_id,
+      lo_id: data.loId ?? existing.lo_id,
+      source: data.source ?? existing.source,
+    };
+    sqlite.prepare(
+      `UPDATE unified_contacts SET first_name=?, last_name=?, full_name=?, phone=?, email=?,
+       bonzo_prospect_id=?, bonzo_pipeline=?, bonzo_stage=?, bonzo_assigned_user=?,
+       mojo_contact_id=?, mojo_group=?, mojo_status=?, clr_user_id=?, lo_id=?, source=?, updated_at=? WHERE id=?`
+    ).run(
+      merged.first_name, merged.last_name, merged.full_name, merged.phone, merged.email,
+      merged.bonzo_prospect_id, merged.bonzo_pipeline, merged.bonzo_stage, merged.bonzo_assigned_user,
+      merged.mojo_contact_id, merged.mojo_group, merged.mojo_status, merged.clr_user_id, merged.lo_id, merged.source, now, existing.id,
+    );
+    return existing.id as number;
+  } else {
+    const r = sqlite.prepare(
+      `INSERT INTO unified_contacts (first_name, last_name, full_name, phone, email,
+       bonzo_prospect_id, bonzo_pipeline, bonzo_stage, bonzo_assigned_user,
+       mojo_contact_id, mojo_group, mojo_status, clr_user_id, lo_id, source, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      data.firstName ?? null, data.lastName ?? null, fullName, phone, email,
+      data.bonzoProspectId ?? null, data.bonzoPipeline ?? null, data.bonzoStage ?? null, data.bonzoAssignedUser ?? null,
+      data.mojoContactId ?? null, data.mojoGroup ?? null, data.mojoStatus ?? null,
+      data.clrUserId ?? null, data.loId ?? null, data.source ?? 'manual', now, now,
+    );
+    return r.lastInsertRowid as number;
+  }
+}
+
+export function getUnifiedContacts(filters: {
+  search?: string;
+  clrUserId?: number;
+  loId?: number;
+  source?: string;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filters.search) {
+    where.push(`(LOWER(COALESCE(full_name,'')) LIKE ? OR LOWER(COALESCE(first_name,'')) LIKE ? OR LOWER(COALESCE(last_name,'')) LIKE ? OR LOWER(COALESCE(email,'')) LIKE ? OR phone LIKE ?)`);
+    const s = `%${filters.search.toLowerCase()}%`;
+    args.push(s, s, s, s, `%${filters.search}%`);
+  }
+  if (filters.clrUserId !== undefined) { where.push(`clr_user_id=?`); args.push(filters.clrUserId); }
+  if (filters.loId !== undefined) { where.push(`lo_id=?`); args.push(filters.loId); }
+  if (filters.source) { where.push(`source=?`); args.push(filters.source); }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const offset = filters.offset ?? 0;
+  const rows = sqlite.prepare(
+    `SELECT uc.*, u.name AS clr_user_name, lo.full_name AS lo_name FROM unified_contacts uc
+     LEFT JOIN users u ON u.id = uc.clr_user_id
+     LEFT JOIN loan_officers lo ON lo.id = uc.lo_id
+     ${clause} ORDER BY COALESCE(uc.last_outcome_date, uc.updated_at) DESC LIMIT ? OFFSET ?`
+  ).all(...args, limit, offset) as any[];
+  const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM unified_contacts ${clause}`).get(...args) as any).c;
+  return { rows, total };
+}
+
+export function getUnifiedContactById(id: number) {
+  const row = sqlite.prepare(
+    `SELECT uc.*, u.name AS clr_user_name, lo.full_name AS lo_name FROM unified_contacts uc
+     LEFT JOIN users u ON u.id = uc.clr_user_id
+     LEFT JOIN loan_officers lo ON lo.id = uc.lo_id
+     WHERE uc.id=?`
+  ).get(id) as any;
+  if (!row) return null;
+  // Get related history
+  const outcomes = row.phone
+    ? sqlite.prepare(`SELECT lo.*, u.name AS assistant_name, lof.full_name AS lo_full_name FROM lead_outcomes lo
+       LEFT JOIN users u ON u.id = lo.assistant_id
+       LEFT JOIN loan_officers lof ON lof.id = lo.lo_id
+       WHERE LOWER(COALESCE(lo.borrower_name,'')) LIKE ? OR LOWER(COALESCE(lo.borrower_name,'')) LIKE ?
+       ORDER BY lo.created_at DESC LIMIT 50`).all(
+        `%${(row.full_name || '').toLowerCase()}%`,
+        `%${((row.first_name || '') + ' ' + (row.last_name || '')).toLowerCase().trim()}%`
+      )
+    : [];
+  const bonzoProspect = row.bonzo_prospect_id
+    ? sqlite.prepare(`SELECT * FROM bonzo_prospects WHERE bonzo_id=?`).get(row.bonzo_prospect_id)
+    : null;
+  const mojoContact = row.mojo_contact_id
+    ? sqlite.prepare(`SELECT * FROM mojo_contacts WHERE mojo_id=?`).get(row.mojo_contact_id)
+    : null;
+  const mojoSessions = row.clr_user_id
+    ? sqlite.prepare(`SELECT * FROM mojo_sessions WHERE clr_user_id=? ORDER BY session_date DESC LIMIT 20`).all(row.clr_user_id)
+    : [];
+  return { ...row, outcomes, bonzoProspect, mojoContact, mojoSessions };
+}
+
+export function updateUnifiedContactFromOutcome(outcome: {
+  borrowerName?: string | null;
+  outcomeType: string;
+  date: string;
+  loId?: number | null;
+  assistantId?: number | null;
+}) {
+  if (!outcome.borrowerName) return;
+  const name = outcome.borrowerName.toLowerCase().trim();
+  const contact = sqlite.prepare(
+    `SELECT * FROM unified_contacts WHERE LOWER(COALESCE(full_name,'')) = ? OR LOWER(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) = ? LIMIT 1`
+  ).get(name, name) as any;
+  if (!contact) return;
+  const isTransfer = outcome.outcomeType === 'transfer';
+  const isAppt = outcome.outcomeType === 'appointment';
+  const now = new Date().toISOString();
+  sqlite.prepare(
+    `UPDATE unified_contacts SET
+      last_outcome_type=?, last_outcome_date=?,
+      total_transfers=total_transfers + ?,
+      total_appointments=total_appointments + ?,
+      clr_user_id=COALESCE(?, clr_user_id),
+      lo_id=COALESCE(?, lo_id),
+      updated_at=?
+     WHERE id=?`
+  ).run(
+    outcome.outcomeType, outcome.date,
+    isTransfer ? 1 : 0, isAppt ? 1 : 0,
+    outcome.assistantId ?? null, outcome.loId ?? null,
+    now, contact.id,
+  );
+}
+
+export function upsertMojoContact(c: {
+  mojoId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  status?: string | null;
+  listName?: string | null;
+  assignedClrId?: number | null;
+}) {
+  const now = new Date().toISOString();
+  const phone = normPhone(c.phone);
+  let existing: any = null;
+  if (c.mojoId) {
+    existing = sqlite.prepare(`SELECT id FROM mojo_contacts WHERE mojo_id=?`).get(c.mojoId);
+  }
+  if (!existing && phone) {
+    existing = sqlite.prepare(`SELECT id FROM mojo_contacts WHERE phone=?`).get(phone);
+  }
+  if (existing) {
+    sqlite.prepare(
+      `UPDATE mojo_contacts SET first_name=COALESCE(?,first_name), last_name=COALESCE(?,last_name), phone=COALESCE(?,phone), email=COALESCE(?,email), status=COALESCE(?,status), list_name=COALESCE(?,list_name), assigned_clr_id=COALESCE(?,assigned_clr_id), updated_at=? WHERE id=?`
+    ).run(
+      c.firstName ?? null, c.lastName ?? null, phone, normEmail(c.email),
+      c.status ?? null, c.listName ?? null, c.assignedClrId ?? null, now, existing.id,
+    );
+    return existing.id as number;
+  } else {
+    const r = sqlite.prepare(
+      `INSERT INTO mojo_contacts (mojo_id, first_name, last_name, phone, email, status, list_name, assigned_clr_id, imported_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      c.mojoId ?? null, c.firstName ?? null, c.lastName ?? null,
+      phone, normEmail(c.email), c.status ?? null, c.listName ?? null, c.assignedClrId ?? null, now, now,
+    );
+    return r.lastInsertRowid as number;
+  }
+}
+
+export function findClrByPhone(phone: string | null | undefined): any | null {
+  const p = normPhone(phone);
+  if (!p) return null;
+  const u = sqlite.prepare(`SELECT id, name FROM users WHERE REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'-',''),' ',''),'(',''),')','') LIKE ? AND is_active=1 LIMIT 1`).get(`%${p}%`) as any;
+  return u ?? null;
+}
+
+export { normPhone, normEmail };
 
 // Match a CLR user by name (case-insensitive partial match). Returns user or null.
 export function findUserByName(name: string | null | undefined): any | null {
@@ -2063,6 +2342,21 @@ export function upsertBonzoProspect(p: {
       tagsJson, p.lastActivityAt ?? null, now, now,
     );
   }
+  // Mirror into unified_contacts
+  try {
+    upsertUnifiedContact({
+      firstName: p.firstName ?? null,
+      lastName: p.lastName ?? null,
+      email: p.email ?? null,
+      phone: p.phone ?? null,
+      bonzoProspectId: p.bonzoId,
+      bonzoPipeline: p.pipelineName ?? null,
+      bonzoStage: p.stageName ?? null,
+      bonzoAssignedUser: p.bonzoUserName ?? null,
+      clrUserId: p.assignedUserId ?? null,
+      source: 'bonzo',
+    });
+  } catch (e) { /* swallow */ }
 }
 
 export function getBonzoProspects(filters: {

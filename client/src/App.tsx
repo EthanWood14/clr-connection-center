@@ -47,6 +47,8 @@ import WebhookSettings from "@/pages/webhook-settings";
 import Integrations from "@/pages/integrations";
 import BonzoProspects from "@/pages/bonzo-prospects";
 import MojoSessions from "@/pages/mojo-sessions";
+import Contacts from "@/pages/contacts";
+import MojoImport from "@/pages/mojo-import";
 import Forum from "@/pages/forum";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
@@ -96,6 +98,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/integrations":     "Integrations",
   "/bonzo-prospects":  "Bonzo Prospects",
   "/mojo-sessions":    "Mojo Sessions",
+  "/contacts":         "Contact Hub",
+  "/mojo-import":      "Mojo Import",
   "/forum":            "Forum",
 };
 
@@ -139,6 +143,8 @@ function AppRouter() {
       <Route path="/integrations" component={Integrations} />
       <Route path="/bonzo-prospects" component={BonzoProspects} />
       <Route path="/mojo-sessions" component={MojoSessions} />
+      <Route path="/contacts" component={Contacts} />
+      <Route path="/mojo-import" component={MojoImport} />
       <Route path="/forum" component={Forum} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />

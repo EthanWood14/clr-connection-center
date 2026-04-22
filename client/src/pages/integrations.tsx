@@ -13,12 +13,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
 const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
+const ZAPIER_INBOUND_URL = "https://www.wlc.it.com/api/webhook/mojo/zapier";
 
 type Settings = {
   mojoSecret: string;
   bonzoSecret: string;
   bonzoApiToken: string;
   mojoApiKey: string;
+  zapierWebhookUrl: string;
+  zapierSecret: string;
 };
 
 type WebhookEvent = {
@@ -267,6 +270,7 @@ export default function IntegrationsPage() {
 
   const [local, setLocal] = useState<Settings>({
     mojoSecret: "", bonzoSecret: "", bonzoApiToken: "", mojoApiKey: "",
+    zapierWebhookUrl: "", zapierSecret: "",
   });
   useEffect(() => {
     if (settings) {
@@ -275,6 +279,8 @@ export default function IntegrationsPage() {
         bonzoSecret: settings.bonzoSecret ?? "",
         bonzoApiToken: settings.bonzoApiToken ?? "",
         mojoApiKey: settings.mojoApiKey ?? "",
+        zapierWebhookUrl: settings.zapierWebhookUrl ?? "",
+        zapierSecret: settings.zapierSecret ?? "",
       });
     }
   }, [settings]);
@@ -334,11 +340,11 @@ export default function IntegrationsPage() {
     return "partial";
   }, [settings]);
 
-  const [sourceFilter, setSourceFilter] = useState<"all" | "bonzo" | "mojo">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "bonzo" | "mojo" | "zapier">("all");
   const filteredEvents = useMemo(() => {
     const filtered = sourceFilter === "all"
       ? events
-      : events.filter((e) => e.source === sourceFilter);
+      : events.filter((e) => e.source === sourceFilter || (sourceFilter === "zapier" && e.source === "zapier_out"));
     return filtered.slice(0, 30);
   }, [events, sourceFilter]);
 
@@ -351,6 +357,7 @@ export default function IntegrationsPage() {
     { label: "Historical prospect import (requires API token)", active: !!(local.bonzoApiToken?.trim()) },
     { label: "Full pipeline sync (requires API token)", active: !!(local.bonzoApiToken?.trim()) },
     { label: "Contact list import (requires API token)", active: !!(local.bonzoApiToken?.trim()) },
+    { label: "Outbound push (C3 outcomes → Bonzo stage/notes)", active: !!(local.bonzoApiToken?.trim()) },
   ];
 
   const mojoFeatures = [
@@ -358,9 +365,18 @@ export default function IntegrationsPage() {
     { label: "Contacts reached tracking", active: true },
     { label: "DNC hit tracking", active: true },
     { label: "Auto outcome logging for transfers/appointments", active: true },
+    { label: "CSV Import (call logs + contacts)", active: true },
     { label: "Historical call log import (requires Mojo API — not yet available)", active: !!(local.mojoApiKey?.trim()) },
     { label: "Session data sync (requires Mojo API — not yet available)", active: !!(local.mojoApiKey?.trim()) },
   ];
+
+  const zapierStatus: Status = useMemo(() => {
+    const hasUrl = !!(local.zapierWebhookUrl?.trim());
+    const hasSecret = !!(local.zapierSecret?.trim());
+    if (hasUrl && hasSecret) return "connected";
+    if (hasUrl || hasSecret) return "partial";
+    return "not_connected";
+  }, [local.zapierWebhookUrl, local.zapierSecret]);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-6xl">
@@ -424,6 +440,81 @@ export default function IntegrationsPage() {
         />
       </div>
 
+      {/* Zapier Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-md flex items-center justify-center text-white font-bold text-lg shrink-0 bg-amber-500">
+              Z
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle className="text-base">Zapier</CardTitle>
+                <StatusBadge status={zapierStatus} />
+              </div>
+              <CardDescription className="mt-1">
+                Bridge Mojo and other systems to C3 via Zapier. Inbound: Zapier posts Mojo events to the C3 webhook.
+                Outbound: C3 fires events (outcomes, assignments) to your Zapier webhook URL.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Inbound Webhook URL (paste into Zapier's "Webhooks by Zapier" action)
+            </label>
+            <div className="flex gap-2 mt-1.5">
+              <Input readOnly value={ZAPIER_INBOUND_URL} className="font-mono text-xs" />
+              <CopyBtn value={ZAPIER_INBOUND_URL} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Inbound Shared Secret (optional — sent as X-Zapier-Secret header or payload.secret)
+            </label>
+            <div className="mt-1.5">
+              <SecretInput
+                value={local.zapierSecret}
+                onChange={(v) => setLocal(p => ({ ...p, zapierSecret: v }))}
+                placeholder="(leave blank to disable verification)"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Outbound Webhook URL (paste your Zapier catch-hook URL)
+            </label>
+            <div className="mt-1.5">
+              <Input
+                value={local.zapierWebhookUrl}
+                onChange={(e) => setLocal(p => ({ ...p, zapierWebhookUrl: e.target.value }))}
+                placeholder="https://hooks.zapier.com/hooks/catch/…"
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="pt-2 border-t">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">What's connected</div>
+            <ul className="space-y-1.5 text-sm">
+              <li className="flex items-start gap-2">
+                {local.zapierSecret?.trim() ? <span className="text-green-600 shrink-0">✅</span> : <span className="shrink-0">⏳</span>}
+                <span className={local.zapierSecret?.trim() ? "" : "text-muted-foreground"}>Inbound webhook (Zapier → C3)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                {local.zapierWebhookUrl?.trim() ? <span className="text-green-600 shrink-0">✅</span> : <span className="shrink-0">⏳</span>}
+                <span className={local.zapierWebhookUrl?.trim() ? "" : "text-muted-foreground"}>Outbound events (C3 → Zapier) for outcomes & assignments</span>
+              </li>
+            </ul>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => saveMutation.mutate({ zapierWebhookUrl: local.zapierWebhookUrl, zapierSecret: local.zapierSecret })} disabled={saveMutation.isPending}>
+              <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -432,14 +523,14 @@ export default function IntegrationsPage() {
               <CardDescription>Last 30 inbound webhook events (auto-refreshes every 15s).</CardDescription>
             </div>
             <div className="flex gap-1">
-              {(["all", "bonzo", "mojo"] as const).map((s) => (
+              {(["all", "bonzo", "mojo", "zapier"] as const).map((s) => (
                 <Button
                   key={s}
                   size="sm"
                   variant={sourceFilter === s ? "default" : "outline"}
                   onClick={() => setSourceFilter(s)}
                 >
-                  {s === "all" ? "All" : s === "bonzo" ? "Bonzo" : "Mojo"}
+                  {s === "all" ? "All" : s === "bonzo" ? "Bonzo" : s === "mojo" ? "Mojo" : "Zapier"}
                 </Button>
               ))}
             </div>
