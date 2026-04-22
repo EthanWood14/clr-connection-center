@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { LoStatusBadge } from "@/components/lo-status-badge";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   recommended: { label: "Recommended", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: AlertCircle },
@@ -65,7 +66,10 @@ function StatusDialog({ open, assignment, onClose, onConfirm, isPending }: Statu
         </DialogHeader>
         <div className="space-y-3">
           <div className="p-3 rounded-lg bg-muted/50 text-sm">
-            <p className="font-medium">{assignment.lo?.fullName}</p>
+            <p className="font-medium flex items-center gap-2">
+              {assignment.lo?.fullName}
+              <LoStatusBadge status={assignment.lo?.internalStatus} hideWhenActive />
+            </p>
             <p className="text-muted-foreground text-xs">{assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId} · ` : ""}Assigned to {assignment.assistant?.name}</p>
           </div>
           <div className="grid grid-cols-3 gap-2">
@@ -138,6 +142,7 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle }: Assign
           {assignment.lo?.priorityTier === 1 && (
             <span className="text-[10px] px-1 py-0 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>
           )}
+          <LoStatusBadge status={assignment.lo?.internalStatus} hideWhenActive />
         </div>
         <div className="text-xs text-muted-foreground">
           {assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId}` : ""}

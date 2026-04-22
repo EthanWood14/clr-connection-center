@@ -1480,6 +1480,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json(lo);
   });
 
+  // Admin-only: update LO active/inactive/vacation status
+  app.patch("/api/loan-officers/:id/status", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    const rawStatus = String(req.body?.status ?? "").toLowerCase();
+    const allowed = ["active", "inactive", "vacation", "archived"];
+    if (!allowed.includes(rawStatus)) {
+      return res.status(400).json({ error: `status must be one of ${allowed.join(", ")}` });
+    }
+    const lo = storage.updateLoanOfficer(id, { internalStatus: rawStatus });
+    if (!lo) return res.status(404).json({ error: "Not found" });
+    const actor = storage.getUsers().find((u: any) => u.id === req.session_user.userId);
+    audit({
+      userId: req.session_user.userId,
+      userName: actor?.name ?? "Admin",
+      action: "update",
+      entityType: "loan_officer",
+      entityId: lo.id,
+      entityLabel: lo.fullName,
+      details: JSON.stringify({ status: rawStatus }),
+    });
+    res.json(lo);
+  });
+
   app.delete("/api/loan-officers/:id", (req, res) => {
     const id = parseInt(req.params.id);
     const lo = storage.getLoanOfficerById(id);

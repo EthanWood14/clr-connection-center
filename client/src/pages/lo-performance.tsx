@@ -32,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TrendingUp, PhoneForwarded, Calendar, Activity, BarChart2 } from "lucide-react";
+import { LoStatusBadge } from "@/components/lo-status-badge";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -233,11 +234,7 @@ export default function LoPerformance() {
                 <span className="font-medium text-foreground">{lo.fullName}</span>
                 {" · "}
                 {lo.nmlsId && <span className="font-mono">NMLS #{lo.nmlsId}</span>}
-                {lo.internalStatus !== "active" && (
-                  <Badge variant="outline" className="ml-2 text-[10px]">
-                    {lo.internalStatus}
-                  </Badge>
-                )}
+                <LoStatusBadge status={lo.internalStatus} hideWhenActive className="ml-2" />
               </div>
             )}
           </div>

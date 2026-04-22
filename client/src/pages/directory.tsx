@@ -28,6 +28,7 @@ import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LoCsvImport } from "@/components/lo-csv-import";
+import { LoStatusBadge } from "@/components/lo-status-badge";
 
 // ── Tier / Status display maps ────────────────────────────────────────────────
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
@@ -35,11 +36,6 @@ const TIER_COLORS: Record<number, string> = {
   1: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
   2: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   3: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400",
-};
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  inactive: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
-  archived: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
 };
 
 // ── Algorithm score helper ────────────────────────────────────────────────────
@@ -230,8 +226,10 @@ function LOCard({
     ? Math.floor((Date.now() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
     : null;
 
+  const isInactive = lo.internalStatus === "inactive" || lo.internalStatus === "vacation" || lo.internalStatus === "archived";
+
   return (
-    <Card className="overflow-hidden" data-testid={`card-lo-${lo.id}`}>
+    <Card className={`overflow-hidden ${isInactive ? "opacity-70 bg-muted/30" : ""}`} data-testid={`card-lo-${lo.id}`}>
       <CardContent className="p-0">
 
         {/* ── Main row ──────────────────────────────────────────────────── */}
@@ -251,9 +249,7 @@ function LOCard({
               <Badge className={`text-xs px-1.5 py-0 ${TIER_COLORS[lo.priorityTier]}`}>
                 {TIER_LABELS[lo.priorityTier]}
               </Badge>
-              <Badge className={`text-xs px-1.5 py-0 ${STATUS_COLORS[lo.internalStatus]}`}>
-                {lo.internalStatus}
-              </Badge>
+              <LoStatusBadge status={lo.internalStatus} className="text-xs" />
               {lo.snoozeUntil && new Date(lo.snoozeUntil) > new Date() && (
                 <Badge variant="outline" className="text-xs px-1.5 py-0 text-orange-600 border-orange-300">
                   <BedDouble className="w-3 h-3 mr-1" />Snoozed
@@ -669,6 +665,7 @@ function LOFormDialog({
                     <SelectContent>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="vacation">🏖 On Vacation</SelectItem>
                       <SelectItem value="archived">Archived</SelectItem>
                     </SelectContent>
                   </Select>
@@ -872,6 +869,7 @@ export default function Directory() {
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="inactive">Inactive</SelectItem>
+            <SelectItem value="vacation">🏖 On Vacation</SelectItem>
             <SelectItem value="archived">Archived</SelectItem>
           </SelectContent>
         </Select>
