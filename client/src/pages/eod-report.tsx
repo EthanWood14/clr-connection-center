@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
-  History, ChevronDown, ChevronUp, User, Users, X,
+  History, ChevronDown, ChevronUp, User, Users, X, Save,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
@@ -73,6 +73,15 @@ export default function EodReport() {
   // Activity form state
   const [activityType, setActivityType] = useState("follow_up");
   const [activityDesc, setActivityDesc] = useState("");
+
+  // ── EOD draft (auto-save) ──────────────────────────────────────────────
+  const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
+  const [draftBannerDismissed, setDraftBannerDismissed] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftLoadedRef = useRef(false);
+  const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
   const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[] }>({
@@ -146,6 +155,99 @@ export default function EodReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportKey]);
 
+  // Load the persisted draft once on mount. Only runs for today's page and
+  // only when no report has been submitted yet — a submitted report always
+  // wins, since the draft is meant to hold an in-progress first submission.
+  useEffect(() => {
+    if (draftLoadedRef.current) return;
+    if (selectedDate !== todayStr) return;
+    if (isLoading) return;
+    if (report) { draftLoadedRef.current = true; return; }
+    draftLoadedRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/eod/draft", { credentials: "include" });
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!body || !body.data) return;
+        const d = body.data;
+        skipAutoSaveRef.current = true;
+        if (typeof d.callsMade === "string") setCallsMade(d.callsMade);
+        if (typeof d.notes === "string") setNotes(d.notes);
+        if (Array.isArray(d.assignedCalled)) setAssignedCalled(d.assignedCalled);
+        if (Array.isArray(d.additionalCalled)) setAdditionalCalled(d.additionalCalled);
+        if (typeof d.additionalOtherNotes === "string") setAdditionalOtherNotes(d.additionalOtherNotes);
+        if (typeof d.showOtherInput === "boolean") setShowOtherInput(d.showOtherInput);
+        setDirty(true);
+        setDraftRestoredAt(body.updatedAt ?? null);
+        if (body.updatedAt) setDraftSavedAt(new Date(body.updatedAt));
+        setTimeout(() => { skipAutoSaveRef.current = false; }, 50);
+      } catch { /* ignore — draft restore is best-effort */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, todayStr, isLoading, report]);
+
+  async function saveDraft(silent: boolean): Promise<boolean> {
+    try {
+      if (!silent) setDraftSaving(true);
+      const res = await fetch("/api/eod/draft", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: {
+            selectedDate,
+            callsMade,
+            notes,
+            assignedCalled,
+            additionalCalled,
+            additionalOtherNotes,
+            showOtherInput,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      setDraftSavedAt(new Date());
+      return true;
+    } catch (e: any) {
+      if (!silent) toast({ title: "Draft save failed", description: e?.message ?? "", variant: "destructive" });
+      return false;
+    } finally {
+      if (!silent) setDraftSaving(false);
+    }
+  }
+
+  // Debounced auto-save — fires 500ms after the last form edit while on today.
+  useEffect(() => {
+    if (selectedDate !== todayStr) return;
+    if (!dirty) return;
+    if (skipAutoSaveRef.current) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => { void saveDraft(true); }, 500);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callsMade, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, todayStr, dirty]);
+
+  async function clearDraft(resetForm: boolean) {
+    try {
+      await fetch("/api/eod/draft", { method: "DELETE", credentials: "include" });
+    } catch { /* best effort */ }
+    setDraftRestoredAt(null);
+    setDraftSavedAt(null);
+    setDraftBannerDismissed(true);
+    if (resetForm) {
+      skipAutoSaveRef.current = true;
+      setCallsMade("");
+      setNotes("");
+      setAssignedCalled([]);
+      setAdditionalCalled([]);
+      setAdditionalOtherNotes("");
+      setShowOtherInput(false);
+      setDirty(false);
+      setTimeout(() => { skipAutoSaveRef.current = false; }, 50);
+    }
+  }
+
   const saveMutation = useMutation({
     mutationFn: () =>
       apiRequest("POST", "/api/eod-reports", {
@@ -164,6 +266,8 @@ export default function EodReport() {
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       refetch();
       setDirty(false);
+      // Final submission succeeded — draft is no longer needed.
+      void clearDraft(false);
       markStep(user?.id, "submit_eod");
       toast({ title: "EOD report saved", description: `Report for ${format(parseISO(selectedDate), "MMM d")} saved.` });
     },
@@ -258,6 +362,36 @@ export default function EodReport() {
         <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
         <>
+          {/* Restored-draft banner — appears once per load if a draft was found */}
+          {draftRestoredAt && !draftBannerDismissed && !report && (
+            <Card className="border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
+              <CardContent className="py-3 px-4 flex flex-wrap items-center gap-3">
+                <Clock className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0" />
+                <p className="text-xs text-amber-900 dark:text-amber-200 flex-1 min-w-[200px]">
+                  You have a saved draft from{" "}
+                  <strong>{format(new Date(draftRestoredAt), "MMM d, h:mm a")}</strong>. Your progress has been restored.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1 border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                  onClick={() => { void clearDraft(true); }}
+                >
+                  <Trash2 className="w-3 h-3" /> Clear Draft
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0 text-amber-700 hover:text-amber-900"
+                  onClick={() => setDraftBannerDismissed(true)}
+                  aria-label="Dismiss banner"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Auto-tallied stats from logged outcomes */}
           <Card>
             <CardHeader className="pb-2">
@@ -451,19 +585,41 @@ export default function EodReport() {
                 />
               </div>
 
-              <Button
-                className="w-full gap-2"
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending || (!dirty && !!report)}
-              >
-                {saveMutation.isPending ? (
-                  <><Clock className="w-4 h-4 animate-spin" /> Saving…</>
-                ) : report && !dirty ? (
-                  <><CheckCircle2 className="w-4 h-4" /> Already submitted</>
-                ) : (
-                  <><Send className="w-4 h-4" /> {report ? "Update Report" : "Submit Report"}</>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="flex-1 min-w-[180px] gap-2"
+                  onClick={() => saveMutation.mutate()}
+                  disabled={saveMutation.isPending || (!dirty && !!report)}
+                >
+                  {saveMutation.isPending ? (
+                    <><Clock className="w-4 h-4 animate-spin" /> Saving…</>
+                  ) : report && !dirty ? (
+                    <><CheckCircle2 className="w-4 h-4" /> Already submitted</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> {report ? "Update Report" : "Submit Report"}</>
+                  )}
+                </Button>
+                {selectedDate === todayStr && !report && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2"
+                    onClick={async () => {
+                      const ok = await saveDraft(false);
+                      if (ok) toast({ title: "Draft saved successfully" });
+                    }}
+                    disabled={draftSaving}
+                  >
+                    <Save className="w-4 h-4" />
+                    {draftSaving ? "Saving…" : "Save Draft"}
+                  </Button>
                 )}
-              </Button>
+              </div>
+              {selectedDate === todayStr && !report && draftSavedAt && (
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Saved · {format(draftSavedAt, "h:mm a")}
+                </p>
+              )}
             </CardContent>
           </Card>
 

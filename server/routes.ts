@@ -11,9 +11,22 @@ import cron from "node-cron";
 import crypto from "crypto";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
+import { LANDING_HTML } from "./landing";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
+
+// ── In-memory rate limiter for the public request-access form (3/hr/IP) ───
+const requestAccessHits = new Map<string, number[]>();
+function requestAccessRateOk(ip: string): boolean {
+  const now = Date.now();
+  const hourAgo = now - 60 * 60 * 1000;
+  const arr = (requestAccessHits.get(ip) ?? []).filter(t => t > hourAgo);
+  if (arr.length >= 3) return false;
+  arr.push(now);
+  requestAccessHits.set(ip, arr);
+  return true;
+}
 
 function signPayload(payload: object): string {
   // Simple HMAC-like signature using base64 + secret
@@ -1121,6 +1134,55 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Health check (Railway) ────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  // ── Public marketing landing page ──────────────────────────────────────────
+  app.get("/landing", (_req, res) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(LANDING_HTML);
+  });
+
+  // ── Request access form (public, rate-limited 3/hr per IP) ────────────────
+  app.post("/api/request-access", async (req, res) => {
+    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+    if (!requestAccessRateOk(ip)) {
+      return res.status(429).json({ error: "Too many requests. Please try again later." });
+    }
+    const { companyName, yourName, email, teamSize, message } = req.body ?? {};
+    const errors: string[] = [];
+    const safeCompany = String(companyName ?? "").trim();
+    const safeName = String(yourName ?? "").trim();
+    const safeEmail = String(email ?? "").trim();
+    const safeTeamSize = String(teamSize ?? "").trim();
+    const safeMessage = String(message ?? "").trim();
+    if (!safeCompany) errors.push("companyName required");
+    if (!safeName) errors.push("yourName required");
+    if (!safeEmail.includes("@")) errors.push("valid email required");
+    if (!["1-5", "6-15", "16+"].includes(safeTeamSize)) errors.push("teamSize must be 1-5, 6-15, or 16+");
+    if (errors.length) return res.status(400).json({ error: errors.join(", ") });
+
+    const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c] || c));
+    const html = `<h2>New CLR Connection Center access request</h2>
+<table cellpadding="6" style="border-collapse:collapse;font-family:-apple-system,Segoe UI,sans-serif;font-size:14px">
+  <tr><td><strong>Company</strong></td><td>${esc(safeCompany)}</td></tr>
+  <tr><td><strong>Name</strong></td><td>${esc(safeName)}</td></tr>
+  <tr><td><strong>Email</strong></td><td>${esc(safeEmail)}</td></tr>
+  <tr><td><strong>Team size</strong></td><td>${esc(safeTeamSize)}</td></tr>
+  <tr><td><strong>IP</strong></td><td>${esc(ip)}</td></tr>
+</table>
+${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap">${esc(safeMessage)}</p>` : ""}`;
+
+    try {
+      await sendEmail({
+        to: "ethan.anthony.wood@gmail.com",
+        subject: `Access request: ${safeCompany} (${safeName})`,
+        html,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[request-access] send failed:", e?.message ?? e);
+      res.status(500).json({ error: "Could not send request. Please email ethan.anthony.wood@gmail.com directly." });
+    }
+  });
 
   // ── Auth routes (public) ───────────────────────────────────────────────────
   app.post("/api/auth/login", async (req, res) => {
@@ -3759,6 +3821,65 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.delete('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
     storageExtra.deleteEodActivity(parseInt(req.params.id));
     res.json({ ok: true });
+  });
+
+  // ── EOD drafts ────────────────────────────────────────────────────────────
+  // Per-user draft of the EOD form. Auto-saved as the user types; cleared
+  // after a successful final submission.
+  app.get('/api/eod/draft', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const sqlite = (storageExtra as any).getSqlite();
+      const row = sqlite.prepare(
+        `SELECT id, user_id, draft_data, updated_at FROM eod_drafts WHERE user_id=?`
+      ).get(userId) as any;
+      if (!row) return res.json(null);
+      let data: any = null;
+      try { data = JSON.parse(row.draft_data); } catch { data = null; }
+      res.json({ id: row.id, userId: row.user_id, data, updatedAt: row.updated_at });
+    } catch (e: any) {
+      console.error("[eod/draft GET]", e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
+  app.put('/api/eod/draft', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const data = req.body?.data;
+    if (data === undefined) return res.status(400).json({ error: "data required" });
+    try {
+      const sqlite = (storageExtra as any).getSqlite();
+      const json = typeof data === "string" ? data : JSON.stringify(data);
+      sqlite.prepare(
+        `INSERT INTO eod_drafts (user_id, org_id, draft_data, updated_at)
+         VALUES (?, 1, ?, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET
+           draft_data = excluded.draft_data,
+           updated_at = datetime('now')`
+      ).run(userId, json);
+      const row = sqlite.prepare(
+        `SELECT updated_at FROM eod_drafts WHERE user_id=?`
+      ).get(userId) as any;
+      res.json({ ok: true, updatedAt: row?.updated_at ?? null });
+    } catch (e: any) {
+      console.error("[eod/draft PUT]", e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
+  app.delete('/api/eod/draft', requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const sqlite = (storageExtra as any).getSqlite();
+      sqlite.prepare(`DELETE FROM eod_drafts WHERE user_id=?`).run(userId);
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("[eod/draft DELETE]", e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
   });
 
   // ── Personal CLR report (per-user analytics for /my-report page) ───────────

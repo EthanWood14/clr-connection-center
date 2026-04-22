@@ -1063,6 +1063,18 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_called TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_other_notes TEXT`); } catch {}
 
+  // EOD drafts — one per user, holds serialized form state so CLRs don't lose
+  // their progress if they close the page before submitting.
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      org_id INTEGER NOT NULL DEFAULT 1,
+      draft_data TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  } catch {}
+
   // EOD activities table (individual line items per report)
   sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_activities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
