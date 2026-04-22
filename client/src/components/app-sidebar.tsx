@@ -27,6 +27,7 @@ const mainItems = [
 const teamItems = [
   { title: "Stats",           url: "/leaderboard", icon: Trophy },
   { title: "Chat",            url: "/chat",        icon: MessageSquare, badge: "chat" },
+  { title: "Forum",           url: "/forum",       icon: MessageSquare },
 ];
 
 const reportItems = [
@@ -265,7 +266,6 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {renderItems([
-                { title: "Forum", url: "/forum", icon: MessageSquare },
                 { title: "Help & Support", url: "/support", icon: LifeBuoy },
                 { title: "Help Videos", url: "/support", icon: Video },
                 { title: "Install App", url: "/install", icon: Smartphone },
