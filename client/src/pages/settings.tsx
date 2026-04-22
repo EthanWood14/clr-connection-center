@@ -881,9 +881,19 @@ function ManagerToggleButton({ user }: { user: any }) {
   const mut = useMutation({
     mutationFn: (next: boolean) =>
       apiRequest("PATCH", `/api/users/${user.id}/manager`, { is_manager: next }),
-    onSuccess: (_, next) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] });
+    onSuccess: async (updated: any, next) => {
+      queryClient.setQueryData<any[]>(["/api/users"], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(u =>
+          u.id === user.id
+            ? { ...u, ...(updated ?? {}), isManager: next }
+            : u,
+        );
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/users"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/report-schedules"] }),
+      ]);
       toast({
         title: next ? `${user.name} is now a manager` : `${user.name} is no longer a manager`,
         description: next
