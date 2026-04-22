@@ -4851,8 +4851,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   function requireSuperAdmin(req: any, res: any, next: any) {
     const session = req.session_user;
-    if (!session?.superAdmin) return res.status(403).json({ error: "Super admin only" });
-    next();
+    if (session?.superAdmin) return next();
+    // Fallback: re-check DB so newly-granted super_admin takes effect without re-login
+    const u = storage.getUserById(session?.userId) as any;
+    if (u && !!(u.superAdmin ?? u.super_admin)) {
+      session.superAdmin = true;
+      return next();
+    }
+    return res.status(403).json({ error: "Super admin only" });
   }
 
   // Current org settings (per-team branding, etc.)
