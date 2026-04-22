@@ -2864,25 +2864,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // ── Daily Call Logs ────────────────────────────────────────────────────────────────
 
-  // Check if current user has a call log for the last business day
+  // Check if current user has a call log for TODAY.
+  // Admins / non-CLR users are exempt (the gate never shows for them).
   app.get("/api/call-logs/check-previous-day", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-    // Compute the last business day (Mon-Fri), skipping weekends
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const prevBiz = new Date(today);
-    prevBiz.setDate(prevBiz.getDate() - 1);
-    // Skip Sunday (0) and Saturday (6)
-    while (prevBiz.getDay() === 0 || prevBiz.getDay() === 6) {
-      prevBiz.setDate(prevBiz.getDate() - 1);
-    }
-    const prevBizStr = prevBiz.toISOString().split("T")[0];
+    const user = storage.getUserById(userId) as any;
+    const isClr = !!(user && (user.isClr ?? user.is_clr) && user.role !== "admin");
+    const todayStr = new Date().toISOString().split("T")[0];
 
-    const logs = storage.getDailyCallLogs(prevBizStr);
+    if (!isClr) {
+      // Non-CLR (admins, LOs, etc.) are never gated.
+      return res.json({ hasLog: true, date: todayStr, exempt: true });
+    }
+
+    const logs = storage.getDailyCallLogs(todayStr);
     const hasLog = logs.some(l => l.assistantId === userId);
-    res.json({ hasLog, date: prevBizStr });
+    res.json({ hasLog, date: todayStr });
   });
 
   app.get("/api/call-logs", (req, res) => {
@@ -3795,6 +3794,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return lo ? (lo.fullName ?? lo.full_name ?? `LO #${id}`) : `LO #${id}`;
     };
     const enriched = reports.map((r: any) => {
+      // Outcome breakdown: count each outcome_type for this CLR + date.
+      // lead_outcomes.date is "YYYY-MM-DD" (same format as eod_reports.report_date),
+      // so direct equality works. No DATE() needed.
+      const breakdownRows = sqlite.prepare(`
+        SELECT outcome_type, COUNT(*) as n
+        FROM lead_outcomes
+        WHERE assistant_id=? AND date=?
+        GROUP BY outcome_type
+      `).all(r.assistant_id, r.report_date) as any[];
+      const outcomeBreakdown: Record<string, number> = {};
+      for (const row of breakdownRows) {
+        const k = String(row.outcome_type || "").trim();
+        if (k) outcomeBreakdown[k] = Number(row.n) || 0;
+      }
+
       const rows = sqlite.prepare(`
         SELECT o.borrower_name, o.transfer_type, lo.full_name as lo_full_name
         FROM lead_outcomes o
@@ -3831,6 +3845,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       return {
         ...r,
+        outcomeBreakdown,
         transferProspects,
         transferProspectsWithLo,
         additionalLosOtherNotes: (r.additional_los_other_notes ?? null),
