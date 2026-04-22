@@ -49,7 +49,7 @@ interface PersonalReport {
   loCoverage: Array<{ loId: number; name: string; outcomes: number }>;
   bestDay: { date: string; transfers: number } | null;
   streak: number;
-  weekToDate: { startDate: string; endDate: string; calls: number; transfers: number; appointments: number };
+  weekToDate: { startDate: string; endDate: string; calls: number; transfers: number; appointments: number; fellThrough?: number };
 }
 
 const COLORS = {
@@ -242,7 +242,14 @@ export default function MyReport() {
                   <GoalProgressRow label="Transfers" current={data.weekToDate.transfers} goal={data.goals.transfers} color="" />
                 )}
                 {data.goals.appointments > 0 && (
-                  <GoalProgressRow label="Appointments" current={data.weekToDate.appointments} goal={data.goals.appointments} color="" />
+                  <div>
+                    <GoalProgressRow label="Appointments" current={data.weekToDate.appointments} goal={data.goals.appointments} color="" />
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground pt-1">
+                      <span>Appointments: <span className="font-semibold text-foreground tabular-nums">{data.weekToDate.appointments ?? 0}</span></span>
+                      <span>Transfers: <span className="font-semibold text-foreground tabular-nums">{data.weekToDate.transfers ?? 0}</span></span>
+                      <span>Fell Throughs: <span className="font-semibold text-foreground tabular-nums">{data.weekToDate.fellThrough ?? 0}</span></span>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
