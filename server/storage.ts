@@ -998,6 +998,10 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE daily_call_logs ADD COLUMN contacts_reached INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE daily_call_logs ADD COLUMN dnc_hits INTEGER NOT NULL DEFAULT 0`); } catch {}
 
+  // webhook_settings: add integration API tokens
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN bonzo_api_token TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN mojo_api_key TEXT`); } catch {}
+
 }
 runNewMigrations();
 
@@ -1503,17 +1507,24 @@ export function getRecentWebhookEvents(limit = 50) {
 
 export function getWebhookSettings() {
   const row = sqlite.prepare(`SELECT * FROM webhook_settings WHERE id=1`).get() as any;
-  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null };
+  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null };
 }
 
-export function updateWebhookSettings(data: { mojoSecret?: string | null; bonzoSecret?: string | null }) {
+export function updateWebhookSettings(data: {
+  mojoSecret?: string | null;
+  bonzoSecret?: string | null;
+  bonzoApiToken?: string | null;
+  mojoApiKey?: string | null;
+}) {
   const now = new Date().toISOString();
   const existing = getWebhookSettings();
   const mojo = data.mojoSecret !== undefined ? (data.mojoSecret || null) : existing.mojo_secret;
   const bonzo = data.bonzoSecret !== undefined ? (data.bonzoSecret || null) : existing.bonzo_secret;
+  const bonzoToken = data.bonzoApiToken !== undefined ? (data.bonzoApiToken || null) : existing.bonzo_api_token;
+  const mojoKey = data.mojoApiKey !== undefined ? (data.mojoApiKey || null) : existing.mojo_api_key;
   sqlite.prepare(
-    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, updated_at=? WHERE id=1`
-  ).run(mojo, bonzo, now);
+    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, updated_at=? WHERE id=1`
+  ).run(mojo, bonzo, bonzoToken, mojoKey, now);
   return getWebhookSettings();
 }
 

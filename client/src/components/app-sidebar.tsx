@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +53,7 @@ const adminItems: { title: string; url: string; icon: any; badge?: string }[] = 
 ];
 
 const integrationItems: { title: string; url: string; icon: any; badge?: string }[] = [
-  { title: "Webhooks",        url: "/webhook-settings", icon: Webhook },
+  { title: "Integrations",    url: "/integrations", icon: Plug },
 ];
 
 // ── Component ────────────────────────────────────────────────────────────────

@@ -2464,19 +2464,25 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({
       mojoSecret: s.mojo_secret ?? "",
       bonzoSecret: s.bonzo_secret ?? "",
+      bonzoApiToken: s.bonzo_api_token ?? "",
+      mojoApiKey: s.mojo_api_key ?? "",
     });
   });
 
   app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const { mojoSecret, bonzoSecret } = req.body ?? {};
+    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey } = req.body ?? {};
     const updated = storageExtra.updateWebhookSettings({
       mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
       bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
+      bonzoApiToken: typeof bonzoApiToken === "string" ? bonzoApiToken : undefined,
+      mojoApiKey: typeof mojoApiKey === "string" ? mojoApiKey : undefined,
     });
     res.json({
       mojoSecret: updated.mojo_secret ?? "",
       bonzoSecret: updated.bonzo_secret ?? "",
+      bonzoApiToken: updated.bonzo_api_token ?? "",
+      mojoApiKey: updated.mojo_api_key ?? "",
     });
   });
 

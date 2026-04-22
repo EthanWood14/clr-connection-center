@@ -44,6 +44,7 @@ import CallScript from "@/pages/call-script";
 import GlossaryPage from "@/pages/glossary";
 import LoVacation from "@/pages/lo-vacation";
 import WebhookSettings from "@/pages/webhook-settings";
+import Integrations from "@/pages/integrations";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -88,7 +89,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/terms-of-use": "Terms of Use",
   "/glossary":      "Glossary",
   "/lo-vacation":   "LO Vacation",
-  "/webhook-settings": "Webhooks",
+  "/webhook-settings": "Integrations",
+  "/integrations":     "Integrations",
 };
 
 function usePageTitle() {
@@ -127,7 +129,8 @@ function AppRouter() {
       <Route path="/call-script" component={CallScript} />
       <Route path="/glossary" component={GlossaryPage} />
       <Route path="/lo-vacation" component={LoVacation} />
-      <Route path="/webhook-settings" component={WebhookSettings} />
+      <Route path="/webhook-settings" component={Integrations} />
+      <Route path="/integrations" component={Integrations} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-use" component={TermsOfUse} />
