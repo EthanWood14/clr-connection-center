@@ -21,6 +21,7 @@ export interface AuthUser {
   reminderEmailEnabled?: boolean;
   smsRemindersEnabled?: boolean;
   phone?: string | null;
+  timezone?: string;
 }
 
 interface AuthContextValue {

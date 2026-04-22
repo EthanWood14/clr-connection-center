@@ -1382,13 +1382,19 @@ export default function CallScriptPage() {
   useEffect(() => { document.title = "Scripts · WCLCC"; }, []);
 
   // ── Placeholder state ────────────────────────────────────────────────────
+  // Priority: user's profile timezone > previously chosen script timezone > browser detection.
+  // Saving the profile timezone in Settings also writes clr_script_timezone so the two stay aligned.
   const [timezone, setTimezone] = useState<string>(() => {
     try {
+      if (user?.timezone) return user.timezone;
       const saved = localStorage.getItem("clr_script_timezone");
-      if (saved && TIMEZONE_OPTIONS.some(o => o.value === saved)) return saved;
+      if (saved) return saved;
     } catch {}
     return detectDefaultTimezone();
   });
+  useEffect(() => {
+    if (user?.timezone && user.timezone !== timezone) setTimezone(user.timezone);
+  }, [user?.timezone]);
   useEffect(() => {
     try { localStorage.setItem("clr_script_timezone", timezone); } catch {}
   }, [timezone]);

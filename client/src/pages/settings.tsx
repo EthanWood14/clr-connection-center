@@ -790,6 +790,209 @@ function WeeklyGoalsCard() {
   );
 }
 
+// ── Timezone Preference Card (per-user IANA timezone for all date/time display) ──
+const TIMEZONE_GROUPS: Array<{ label: string; options: Array<{ value: string; label: string }> }> = [
+  {
+    label: "US (Quick Access)",
+    options: [
+      { value: "America/Los_Angeles", label: "Pacific Time (US & Canada)" },
+      { value: "America/Denver", label: "Mountain Time (US & Canada)" },
+      { value: "America/Phoenix", label: "Mountain Time (Arizona, no DST)" },
+      { value: "America/Chicago", label: "Central Time (US & Canada)" },
+      { value: "America/New_York", label: "Eastern Time (US & Canada)" },
+      { value: "America/Anchorage", label: "Alaska Time" },
+      { value: "Pacific/Honolulu", label: "Hawaii Time" },
+    ],
+  },
+  {
+    label: "Americas",
+    options: [
+      { value: "America/Toronto", label: "Toronto" },
+      { value: "America/Mexico_City", label: "Mexico City" },
+      { value: "America/Sao_Paulo", label: "São Paulo" },
+      { value: "America/Buenos_Aires", label: "Buenos Aires" },
+      { value: "America/Bogota", label: "Bogotá" },
+    ],
+  },
+  {
+    label: "Europe",
+    options: [
+      { value: "Europe/London", label: "London" },
+      { value: "Europe/Dublin", label: "Dublin" },
+      { value: "Europe/Paris", label: "Paris" },
+      { value: "Europe/Berlin", label: "Berlin" },
+      { value: "Europe/Madrid", label: "Madrid" },
+      { value: "Europe/Rome", label: "Rome" },
+      { value: "Europe/Amsterdam", label: "Amsterdam" },
+      { value: "Europe/Stockholm", label: "Stockholm" },
+      { value: "Europe/Moscow", label: "Moscow" },
+    ],
+  },
+  {
+    label: "Asia / Pacific",
+    options: [
+      { value: "Asia/Dubai", label: "Dubai" },
+      { value: "Asia/Kolkata", label: "India (Kolkata)" },
+      { value: "Asia/Bangkok", label: "Bangkok" },
+      { value: "Asia/Singapore", label: "Singapore" },
+      { value: "Asia/Hong_Kong", label: "Hong Kong" },
+      { value: "Asia/Shanghai", label: "Shanghai" },
+      { value: "Asia/Tokyo", label: "Tokyo" },
+      { value: "Asia/Seoul", label: "Seoul" },
+      { value: "Australia/Sydney", label: "Sydney" },
+      { value: "Australia/Melbourne", label: "Melbourne" },
+      { value: "Pacific/Auckland", label: "Auckland" },
+    ],
+  },
+  {
+    label: "Africa",
+    options: [
+      { value: "Africa/Cairo", label: "Cairo" },
+      { value: "Africa/Johannesburg", label: "Johannesburg" },
+      { value: "Africa/Nairobi", label: "Nairobi" },
+      { value: "Africa/Lagos", label: "Lagos" },
+    ],
+  },
+  {
+    label: "UTC",
+    options: [{ value: "UTC", label: "Coordinated Universal Time" }],
+  },
+];
+
+function utcOffsetLabel(tz: string, at: Date = new Date()): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "shortOffset" }).formatToParts(at);
+    const tzPart = parts.find(p => p.type === "timeZoneName");
+    if (tzPart?.value) return tzPart.value.replace(/^GMT/, "UTC");
+  } catch {}
+  return "";
+}
+
+function detectBrowserTimezone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles"; }
+  catch { return "America/Los_Angeles"; }
+}
+
+function TimezonePreferenceCard() {
+  const { toast } = useToast();
+  const { user: authUser, refetchUser } = useAuth();
+  const saved = authUser?.timezone ?? "America/Los_Angeles";
+  const [selected, setSelected] = useState<string>(saved);
+  const [saving, setSaving] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  const browserTz = detectBrowserTimezone();
+
+  useEffect(() => { setSelected(saved); }, [saved]);
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const isDirty = selected !== saved;
+  const offsetForSelected = utcOffsetLabel(selected, now);
+  const preview = (() => {
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: selected,
+        weekday: "short", month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+      }).format(now);
+    } catch { return ""; }
+  })();
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/auth/profile", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timezone: selected }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({ title: "Failed to save timezone", description: data?.error ?? `Status ${res.status}`, variant: "destructive" });
+      } else {
+        toast({ title: "Timezone saved", description: `All dates and times will now display in ${selected}.` });
+        try { localStorage.setItem("clr_script_timezone", selected); } catch {}
+        await refetchUser();
+      }
+    } catch {
+      toast({ title: "Failed to save timezone", description: "Could not reach the server.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-muted-foreground" />
+          Timezone
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">Controls how dates and times are displayed across the app — outcomes, appointments, followups, and the call script clock.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Your timezone</label>
+          <select
+            value={selected}
+            onChange={e => setSelected(e.target.value)}
+            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+            data-testid="settings-timezone-select"
+          >
+            {TIMEZONE_GROUPS.map(group => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map(opt => {
+                  const off = utcOffsetLabel(opt.value, now);
+                  return (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}{off ? ` — ${off}` : ""}
+                    </option>
+                  );
+                })}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+
+        <div className="rounded-md border px-3 py-2 text-xs space-y-1 bg-muted/40">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Current time in your timezone</span>
+            <span className="font-medium tabular-nums">{preview || "—"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">UTC offset</span>
+            <span className="font-mono">{offsetForSelected || "—"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Detected from your browser</span>
+            <span className="font-mono">{browserTz}</span>
+          </div>
+          {browserTz && browserTz !== selected && (
+            <button
+              type="button"
+              onClick={() => setSelected(browserTz)}
+              className="text-[11px] underline text-primary"
+            >
+              Use browser timezone ({browserTz})
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={save} disabled={saving || !isDirty} className="gap-1.5">
+            <Save className="w-3.5 h-3.5" />
+            {saving ? "Saving…" : "Save Timezone"}
+          </Button>
+          {isDirty && <span className="text-[11px] text-amber-700">Unsaved change</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Notifications Card (per-user email reminders + admin org toggle) ────────
 function NotificationsCard() {
   const { toast } = useToast();
@@ -1754,6 +1957,8 @@ export default function Settings() {
       </Card>
 
       <WeeklyGoalsCard />
+
+      <TimezonePreferenceCard />
 
       <Card>
         <CardHeader className="pb-3">
