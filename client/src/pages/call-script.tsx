@@ -1340,6 +1340,16 @@ export default function CallScriptPage() {
         </Card>
       )}
 
+      {/* Admin editing the shared Default Script — warn that changes apply globally */}
+      {!isLoading && activeScript && isAdmin && isUsingDefault && view === "edit" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3 flex items-start gap-2 text-sm text-amber-900 dark:text-amber-200">
+          <Lock className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>
+            You are editing the <strong>Default Script</strong> — changes apply to every user who hasn't made a personal copy.
+          </span>
+        </div>
+      )}
+
       {/* Main content */}
       {!isLoading && activeScript && (
         view === "run"
