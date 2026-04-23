@@ -192,7 +192,6 @@ const toolItems: NavItem[] = [
   { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
   { title: "NMLS License",    url: "/nmls-status", icon: ShieldCheck },
   { title: "NMLS",            url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
-  { title: "Reports",         url: "/reporting",   icon: BarChart,        help: help.reporting },
 ];
 
 const adminItems: NavItem[] = [
