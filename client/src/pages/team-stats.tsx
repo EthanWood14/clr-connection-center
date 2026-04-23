@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { TimeRangeToggle, TimeRange, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -114,6 +115,8 @@ export default function TeamStats() {
   const [clrFilter, setClrFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("transfers");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [histRange, setHistRange] = useState<TimeRange>(() => getStoredRange("team-stats"));
+  const handleHistRangeChange = (v: TimeRange) => { setHistRange(v); storeRange("team-stats", v); };
 
   useEffect(() => {
     document.title = "Stats · WCLCC";
@@ -135,6 +138,16 @@ export default function TeamStats() {
   const { data, isLoading } = useQuery<StatsResponse>({
     queryKey: [`/api/stats?period=${period}&clr_id=${effectiveClr}`],
   });
+
+  const { data: historyData } = useQuery<any>({
+    queryKey: ["/api/analytics/history", histRange, effectiveClr],
+    queryFn: () => {
+      const params = new URLSearchParams({ range: histRange });
+      if (effectiveClr !== "all") params.set("assistantId", effectiveClr);
+      return fetch(`/api/analytics/history?${params.toString()}`).then(r => r.json());
+    },
+  });
+  const histPeriods: any[] = historyData?.periods ?? [];
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -259,27 +272,28 @@ export default function TeamStats() {
         <SummaryCard title="Total Appointments" value={data.totals.appointments} previous={data.previous.appointments} />
       </div>
 
-      {/* Chart 1: Daily Activity */}
+      {/* Chart 1: Activity Trend — toggle-controlled */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Daily Activity</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Activity Trend</CardTitle>
+            <TimeRangeToggle value={histRange} onChange={handleHistRangeChange} />
+          </div>
         </CardHeader>
         <CardContent>
-          {dailyDisplay.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-12 text-center">No activity for this period.</p>
+          {histPeriods.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-12 text-center">No activity for this time range.</p>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={dailyDisplay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={histPeriods} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="calls" orientation="left" tick={{ fontSize: 11 }} allowDecimals={false} stroke={COLORS.calls} label={{ value: "Calls", angle: -90, position: "insideLeft", fontSize: 10, fill: COLORS.calls }} />
-                <YAxis yAxisId="small" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} stroke={COLORS.transfers} label={{ value: "Transfers / Appts", angle: 90, position: "insideRight", fontSize: 10, fill: COLORS.transfers }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} radius={[2,2,0,0]} />
-                <Bar yAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} radius={[2,2,0,0]} />
-                <Bar yAxisId="small" dataKey="appointments" name="Appointments" fill={COLORS.appointments} radius={[2,2,0,0]} />
-                <Bar yAxisId="small" dataKey="fellThrough" name="Fell Through" fill={COLORS.fell_through} radius={[2,2,0,0]} />
+                <Bar dataKey="transfers" name="Transfers" fill={COLORS.transfers} radius={[2,2,0,0]} />
+                <Bar dataKey="appointments" name="Appointments" fill={COLORS.appointments} radius={[2,2,0,0]} />
+                <Bar dataKey="total" name="Total Outcomes" fill={COLORS.calls} radius={[2,2,0,0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -336,19 +350,19 @@ export default function TeamStats() {
             <CardTitle className="text-base">Transfer Rate Trend</CardTitle>
           </CardHeader>
           <CardContent>
-            {dailyDisplay.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-12 text-center">No activity for this period.</p>
+            {histPeriods.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-12 text-center">No activity for this time range.</p>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={dailyDisplay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <LineChart data={histPeriods} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} unit="%" />
+                  <YAxis tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
                   <Tooltip
-                    formatter={(v: any) => [`${v}%`, "Transfer rate"]}
+                    formatter={(v: any) => [`${v}%`, "Conv. rate"]}
                     contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
                   />
-                  <Line type="monotone" dataKey="transferRate" stroke={COLORS.transfers} strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="convRate" stroke={COLORS.transfers} strokeWidth={2} dot={{ r: 3 }} />
                 </LineChart>
               </ResponsiveContainer>
             )}

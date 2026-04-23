@@ -2970,27 +2970,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Leaderboard ───────────────────────────────────────────────────────────────
   // ── Analytics History (last N periods) ─────────────────────────────────────
   app.get("/api/analytics/history", (req, res) => {
-    const periodsBack = parseInt((req.query.periods as string) || "6");
     const assistantId = req.query.assistantId ? parseInt(req.query.assistantId as string) : undefined;
-    const results: any[] = [];
-    const now = new Date();
+    const range = req.query.range as string | undefined;
+    const users = storage.getUsers();
 
-    for (let i = 0; i < periodsBack; i++) {
-      const periodEnd = new Date(now.getFullYear(), now.getMonth() - i, 15);
-      const periodStart = new Date(now.getFullYear(), now.getMonth() - i - 1, 16);
-      const startDate = periodStart.toISOString().split("T")[0];
-      const endDate = periodEnd.toISOString().split("T")[0];
-      const label = periodEnd.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-
-      const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
-      const users = storage.getUsers();
-
+    // Helper: build a single bucket result from an array of outcomes
+    function buildBucket(label: string, startDate: string, endDate: string, outcomes: any[]) {
       const transfers = outcomes.filter((o: any) => o.outcomeType === "transfer" || o.outcome_type === "transfer").length;
       const appointments = outcomes.filter((o: any) => o.outcomeType === "appointment" || o.outcome_type === "appointment").length;
       const total = outcomes.length;
       const convRate = total > 0 ? Math.round((transfers / total) * 100) : 0;
-
-      // Per-CLR breakdown (only relevant when showing all)
       const tally: Record<number, { transfers: number; total: number; name: string }> = {};
       for (const o of outcomes) {
         const aid = o.assistantId || o.assistant_id;
@@ -3001,12 +2990,119 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         tally[aid].total++;
         if (o.outcomeType === "transfer" || o.outcome_type === "transfer") tally[aid].transfers++;
       }
-      const clrStats = Object.values(tally).sort((a, b) => b.transfers - a.transfers);
-
-      results.push({ label, startDate, endDate, transfers, appointments, total, convRate, clrStats });
+      const clrStats = Object.values(tally).sort((a: any, b: any) => b.transfers - a.transfers);
+      return { label, startDate, endDate, transfers, appointments, total, convRate, clrStats };
     }
 
-    res.json({ periods: results.reverse() });
+    // Pad date string to ISO date
+    function toISODate(d: Date): string {
+      return d.toISOString().split("T")[0];
+    }
+
+    const now = new Date();
+    const results: any[] = [];
+
+    if (range === "1d") {
+      // 24 hourly buckets for today
+      const todayStr = toISODate(now);
+      // Fetch all outcomes for today by date field
+      const dayOutcomes = storage.getLeadOutcomes({ startDate: todayStr, endDate: todayStr, assistantId });
+      for (let h = 0; h < 24; h++) {
+        const label = h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`;
+        // Filter by hour using created_at timestamp
+        const hourOutcomes = dayOutcomes.filter((o: any) => {
+          const ts = o.createdAt || o.created_at || "";
+          if (!ts) return false;
+          try {
+            const d = new Date(ts);
+            return d.getHours() === h;
+          } catch { return false; }
+        });
+        results.push(buildBucket(label, todayStr, todayStr, hourOutcomes));
+      }
+
+    } else if (range === "1w") {
+      // 7 daily buckets: Mon–Sun of current week
+      const dayOfWeek = now.getDay(); // 0=Sun
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
+      for (let i = 0; i < 7; i++) {
+        const day = new Date(monday);
+        day.setDate(monday.getDate() + i);
+        const dateStr = toISODate(day);
+        const label = day.toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
+        const outcomes = storage.getLeadOutcomes({ startDate: dateStr, endDate: dateStr, assistantId });
+        results.push(buildBucket(label, dateStr, dateStr, outcomes));
+      }
+
+    } else if (range === "all") {
+      // Group by month from earliest outcome to today; bucket by quarter if > 24 months
+      const allOutcomes = storage.getLeadOutcomes({ assistantId });
+      if (allOutcomes.length === 0) {
+        return res.json({ periods: [] });
+      }
+      // Find earliest date
+      let earliest = allOutcomes.reduce((min: string, o: any) => {
+        const d = (o.date || "") as string;
+        return d < min ? d : min;
+      }, allOutcomes[0].date as string);
+      const earliestDate = new Date(earliest + "T00:00:00");
+      const startYear = earliestDate.getFullYear();
+      const startMonth = earliestDate.getMonth();
+      const endYear = now.getFullYear();
+      const endMonth = now.getMonth();
+      const totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+      const useQuarters = totalMonths > 24;
+
+      if (!useQuarters) {
+        // Monthly buckets
+        for (let i = 0; i < totalMonths; i++) {
+          const year = startYear + Math.floor((startMonth + i) / 12);
+          const month = (startMonth + i) % 12;
+          const bucketStart = new Date(year, month, 1);
+          const bucketEnd = new Date(year, month + 1, 0);
+          const startDate = toISODate(bucketStart);
+          const endDate = toISODate(bucketEnd);
+          const label = bucketStart.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+          const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
+          results.push(buildBucket(label, startDate, endDate, outcomes));
+        }
+      } else {
+        // Quarterly buckets
+        const startQ = Math.floor(startMonth / 3);
+        const endQ = Math.floor(endMonth / 3);
+        const totalQ = (endYear - startYear) * 4 + (endQ - startQ) + 1;
+        for (let i = 0; i < totalQ; i++) {
+          const totalQFromStart = Math.floor(startMonth / 3) + i;
+          const year = startYear + Math.floor(totalQFromStart / 4);
+          const q = totalQFromStart % 4;
+          const qStartMonth = q * 3;
+          const bucketStart = new Date(year, qStartMonth, 1);
+          const bucketEnd = new Date(year, qStartMonth + 3, 0);
+          const startDate = toISODate(bucketStart);
+          const endDate = toISODate(bucketEnd);
+          const label = `Q${q + 1} ${year}`;
+          const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
+          results.push(buildBucket(label, startDate, endDate, outcomes));
+        }
+      }
+
+    } else {
+      // Default: legacy half-month periods (1m range or periods param)
+      const periodsBack = parseInt((req.query.periods as string) || "6");
+      for (let i = 0; i < periodsBack; i++) {
+        const periodEnd = new Date(now.getFullYear(), now.getMonth() - i, 15);
+        const periodStart = new Date(now.getFullYear(), now.getMonth() - i - 1, 16);
+        const startDate = periodStart.toISOString().split("T")[0];
+        const endDate = periodEnd.toISOString().split("T")[0];
+        const label = periodEnd.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
+        results.push(buildBucket(label, startDate, endDate, outcomes));
+      }
+      return res.json({ periods: results.reverse() });
+    }
+
+    res.json({ periods: results });
   });
 
   app.get("/api/leaderboard", (req, res) => {

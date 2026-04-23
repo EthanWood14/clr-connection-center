@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { TimeRangeToggle, TimeRange, TIME_RANGE_LABELS, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -361,12 +362,18 @@ function TabAssignments({ todayAssignments, generateAssignments, losData }: any)
 
 // ── Tab: Weekly Stats ─────────────────────────────────────────────────────────
 function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
-  const { data: history } = useQuery<any>({ queryKey: ["/api/analytics/history?periods=6"] });
+  const [trendRange, setTrendRange] = useState<TimeRange>(() => getStoredRange("dashboard"));
+  const handleRangeChange = (v: TimeRange) => { setTrendRange(v); storeRange("dashboard", v); };
+  const { data: history } = useQuery<any>({
+    queryKey: ["/api/analytics/history", trendRange],
+    queryFn: () => fetch(`/api/analytics/history?range=${trendRange}`).then(r => r.json()),
+  });
   const periods = history?.periods ?? [];
   const leaderboard = leaderboardData?.leaderboard ?? [];
   const pieData = stats?.outcomesByType
     ? Object.entries(stats.outcomesByType).map(([key, val]) => ({ name: OUTCOME_LABELS[key] || key, value: val as number }))
     : [];
+  const trendTitle = `Transfer Volume — ${TIME_RANGE_LABELS[trendRange]}`;
 
   return (
     <div className="space-y-6">
@@ -423,11 +430,19 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
       </div>
 
       {/* Historical trend */}
-      {periods.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {(
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground font-medium">Activity Trend</span>
+            <TimeRangeToggle value={trendRange} onChange={handleRangeChange} />
+          </div>
+          {periods.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No data for this time range.</p>
+          ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Transfer Volume — Last 6 Periods</CardTitle>
+              <CardTitle className="text-sm font-semibold">{trendTitle}</CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={200}>
@@ -463,6 +478,8 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
               </ResponsiveContainer>
             </CardContent>
           </Card>
+        </div>
+          )}
         </div>
       )}
 

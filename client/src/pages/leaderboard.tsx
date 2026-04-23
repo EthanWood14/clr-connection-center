@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { TimeRangeToggle, TimeRange, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -124,7 +125,7 @@ function ChartTooltip({ active, payload, label }: any) {
 }
 
 // ── Individual CLR stats card ─────────────────────────────────────────────────
-function IndividualStats({ clr, periods }: { clr: any; periods: any[] }) {
+function IndividualStats({ clr, periods, range, onRangeChange }: { clr: any; periods: any[]; range: TimeRange; onRangeChange: (v: TimeRange) => void }) {
   const initials = clr.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
   const convTrend = periods.map((p: any) => ({
     label: p.label,
@@ -177,9 +178,12 @@ function IndividualStats({ clr, periods }: { clr: any; periods: any[] }) {
       {/* Volume + conv area chart */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-primary" /> Volume by Period
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-primary" /> Volume by Period
+            </CardTitle>
+            <TimeRangeToggle value={range} onChange={onRangeChange} />
+          </div>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={240}>
@@ -265,14 +269,20 @@ function IndividualStats({ clr, periods }: { clr: any; periods: any[] }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function TeamStats() {
   const [selectedClrId, setSelectedClrId] = useState<string>("all");
+  const [trendRange, setTrendRange] = useState<TimeRange>(() => getStoredRange("leaderboard"));
+  const handleRangeChange = (v: TimeRange) => { setTrendRange(v); storeRange("leaderboard", v); };
 
   const { data: usersData } = useQuery<any[]>({ queryKey: ["/api/users"] });
   const clrs = (usersData ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
   const { data: leaderboardData, isLoading } = useQuery<any>({ queryKey: ["/api/leaderboard"] });
   const { data: historyData, isLoading: histLoading } = useQuery<any>({
-    queryKey: ["/api/analytics/history", selectedClrId],
-    queryFn: () => fetch(`/api/analytics/history${selectedClrId !== "all" ? `?assistantId=${selectedClrId}` : ""}`).then(r => r.json()),
+    queryKey: ["/api/analytics/history", selectedClrId, trendRange],
+    queryFn: () => {
+      const params = new URLSearchParams({ range: trendRange });
+      if (selectedClrId !== "all") params.set("assistantId", selectedClrId);
+      return fetch(`/api/analytics/history?${params.toString()}`).then(r => r.json());
+    },
   });
 
   const leaderboard: any[] = leaderboardData?.leaderboard ?? [];
@@ -358,7 +368,7 @@ export default function TeamStats() {
       {selectedClrId !== "all" && selectedClr ? (
         histLoading
           ? <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
-          : <IndividualStats clr={selectedClr} periods={periods} />
+          : <IndividualStats clr={selectedClr} periods={periods} range={trendRange} onRangeChange={handleRangeChange} />
       ) : (
         <Tabs defaultValue="current">
           <TabsList className="mb-4">
@@ -434,6 +444,9 @@ export default function TeamStats() {
 
           {/* ── HISTORICAL CHARTS ── */}
           <TabsContent value="history" className="space-y-5">
+            <div className="flex items-center justify-end">
+              <TimeRangeToggle value={trendRange} onChange={handleRangeChange} />
+            </div>
             {histLoading ? (
               <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
             ) : periods.length === 0 ? (
