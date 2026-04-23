@@ -201,7 +201,6 @@ const adminItems: NavItem[] = [
 ];
 
 const integrationItems: NavItem[] = [
-  { title: "Integrations",    url: "/integrations", icon: Plug },
   { title: "Contact Hub",     url: "/contacts", icon: Users },
   { title: "Bonzo Prospects", url: "/bonzo-prospects", icon: UserCheck },
   { title: "Mojo Sessions",   url: "/mojo-sessions", icon: PhoneIncoming },
