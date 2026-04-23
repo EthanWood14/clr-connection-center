@@ -189,4 +189,141 @@
     break-inside: avoid;
     page-break-inside: avoid;
   }
+
+  /* ── EOD Print Sheet — structured, value-based export ─────────────────── */
+  .eod-print-sheet {
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    color: #000 !important;
+  }
+  .eod-print-sheet table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0 10px 0;
+  }
+  .eod-print-sheet .eod-h2 {
+    font-size: 11.5pt;
+    font-weight: 700;
+    margin: 14px 0 4px 0;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #888;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .eod-print-sheet .eod-h2-sub {
+    font-size: 9.5pt;
+    font-weight: 400;
+    color: #555 !important;
+  }
+
+  /* Identity metadata table */
+  .eod-print-sheet .eod-meta td {
+    padding: 3px 6px;
+    font-size: 10pt;
+    vertical-align: top;
+  }
+  .eod-print-sheet .eod-meta td:nth-child(odd) {
+    color: #444 !important;
+    width: 1%;
+    white-space: nowrap;
+    padding-right: 10px;
+  }
+
+  /* Key/value summary */
+  .eod-print-sheet .eod-kv td {
+    padding: 3px 6px;
+    border-bottom: 1px solid #e5e5e5;
+  }
+  .eod-print-sheet .eod-kv td:first-child {
+    color: #333 !important;
+  }
+
+  /* Generic data table */
+  .eod-print-sheet .eod-table th,
+  .eod-print-sheet .eod-table td {
+    padding: 5px 6px;
+    border: 1px solid #bbb;
+    text-align: left;
+    font-size: 10pt;
+    vertical-align: top;
+  }
+  .eod-print-sheet .eod-table th {
+    background: #f3f3f3 !important;
+    font-weight: 700;
+    font-size: 9.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .eod-print-sheet .eod-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .eod-print-sheet .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .eod-print-sheet .eod-total td {
+    background: #fafafa !important;
+    border-top: 2px solid #888;
+  }
+
+  /* LO Coverage */
+  .eod-print-sheet .eod-coverage {
+    display: grid;
+    gap: 6px;
+    margin: 4px 0 10px 0;
+  }
+  .eod-print-sheet .eod-cov-label {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #333 !important;
+    margin: 0 0 2px 0;
+  }
+  .eod-print-sheet .eod-cov-names {
+    font-size: 10pt;
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  /* Notes */
+  .eod-print-sheet .eod-notes {
+    font-size: 10pt;
+    margin: 2px 0 10px 0;
+    padding: 6px 8px;
+    border-left: 3px solid #888;
+    background: #fafafa !important;
+    white-space: pre-wrap;
+  }
+  .eod-print-sheet .eod-empty {
+    font-size: 9.5pt;
+    color: #666 !important;
+    font-style: italic;
+    margin: 4px 0 10px 0;
+  }
+
+  /* Signature block */
+  .eod-print-sheet .eod-sign {
+    display: flex;
+    gap: 32px;
+    margin-top: 28px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .eod-print-sheet .eod-sign-block {
+    flex: 1 1 0;
+  }
+  .eod-print-sheet .eod-sign-line {
+    border-bottom: 1px solid #000;
+    height: 32px;
+  }
+  .eod-print-sheet .eod-sign-label {
+    font-size: 9pt;
+    color: #555 !important;
+    margin: 3px 0 0 0;
+    text-align: center;
+  }
 }

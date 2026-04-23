@@ -4130,6 +4130,79 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       try { (report as any).assignedLosCalled = JSON.parse((report as any).assigned_los_called || "[]"); } catch { (report as any).assignedLosCalled = []; }
       try { (report as any).additionalLosCalled = JSON.parse((report as any).additional_los_called || "[]"); } catch { (report as any).additionalLosCalled = []; }
       (report as any).additionalLosOtherNotes = (report as any).additional_los_other_notes ?? null;
+
+      // Enrich with the same fields the history endpoint returns, so the print
+      // view can render a complete, value-based report.
+      try {
+        const sqlite = storageExtra.getSqlite();
+        const allLos = storage.getLoanOfficers() as any[];
+        const loNameById = (id: number): string => {
+          const lo = allLos.find((l: any) => l.id === id);
+          return lo ? (lo.fullName ?? lo.full_name ?? `LO #${id}`) : `LO #${id}`;
+        };
+
+        // Outcome breakdown for this CLR + date
+        const breakdownRows = sqlite.prepare(`
+          SELECT outcome_type, COUNT(*) as n
+          FROM lead_outcomes
+          WHERE assistant_id=? AND date=?
+          GROUP BY outcome_type
+        `).all(userId, date) as any[];
+        const outcomeBreakdown: Record<string, number> = {};
+        for (const row of breakdownRows) {
+          const k = String(row.outcome_type || "").trim();
+          if (k) outcomeBreakdown[k] = Number(row.n) || 0;
+        }
+        (report as any).outcomeBreakdown = outcomeBreakdown;
+
+        // Transfer prospects (with LO name + transfer type)
+        const transferRows = sqlite.prepare(`
+          SELECT o.borrower_name, o.transfer_type, lo.full_name as lo_full_name
+          FROM lead_outcomes o
+          LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+          WHERE o.assistant_id=? AND o.date=? AND o.outcome_type='transfer'
+          ORDER BY o.id ASC
+        `).all(userId, date) as any[];
+        (report as any).transferProspects = transferRows
+          .map((o: any) => ({
+            name: (o.borrower_name || '').trim(),
+            transferType: (o.transfer_type as string | null) ?? null,
+          }))
+          .filter((p: any) => p.name.length > 0);
+        (report as any).transferProspectsWithLo = transferRows
+          .map((o: any) => ({
+            name: (o.borrower_name || '').trim(),
+            loName: (o.lo_full_name || '').trim() || null,
+            transferType: (o.transfer_type as string | null) ?? null,
+          }))
+          .filter((p: any) => p.name.length > 0);
+
+        // LO Coverage rollup (assigned called / not called / additional + other)
+        const assignedCalledIds: number[] = (report as any).assignedLosCalled || [];
+        const additionalCalledIds: number[] = (report as any).additionalLosCalled || [];
+        const dayAssignments = (storage.getDailyAssignments(date) as any[])
+          .filter((a: any) => (a.assistantId ?? a.assistant_id) === userId);
+        const assignedLoIds: number[] = dayAssignments
+          .map((a: any) => a.loId ?? a.lo_id)
+          .filter((n: any) => Number.isFinite(n));
+        const calledSet = new Set<number>(assignedCalledIds);
+        (report as any).loCoverage = {
+          assignedCalled: assignedLoIds.filter((id: number) => calledSet.has(id)).map(loNameById),
+          notCalled:      assignedLoIds.filter((id: number) => !calledSet.has(id)).map(loNameById),
+          additional:     additionalCalledIds.map(loNameById),
+          otherNotes:     (report as any).additionalLosOtherNotes ?? null,
+        };
+
+        // CLR name (so the print view can show "Submitted by …")
+        const userRow = sqlite.prepare(`SELECT name, email, role FROM users WHERE id=?`).get(userId) as any;
+        if (userRow) {
+          (report as any).clr_name  = userRow.name ?? null;
+          (report as any).clr_email = userRow.email ?? null;
+          (report as any).clr_role  = userRow.role ?? null;
+        }
+      } catch (e) {
+        // Enrichment is best-effort; fall back to the unenriched report.
+      }
     }
     res.json({ report, activities });
   });

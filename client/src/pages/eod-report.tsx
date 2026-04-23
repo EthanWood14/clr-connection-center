@@ -333,6 +333,26 @@ export default function EodReport() {
         <div className="print-title">End-of-Day Report — {displayDate}</div>
       </div>
 
+      {/* Print-only full report sheet. Renders a complete value-based
+          export when the user clicks "Print / Export PDF" on a submitted
+          past report. All interactive form controls are hidden during print. */}
+      {!isToday && report && (
+        <EodPrintSheet
+          report={report}
+          activities={activities}
+          displayDate={displayDate}
+          callsMade={Number((report as any).calls_made ?? (report as any).callsMade ?? 0)}
+          autoTransfers={autoTransfers}
+          autoAppointments={autoAppointments}
+          autoFellThrough={autoFellThrough}
+          autoCallbacks={autoCallbacks}
+          autoFuture={autoFuture}
+          autoNoAnswer={autoNoAnswer}
+          autoTotalLogged={autoTotalLogged}
+          fallbackUser={user}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3 no-print">
         <div>
@@ -379,16 +399,16 @@ export default function EodReport() {
       </div>
 
       {isFuture ? (
-        <Card>
+        <Card className="no-print">
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
             <Clock className="w-8 h-8 mx-auto mb-2 opacity-30" />
             <p>No report for future dates.</p>
           </CardContent>
         </Card>
       ) : isLoading ? (
-        <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-24" />)}</div>
+        <div className="space-y-4 no-print">{[1, 2, 3].map(i => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
-        <>
+        <div className="no-print space-y-6">
           {/* Restored-draft banner — appears once per load if a draft was found */}
           {draftRestoredAt && !draftBannerDismissed && !report && (
             <Card className="border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
@@ -725,7 +745,7 @@ export default function EodReport() {
           <p className="text-xs text-muted-foreground text-center pb-2">
             Your EOD report feeds the daily, weekly, and monthly performance analytics in Team Stats.
           </p>
-        </>
+        </div>
       )}
 
       {/* ── Report History ── */}
@@ -736,6 +756,228 @@ export default function EodReport() {
       {/* Print-only footer */}
       <div className="print-only print-footer">
         West Capital Lending · CLR Connection Center · Generated {new Date().toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
+// ── Print-Only EOD Report Sheet ────────────────────────────────────────────
+// Renders a complete, value-based EOD report for printing / PDF export.
+// Only visible via the @media print stylesheet (class="print-only").
+function EodPrintSheet({
+  report, activities, displayDate, callsMade,
+  autoTransfers, autoAppointments, autoFellThrough,
+  autoCallbacks, autoFuture, autoNoAnswer, autoTotalLogged,
+  fallbackUser,
+}: {
+  report: any;
+  activities: any[];
+  displayDate: string;
+  callsMade: number;
+  autoTransfers: number;
+  autoAppointments: number;
+  autoFellThrough: number;
+  autoCallbacks: number;
+  autoFuture: number;
+  autoNoAnswer: number;
+  autoTotalLogged: number;
+  fallbackUser: any;
+}) {
+  const breakdown = (report?.outcomeBreakdown ?? {}) as Record<string, number>;
+  const transfers    = breakdown.transfer           ?? report?.transfers    ?? autoTransfers;
+  const appointments = breakdown.appointment        ?? report?.appointments ?? autoAppointments;
+  const fellThrough  = breakdown.fell_through       ?? autoFellThrough;
+  const callbacks    = breakdown.callback_requested ?? autoCallbacks;
+  const future       = breakdown.future_contact     ?? autoFuture;
+  const noAnswer     = breakdown.no_answer          ?? autoNoAnswer;
+  const totalLogged  = transfers + appointments + fellThrough + callbacks + future + noAnswer || autoTotalLogged;
+
+  const clrName  = report?.clr_name  ?? fallbackUser?.name  ?? fallbackUser?.fullName ?? "—";
+  const clrEmail = report?.clr_email ?? fallbackUser?.email ?? "";
+  const clrRole  = report?.clr_role  ?? fallbackUser?.role  ?? "";
+
+  const submittedAtRaw = report?.submitted_at ?? report?.submittedAt ?? report?.updated_at ?? report?.updatedAt ?? null;
+  const submittedAt = submittedAtRaw
+    ? format(parseServerTimestamp(submittedAtRaw) ?? new Date(submittedAtRaw), "MMM d, yyyy 'at' h:mm a")
+    : null;
+
+  const ratio = callsMade > 0 ? ((transfers / callsMade) * 100).toFixed(1) + "%" : "—";
+
+  const transferProspects = (report?.transferProspectsWithLo ?? report?.transferProspects ?? []) as Array<
+    { name: string; loName?: string | null; transferType?: string | null }
+  >;
+  const coverage = report?.loCoverage ?? null;
+
+  const coverageCount = (coverage?.assignedCalled?.length ?? 0) +
+    (coverage?.notCalled?.length ?? 0) +
+    (coverage?.additional?.length ?? 0);
+  const hasCoverage = !!coverage && (coverageCount > 0 || !!coverage.otherNotes);
+
+  const outcomeRows: Array<{ label: string; count: number }> = [
+    { label: "Transfers",           count: transfers },
+    { label: "Appointments Set",    count: appointments },
+    { label: "Fell Through",        count: fellThrough },
+    { label: "Callbacks Requested", count: callbacks },
+    { label: "Future Contact",      count: future },
+    { label: "No Answer",           count: noAnswer },
+  ];
+
+  return (
+    <div className="print-only eod-print-sheet">
+      {/* Identity / submission metadata */}
+      <table className="eod-meta">
+        <tbody>
+          <tr>
+            <td><strong>CLR</strong></td>
+            <td>{clrName}{clrRole ? ` · ${String(clrRole).toUpperCase()}` : ""}</td>
+            <td><strong>Report Date</strong></td>
+            <td>{displayDate}</td>
+          </tr>
+          <tr>
+            <td><strong>Email</strong></td>
+            <td>{clrEmail || "—"}</td>
+            <td><strong>Submitted</strong></td>
+            <td>{submittedAt ?? "—"}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 className="eod-h2">Daily Summary</h2>
+      <table className="eod-kv">
+        <tbody>
+          <tr><td>Total Calls Made</td><td className="num">{callsMade}</td></tr>
+          <tr><td>Total Outcomes Logged</td><td className="num">{totalLogged}</td></tr>
+          <tr><td>Transfer / Call Ratio</td><td className="num">{ratio}</td></tr>
+        </tbody>
+      </table>
+
+      <h2 className="eod-h2">Outcome Breakdown</h2>
+      <table className="eod-table">
+        <thead>
+          <tr><th>Outcome</th><th className="num">Count</th></tr>
+        </thead>
+        <tbody>
+          {outcomeRows.map(r => (
+            <tr key={r.label}><td>{r.label}</td><td className="num">{r.count}</td></tr>
+          ))}
+          <tr className="eod-total">
+            <td><strong>Total</strong></td>
+            <td className="num"><strong>{totalLogged}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 className="eod-h2">
+        Transfer Prospects{" "}
+        <span className="eod-h2-sub">({transferProspects.length})</span>
+      </h2>
+      {transferProspects.length === 0 ? (
+        <p className="eod-empty">No transfers logged for this date.</p>
+      ) : (
+        <table className="eod-table">
+          <thead>
+            <tr>
+              <th style={{ width: "32px" }}>#</th>
+              <th>Prospect</th>
+              <th>LO</th>
+              <th>Transfer Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transferProspects.map((p, i) => (
+              <tr key={i}>
+                <td>{i + 1}</td>
+                <td>{p.name}</td>
+                <td>{p.loName || "—"}</td>
+                <td>
+                  {p.transferType === "direct"      ? "Direct" :
+                   p.transferType === "appointment" ? "Appointment" : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h2 className="eod-h2">LO Coverage</h2>
+      {!hasCoverage ? (
+        <p className="eod-empty">No LO coverage recorded for this date.</p>
+      ) : (
+        <div className="eod-coverage">
+          {coverage.assignedCalled?.length > 0 && (
+            <div>
+              <p className="eod-cov-label">
+                Assigned — Called ({coverage.assignedCalled.length}
+                {coverage.notCalled?.length
+                  ? `/${coverage.assignedCalled.length + coverage.notCalled.length}`
+                  : ""})
+              </p>
+              <p className="eod-cov-names">{coverage.assignedCalled.join(" · ")}</p>
+            </div>
+          )}
+          {coverage.notCalled?.length > 0 && (
+            <div>
+              <p className="eod-cov-label">Assigned — Not Called ({coverage.notCalled.length})</p>
+              <p className="eod-cov-names">{coverage.notCalled.join(" · ")}</p>
+            </div>
+          )}
+          {coverage.additional?.length > 0 && (
+            <div>
+              <p className="eod-cov-label">Additional Covered ({coverage.additional.length})</p>
+              <p className="eod-cov-names">{coverage.additional.join(" · ")}</p>
+            </div>
+          )}
+          {coverage.otherNotes && (
+            <div>
+              <p className="eod-cov-label">Additional (Other)</p>
+              <p className="eod-cov-names">{coverage.otherNotes}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <h2 className="eod-h2">Notes / Comments</h2>
+      {report?.notes ? (
+        <p className="eod-notes">{report.notes}</p>
+      ) : (
+        <p className="eod-empty">No notes recorded.</p>
+      )}
+
+      <h2 className="eod-h2">
+        Additional Activity Log{" "}
+        <span className="eod-h2-sub">({activities.length})</span>
+      </h2>
+      {activities.length === 0 ? (
+        <p className="eod-empty">No additional activities logged.</p>
+      ) : (
+        <table className="eod-table">
+          <thead>
+            <tr>
+              <th style={{ width: "180px" }}>Type</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activities.map((a: any) => (
+              <tr key={a.id}>
+                <td>{ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}</td>
+                <td>{a.description || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Signature block */}
+      <div className="eod-sign">
+        <div className="eod-sign-block">
+          <div className="eod-sign-line" />
+          <p className="eod-sign-label">CLR Signature</p>
+        </div>
+        <div className="eod-sign-block">
+          <div className="eod-sign-line" />
+          <p className="eod-sign-label">Manager Signature</p>
+        </div>
       </div>
     </div>
   );
