@@ -2054,8 +2054,44 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (loId) recentTransferCounts.set(loId, (recentTransferCounts.get(loId) || 0) + 1);
       }
     }
-    // Strip passwords from list view and attach transfer count
-    const safe = los.map(lo => ({ ...lo, bonzoPassword: lo.bonzoPassword ? "••••••••" : null, leadMailboxPassword: lo.leadMailboxPassword ? "••••••••" : null, recentTransfers: recentTransferCounts.get(lo.id) || 0 }));
+    // getLoanOfficers may return either camelCase (Drizzle) or snake_case (raw SQL, multi-org).
+    // Normalize to camelCase so the frontend can rely on consistent field names.
+    const safe = (los as any[]).map(lo => {
+      const bonzoPassword = lo.bonzoPassword ?? lo.bonzo_password ?? null;
+      const leadMailboxPassword = lo.leadMailboxPassword ?? lo.lead_mailbox_password ?? null;
+      return {
+        ...lo,
+        id: lo.id,
+        fullName: lo.fullName ?? lo.full_name ?? "",
+        nmlsId: lo.nmlsId ?? lo.nmls_id ?? null,
+        phone: lo.phone ?? null,
+        email: lo.email ?? null,
+        licensedStates: lo.licensedStates ?? lo.licensed_states ?? "[]",
+        bonzoUsername: lo.bonzoUsername ?? lo.bonzo_username ?? null,
+        leadMailboxUsername: lo.leadMailboxUsername ?? lo.lead_mailbox_username ?? null,
+        otherCredentials: lo.otherCredentials ?? lo.other_credentials ?? "{}",
+        notes: lo.notes ?? null,
+        specialRequests: lo.specialRequests ?? lo.special_requests ?? null,
+        tags: lo.tags ?? "[]",
+        internalStatus: lo.internalStatus ?? lo.internal_status ?? "active",
+        boostScore: lo.boostScore ?? lo.boost_score ?? 0,
+        priorityTier: lo.priorityTier ?? lo.priority_tier ?? 2,
+        snoozeUntil: lo.snoozeUntil ?? lo.snooze_until ?? null,
+        snoozeReason: lo.snoozeReason ?? lo.snooze_reason ?? null,
+        lastWorkedDate: lo.lastWorkedDate ?? lo.last_worked_date ?? null,
+        totalTimesWorked: lo.totalTimesWorked ?? lo.total_times_worked ?? 0,
+        nmlsStatus: lo.nmlsStatus ?? lo.nmls_status ?? null,
+        nmlsStates: lo.nmlsStates ?? lo.nmls_states ?? "[]",
+        nmlsLastChecked: lo.nmlsLastChecked ?? lo.nmls_last_checked ?? null,
+        nmlsLicenseExpiration: lo.nmlsLicenseExpiration ?? lo.nmls_license_expiration ?? null,
+        createdAt: lo.createdAt ?? lo.created_at ?? null,
+        updatedAt: lo.updatedAt ?? lo.updated_at ?? null,
+        // Strip passwords from list view
+        bonzoPassword: bonzoPassword ? "••••••••" : null,
+        leadMailboxPassword: leadMailboxPassword ? "••••••••" : null,
+        recentTransfers: recentTransferCounts.get(lo.id) || 0,
+      };
+    });
     res.json(safe);
   });
 
@@ -4411,20 +4447,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       transferByTimeframe[tf] = (transferByTimeframe[tf] || 0) + 1;
     }
 
-    // Appointments summary
-    const appointmentOutcomes = outcomes.filter(o => ot(o) === "appointment");
-    const upcomingAppointments = (storage.getLeadOutcomes({ assistantId: userId }) as any[])
-      .filter((o: any) => ot(o) === "appointment")
-      .filter((o: any) => {
-        const fd = o.followUpDate ?? o.follow_up_date;
-        return fd && fd > todayStr;
-      }).length;
-    const overdueAppointments = (storage.getLeadOutcomes({ assistantId: userId }) as any[])
-      .filter((o: any) => ot(o) === "appointment")
-      .filter((o: any) => {
-        const fd = o.followUpDate ?? o.follow_up_date;
-        return fd && fd < todayStr;
-      }).length;
+    // Appointments summary — include all active appointment-like types:
+    // "appointment", "callback_requested", "deferral", "future_contact".
+    const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
+    const isApptType = (o: any) => ACTIVE_APPT_TYPES.has(ot(o));
+    const appointmentOutcomes = outcomes.filter(isApptType);
+    const allMyApptOutcomes = (storage.getLeadOutcomes({ assistantId: userId }) as any[])
+      .filter(isApptType);
+    const upcomingAppointments = allMyApptOutcomes.filter((o: any) => {
+      const fd = o.followUpDate ?? o.follow_up_date;
+      return fd && fd >= todayStr;
+    }).length;
+    const overdueAppointments = allMyApptOutcomes.filter((o: any) => {
+      const fd = o.followUpDate ?? o.follow_up_date;
+      return fd && fd < todayStr;
+    }).length;
     const completedThisPeriod = appointmentOutcomes.length;
 
     // LO Coverage — count calls per LO from outcomes + assignments

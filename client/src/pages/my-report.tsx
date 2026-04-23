@@ -137,7 +137,7 @@ export default function MyReport() {
     const t = data.transferByType;
     return [
       { name: "Direct", value: t.direct, color: COLORS.direct },
-      { name: "Appointment/Callback", value: t.appointment, color: COLORS.appt },
+      { name: "Appt/Callback", value: t.appointment, color: COLORS.appt },
     ].filter(x => x.value > 0);
   }, [data]);
 

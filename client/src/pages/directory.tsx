@@ -236,7 +236,7 @@ function LOCard({
         <div className="p-4 flex items-start gap-3">
           {/* Avatar */}
           <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-sm font-semibold text-primary">
-            {lo.fullName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+            {(lo.fullName ?? "").split(" ").map((n: string) => n?.[0] ?? "").join("").slice(0, 2).toUpperCase() || "?"}
           </div>
 
           {/* Info */}
@@ -244,7 +244,7 @@ function LOCard({
             {/* Name + badges row */}
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-semibold text-sm" data-testid={`text-lo-name-${lo.id}`}>
-                {lo.fullName}
+                {lo.fullName ?? "(unnamed)"}
               </span>
               <Badge className={`text-xs px-1.5 py-0 ${TIER_COLORS[lo.priorityTier]}`}>
                 {TIER_LABELS[lo.priorityTier]}
@@ -809,7 +809,7 @@ export default function Directory() {
   const filtered = los.filter((lo: any) => {
     const matchSearch =
       !search ||
-      lo.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      (lo.fullName ?? "").toLowerCase().includes(search.toLowerCase()) ||
       (lo.nmlsId ?? "").includes(search);
     const matchStatus = statusFilter === "all" || lo.internalStatus === statusFilter;
     const matchTier = tierFilter === "all" || String(lo.priorityTier) === tierFilter;
