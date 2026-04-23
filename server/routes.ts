@@ -9,6 +9,8 @@ import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
 import crypto from "crypto";
+import path from "path";
+import fs from "fs";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
@@ -1559,6 +1561,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(401).json({ error: "Not authenticated" });
     }
   });
+
+  // Admin-only: Complete System Manual PDF.
+  // Also intercepts the public static path so old links still enforce auth.
+  const serveCompleteManual = (req: any, res: Response) => {
+    const user = storage.getUserById(req.session_user?.userId) as any;
+    if (!user || user.role !== "admin") {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const pdfPath = path.resolve(process.cwd(), "docs-private", "complete-manual.pdf");
+    if (!fs.existsSync(pdfPath)) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'inline; filename="complete-manual.pdf"');
+    res.setHeader("Cache-Control", "private, no-store");
+    fs.createReadStream(pdfPath).pipe(res);
+  };
+  app.get("/api/docs/complete-manual.pdf", requireAuth, serveCompleteManual);
+  app.get("/docs/complete-manual.pdf", requireAuth, serveCompleteManual);
 
   // Current user's full record (including goals etc.)
   app.get("/api/me", requireAuth, (req: any, res) => {

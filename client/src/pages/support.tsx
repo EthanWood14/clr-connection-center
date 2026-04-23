@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "wouter";
+import { useAuth } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +52,7 @@ type DocCard = {
   pages: string;
   description: string;
   href: string;
+  adminOnly?: boolean;
 };
 
 const documents: DocCard[] = [
@@ -73,7 +75,8 @@ const documents: DocCard[] = [
     pages: "250 pages",
     description:
       "The comprehensive reference covering every feature, the technical architecture, troubleshooting, and admin operations.",
-    href: "/docs/complete-manual.pdf",
+    href: "/api/docs/complete-manual.pdf",
+    adminOnly: true,
   },
 ];
 
@@ -105,6 +108,10 @@ const faqs: { q: string; a: React.ReactNode }[] = [
 ];
 
 export default function Support() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const visibleDocuments = documents.filter((d) => !d.adminOnly || isAdmin);
+
   useEffect(() => {
     document.title = "Help & Support · WCLCC";
   }, []);
@@ -230,7 +237,7 @@ export default function Support() {
             Read the Manuals
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {documents.map((d) => (
+            {visibleDocuments.map((d) => (
               <Card key={d.title}>
                 <CardContent className="p-6 flex flex-col h-full">
                   <div
