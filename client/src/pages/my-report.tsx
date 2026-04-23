@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
 import {
@@ -42,7 +42,8 @@ interface PersonalReport {
     fellThrough: number; deferrals: number; transferRate: number;
     avgCallsPerDay: number;
   };
-  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number }>;
+  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; callbacks?: number; deferrals?: number; futureContacts?: number; noAnswer?: number }>;
+  hourly?: Array<{ hour: number; label: string; calls: number; transfers: number; appointments: number; fellThrough: number; callbacks: number; deferrals: number; futureContacts: number; noAnswer: number }>;
   transferByType: { direct: number; appointment: number; unspecified: number };
   transferByTimeframe: Record<string, number>;
   appointments: { upcoming: number; overdue: number; completedThisPeriod: number };
@@ -57,10 +58,42 @@ const COLORS = {
   transfers: "#22C55E",
   appointments: "#A855F7",
   fell: "#EF4444",
+  callbacks: "#F59E0B",
+  deferrals: "#06B6D4",
+  futureContacts: "#8B5CF6",
+  noAnswer: "#64748B",
   direct: "#1E3A8A",       // navy/blue — Direct
   appt: "#14B8A6",         // teal — Appointment/Callback
   other: "#94A3B8",
 };
+
+type TrendRange = "1d" | "1w" | "1m" | "all";
+const TREND_RANGE_TO_PERIOD: Record<TrendRange, Period> = {
+  "1d": "today",
+  "1w": "week",
+  "1m": "30days",
+  "all": "alltime",
+};
+const TREND_RANGE_OPTIONS: { value: TrendRange; label: string }[] = [
+  { value: "1d", label: "1D" },
+  { value: "1w", label: "1W" },
+  { value: "1m", label: "1M" },
+  { value: "all", label: "All Time" },
+];
+
+type TrendLineKey = "Calls" | "Transfers" | "Appointments" | "Callbacks" | "Deferrals" | "FutureContacts" | "FellThrough" | "NoAnswer";
+const TREND_LINE_CONFIG: Array<{ key: TrendLineKey; label: string; color: string; yAxis: "left" | "right" }> = [
+  { key: "Calls",           label: "Calls",           color: COLORS.calls,          yAxis: "left" },
+  { key: "Transfers",       label: "Transfers",       color: COLORS.transfers,      yAxis: "right" },
+  { key: "Appointments",    label: "Appointments",    color: COLORS.appointments,   yAxis: "right" },
+  { key: "Callbacks",       label: "Callbacks",       color: COLORS.callbacks,      yAxis: "right" },
+  { key: "Deferrals",       label: "Deferrals",       color: COLORS.deferrals,      yAxis: "right" },
+  { key: "FutureContacts",  label: "Future Contacts", color: COLORS.futureContacts, yAxis: "right" },
+  { key: "FellThrough",     label: "Fell Through",    color: COLORS.fell,           yAxis: "right" },
+  { key: "NoAnswer",        label: "No Answer",       color: COLORS.noAnswer,       yAxis: "right" },
+];
+const TREND_LINES_LS_KEY = "my-report-trend-lines-v1";
+const TREND_RANGE_LS_KEY = "my-report-trend-range-v1";
 
 function formatDayLabel(iso: string) {
   const d = new Date(iso + "T00:00:00");
@@ -104,6 +137,151 @@ function formatTf(tf: string) {
   return tf.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function ActivityTrendChart() {
+  const [range, setRangeState] = useState<TrendRange>(() => {
+    if (typeof window === "undefined") return "1w";
+    const saved = localStorage.getItem(TREND_RANGE_LS_KEY) as TrendRange | null;
+    if (saved && TREND_RANGE_OPTIONS.some(o => o.value === saved)) return saved;
+    return "1w";
+  });
+  const setRange = (r: TrendRange) => {
+    setRangeState(r);
+    try { localStorage.setItem(TREND_RANGE_LS_KEY, r); } catch {}
+  };
+
+  const [visible, setVisibleState] = useState<Record<TrendLineKey, boolean>>(() => {
+    const defaults: Record<TrendLineKey, boolean> = {
+      Calls: true, Transfers: true, Appointments: true,
+      Callbacks: false, Deferrals: false, FutureContacts: false,
+      FellThrough: false, NoAnswer: false,
+    };
+    if (typeof window === "undefined") return defaults;
+    try {
+      const raw = localStorage.getItem(TREND_LINES_LS_KEY);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw);
+      return { ...defaults, ...parsed };
+    } catch { return defaults; }
+  });
+  const toggleLine = (key: TrendLineKey) => {
+    setVisibleState(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem(TREND_LINES_LS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const chartPeriod = TREND_RANGE_TO_PERIOD[range];
+  const { data, isLoading } = useQuery<PersonalReport>({
+    queryKey: ["/api/my-report", "trend", chartPeriod],
+    queryFn: () => fetch(`/api/my-report?period=${chartPeriod}&range=${range}`, { credentials: "include" }).then(r => r.json()),
+  });
+
+  const chartData = useMemo(() => {
+    if (!data) return [];
+    if (range === "1d" && data.hourly) {
+      return data.hourly.map(h => ({
+        date: h.label,
+        Calls: h.calls,
+        Transfers: h.transfers,
+        Appointments: h.appointments,
+        Callbacks: h.callbacks,
+        Deferrals: h.deferrals,
+        FutureContacts: h.futureContacts,
+        FellThrough: h.fellThrough,
+        NoAnswer: h.noAnswer,
+      }));
+    }
+    return (data.daily ?? []).map(d => ({
+      date: formatDayLabel(d.date),
+      Calls: d.calls,
+      Transfers: d.transfers,
+      Appointments: d.appointments,
+      Callbacks: d.callbacks ?? 0,
+      Deferrals: d.deferrals ?? 0,
+      FutureContacts: d.futureContacts ?? 0,
+      FellThrough: d.fellThrough,
+      NoAnswer: d.noAnswer ?? 0,
+    }));
+  }, [data, range]);
+
+  const hasAny = chartData.some(row => TREND_LINE_CONFIG.some(c => (row as any)[c.key] > 0));
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-sm font-semibold">Your Activity Trend</CardTitle>
+          <div className="inline-flex rounded-md border border-border overflow-hidden">
+            {TREND_RANGE_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setRange(opt.value)}
+                className={`px-2.5 py-1 text-xs font-medium border-r last:border-r-0 border-border transition-colors ${
+                  range === opt.value
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-background hover:bg-muted text-muted-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* Line visibility legend */}
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {TREND_LINE_CONFIG.map(cfg => (
+            <button
+              key={cfg.key}
+              type="button"
+              onClick={() => toggleLine(cfg.key)}
+              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-opacity ${
+                visible[cfg.key] ? "opacity-100" : "opacity-40"
+              }`}
+              style={{ borderColor: cfg.color }}
+              aria-pressed={visible[cfg.key]}
+            >
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: cfg.color }} />
+              <span>{cfg.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <Skeleton className="h-[260px] w-full" />
+        ) : !hasAny ? (
+          <p className="text-sm text-muted-foreground text-center py-10">No activity in this range.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="date" fontSize={11} />
+              <YAxis yAxisId="left" orientation="left" fontSize={11} allowDecimals={false} stroke={COLORS.calls} label={{ value: "Calls", angle: -90, position: "insideLeft", fontSize: 10, fill: COLORS.calls }} />
+              <YAxis yAxisId="right" orientation="right" fontSize={11} allowDecimals={false} stroke={COLORS.transfers} label={{ value: "Outcomes", angle: 90, position: "insideRight", fontSize: 10, fill: COLORS.transfers }} />
+              <Tooltip />
+              {TREND_LINE_CONFIG.filter(c => visible[c.key]).map(cfg => (
+                <Line
+                  key={cfg.key}
+                  yAxisId={cfg.yAxis}
+                  type="monotone"
+                  dataKey={cfg.key}
+                  name={cfg.label}
+                  stroke={cfg.color}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function MyReport() {
   const { user } = useAuth();
   const [period, setPeriodState] = useState<Period>(() => {
@@ -122,14 +300,6 @@ export default function MyReport() {
     queryFn: () => fetch(`/api/my-report?period=${period}`, { credentials: "include" }).then(r => r.json()),
   });
 
-  const trendData = useMemo(() => {
-    return (data?.daily ?? []).map(d => ({
-      date: formatDayLabel(d.date),
-      Calls: d.calls,
-      Transfers: d.transfers,
-      Appointments: d.appointments,
-    }));
-  }, [data?.daily]);
 
   // Transfer Types: only include Direct + Appointment/Callback; drop unspecified/null entirely.
   const transferTypeData = useMemo(() => {
@@ -272,29 +442,8 @@ export default function MyReport() {
             </Card>
           )}
 
-          {/* Trend chart */}
-          {period !== "today" && trendData.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Your Activity Trend</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="date" fontSize={11} />
-                    <YAxis yAxisId="calls" orientation="left" fontSize={11} allowDecimals={false} stroke={COLORS.calls} label={{ value: "Calls", angle: -90, position: "insideLeft", fontSize: 10, fill: COLORS.calls }} />
-                    <YAxis yAxisId="small" orientation="right" fontSize={11} allowDecimals={false} stroke={COLORS.transfers} label={{ value: "Transfers / Appts", angle: 90, position: "insideRight", fontSize: 10, fill: COLORS.transfers }} />
-                    <Tooltip />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line yAxisId="calls" type="monotone" dataKey="Calls" stroke={COLORS.calls} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line yAxisId="small" type="monotone" dataKey="Transfers" stroke={COLORS.transfers} strokeWidth={2} dot={{ r: 3 }} />
-                    <Line yAxisId="small" type="monotone" dataKey="Appointments" stroke={COLORS.appointments} strokeWidth={2} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
+          {/* Trend chart — its own time-range toggle + toggleable lines */}
+          <ActivityTrendChart />
 
           {/* Transfer breakdown */}
           {(totalTransfers > 0) && (

@@ -4762,8 +4762,53 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         transfers: dayOutcomes.filter(o => ot(o) === "transfer").length,
         appointments: dayOutcomes.filter(o => ot(o) === "appointment").length,
         fellThrough: dayOutcomes.filter(o => ot(o) === "fell_through").length,
+        callbacks: dayOutcomes.filter(o => ot(o) === "callback_requested").length,
+        deferrals: dayOutcomes.filter(o => ot(o) === "deferral").length,
+        futureContacts: dayOutcomes.filter(o => ot(o) === "future_contact").length,
+        noAnswer: dayOutcomes.filter(o => ot(o) === "no_answer").length,
       };
     });
+
+    // Hourly breakdown for "today" (local timezone, 24 buckets)
+    // Outcomes: use created_at if present, else fall back to date-only (bucket 0).
+    // Call logs don't have timestamps, so their calls collapse to a single bucket.
+    let hourly: Array<{ hour: number; label: string; transfers: number; appointments: number; fellThrough: number; callbacks: number; deferrals: number; futureContacts: number; noAnswer: number; calls: number }> | undefined;
+    if (periodName === "today") {
+      const buckets = Array.from({ length: 24 }, (_, h) => ({
+        hour: h,
+        label: `${h.toString().padStart(2, "0")}:00`,
+        transfers: 0, appointments: 0, fellThrough: 0,
+        callbacks: 0, deferrals: 0, futureContacts: 0, noAnswer: 0,
+        calls: 0,
+      }));
+      const hourOf = (o: any): number => {
+        const created = o.createdAt ?? o.created_at;
+        if (created) {
+          const d = new Date(created);
+          if (!isNaN(d.getTime())) return d.getHours();
+        }
+        return new Date().getHours();
+      };
+      for (const o of outcomes) {
+        if (o.date !== todayStr) continue;
+        const h = hourOf(o);
+        if (h < 0 || h > 23) continue;
+        const t = ot(o);
+        if (t === "transfer") buckets[h].transfers++;
+        else if (t === "appointment") buckets[h].appointments++;
+        else if (t === "fell_through") buckets[h].fellThrough++;
+        else if (t === "callback_requested") buckets[h].callbacks++;
+        else if (t === "deferral") buckets[h].deferrals++;
+        else if (t === "future_contact") buckets[h].futureContacts++;
+        else if (t === "no_answer") buckets[h].noAnswer++;
+      }
+      // Put all of today's call count into the current hour bucket as a rough proxy.
+      const totalTodayCalls = sumCalls(callLogs.filter((l: any) => (l.logDate ?? l.log_date) === todayStr));
+      if (totalTodayCalls > 0) {
+        buckets[new Date().getHours()].calls = totalTodayCalls;
+      }
+      hourly = buckets;
+    }
 
     const daysInPeriod = days.length;
     const daysWithActivity = daily.filter(d => d.calls > 0 || d.transfers > 0 || d.appointments > 0).length;
@@ -4884,6 +4929,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         avgCallsPerDay,
       },
       daily,
+      hourly,
       transferByType,
       transferByTimeframe,
       appointments: {
