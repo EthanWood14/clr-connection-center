@@ -709,7 +709,7 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     </p>
 
     <!-- Team summary stat cards -->
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px">
       <tr>
         ${statCard(teamTransfers, "Transfers", "#1A2B4A")}
         ${statCard(teamCalls, "Total Calls", "#0369a1")}
@@ -717,6 +717,34 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
         ${statCard(teamMissed > 0 ? "⚠ " + teamMissed : teamMissed, "LOs Missed", teamMissed > 0 ? "#dc2626" : "#15803d")}
       </tr>
     </table>
+
+    <!-- Team outcome breakdown — all 6 outcome types -->
+    <div style="margin-bottom:24px">
+      <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#0F182D">📊 Team Outcome Breakdown</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;font-size:12px;table-layout:fixed">
+        <thead>
+          <tr style="background:#0F182D">
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appointments</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Future Contacts</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">No Answer</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="background:#ffffff">
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${teamTransfers}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${teamAppointments}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${teamFellThrough}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${teamCallbacks}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#0891b2">${teamFutureContacts}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#64748b">${teamNoAnswers}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin:8px 0 0;font-size:12px;color:#475569;text-align:right"><strong>Total:</strong> ${teamTransfers + teamAppointments + teamFellThrough + teamCallbacks + teamFutureContacts + teamNoAnswers} outcomes · <strong>${teamCalls}</strong> calls</p>
+    </div>
 
     <!-- Divider -->
     <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
@@ -4079,6 +4107,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           followupDate?: string | null;
         }> = [];
         let fellThroughCount = 0;
+        const outcomeCounts = {
+          transfer: 0,
+          appointment: 0,
+          fell_through: 0,
+          callback_requested: 0,
+          future_contact: 0,
+          no_answer: 0,
+          total: 0,
+        };
         if (sqlite2) {
           try {
             const dayRows = sqlite2.prepare(`
@@ -4103,6 +4140,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
               }))
               .filter((p: any) => p.name.length > 0);
             fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
+            for (const r of dayRows) {
+              const t = String(r.outcome_type ?? "");
+              if (t in outcomeCounts) (outcomeCounts as any)[t] += 1;
+              outcomeCounts.total += 1;
+            }
           } catch {}
         }
 
@@ -4187,6 +4229,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
               ${statBlock("Fell Through", fellThroughCount, "#dc2626")}
             </tr>
           </table>
+
+          <!-- Full outcome breakdown — all 6 outcome types -->
+          <div style="margin-bottom:20px">
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#0F182D">📊 Outcome Breakdown</p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;font-size:12px;table-layout:fixed">
+              <thead>
+                <tr style="background:#0F182D">
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appointments</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Future Contacts</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">No Answer</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="background:#ffffff">
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${outcomeCounts.transfer}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${outcomeCounts.appointment}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${outcomeCounts.fell_through}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.callback_requested}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#0891b2">${outcomeCounts.future_contact}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#64748b">${outcomeCounts.no_answer}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p style="margin:8px 0 0;font-size:12px;color:#475569;text-align:right"><strong>Total:</strong> ${outcomeCounts.total} outcome${outcomeCounts.total === 1 ? '' : 's'}</p>
+          </div>
 
           ${xfers > 0 ? `
           <!-- Transfer prospects -->
