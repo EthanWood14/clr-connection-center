@@ -22,7 +22,7 @@ type VideoCard = {
 const videos: VideoCard[] = [
   {
     title: "Platform Introduction",
-    badge: "All Users · 3 min",
+    badge: "All Users · 6 min",
     description:
       "A quick overview of CLR Connection Center — what it is, how it works, and how it fits into your daily workflow.",
     href: "/intro-video",
