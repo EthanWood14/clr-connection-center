@@ -1370,7 +1370,7 @@ function CallRecorder({
 export default function CallScriptPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const isAdmin = (user as any)?.isAdmin;
+  const isAdmin = (user as any)?.isAdmin === true || (user as any)?.role === "admin";
   const userId = (user as any)?.id;
 
   const [view, setView] = useState<"run" | "edit" | "flowchart">("run");
