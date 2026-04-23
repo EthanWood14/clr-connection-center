@@ -14,7 +14,7 @@ import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
 import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers } from "./push";
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
-import { runWithOrg } from "./orgContext";
+import { runWithOrg, currentOrgId } from "./orgContext";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -154,17 +154,27 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
     : 1;
 
   return los
-    .filter(lo => lo.internalStatus === "active")
-    .filter(lo => !lo.snoozeUntil || lo.snoozeUntil < todayStr)
+    .filter(lo => {
+      const status = lo.internalStatus ?? lo.internal_status;
+      return status == null || status === "active";
+    })
+    .filter(lo => {
+      const snooze = lo.snoozeUntil ?? lo.snooze_until;
+      return !snooze || snooze < todayStr;
+    })
     .map(lo => {
-      const daysSince = lo.lastWorkedDate
-        ? Math.floor((today.getTime() - new Date(lo.lastWorkedDate).getTime()) / 86400000)
+      const lastWorked = lo.lastWorkedDate ?? lo.last_worked_date;
+      const totalWorked = lo.totalTimesWorked ?? lo.total_times_worked ?? 0;
+      const boostScore = lo.boostScore ?? lo.boost_score ?? 0;
+      const priorityTier = lo.priorityTier ?? lo.priority_tier ?? 2;
+      const daysSince = lastWorked
+        ? Math.floor((today.getTime() - new Date(lastWorked).getTime()) / 86400000)
         : 999;
       const daysSinceNorm = Math.min(daysSince / 30, 1);
-      const freqScore = 1 - Math.min(lo.totalTimesWorked / 100, 1);
+      const freqScore = 1 - Math.min(totalWorked / 100, 1);
       const availScore = 1; // simplified - full availability check in prod
-      const boostNorm = (lo.boostScore || 0) / 10;
-      const tierScore = lo.priorityTier === 1 ? 1 : lo.priorityTier === 2 ? 0.5 : 0.1;
+      const boostNorm = boostScore / 10;
+      const tierScore = priorityTier === 1 ? 1 : priorityTier === 2 ? 0.5 : 0.1;
       // 90-day transfer score: direction is controlled by settings.transferPreference
       // 'fewer' → fewer transfers = higher score (spread leads to quieter LOs)
       // 'more'  → more transfers = higher score (reward recent producers)
@@ -2675,6 +2685,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Sum contacts_reached + dnc_hits from raw call_logs for the period
     const rawLogsInPeriod = storageExtra.getCallLogsByRangeRaw(startDate, endDate) as any[];
 
+    // Bulletproof period-scoped calls sum via direct SQL (avoids ORM/camelCase drift).
+    const sqliteDb = storageExtra.getSqlite();
+    const oidForSum = currentOrgId();
+    const orgClause = oidForSum != null ? ` AND org_id = ${Number(oidForSum)}` : "";
+    const sumCallsSql = (extraWhere: string, params: any[]): number => {
+      const row = sqliteDb.prepare(
+        `SELECT COALESCE(SUM(calls_made), 0) AS total FROM daily_call_logs WHERE log_date >= ? AND log_date <= ?${extraWhere}${orgClause}`
+      ).get(startDate, endDate, ...params) as any;
+      return Number(row?.total ?? 0);
+    };
+
     if (scope === "team") {
       // Team totals — aggregate across all active CLRs
       const allLogsToday = storage.getDailyCallLogs(todayStr) as any[];
@@ -2686,23 +2707,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return t === "deferral" || t === "future_contact";
       }).length;
 
-      const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
-      myCallsInPeriod = callLogs.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+      myCallsInPeriod = sumCallsSql("", []);
       contactsReachedPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
       dncHitsPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
     } else if (userId) {
-      const myLog = storage.getDailyCallLogs(todayStr).find((l: any) => l.assistantId === userId);
-      myCallsToday = myLog ? myLog.callsMade : null;
+      const myLog = storage.getDailyCallLogs(todayStr).find(
+        (l: any) => (l.assistantId ?? l.assistant_id) === userId,
+      );
+      myCallsToday = myLog ? (myLog.callsMade ?? (myLog as any).calls_made ?? null) : null;
 
       const userOutcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[];
       futureContactsCount = userOutcomes.filter((o: any) => {
         const t = o.outcomeType || o.outcome_type;
         return t === "deferral" || t === "future_contact";
       }).length;
-      const callLogs = storage.getCallLogsByRange(startDate, endDate) as any[];
-      myCallsInPeriod = callLogs
-        .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId)
-        .reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+      myCallsInPeriod = sumCallsSql(` AND assistant_id = ?`, [userId]);
       const myRaw = rawLogsInPeriod.filter((l: any) => l.assistant_id === userId);
       contactsReachedPeriod = myRaw.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
       dncHitsPeriod = myRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
