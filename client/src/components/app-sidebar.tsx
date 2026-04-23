@@ -188,7 +188,6 @@ const teamItems: NavItem[] = [
 const toolItems: NavItem[] = [
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
   { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
-  { title: "Integrations",    url: "/integrations", icon: Plug },
   { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
   { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
   { title: "NMLS License",    url: "/nmls-status", icon: ShieldCheck },
