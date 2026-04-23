@@ -213,13 +213,20 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  // Live appointment count — outcomes with followUpDate <= today
+  // Live appointment count — outcomes with followUpDate within the next 3 days (today through today+3, inclusive)
   const { data: outcomes = [] } = useQuery<any[]>({
     queryKey: ["/api/outcomes"],
     refetchInterval: 60000,
     select: (data) => {
-      const today = new Date().toISOString().split("T")[0];
-      return data.filter((o) => o.followUpDate && o.followUpDate <= today);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const cutoff = new Date(today);
+      cutoff.setDate(cutoff.getDate() + 3);
+      const todayStr = today.toISOString().split("T")[0];
+      const cutoffStr = cutoff.toISOString().split("T")[0];
+      return data.filter(
+        (o) => o.followUpDate && o.followUpDate >= todayStr && o.followUpDate <= cutoffStr
+      );
     },
   });
 
@@ -435,6 +442,9 @@ export function AppSidebar() {
                 { title: "Help & Support", url: "/support", icon: LifeBuoy },
                 { title: "Help Videos", url: "/support", icon: Video },
                 { title: "Install App", url: "/install", icon: Smartphone },
+                ...(user?.role === "admin"
+                  ? [{ title: "Integrations", url: "/integrations", icon: Plug } as NavItem]
+                  : []),
               ])}
             </SidebarMenu>
           </SidebarGroupContent>
