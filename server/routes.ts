@@ -1569,8 +1569,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!user || user.role !== "admin") {
       return res.status(403).json({ error: "Admin only" });
     }
-    const pdfPath = path.resolve(process.cwd(), "docs-private", "complete-manual.pdf");
-    if (!fs.existsSync(pdfPath)) {
+    // Try dist-bundled location first (prod), then repo root (dev)
+    const candidates = [
+      path.resolve(process.cwd(), "dist", "docs-private", "complete-manual.pdf"),
+      path.resolve(process.cwd(), "docs-private", "complete-manual.pdf"),
+      path.resolve(__dirname, "docs-private", "complete-manual.pdf"),
+    ];
+    const pdfPath = candidates.find((p) => fs.existsSync(p)) || candidates[0];
+    if (!pdfPath || !fs.existsSync(pdfPath)) {
       return res.status(404).json({ error: "Document not found" });
     }
     res.setHeader("Content-Type", "application/pdf");
