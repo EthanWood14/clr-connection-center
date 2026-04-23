@@ -214,20 +214,34 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  // Live appointment count — outcomes with followUpDate within the next 3 days (today through today+3, inclusive)
+  // Live appointment count — active appointment-type outcomes with followUpDate in the next 3 days.
+  // Excludes outcomes that already became transfers or that are overdue (< today).
+  // Window is today through today + 3 days (inclusive).
   const { data: outcomes = [] } = useQuery<any[]>({
     queryKey: ["/api/outcomes"],
     refetchInterval: 60000,
     select: (data) => {
+      const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const cutoff = new Date(today);
       cutoff.setDate(cutoff.getDate() + 3);
-      const todayStr = today.toISOString().split("T")[0];
-      const cutoffStr = cutoff.toISOString().split("T")[0];
-      return data.filter(
-        (o) => o.followUpDate && o.followUpDate >= todayStr && o.followUpDate <= cutoffStr
-      );
+      // Local YYYY-MM-DD (avoid toISOString UTC drift)
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+      const cutoffStr = `${cutoff.getFullYear()}-${pad(cutoff.getMonth() + 1)}-${pad(cutoff.getDate())}`;
+      // cutoffEnd lets ISO timestamps on the cutoff day still match ("2026-04-26T10:00:00Z" <= "2026-04-26T23:59:59Z")
+      const cutoffEndStr = `${cutoffStr}T23:59:59.999Z`;
+      return data.filter((o) => {
+        if (!ACTIVE_APPT_TYPES.has(o.outcomeType)) return false;
+        const fd: string | null | undefined = o.followUpDate;
+        if (!fd) return false;
+        // Extract YYYY-MM-DD portion for lower-bound compare; full string for upper-bound
+        const dateOnly = fd.slice(0, 10);
+        if (dateOnly < todayStr) return false; // overdue
+        if (fd > cutoffEndStr) return false; // beyond window
+        return true;
+      });
     },
   });
 
