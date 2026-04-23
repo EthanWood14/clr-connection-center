@@ -1,13 +1,23 @@
 // CLR Connection Center — Service Worker
 // Provides offline shell caching and background sync support
 
-const CACHE_NAME = "wclcc-v1";
+const CACHE_NAME = "wclcc-v2";
 const STATIC_ASSETS = [
   "/",
   "/manifest.json",
   "/favicon.svg",
+  "/favicon.ico",
+  "/favicon-16.png",
+  "/favicon-32.png",
+  "/favicon-64.png",
+  "/favicon-180.png",
   "/favicon-192.png",
+  "/favicon-256.png",
+  "/favicon-384.png",
   "/favicon-512.png",
+  "/favicon-maskable-512.png",
+  "/favicon-monochrome-512.png",
+  "/wcl-logo.png",
 ];
 
 // Install: cache static shell
