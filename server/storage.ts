@@ -55,6 +55,8 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEF
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
 
 export const db = drizzle(sqlite);
 
@@ -540,6 +542,8 @@ try {
 // so if a later migration adds a column we must add it here too.
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
 
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();

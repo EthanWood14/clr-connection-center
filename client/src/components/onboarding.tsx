@@ -121,54 +121,102 @@ type CheckItem = {
 };
 
 const CHECKLIST: CheckItem[] = [
-  { id: "log_outcome",   label: "Log your first call outcome",    href: "/outcomes" },
-  { id: "submit_eod",    label: "Submit your first EOD report",   href: "/eod-report" },
-  { id: "view_assignments", label: "Check your daily LO assignments", href: "/assignments" },
-  { id: "set_availability", label: "Set your availability (morning/afternoon)", href: "/settings" },
-  { id: "read_glossary", label: "Read the Glossary",              href: "/glossary" },
-  { id: "view_script",   label: "Explore the Call Script",        href: "/call-script" },
+  { id: "log_outcome",       label: "Log your first call outcome",            href: "/outcomes" },
+  { id: "submit_eod",        label: "Submit your first EOD report",           href: "/eod-report" },
+  { id: "check_assignments", label: "Check your daily LO assignments",        href: "/assignments" },
+  { id: "set_availability",  label: "Set your availability (morning/afternoon)", href: "/settings" },
+  { id: "read_glossary",     label: "Read the Glossary",                      href: "/glossary" },
+  { id: "explore_script",    label: "Explore the Call Script",                href: "/call-script" },
 ];
+
+// Queue of step IDs to mark complete once the user object is known (so the main
+// thread can call markStep without awaiting network I/O).
+const pendingStepQueue: string[] = [];
+
+async function postGettingStarted(body: { dismissed?: boolean; completed?: string[] }) {
+  try {
+    await apiRequest("POST", "/api/user/getting-started", body);
+  } catch {}
+}
 
 export function markOnboardingItem(userId: number | null | undefined, itemId: string) {
   if (!userId) return;
+  // Keep localStorage for legacy tracking + instant UI, but also POST to server.
   lsSetBool(lsKey(userId, `onboarding_${itemId}`), true);
+  if (!pendingStepQueue.includes(itemId)) pendingStepQueue.push(itemId);
+  // Fire-and-forget server sync — GET on mount will reconcile.
+  (async () => {
+    try {
+      const data: any = await apiRequest("GET", "/api/user/getting-started");
+      const curCompleted: string[] = Array.isArray(data?.completed) ? data.completed : [];
+      if (curCompleted.includes(itemId)) return;
+      await postGettingStarted({ completed: Array.from(new Set([...curCompleted, itemId])) });
+    } catch {}
+  })();
 }
 
 export function OnboardingChecklist() {
   const { user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [serverState, setServerState] = useState<{ dismissed: boolean; completed: string[] } | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
+  // Fetch persisted state from the server on mount.
   useEffect(() => {
-    const i = setInterval(() => setTick(t => t + 1), 4000);
-    return () => clearInterval(i);
-  }, []);
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data: any = await apiRequest("GET", "/api/user/getting-started");
+        if (cancelled) return;
+        setServerState({
+          dismissed: !!data?.dismissed,
+          completed: Array.isArray(data?.completed) ? data.completed : [],
+        });
+      } catch {
+        if (!cancelled) setServerState({ dismissed: false, completed: [] });
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  // Flush any steps that were queued before the server state loaded.
+  useEffect(() => {
+    if (!user || !serverState) return;
+    if (pendingStepQueue.length === 0) return;
+    const drained = pendingStepQueue.splice(0);
+    const next = Array.from(new Set([...serverState.completed, ...drained]));
+    setServerState(s => s ? { ...s, completed: next } : s);
+    postGettingStarted({ completed: next });
+  }, [user?.id, serverState?.dismissed]);
 
   if (!user) return null;
-  const dismissKey = lsKey(user.id, "onboarding_dismissed");
-  if (lsGetBool(dismissKey)) return null;
+  if (!loaded || !serverState) return null;
+  if (serverState.dismissed) return null;
 
   const age = daysSince(user.createdAt);
   if (age > 14) return null;
 
-  // Do not show on the very first visit — mark "seen once" now; return null the first time.
-  const seenOnceKey = lsKey(user.id, "onboarding_seen_once");
-  if (!lsGetBool(seenOnceKey)) {
-    lsSetBool(seenOnceKey, true);
-    return null;
-  }
-
-  const completed = CHECKLIST.filter(i => lsGetBool(lsKey(user.id, `onboarding_${i.id}`)));
+  const completed = CHECKLIST.filter(i => serverState.completed.includes(i.id));
   const pct = Math.round((completed.length / CHECKLIST.length) * 100);
   const allDone = completed.length === CHECKLIST.length;
 
   function dismiss() {
-    lsSetBool(dismissKey, true);
-    setTick(t => t + 1);
+    setServerState(s => s ? { ...s, dismissed: true } : s);
+    postGettingStarted({ dismissed: true });
   }
 
-  // Force-rerender every ~4s pulls in localStorage changes from other pages (mark handlers)
-  void tick;
+  function markLocal(itemId: string) {
+    setServerState(s => {
+      if (!s) return s;
+      if (s.completed.includes(itemId)) return s;
+      const next = [...s.completed, itemId];
+      postGettingStarted({ completed: next });
+      return { ...s, completed: next };
+    });
+  }
 
   return (
     <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
@@ -213,7 +261,7 @@ export function OnboardingChecklist() {
         {!collapsed && (
           <ul className="space-y-1.5">
             {CHECKLIST.map(item => {
-              const done = lsGetBool(lsKey(user.id, `onboarding_${item.id}`));
+              const done = serverState.completed.includes(item.id);
               const Icon = done ? CheckCircle2 : Circle;
               const content = (
                 <span className={`flex items-center gap-2 text-sm ${done ? "line-through text-muted-foreground" : ""}`}>
@@ -226,7 +274,7 @@ export function OnboardingChecklist() {
                   {item.href ? (
                     <Link
                       href={item.href}
-                      onClick={() => markOnboardingItem(user.id, item.id)}
+                      onClick={() => markLocal(item.id)}
                       className="block hover:bg-muted/50 rounded px-2 py-1 -mx-2 transition-colors"
                     >
                       {content}
@@ -324,7 +372,23 @@ export function SampleDataBanner({ onDismiss }: { onDismiss?: () => void }) {
   );
 }
 
-// Expose for pages that need to mark a step complete at action time
-export function markStep(userId: number | null | undefined, step: "log_outcome" | "submit_eod" | "view_assignments" | "set_availability" | "read_glossary" | "view_script") {
-  markOnboardingItem(userId, step);
+// Expose for pages that need to mark a step complete at action time. Accepts
+// legacy IDs (view_assignments, view_script) for backward compatibility.
+export function markStep(
+  userId: number | null | undefined,
+  step:
+    | "log_outcome"
+    | "submit_eod"
+    | "check_assignments"
+    | "view_assignments"
+    | "set_availability"
+    | "read_glossary"
+    | "explore_script"
+    | "view_script"
+) {
+  const mapped =
+    step === "view_assignments" ? "check_assignments" :
+    step === "view_script"      ? "explore_script"    :
+    step;
+  markOnboardingItem(userId, mapped);
 }

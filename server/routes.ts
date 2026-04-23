@@ -1608,6 +1608,56 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return res.json({ ok: true });
   });
 
+  // Getting Started checklist — per-user DB-tracked (replaces old localStorage scheme)
+  app.get("/api/user/getting-started", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const sqliteDb: any = storageExtra.getSqlite();
+      const row: any = sqliteDb.prepare(
+        `SELECT getting_started_dismissed AS dismissed, getting_started_completed AS completed FROM users WHERE id = ?`
+      ).get(userId);
+      let completed: string[] = [];
+      try { completed = JSON.parse(row?.completed ?? "[]"); } catch { completed = []; }
+      if (!Array.isArray(completed)) completed = [];
+      res.json({ dismissed: !!row?.dismissed, completed });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "failed" });
+    }
+  });
+
+  app.post("/api/user/getting-started", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const sqliteDb: any = storageExtra.getSqlite();
+      const body = req.body ?? {};
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (typeof body.dismissed === "boolean") {
+        updates.push("getting_started_dismissed = ?");
+        values.push(body.dismissed ? 1 : 0);
+      }
+      if (Array.isArray(body.completed)) {
+        const cleaned = Array.from(new Set(body.completed.filter((x: any) => typeof x === "string")));
+        updates.push("getting_started_completed = ?");
+        values.push(JSON.stringify(cleaned));
+      }
+      if (updates.length > 0) {
+        values.push(userId);
+        sqliteDb.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      }
+      const row: any = sqliteDb.prepare(
+        `SELECT getting_started_dismissed AS dismissed, getting_started_completed AS completed FROM users WHERE id = ?`
+      ).get(userId);
+      let completed: string[] = [];
+      try { completed = JSON.parse(row?.completed ?? "[]"); } catch { completed = []; }
+      res.json({ dismissed: !!row?.dismissed, completed });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "failed" });
+    }
+  });
+
   // Admin: reset intro for a specific user (so they see it again)
   app.patch("/api/users/:id/reset-intro", requireAuth, (req: any, res) => {
     if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
@@ -3465,17 +3515,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── NMLS license auto-verification ──────────────────────────────────────────
   // Returns every LO's current stored license status + profile-link helper.
   app.get("/api/nmls/status", requireAuth, (_req, res) => {
-    const los = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus !== "archived");
-    const items = los.map((lo: any) => ({
-      id: lo.id,
-      fullName: lo.fullName,
-      nmlsId: lo.nmlsId,
-      nmlsStatus: lo.nmlsStatus ?? null,
-      nmlsStates: (() => { try { return JSON.parse(lo.nmlsStates || "[]"); } catch { return []; } })(),
-      nmlsLastChecked: lo.nmlsLastChecked ?? null,
-      nmlsLicenseExpiration: lo.nmlsLicenseExpiration ?? null,
-      profileUrl: lo.nmlsId ? nmlsProfileUrl(lo.nmlsId) : null,
-    }));
+    const los = storage.getLoanOfficers().filter((lo: any) => (lo.internalStatus ?? lo.internal_status) !== "archived");
+    const items = los.map((lo: any) => {
+      const nmlsId = lo.nmlsId ?? lo.nmls_id ?? null;
+      const fullName = lo.fullName ?? lo.full_name ?? "";
+      const nmlsStatus = lo.nmlsStatus ?? lo.nmls_status ?? null;
+      const nmlsStatesRaw = lo.nmlsStates ?? lo.nmls_states ?? "[]";
+      const nmlsLastChecked = lo.nmlsLastChecked ?? lo.nmls_last_checked ?? null;
+      const nmlsLicenseExpiration = lo.nmlsLicenseExpiration ?? lo.nmls_license_expiration ?? null;
+      return {
+        id: lo.id,
+        fullName,
+        nmlsId,
+        nmlsStatus,
+        nmlsStates: (() => { try { return JSON.parse(nmlsStatesRaw || "[]"); } catch { return []; } })(),
+        nmlsLastChecked,
+        nmlsLicenseExpiration,
+        profileUrl: nmlsId ? nmlsProfileUrl(nmlsId) : null,
+      };
+    });
     res.json({ items });
   });
 

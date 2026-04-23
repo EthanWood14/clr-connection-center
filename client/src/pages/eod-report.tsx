@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
-  History, ChevronDown, ChevronUp, User, Users, X, Save,
+  History, ChevronDown, ChevronUp, User, Users, X, Save, Printer,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
@@ -320,15 +320,21 @@ export default function EodReport() {
     : null;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto print-report">
       <PageTooltip
         pageKey="eod-report"
         title="End-of-day report"
         body="Submit your end-of-day report here. Check off which LOs you called for and add any notes."
       />
 
+      {/* Print-only header (West Capital Lending) */}
+      <div className="print-only print-header">
+        <img src="/wcl-logo.png" alt="West Capital Lending" className="print-logo" />
+        <div className="print-title">End-of-Day Report — {displayDate}</div>
+      </div>
+
       {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
+      <div className="flex items-start justify-between flex-wrap gap-3 no-print">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" /> EOD Reporting
@@ -342,7 +348,20 @@ export default function EodReport() {
         </div>
 
         {/* Date navigator */}
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          {!isToday && report && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.print()}
+              data-testid="button-print-eod-report"
+              className="h-9"
+            >
+              <Printer className="w-4 h-4 mr-1.5" />
+              Print / Export PDF
+            </Button>
+          )}
+          <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
           <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => navigateDate(-1)}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
@@ -355,6 +374,7 @@ export default function EodReport() {
               Today
             </Button>
           )}
+          </div>
         </div>
       </div>
 
@@ -709,7 +729,14 @@ export default function EodReport() {
       )}
 
       {/* ── Report History ── */}
-      <ReportHistory isAdmin={isAdmin} />
+      <div className="no-print">
+        <ReportHistory isAdmin={isAdmin} />
+      </div>
+
+      {/* Print-only footer */}
+      <div className="print-only print-footer">
+        West Capital Lending · CLR Connection Center · Generated {new Date().toLocaleString()}
+      </div>
     </div>
   );
 }

@@ -20,6 +20,7 @@ import {
   TrendingUp,
   Download,
   BarChart2,
+  Printer,
 } from "lucide-react";
 import {
   BarChart,
@@ -315,9 +316,15 @@ export default function Reporting() {
   const isLoading = outcomesLoading;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
+    <div className="p-6 space-y-6 max-w-[1400px] mx-auto print-report">
+      {/* Print-only header */}
+      <div className="print-only print-header">
+        <img src="/wcl-logo.png" alt="West Capital Lending" className="print-logo" />
+        <div className="print-title">Weekly Report — {fromDate} to {toDate}</div>
+      </div>
+
       {/* ── Page header ── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4 no-print">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-primary" />
@@ -327,16 +334,27 @@ export default function Reporting() {
             Outcomes analysis for the selected date range
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={exportCSV}
-          disabled={filtered.length === 0}
-          data-testid="button-export-csv"
-          className="gap-2"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => window.print()}
+            data-testid="button-print-report"
+            className="gap-2"
+          >
+            <Printer className="w-4 h-4" />
+            Print / Export PDF
+          </Button>
+          <Button
+            variant="outline"
+            onClick={exportCSV}
+            disabled={filtered.length === 0}
+            data-testid="button-export-csv"
+            className="gap-2"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       {/* ── Date range selector ── */}
@@ -654,6 +672,11 @@ export default function Reporting() {
           )}
         </CardContent>
       </Card>
+
+      {/* Print-only footer */}
+      <div className="print-only print-footer">
+        West Capital Lending · CLR Connection Center · Generated {new Date().toLocaleString()}
+      </div>
     </div>
   );
 }

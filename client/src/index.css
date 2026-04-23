@@ -119,3 +119,74 @@
 .badge-not_interested { @apply bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400; }
 .badge-wrong_number { @apply bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-400; }
 .badge-other { @apply bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400; }
+
+/* ── Print styles for report export ────────────────────────────────────── */
+.print-only { display: none; }
+
+@media print {
+  @page { margin: 0.6in; }
+
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide the full chrome */
+  .no-print,
+  [data-sidebar="sidebar"],
+  aside,
+  nav,
+  header[role="banner"],
+  .impersonation-banner,
+  [data-testid="sidebar"],
+  [data-testid="mobile-bottom-nav"] {
+    display: none !important;
+  }
+
+  .print-only { display: block !important; }
+
+  /* Give the report the full page width */
+  .print-report {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  .print-report * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border-color: #bbb !important;
+  }
+
+  .print-header {
+    border-bottom: 1px solid #999;
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .print-logo { height: 28px; width: auto; }
+  .print-title {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .print-footer {
+    margin-top: 24px;
+    padding-top: 8px;
+    border-top: 1px solid #999;
+    font-size: 10px;
+    color: #555 !important;
+    text-align: center;
+  }
+
+  /* Prefer not to break cards across pages */
+  .print-report .card,
+  .print-report [class*="Card"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

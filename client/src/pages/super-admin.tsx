@@ -11,7 +11,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Building2, Plus, Shield, ExternalLink, Pause, Copy } from "lucide-react";
+import { Building2, Plus, Shield, ExternalLink, Pause, Copy, AlertTriangle } from "lucide-react";
 
 interface Org {
   id: number;
@@ -81,6 +81,18 @@ export default function SuperAdmin() {
         <Button onClick={() => setCreateOpen(true)} data-testid="button-create-org">
           <Plus className="w-4 h-4 mr-2" /> Create Org
         </Button>
+      </div>
+
+      <div
+        role="alert"
+        className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-200"
+        data-testid="banner-sa-warning"
+      >
+        <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0" />
+        <div className="text-sm">
+          <div className="font-semibold">Not fully tested — proceed with caution.</div>
+          <div>Actions taken here affect all organizations and cannot be undone.</div>
+        </div>
       </div>
 
       <Card>

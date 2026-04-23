@@ -171,14 +171,12 @@ const help = {
 
 const mainItems: NavItem[] = [
   { title: "Dashboard",       url: "/",            icon: LayoutDashboard, help: help.dashboard },
-  { title: "My Report",       url: "/my-report",   icon: BarChart2,       help: help.myReport },
-  { title: "Directory",       url: "/directory",   icon: Users,           help: help.directory },
+  { title: "Script",          url: "/call-script", icon: PhoneCall,       help: help.script },
   { title: "Assignments",     url: "/assignments", icon: CalendarCheck,   help: help.assignments },
-  { title: "Call History",    url: "/outcomes",     icon: ClipboardList,  help: help.callHistory },
-  { title: "EOD Report",      url: "/eod-report",   icon: FileText,       help: help.eodReport },
+  { title: "Directory",       url: "/directory",   icon: Users,           help: help.directory },
+  { title: "Call History",    url: "/outcomes",    icon: ClipboardList,   help: help.callHistory },
+  { title: "EOD Report",      url: "/eod-report",  icon: FileText,        help: help.eodReport },
   { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
-  { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
-  { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
 ];
 
 const teamItems: NavItem[] = [
@@ -188,18 +186,19 @@ const teamItems: NavItem[] = [
 ];
 
 const toolItems: NavItem[] = [
-  { title: "State Lookup",    url: "/state-lookup",  icon: MapPin },
-  { title: "NMLS",            url: "/nmls-checks",   icon: ShieldCheck, badge: "nmls" },
-  { title: "NMLS License",    url: "/nmls-status",   icon: ShieldCheck },
-  { title: "Reports",         url: "/reporting",     icon: BarChart,    help: help.reporting },
-  { title: "Script",          url: "/call-script",   icon: PhoneCall,   help: help.script },
-  { title: "Glossary",        url: "/glossary",      icon: BookOpen,    help: help.glossary },
+  { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
+  { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
+  { title: "Integrations",    url: "/integrations", icon: Plug },
+  { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
+  { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
+  { title: "NMLS License",    url: "/nmls-status", icon: ShieldCheck },
+  { title: "NMLS",            url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
+  { title: "Reports",         url: "/reporting",   icon: BarChart,        help: help.reporting },
 ];
 
 const adminItems: NavItem[] = [
-  { title: "Settings",        url: "/settings",    icon: Settings, help: help.settings },
-  { title: "LO Status",       url: "/lo-vacation", icon: Plane },
-  { title: "History",         url: "/audit-log",   icon: ScrollText },
+  { title: "My Report",       url: "/my-report",   icon: BarChart2,       help: help.myReport },
+  { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },
 ];
 
 const integrationItems: NavItem[] = [
@@ -387,15 +386,17 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* ADMIN */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Admin
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(adminItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* ADMIN (admin-only) */}
+        {user?.role === "admin" && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+              Admin
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{renderItems(adminItems)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {/* SUPER ADMIN (super-admin only) */}
         {user?.superAdmin && (
