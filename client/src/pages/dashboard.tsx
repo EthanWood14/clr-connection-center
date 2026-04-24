@@ -15,6 +15,7 @@ import {
   ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { GoalCelebration, useGoalCelebration } from "@/components/goal-celebration";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, LineChart, Line, CartesianGrid,
@@ -67,11 +68,13 @@ const ALL_STATES: { abbr: string; name: string }[] = [
 
 // ── Weekly Goal Stripe (shown on dashboard if user has any goal set) ─────────
 function GoalStripe() {
+  const { user } = useAuth();
   const { data } = useQuery<any>({
     queryKey: ["/api/my-report", "week"],
     queryFn: () => fetch(`/api/my-report?period=week`, { credentials: "include" }).then(r => r.json()),
     staleTime: 60_000,
   });
+  const celebration = useGoalCelebration(data, user?.id);
   if (!data?.goals) return null;
   const hasGoals = (data.goals.calls ?? 0) > 0 || (data.goals.transfers ?? 0) > 0 || (data.goals.appointments ?? 0) > 0;
   if (!hasGoals) return null;
@@ -86,6 +89,8 @@ function GoalStripe() {
   }
 
   return (
+    <>
+      <GoalCelebration show={celebration.show} onClose={celebration.dismiss} />
     <Card className="border-dashed">
       <CardContent className="py-3 px-4">
         <div className="flex items-center gap-2 mb-2">
@@ -121,6 +126,7 @@ function GoalStripe() {
         </div>
       </CardContent>
     </Card>
+    </>
   );
 }
 

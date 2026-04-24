@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
+import { GoalCelebration, useGoalCelebration } from "@/components/goal-celebration";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar,
@@ -300,6 +301,15 @@ export default function MyReport() {
     queryFn: () => fetch(`/api/my-report?period=${period}`, { credentials: "include" }).then(r => r.json()),
   });
 
+  // Celebrate the first time this week all goals are hit. Only watch the
+  // weekly data (even if user is viewing a different period).
+  const { data: weekProgress } = useQuery<any>({
+    queryKey: ["/api/my-report", "week", "celebration"],
+    queryFn: () => fetch(`/api/my-report?period=week`, { credentials: "include" }).then(r => r.json()),
+    staleTime: 60_000,
+  });
+  const celebration = useGoalCelebration(weekProgress, user?.id);
+
 
   // Transfer Types: only include Direct + Appointment/Callback; drop unspecified/null entirely.
   const transferTypeData = useMemo(() => {
@@ -333,6 +343,7 @@ export default function MyReport() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
+      <GoalCelebration show={celebration.show} onClose={celebration.dismiss} />
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
