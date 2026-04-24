@@ -441,9 +441,9 @@ function AppointmentCard({
               size="sm"
               variant="default"
               className="h-8 text-xs gap-1.5"
-              onClick={() => onQuickComplete(outcome.id)}
+              onClick={() => onComplete(outcome)}
               disabled={isPendingComplete}
-              title="Mark complete immediately"
+              title="Complete with outcome (Transfer or Fell Through)"
             >
               {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
               Complete
