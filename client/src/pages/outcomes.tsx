@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,6 +115,68 @@ const outcomeFormSchema = z.object({
   }
 });
 type OutcomeFormValues = z.infer<typeof outcomeFormSchema>;
+
+// Inline date editor for the Outcomes list. Click the date to edit it,
+// blur or press Enter to save, Escape to cancel.
+function InlineDateEditor({
+  value,
+  onSave,
+  saving,
+}: {
+  value: string;
+  onSave: (date: string) => void;
+  saving: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(value);
+      setTimeout(() => inputRef.current?.focus(), 10);
+    }
+  }, [editing, value]);
+
+  const commit = () => {
+    if (draft && draft !== value) onSave(draft);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="date"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setDraft(value);
+            setEditing(false);
+          }
+        }}
+        className="text-xs font-mono bg-background border rounded px-1.5 py-0.5 w-[120px] focus:outline-none focus:ring-1 focus:ring-primary"
+        data-testid="inline-date-input"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="text-xs text-muted-foreground font-mono hover:text-foreground hover:underline decoration-dotted underline-offset-2 text-left disabled:opacity-60"
+      disabled={saving}
+      title="Click to change date"
+      data-testid="inline-date-value"
+    >
+      {saving ? "Saving…" : value}
+    </button>
+  );
+}
 
 function TransferTypeOption({
   active,
@@ -933,6 +995,18 @@ export default function Outcomes() {
     onError: () => toast({ title: "Error updating outcome", variant: "destructive" }),
   });
 
+  const updateDateMutation = useMutation({
+    mutationFn: ({ id, date }: { id: number; date: string }) =>
+      apiRequest("PATCH", `/api/outcomes/${id}`, { date }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      toast({ title: "Date updated" });
+    },
+    onError: () => toast({ title: "Error updating date", variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/outcomes/${id}`),
     onSuccess: () => {
@@ -1075,7 +1149,11 @@ export default function Outcomes() {
                 className="grid grid-cols-1 md:grid-cols-[80px_1fr_1fr_1fr_120px_80px] gap-3 px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors items-center group"
                 data-testid={`row-outcome-${o.id}`}
               >
-                <span className="text-xs text-muted-foreground font-mono">{o.date}</span>
+                <InlineDateEditor
+                  value={o.date}
+                  onSave={(date) => updateDateMutation.mutate({ id: o.id, date })}
+                  saving={updateDateMutation.isPending && updateDateMutation.variables?.id === o.id}
+                />
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Badge className={`text-xs w-fit px-2 py-0.5 ${OUTCOME_COLORS[o.outcomeType]}`}>
                     {OUTCOME_LABELS[o.outcomeType]}
