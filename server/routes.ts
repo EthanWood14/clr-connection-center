@@ -397,8 +397,10 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
     const myFutureContacts  = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "future_contact").length;
     const myNoAnswers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "no_answer").length;
 
-    // Total calls — prefer call_logs count, fall back to outcome count if logs empty
-    const myCalls = myCallsFromLogs > 0 ? myCallsFromLogs : myOutcomes.length;
+    // Total calls — always use the daily call_logs sum across the period.
+    // (Previously fell back to outcomes count when logs empty, which understated
+    // the true number of calls made for CLRs who didn't log every day.)
+    const myCalls = myCallsFromLogs;
 
     // Assignments
     const myAssignments = assignments.filter((a: any) => (a.assistantId || a.assistant_id) === uid);
