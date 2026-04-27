@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,8 @@ export default function ReportsArchive() {
   const [picked, setPicked] = useState<string>(todayISO());
   const [recipients, setRecipients] = useState<string>("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  // 0 means "All CLRs (whole team)"; otherwise a specific user id
+  const [selectedClrId, setSelectedClrId] = useState<number>(0);
 
   useEffect(() => {
     document.title = "Report Archive · WCLCC";
@@ -65,14 +67,22 @@ export default function ReportsArchive() {
 
   const { hint } = useMemo(() => describeRange(type, picked), [type, picked]);
 
+  // Fetch the list of CLRs to filter by
+  const { data: clrs } = useQuery<{ id: number; name: string; email: string }[]>({
+    queryKey: ["/api/reports/clrs"],
+    queryFn: () => fetch("/api/reports/clrs", { credentials: "include" }).then((r) => r.json()),
+    enabled: isAuthorized,
+  });
+
   const previewMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/reports/preview", {
+      const data = await apiRequest("POST", "/api/reports/preview", {
         type,
         startDate: picked,
         endDate: picked,
+        clrId: selectedClrId,
       });
-      return (await res.json()) as PreviewResult;
+      return data as PreviewResult;
     },
     onSuccess: (data) => setPreview(data),
     onError: (e: any) => toast({ title: "Preview failed", description: e?.message ?? "", variant: "destructive" }),
@@ -80,13 +90,14 @@ export default function ReportsArchive() {
 
   const emailMutation = useMutation({
     mutationFn: async (toList: string[]) => {
-      const res = await apiRequest("POST", "/api/reports/email", {
+      const data = await apiRequest("POST", "/api/reports/email", {
         type,
         startDate: picked,
         endDate: picked,
         recipients: toList,
+        clrId: selectedClrId,
       });
-      return await res.json();
+      return data;
     },
     onSuccess: (data: any) => {
       toast({
@@ -177,6 +188,24 @@ export default function ReportsArchive() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <Label htmlFor="clr" className="text-xs uppercase tracking-wide text-muted-foreground">
+              CLR (whose activity to include)
+            </Label>
+            <select
+              id="clr"
+              value={selectedClrId}
+              onChange={(e) => { setSelectedClrId(Number(e.target.value)); setPreview(null); }}
+              className="mt-1.5 w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              data-testid="report-clr-select"
+            >
+              <option value={0}>All CLRs — full team report</option>
+              {(clrs ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

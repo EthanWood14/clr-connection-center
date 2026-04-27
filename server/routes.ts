@@ -329,6 +329,8 @@ type ReportOptions = {
   recipientsOverride?: string[];
   // When true, builds the HTML and returns it but does not send any email.
   renderOnly?: boolean;
+  // When set, the report includes only this CLR's activity (instead of the full team).
+  clrId?: number;
 };
 
 async function sendReport(
@@ -380,8 +382,12 @@ async function sendReport(
   const callLogs   = storage.getCallLogsByRange(startDate, endDate);
   const assignments = storage.getAssignmentsByRange(startDate, endDate);
 
-  // CLR list — assistants + admin-CLRs
-  const clrs = users.filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+  // CLR list — assistants + admin-CLRs. When clrId is set, scope to that CLR.
+  const clrs = users.filter((u: any) =>
+    u.isActive
+    && (u.role === "assistant" || (u.role === "admin" && u.isClr))
+    && (opts.clrId ? u.id === opts.clrId : true)
+  );
 
   // Per-CLR aggregates
   interface ClrStats {
@@ -3876,6 +3882,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return { startDate: s, endDate: e };
   }
 
+  // List of CLRs available to filter the archive by
+  app.get("/api/reports/clrs", requireAuth, (req, res) => {
+    const gate = requireAdminOrViewerSession(req as any, res);
+    if (!gate) return;
+    const list = (storage.getUsers() as any[])
+      .filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .map((u: any) => ({ id: u.id, name: u.name, email: u.email }));
+    res.json(list);
+  });
+
   app.post("/api/reports/preview", requireAuth, async (req, res) => {
     const gate = requireAdminOrViewerSession(req as any, res);
     if (!gate) return;
@@ -3884,7 +3900,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
     try {
       const range = parseRange(req.body, type);
-      const result: any = await sendReport(type, { customRange: range, renderOnly: true });
+      const clrIdRaw = req.body?.clrId;
+      const clrId = typeof clrIdRaw === "number" && clrIdRaw > 0 ? clrIdRaw : undefined;
+      const result: any = await sendReport(type, { customRange: range, renderOnly: true, clrId });
       res.json({
         ok: true,
         type,
@@ -3918,8 +3936,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (!recipientsOverride.length) {
         return res.status(400).json({ error: "No valid recipients (your account has no email on file)." });
       }
-      console.log(`[reports/email] user=${gate.user.id} type=${type} range=${range.startDate}..${range.endDate} recipients=${JSON.stringify(recipientsOverride)}`);
-      const result: any = await sendReport(type, { customRange: range, recipientsOverride });
+      const clrIdRaw = req.body?.clrId;
+      const clrId = typeof clrIdRaw === "number" && clrIdRaw > 0 ? clrIdRaw : undefined;
+      console.log(`[reports/email] user=${gate.user.id} type=${type} range=${range.startDate}..${range.endDate} clrId=${clrId ?? "all"} recipients=${JSON.stringify(recipientsOverride)}`);
+      const result: any = await sendReport(type, { customRange: range, recipientsOverride, clrId });
       res.json({
         ok: true,
         id: result.id,
