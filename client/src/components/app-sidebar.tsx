@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload, Inbox,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -196,7 +196,13 @@ const toolItems: NavItem[] = [
 
 const adminItems: NavItem[] = [
   { title: "My Report",       url: "/my-report",   icon: BarChart2,       help: help.myReport },
+  { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
   { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },
+];
+
+// Viewer accounts get only the Report Archive (read-only role)
+const viewerItems: NavItem[] = [
+  { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
 ];
 
 const integrationItems: NavItem[] = [
@@ -413,6 +419,18 @@ export function AppSidebar() {
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>{renderItems(adminItems)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {/* VIEWER — read-only access to historical reports */}
+        {user?.role === "viewer" && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+              Reports
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{renderItems(viewerItems)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}

@@ -324,29 +324,50 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
   return id;
 }
 
-async function sendReport(type: "daily" | "weekly" | "monthly") {
-  // Single source of truth for every report (EOD + daily + weekly + monthly):
-  // email_settings.manager_emails. This is the list the admin edits in the
-  // "Report Recipients" card on the Settings page.
-  const settings = storageExtra.getEmailSettings() as any;
-  let rawManagers: string[] = [];
-  try { rawManagers = JSON.parse(settings.manager_emails || "[]"); } catch { rawManagers = []; }
-  const seenManagers = new Set<string>();
-  const managers: string[] = [];
-  for (const e of rawManagers) {
-    const trimmed = String(e || "").trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (!seenManagers.has(key)) { seenManagers.add(key); managers.push(trimmed); }
-  }
-  console.log(`[sendReport] type=${type} resolved-recipients=${JSON.stringify(managers)} (source=email_settings.manager_emails)`);
-  if (!managers.length) throw new Error(`No recipients configured. Add recipients in Settings → Report Recipients.`);
+type ReportOptions = {
+  customRange?: { startDate: string; endDate: string };
+  recipientsOverride?: string[];
+  // When true, builds the HTML and returns it but does not send any email.
+  renderOnly?: boolean;
+};
 
-  // Choose the reporting window that matches the report type.
-  // daily   → today only
-  // weekly  → Sun–Sat containing today
-  // monthly → 16th of prev month → 15th of current (billing period)
-  const period = type === "daily"
+async function sendReport(
+  type: "daily" | "weekly" | "monthly",
+  opts: ReportOptions = {},
+) {
+  // Resolve recipients. By default uses email_settings.manager_emails (the
+  // "Report Recipients" card on Settings). For ad-hoc historical exports the
+  // caller can pass recipientsOverride to send to a specific list (e.g. just
+  // the requesting admin/viewer). When renderOnly=true, recipients are
+  // unused and we skip the validation entirely.
+  let managers: string[] = [];
+  if (!opts.renderOnly) {
+    let rawManagers: string[] = [];
+    if (opts.recipientsOverride && opts.recipientsOverride.length) {
+      rawManagers = opts.recipientsOverride;
+    } else {
+      const settings = storageExtra.getEmailSettings() as any;
+      try { rawManagers = JSON.parse(settings.manager_emails || "[]"); } catch { rawManagers = []; }
+    }
+    const seenManagers = new Set<string>();
+    for (const e of rawManagers) {
+      const trimmed = String(e || "").trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (!seenManagers.has(key)) { seenManagers.add(key); managers.push(trimmed); }
+    }
+    console.log(`[sendReport] type=${type} resolved-recipients=${JSON.stringify(managers)} (source=${opts.recipientsOverride ? "override" : "email_settings.manager_emails"})`);
+    if (!managers.length) throw new Error(`No recipients configured. Add recipients in Settings → Report Recipients.`);
+  }
+
+  // Choose the reporting window. Caller can pass a custom range for
+  // historical exports; otherwise we default based on type:
+  //   daily   → today only
+  //   weekly  → Sun–Sat containing today
+  //   monthly → 16th of prev month → 15th of current (billing period)
+  const period = opts.customRange
+    ? opts.customRange
+    : type === "daily"
     ? (() => { const t = new Date().toISOString().split("T")[0]; return { startDate: t, endDate: t }; })()
     : type === "weekly"
     ? resolveNamedPeriod("week")
@@ -948,9 +969,13 @@ async function sendReport(type: "daily" | "weekly" | "monthly") {
   }
 
   const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body: body + callNotesHtml });
+  if (opts.renderOnly) {
+    console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
+    return { id: null, recipients: [], html, subject, startDate, endDate };
+  }
   console.log(`[sendReport] type=${type} recipients=${JSON.stringify(managers)} window=${startDate}..${endDate}`);
   const id = await sendEmail({ to: managers, subject, html });
-  return { id, recipients: managers };
+  return { id, recipients: managers, html, subject, startDate, endDate };
 }
 
 // ── NMLS Check trigger + cron ────────────────────────────────────────────────
@@ -3318,6 +3343,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return true;
   }
 
+  function requireAdminOrViewerSession(req: any, res: Response): { user: any } | null {
+    const uid = req.session_user?.userId;
+    if (!uid) { res.status(401).json({ error: "Unauthorized" }); return null; }
+    const u = storage.getUserById(uid) as any;
+    if (!u || (u.role !== "admin" && u.role !== "viewer")) {
+      res.status(403).json({ error: "Admin or viewer only" }); return null;
+    }
+    return { user: u };
+  }
+
   function verifyWebhookSecret(header: string | undefined, stored: string | null | undefined): boolean {
     if (!stored) return true; // no secret configured → skip verification
     if (!header) return false;
@@ -3802,7 +3837,103 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // ── Diagnostic: send a plain test email via Resend (admin only) ─────────────
+  // ── Report Archive: regenerate any historical daily/weekly/monthly report ──
+  // Available to admin and viewer roles. Lets them preview the rendered email
+  // for any date range and optionally send it to a list of recipients.
+  function parseRange(body: any, type: "daily" | "weekly" | "monthly"): { startDate: string; endDate: string } {
+    const ymd = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) ? String(s) : "";
+    let s = ymd(body?.startDate);
+    let e = ymd(body?.endDate);
+    if (!s) {
+      const t = new Date().toISOString().split("T")[0];
+      s = t; e = t;
+    }
+    if (!e) e = s;
+    // For a single picked date on weekly/monthly, expand to the natural window
+    if (type === "weekly" && s === e) {
+      const d = new Date(s + "T00:00:00");
+      const dow = d.getUTCDay(); // 0=Sun
+      const sun = new Date(d); sun.setUTCDate(d.getUTCDate() - dow);
+      const sat = new Date(sun); sat.setUTCDate(sun.getUTCDate() + 6);
+      s = sun.toISOString().split("T")[0];
+      e = sat.toISOString().split("T")[0];
+    } else if (type === "monthly" && s === e) {
+      // 16th of the prev month → 15th of the current month containing `s`
+      const d = new Date(s + "T00:00:00Z");
+      const day = d.getUTCDate();
+      let endY = d.getUTCFullYear();
+      let endM = d.getUTCMonth(); // 0-indexed
+      // If picked day is between 1..15 the period ends on the 15th of THIS month
+      // Otherwise it ends on the 15th of NEXT month.
+      if (day > 15) { endM += 1; if (endM > 11) { endM = 0; endY += 1; } }
+      const startY = endM === 0 ? endY - 1 : endY;
+      const startM = endM === 0 ? 11 : endM - 1;
+      const fmt = (y: number, m: number, d: number) =>
+        `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      s = fmt(startY, startM, 16);
+      e = fmt(endY, endM, 15);
+    }
+    return { startDate: s, endDate: e };
+  }
+
+  app.post("/api/reports/preview", requireAuth, async (req, res) => {
+    const gate = requireAdminOrViewerSession(req as any, res);
+    if (!gate) return;
+    const rawType = req.body?.type;
+    const type: "daily" | "weekly" | "monthly" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    try {
+      const range = parseRange(req.body, type);
+      const result: any = await sendReport(type, { customRange: range, renderOnly: true });
+      res.json({
+        ok: true,
+        type,
+        startDate: result.startDate,
+        endDate: result.endDate,
+        subject: result.subject,
+        html: result.html,
+      });
+    } catch (e: any) {
+      console.error(`[reports/preview] FAIL:`, e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
+  app.post("/api/reports/email", requireAuth, async (req, res) => {
+    const gate = requireAdminOrViewerSession(req as any, res);
+    if (!gate) return;
+    const rawType = req.body?.type;
+    const type: "daily" | "weekly" | "monthly" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    try {
+      const range = parseRange(req.body, type);
+      const requested: any[] = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+      // Default: send to the requesting user's own email if no list supplied
+      const cleaned = requested
+        .map((r: any) => String(r || "").trim())
+        .filter((r: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r));
+      const recipientsOverride = cleaned.length
+        ? cleaned
+        : (gate.user.email ? [gate.user.email] : []);
+      if (!recipientsOverride.length) {
+        return res.status(400).json({ error: "No valid recipients (your account has no email on file)." });
+      }
+      console.log(`[reports/email] user=${gate.user.id} type=${type} range=${range.startDate}..${range.endDate} recipients=${JSON.stringify(recipientsOverride)}`);
+      const result: any = await sendReport(type, { customRange: range, recipientsOverride });
+      res.json({
+        ok: true,
+        id: result.id,
+        recipients: result.recipients,
+        startDate: result.startDate,
+        endDate: result.endDate,
+      });
+    } catch (e: any) {
+      console.error(`[reports/email] FAIL:`, e?.message ?? e);
+      res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
+  // ── Diagnostic: send a plain test email via Resend (admin only) ───────────────
   // POST /api/test-email { to?: string }  — defaults to ethan.anthony.wood@gmail.com
   // Returns { ok, id, to, from, keySource } so the admin can confirm Resend
   // is actually delivering without going through the full report pipeline.

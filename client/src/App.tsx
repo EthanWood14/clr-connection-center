@@ -37,6 +37,7 @@ import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
 import MyReport from "@/pages/my-report";
+import ReportsArchive from "@/pages/reports-archive";
 import InstallApp from "@/pages/install";
 import Support from "@/pages/support";
 import IntroVideo from "@/pages/intro-video";
@@ -137,6 +138,7 @@ function AppRouter() {
       <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
       <Route path="/my-report" component={MyReport} />
+      <Route path="/reports-archive" component={ReportsArchive} />
       <Route path="/install" component={InstallApp} />
       <Route path="/support" component={Support} />
       <Route path="/call-script" component={CallScript} />
