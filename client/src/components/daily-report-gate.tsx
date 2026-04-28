@@ -35,14 +35,13 @@ interface CheckResult {
   callsMadeLogged?: number;
 }
 
-const OUTCOME_LABELS: Array<[keyof OutcomeBreakdown, string]> = [
-  ["transfer", "Transfers"],
-  ["appointment", "Appointments"],
-  ["callback_requested", "Callbacks Requested"],
-  ["deferral", "Deferrals"],
-  ["future_contact", "Future Contacts"],
-  ["fell_through", "Fell Throughs"],
-  ["no_answer", "No Answers"],
+const OUTCOME_LABELS: Array<{ label: string; keys: Array<keyof OutcomeBreakdown> }> = [
+  { label: "Transfers",            keys: ["transfer"] },
+  { label: "Appointments",         keys: ["appointment"] },
+  { label: "Callbacks & Deferrals", keys: ["callback_requested", "deferral"] },
+  { label: "Future Contacts",      keys: ["future_contact"] },
+  { label: "Fell Throughs",        keys: ["fell_through"] },
+  { label: "No Answers",           keys: ["no_answer"] },
 ];
 
 function formatDate(dateStr: string) {
@@ -157,10 +156,12 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
                   Today's logged outcomes
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                  {OUTCOME_LABELS.map(([key, label]) => (
-                    <div key={key} className="flex items-center justify-between">
+                  {OUTCOME_LABELS.map(({ label, keys }) => (
+                    <div key={label} className="flex items-center justify-between">
                       <span className="text-muted-foreground">{label}</span>
-                      <span className="font-medium tabular-nums">{checkData.outcomes![key]}</span>
+                      <span className="font-medium tabular-nums">
+                        {keys.reduce((sum, k) => sum + (checkData.outcomes![k] ?? 0), 0)}
+                      </span>
                     </div>
                   ))}
                 </div>

@@ -4692,6 +4692,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           appointment: 0,
           fell_through: 0,
           callback_requested: 0,
+          deferral: 0,
           future_contact: 0,
           no_answer: 0,
           total: 0,
@@ -4819,7 +4820,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appointments</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
-                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks &amp; Deferrals</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Future Contacts</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">No Answer</th>
                 </tr>
@@ -4829,7 +4830,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${outcomeCounts.transfer}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${outcomeCounts.appointment}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${outcomeCounts.fell_through}</td>
-                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.callback_requested}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.callback_requested + outcomeCounts.deferral}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#0891b2">${outcomeCounts.future_contact}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#64748b">${outcomeCounts.no_answer}</td>
                 </tr>

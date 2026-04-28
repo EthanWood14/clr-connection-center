@@ -132,6 +132,7 @@ export default function EodReport() {
   const autoAppointments = outcomeCount("appointment");
   const autoFellThrough  = outcomeCount("fell_through");
   const autoCallbacks    = outcomeCount("callback_requested");
+  const autoDeferrals    = outcomeCount("deferral");
   const autoFuture       = outcomeCount("future_contact");
   const autoNoAnswer     = outcomeCount("no_answer");
   const autoTotalLogged  = dayOutcomes.length;
@@ -346,6 +347,7 @@ export default function EodReport() {
           autoAppointments={autoAppointments}
           autoFellThrough={autoFellThrough}
           autoCallbacks={autoCallbacks}
+          autoDeferrals={autoDeferrals}
           autoFuture={autoFuture}
           autoNoAnswer={autoNoAnswer}
           autoTotalLogged={autoTotalLogged}
@@ -767,7 +769,7 @@ export default function EodReport() {
 function EodPrintSheet({
   report, activities, displayDate, callsMade,
   autoTransfers, autoAppointments, autoFellThrough,
-  autoCallbacks, autoFuture, autoNoAnswer, autoTotalLogged,
+  autoCallbacks, autoDeferrals, autoFuture, autoNoAnswer, autoTotalLogged,
   fallbackUser,
 }: {
   report: any;
@@ -778,6 +780,7 @@ function EodPrintSheet({
   autoAppointments: number;
   autoFellThrough: number;
   autoCallbacks: number;
+  autoDeferrals: number;
   autoFuture: number;
   autoNoAnswer: number;
   autoTotalLogged: number;
@@ -788,9 +791,10 @@ function EodPrintSheet({
   const appointments = breakdown.appointment        ?? report?.appointments ?? autoAppointments;
   const fellThrough  = breakdown.fell_through       ?? autoFellThrough;
   const callbacks    = breakdown.callback_requested ?? autoCallbacks;
+  const deferrals    = breakdown.deferral           ?? autoDeferrals;
   const future       = breakdown.future_contact     ?? autoFuture;
   const noAnswer     = breakdown.no_answer          ?? autoNoAnswer;
-  const totalLogged  = transfers + appointments + fellThrough + callbacks + future + noAnswer || autoTotalLogged;
+  const totalLogged  = transfers + appointments + fellThrough + callbacks + deferrals + future + noAnswer || autoTotalLogged;
 
   const clrName  = report?.clr_name  ?? fallbackUser?.name  ?? fallbackUser?.fullName ?? "—";
   const clrEmail = report?.clr_email ?? fallbackUser?.email ?? "";
@@ -814,12 +818,12 @@ function EodPrintSheet({
   const hasCoverage = !!coverage && (coverageCount > 0 || !!coverage.otherNotes);
 
   const outcomeRows: Array<{ label: string; count: number }> = [
-    { label: "Transfers",           count: transfers },
-    { label: "Appointments Set",    count: appointments },
-    { label: "Fell Through",        count: fellThrough },
-    { label: "Callbacks Requested", count: callbacks },
-    { label: "Future Contact",      count: future },
-    { label: "No Answer",           count: noAnswer },
+    { label: "Transfers",            count: transfers },
+    { label: "Appointments Set",     count: appointments },
+    { label: "Fell Through",         count: fellThrough },
+    { label: "Callbacks & Deferrals", count: callbacks + deferrals },
+    { label: "Future Contact",       count: future },
+    { label: "No Answer",            count: noAnswer },
   ];
 
   return (
@@ -1024,16 +1028,18 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const appts = breakdown.appointment ?? r.appointments ?? 0;
           const fellThrough = breakdown.fell_through ?? 0;
           const callbacks = breakdown.callback_requested ?? 0;
+          const deferrals = breakdown.deferral ?? 0;
+          const callbacksAndDeferrals = callbacks + deferrals;
           const future = breakdown.future_contact ?? 0;
           const noAnswer = breakdown.no_answer ?? 0;
           const summaryChips: Array<{ label: string; val: number; cls: string }> = [
-            { label: "calls",        val: calls,       cls: "text-muted-foreground" },
-            { label: "transfers",    val: xfers,       cls: "text-emerald-600 font-medium" },
-            { label: "appts",        val: appts,       cls: "text-blue-600" },
-            { label: "fell through", val: fellThrough, cls: "text-rose-600" },
-            { label: "callbacks",    val: callbacks,   cls: "text-amber-600" },
-            { label: "future",       val: future,      cls: "text-indigo-600" },
-            { label: "no answer",    val: noAnswer,    cls: "text-muted-foreground" },
+            { label: "calls",                  val: calls,                cls: "text-muted-foreground" },
+            { label: "transfers",              val: xfers,                cls: "text-emerald-600 font-medium" },
+            { label: "appts",                  val: appts,                cls: "text-blue-600" },
+            { label: "fell through",           val: fellThrough,          cls: "text-rose-600" },
+            { label: "callbacks & deferrals", val: callbacksAndDeferrals, cls: "text-amber-600" },
+            { label: "future",                 val: future,               cls: "text-indigo-600" },
+            { label: "no answer",              val: noAnswer,             cls: "text-muted-foreground" },
           ].filter(c => c.val > 0);
 
           return (
@@ -1074,13 +1080,13 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                   {/* Stats — full outcome breakdown */}
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {[
-                      { label: "Calls",        val: calls,       color: "text-foreground" },
-                      { label: "Transfers",    val: xfers,       color: "text-emerald-600" },
-                      { label: "Appointments", val: appts,       color: "text-blue-600" },
-                      { label: "Fell Through", val: fellThrough, color: "text-rose-600" },
-                      { label: "Callbacks",    val: callbacks,   color: "text-amber-600" },
-                      { label: "Future",       val: future,      color: "text-indigo-600" },
-                      { label: "No Answer",    val: noAnswer,    color: "text-muted-foreground" },
+                      { label: "Calls",                 val: calls,                color: "text-foreground" },
+                      { label: "Transfers",             val: xfers,                color: "text-emerald-600" },
+                      { label: "Appointments",          val: appts,                color: "text-blue-600" },
+                      { label: "Fell Through",          val: fellThrough,          color: "text-rose-600" },
+                      { label: "Callbacks & Deferrals", val: callbacksAndDeferrals, color: "text-amber-600" },
+                      { label: "Future",                val: future,               color: "text-indigo-600" },
+                      { label: "No Answer",             val: noAnswer,             color: "text-muted-foreground" },
                     ].map(s => (
                       <div key={s.label} className="rounded-lg bg-background border border-border px-3 py-2 text-center">
                         <div className={`text-xl font-bold ${s.color}`}>{s.val}</div>
