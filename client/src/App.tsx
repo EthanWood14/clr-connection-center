@@ -59,6 +59,7 @@ import ResetPassword from "@/pages/reset-password";
 import SuperAdmin from "@/pages/super-admin";
 import InviteAccept from "@/pages/invite";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
+import { SplashScreen } from "@/components/splash-screen";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() =>
@@ -235,6 +236,7 @@ function AuthenticatedApp() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <SplashScreen />
       <TooltipProvider>
         <Router hook={useHashLocation}>
           <AuthProvider>

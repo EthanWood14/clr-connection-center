@@ -1224,6 +1224,74 @@ cron.schedule("* * * * *", async () => {
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
 
+// ── 30-minute appointment reminder ──────────────────────────────────────────
+// Adds a `reminder_sent_30m` column to lead_outcomes (idempotent), then every
+// 5 minutes finds appointment outcomes whose appointment_datetime is between
+// now and now+35min and reminder hasn't been sent. Sends email via Resend +
+// web push via sendPushToUser, then sets the flag.
+try { storageExtra.getRawSqlite().exec(`ALTER TABLE lead_outcomes ADD COLUMN reminder_sent_30m INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const sqlite = storageExtra.getRawSqlite();
+    const nowMs = Date.now();
+    const cutoffMs = nowMs + 35 * 60 * 1000;
+    const rows = sqlite.prepare(`
+      SELECT lo.id, lo.assistant_id, lo.borrower_name, lo.appointment_datetime,
+             u.email AS clr_email, u.name AS clr_name, u.reminder_email_enabled,
+             loff.full_name AS lo_name
+      FROM lead_outcomes lo
+      JOIN users u ON u.id = lo.assistant_id
+      LEFT JOIN loan_officers loff ON loff.id = lo.lo_id
+      WHERE lo.outcome_type = 'appointment'
+        AND lo.appointment_datetime IS NOT NULL
+        AND lo.appointment_datetime <> ''
+        AND COALESCE(lo.reminder_sent_30m, 0) = 0
+    `).all() as any[];
+
+    for (const r of rows) {
+      const t = Date.parse(r.appointment_datetime);
+      if (!Number.isFinite(t)) continue;
+      if (t <= nowMs || t > cutoffMs) continue;
+
+      const borrower = r.borrower_name?.trim() || "Unknown";
+      const loName = r.lo_name || "Unknown LO";
+      const when = (() => {
+        try { return new Date(r.appointment_datetime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
+        catch { return r.appointment_datetime; }
+      })();
+
+      // Email (only if user opted in + has address)
+      if (r.reminder_email_enabled && r.clr_email) {
+        try {
+          await sendEmail({
+            to: r.clr_email,
+            subject: `Appointment in 30 minutes — ${borrower}`,
+            html: `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,sans-serif;color:#1e293b;line-height:1.55">
+              <p>Hi ${String(r.clr_name || "")},</p>
+              <p>Your appointment with <strong>${borrower}</strong> (LO: ${loName}) is in about 30 minutes.</p>
+              <p><strong>Scheduled:</strong> ${when}</p>
+              <p style="margin-top:18px"><a href="https://www.wlc.it.com/#/outcomes" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Open CLR Connection Center</a></p>
+            </body></html>`,
+          });
+        } catch (e: any) { console.error(`[appt-30m] email failed outcome=${r.id}:`, e?.message ?? e); }
+      }
+
+      // Push (best-effort)
+      try {
+        await sendPushToUser(r.assistant_id, {
+          title: "⏰ Appointment in 30 minutes",
+          body: `${borrower} — ${loName}`,
+          url: "/outcomes",
+        });
+      } catch {}
+
+      try { sqlite.prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 1 WHERE id = ?`).run(r.id); } catch {}
+      console.log(`[appt-30m] reminder fired outcome=${r.id} to=${r.clr_email}`);
+    }
+  } catch (e: any) { console.error("[appt-30m] cron error:", e?.message ?? e); }
+});
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -2674,8 +2742,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  app.patch("/api/outcomes/:id", (req, res) => {
+  app.patch("/api/outcomes/:id", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
+    const sessionUser = req.session_user as { userId: number; role?: string } | undefined;
+    const isAdmin = sessionUser?.role === "admin";
+    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id FROM lead_outcomes WHERE id = ?`).get(id) as any;
+    if (!existing) return res.status(404).json({ error: "Outcome not found" });
+    if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
+      return res.status(403).json({ error: "You can only edit your own outcomes" });
+    }
     const body = { ...req.body };
     // If caller is setting outcomeType, enforce the same rule.
     if (body.outcomeType === "transfer") {
@@ -2705,9 +2780,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(outcome);
   });
 
-  app.delete("/api/outcomes/:id", (req, res) => {
+  app.delete("/api/outcomes/:id", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
-    audit({ userId: 1, userName: "Ethan Wood", action: "delete", entityType: "outcome", entityId: id, entityLabel: null, details: null });
+    const sessionUser = req.session_user as { userId: number; role?: string } | undefined;
+    const isAdmin = sessionUser?.role === "admin";
+    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id FROM lead_outcomes WHERE id = ?`).get(id) as any;
+    if (!existing) return res.status(404).json({ error: "Outcome not found" });
+    if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
+      return res.status(403).json({ error: "You can only delete your own outcomes" });
+    }
+    audit({ userId: sessionUser?.userId ?? 0, userName: "", action: "delete", entityType: "outcome", entityId: id, entityLabel: null, details: null });
     storage.deleteLeadOutcome(id);
     res.json({ ok: true });
   });
@@ -6553,7 +6635,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     `).all(orgId) as any[];
     const csv = toCsv(
       ["ID", "Name", "Email", "Role", "Is CLR", "Is Active", "Created At"],
-      rows.map((r) => [r.id, r.name, r.email, r.role, r.is_clr ? "yes" : "no", r.is_active ? "yes" : "no", r.created_at]),
+       rows.map((r) => [r.id, r.name, r.email, r.role, r.is_clr ? "yes" : "no", r.is_active ? "yes" : "no", r.created_at]),
     );
     sendCsv(res, `users_${todayIso()}.csv`, csv);
   });

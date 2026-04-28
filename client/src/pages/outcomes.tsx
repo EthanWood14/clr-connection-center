@@ -806,6 +806,7 @@ function EditOutcomeDialog({
   onSubmit,
   isPending,
   los,
+  currentUserId,
 }: {
   outcome: any | null;
   open: boolean;
@@ -813,6 +814,7 @@ function EditOutcomeDialog({
   onSubmit: (values: EditOutcomeValues) => void;
   isPending: boolean;
   los: any[];
+  currentUserId?: number;
 }) {
   const form = useForm<EditOutcomeValues>({
     resolver: zodResolver(editOutcomeSchema),
@@ -859,6 +861,11 @@ function EditOutcomeDialog({
         <DialogHeader>
           <DialogTitle>Edit Outcome</DialogTitle>
         </DialogHeader>
+        {outcome && currentUserId != null && outcome.assistantId !== currentUserId && (
+          <div className="text-xs px-3 py-2 rounded-md border border-amber-300 bg-amber-50 text-amber-900">
+            Editing another CLR's record ({outcome.assistant?.name ?? `Assistant #${outcome.assistantId}`}).
+          </div>
+        )}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField control={form.control} name="outcomeType" render={({ field }) => (
@@ -1241,24 +1248,34 @@ export default function Outcomes() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 justify-end min-w-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground"
-                    onClick={() => setEditTarget(o)}
-                    data-testid={`button-edit-outcome-${o.id}`}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-                    onClick={() => deleteMutation.mutate(o.id)}
-                    data-testid={`button-delete-outcome-${o.id}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
+                  {(() => {
+                    const isOwner = authUser?.id != null && o.assistantId === authUser.id;
+                    const isAdmin = authUser?.role === "admin";
+                    if (!isOwner && !isAdmin) return null;
+                    return (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground"
+                          onClick={() => setEditTarget(o)}
+                          title={!isOwner && isAdmin ? "Editing another CLR's record" : undefined}
+                          data-testid={`button-edit-outcome-${o.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+                          onClick={() => deleteMutation.mutate(o.id)}
+                          data-testid={`button-delete-outcome-${o.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
@@ -1288,6 +1305,7 @@ export default function Outcomes() {
         onSubmit={values => editTarget && updateMutation.mutate({ id: editTarget.id, data: values })}
         isPending={updateMutation.isPending}
         los={los}
+        currentUserId={authUser?.id}
       />
     </div>
   );
