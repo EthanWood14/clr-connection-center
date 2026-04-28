@@ -15,7 +15,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck, ChevronLeft, ChevronRight, Check } from "lucide-react";
+import {
+  Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck,
+  ChevronLeft, ChevronRight, Check,
+  ArrowRightLeft, CalendarPlus, PhoneCall, Hourglass, AlertTriangle,
+  PhoneOff, ThumbsDown, PhoneMissed, HelpCircle, ArrowLeft,
+} from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 
@@ -37,6 +42,24 @@ const OUTCOME_HELPERS: Record<string, string> = {
   callback_requested: "Call back soon — within days/weeks, no exact time",
   deferral: "Month+ away — open to future contact, no date set",
 };
+
+// ── Result picker tiles — the first screen of the log-contact flow ────────────
+const OUTCOME_TILES: Array<{
+  type: typeof OUTCOME_TYPES[number];
+  icon: any;
+  helper?: string;
+  tone: string; // tailwind classes for the active state
+}> = [
+  { type: "transfer",           icon: ArrowRightLeft, helper: "Sent to LO — live or scheduled", tone: "border-green-500 bg-green-50 hover:bg-green-100 text-green-900 dark:bg-green-900/20 dark:hover:bg-green-900/30 dark:text-green-200 dark:border-green-700" },
+  { type: "appointment",        icon: CalendarPlus,   helper: "Specific date & time confirmed",  tone: "border-blue-500 bg-blue-50 hover:bg-blue-100 text-blue-900 dark:bg-blue-900/20 dark:hover:bg-blue-900/30 dark:text-blue-200 dark:border-blue-700" },
+  { type: "callback_requested", icon: PhoneCall,      helper: "Call back within days/weeks",     tone: "border-purple-500 bg-purple-50 hover:bg-purple-100 text-purple-900 dark:bg-purple-900/20 dark:hover:bg-purple-900/30 dark:text-purple-200 dark:border-purple-700" },
+  { type: "deferral",           icon: Hourglass,      helper: "Month+ away — no date set",        tone: "border-amber-500 bg-amber-50 hover:bg-amber-100 text-amber-900 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700" },
+  { type: "fell_through",       icon: AlertTriangle,  helper: "Conversation ended without progress", tone: "border-orange-500 bg-orange-50 hover:bg-orange-100 text-orange-900 dark:bg-orange-900/20 dark:hover:bg-orange-900/30 dark:text-orange-200 dark:border-orange-700" },
+  { type: "no_answer",          icon: PhoneMissed,    helper: "Didn’t reach the lead",            tone: "border-gray-400 bg-gray-50 hover:bg-gray-100 text-gray-800 dark:bg-gray-800/40 dark:hover:bg-gray-700/40 dark:text-gray-200 dark:border-gray-600" },
+  { type: "not_interested",     icon: ThumbsDown,     helper: "Lead declined — don’t pursue",      tone: "border-red-500 bg-red-50 hover:bg-red-100 text-red-900 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-200 dark:border-red-700" },
+  { type: "wrong_number",       icon: PhoneOff,       helper: "Number not associated with lead",  tone: "border-zinc-400 bg-zinc-50 hover:bg-zinc-100 text-zinc-800 dark:bg-zinc-800/40 dark:hover:bg-zinc-700/40 dark:text-zinc-200 dark:border-zinc-600" },
+  { type: "other",              icon: HelpCircle,     helper: "Anything else — add notes below",  tone: "border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-800 dark:bg-slate-800/40 dark:hover:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600" },
+];
 
 const OUTCOME_COLORS: Record<string, string> = {
   transfer: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
@@ -289,7 +312,8 @@ function OutcomeFormDialog({
   });
 
   const [bonzoLogged, setBonzoLogged] = useState(false);
-  const [step, setStep] = useState(1);
+  // Step 0 = result picker (always shown first), step 1 = details, step 2/3 = transfer wizard
+  const [step, setStep] = useState(0);
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
   const watchedRequiresFollowup = form.watch("requiresFollowup");
@@ -304,11 +328,12 @@ function OutcomeFormDialog({
     if (watchedType !== "transfer" && form.getValues("transferType") != null) {
       form.setValue("transferType", null, { shouldValidate: false });
     }
-    if (watchedType !== "transfer" && step !== 1) setStep(1);
+    // If outcome changed away from transfer mid-wizard (steps 2/3), drop back to step 1.
+    if (watchedType !== "transfer" && step > 1) setStep(1);
   }, [watchedType, form, step]);
 
   useEffect(() => {
-    if (open) { setBonzoLogged(false); setStep(1); }
+    if (open) { setBonzoLogged(false); setStep(0); }
   }, [open]);
 
   const canAdvanceFromStep1 = !isTransfer || (
@@ -327,7 +352,16 @@ function OutcomeFormDialog({
     }
   };
 
-  const handleBack = () => { if (step > 1) setStep(step - 1); };
+  const handleBack = () => { if (step > 0) setStep(step - 1); };
+
+  const pickOutcome = (type: typeof OUTCOME_TYPES[number]) => {
+    form.setValue("outcomeType", type, { shouldValidate: false });
+    // Clear stale transferType when re-picking a non-transfer outcome
+    if (type !== "transfer") {
+      form.setValue("transferType", null, { shouldValidate: false });
+    }
+    setStep(1);
+  };
 
   const handleSkip = () => {
     // Clear the fields on the current step then advance (or submit from step 3)
@@ -356,48 +390,67 @@ function OutcomeFormDialog({
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Log Outcome</DialogTitle>
+          <DialogTitle>{step === 0 ? "What was the result?" : "Log Outcome"}</DialogTitle>
         </DialogHeader>
-        {isTransfer && <StepIndicator step={step} total={totalSteps} />}
+        {step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+
+          {/* ── Step 0: Result Picker ──────────────────────────── */}
+          {step === 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {OUTCOME_TILES.map(tile => {
+                const Icon = tile.icon;
+                return (
+                  <button
+                    key={tile.type}
+                    type="button"
+                    onClick={() => pickOutcome(tile.type)}
+                    data-testid={`tile-outcome-${tile.type}`}
+                    className={`flex flex-col items-center justify-start gap-1.5 rounded-lg border-2 p-3 text-center transition-colors ${tile.tone}`}
+                  >
+                    <Icon className="w-6 h-6" />
+                    <span className="text-sm font-semibold leading-tight">{OUTCOME_LABELS[tile.type]}</span>
+                    {tile.helper && (
+                      <span className="text-[11px] opacity-80 leading-tight">{tile.helper}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {step === 1 && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField control={form.control} name="date" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Date</FormLabel>
-                  <FormControl><Input type="date" {...field} data-testid="input-outcome-date" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="outcomeType" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Outcome</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger data-testid="select-outcome-type"><SelectValue /></SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {OUTCOME_TYPES.map(t => (
-                        <SelectItem key={t} value={t}>
-                          <div className="flex flex-col">
-                            <span>{OUTCOME_LABELS[t]}</span>
-                            {OUTCOME_HELPERS[t] && (
-                              <span className="text-[11px] text-muted-foreground">{OUTCOME_HELPERS[t]}</span>
-                            )}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {OUTCOME_HELPERS[field.value] && (
-                    <p className="text-xs text-muted-foreground mt-1">ℹ️ {OUTCOME_HELPERS[field.value]}</p>
-                  )}
-                  <FormMessage />
-                </FormItem>
-              )} />
+            {/* Selected outcome chip with Change link */}
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Outcome:</span>
+                <Badge className={OUTCOME_COLORS[watchedType] || ""} data-testid="badge-selected-outcome">
+                  {OUTCOME_LABELS[watchedType] || watchedType}
+                </Badge>
+                {OUTCOME_HELPERS[watchedType] && (
+                  <span className="text-[11px] text-muted-foreground hidden sm:inline">{OUTCOME_HELPERS[watchedType]}</span>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setStep(0)}
+                data-testid="button-change-outcome"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Change
+              </Button>
             </div>
+            <FormField control={form.control} name="date" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Date</FormLabel>
+                <FormControl><Input type="date" {...field} data-testid="input-outcome-date" /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
             {isTransfer && (
               <FormField control={form.control} name="transferType" render={({ field }) => (
                 <FormItem>
@@ -694,7 +747,7 @@ function OutcomeFormDialog({
                   Skip for now
                 </Button>
               )}
-              {isTransfer && step < totalSteps && (
+              {isTransfer && step >= 1 && step < totalSteps && (
                 <Button
                   type="button"
                   size="sm"
@@ -704,7 +757,7 @@ function OutcomeFormDialog({
                   Next <ChevronRight className="w-4 h-4 ml-1" />
                 </Button>
               )}
-              {(!isTransfer || step === totalSteps) && (
+              {step >= 1 && (!isTransfer || step === totalSteps) && (
                 <Button
                   type="submit"
                   disabled={
