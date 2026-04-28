@@ -221,7 +221,9 @@ export function AppSidebar() {
 
   // Live appointment count — active appointment-type outcomes with followUpDate in the next 3 days.
   // Excludes outcomes that already became transfers or that are overdue (< today).
-  // Window is today through today + 3 days (inclusive).
+  // Window is today through today + 3 days (inclusive). Only counts the current
+  // user's own appointments — other CLRs' upcoming appointments are private.
+  const myUserId = (user as any)?.id ?? null;
   const { data: outcomes = [] } = useQuery<any[]>({
     queryKey: ["/api/outcomes"],
     refetchInterval: 60000,
@@ -239,6 +241,8 @@ export function AppSidebar() {
       const cutoffEndStr = `${cutoffStr}T23:59:59.999Z`;
       return data.filter((o) => {
         if (!ACTIVE_APPT_TYPES.has(o.outcomeType)) return false;
+        // Only count the current user's own upcoming appointments (others' are private)
+        if (myUserId != null && o.assistantId !== myUserId) return false;
         const fd: string | null | undefined = o.followUpDate;
         if (!fd) return false;
         // Extract YYYY-MM-DD portion for lower-bound compare; full string for upper-bound

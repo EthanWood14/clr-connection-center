@@ -498,21 +498,26 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
 
 // ── Tab: Upcoming Appointments ────────────────────────────────────────────────
 function TabAppointments() {
+  const { user } = useAuth();
+  const myUserId = (user as any)?.id ?? null;
   const { data: outcomes = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/outcomes"] });
   const { data: losData = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const [search, setSearch] = useState("");
 
-  // Only keep future appointments: today OR not yet past; outcome must be an appointment or callback request
+  // Only keep future appointments: today OR not yet past; outcome must be an appointment or callback request.
+  // Scoped to the current user — other CLRs' upcoming appointments are private (only overdue ones surface elsewhere).
   const appointments = useMemo(() =>
     outcomes.filter((o: any) => {
       const t = o.outcomeType || o.outcome_type;
       if (t !== "appointment" && t !== "callback_requested") return false;
+      const aId = o.assistantId ?? o.assistant_id;
+      if (myUserId != null && aId !== myUserId) return false;
       const d = o.followUpDate || o.follow_up_date;
       if (!d) return false;
       const parsed = parseISO(d);
       return isToday(parsed) || !isPast(parsed);
     }),
-    [outcomes]
+    [outcomes, myUserId]
   );
 
   const filtered = useMemo(() => {

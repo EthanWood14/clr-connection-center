@@ -37,6 +37,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format, parseISO } from "date-fns";
+import { useAuth } from "@/lib/auth";
 import {
   CheckCircle2,
   CalendarClock,
@@ -583,6 +584,8 @@ function SectionHeader({ label, count, overdue, upcoming }: { label: string; cou
 
 export default function Appointments() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const myUserId = (user as any)?.id ?? null;
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
@@ -609,11 +612,23 @@ export default function Appointments() {
     return o.outcomeType === filterType;
   };
 
+  // Visibility rule: each CLR sees their own appointments by default. Another
+  // CLR's appointment only shows up once it's overdue (follow-up date in the
+  // past) AND still in an active appointment status. ACTIVE_APPT_TYPES is
+  // already enforced below, so the only extra check needed is mine-or-overdue.
+  const isMineOrOverdue = (o: Outcome) => {
+    if (myUserId != null && o.assistantId === myUserId) return true;
+    const fd = o.followUpDate;
+    if (!fd) return false; // undated deferrals from another CLR stay private
+    return fd.slice(0, 10) < todayStr;
+  };
+
   const allAppointments = outcomes
     .filter(
       (o) =>
         ACTIVE_APPT_TYPES.has(o.outcomeType) &&
         matchesFilter(o) &&
+        isMineOrOverdue(o) &&
         (
           // dated entries always show
           (o.followUpDate != null && o.followUpDate !== "") ||
