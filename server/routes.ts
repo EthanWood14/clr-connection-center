@@ -2882,15 +2882,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
-  app.get("/api/dashboard/stats", (req: any, res) => {
+  app.get("/api/dashboard/stats", requireAuth, (req: any, res) => {
     const periodName = (req.query.period as string) || "period";
     const scope = (req.query.scope as string) === "team" ? "team" : "personal";
     const resolved = resolveNamedPeriod(periodName);
     const startDate = (req.query.startDate as string) || resolved.startDate;
     const endDate = (req.query.endDate as string) || resolved.endDate;
-    const stats = storage.getDashboardStats(startDate, endDate);
 
     const userId = req.session_user?.userId;
+    // Personal scope filters base outcome stats (transfers / fellThrough /
+    // appointments / outcomesByType / upcomingAppointments) to the current user.
+    // Team scope returns org-wide aggregates.
+    const stats = scope === "personal" && userId
+      ? storage.getDashboardStats(startDate, endDate, userId)
+      : storage.getDashboardStats(startDate, endDate);
     const todayStr = new Date().toISOString().split("T")[0];
 
     let myCallsToday: number | null = null;

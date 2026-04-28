@@ -811,7 +811,7 @@ export interface IStorage {
   getAuditLogs(filters?: { entityType?: string; userId?: number; limit?: number }): AuditLog[];
 
   // Dashboard stats
-  getDashboardStats(startDate: string, endDate: string): any;
+  getDashboardStats(startDate: string, endDate: string, assistantId?: number): any;
   getLeaderboard(startDate: string, endDate: string): any[];
 
   // Daily Call Logs
@@ -1078,10 +1078,11 @@ export class Storage implements IStorage {
     return this.getAlgorithmSettings();
   }
 
-  getDashboardStats(startDate: string, endDate: string) {
+  getDashboardStats(startDate: string, endDate: string, assistantId?: number) {
     const oid = currentOrgId();
     const orgWhere = oid != null ? ` AND org_id = ${Number(oid)}` : "";
-    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}`).all(startDate, endDate) as any[];
+    const userWhere = assistantId != null ? ` AND assistant_id = ${Number(assistantId)}` : "";
+    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}${userWhere}`).all(startDate, endDate) as any[];
 
     const total = outcomes.length;
     const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer").length;
@@ -1095,14 +1096,16 @@ export class Storage implements IStorage {
       outcomesByType[o.outcome_type] = (outcomesByType[o.outcome_type] || 0) + 1;
     });
 
-    // Today's call totals
+    // Today's call totals (scoped to user when assistantId provided)
     const todayStr = new Date().toISOString().split("T")[0];
-    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}`).all(todayStr) as any[];
+    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}${userWhere}`).all(todayStr) as any[];
     const totalCallsToday = todayLogs.reduce((sum: number, l: any) => sum + (l.calls_made ?? 0), 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
 
-    // Count upcoming appointments: outcomeType='appointment' with followUpDate >= today
-    const allOutcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE 1=1${orgWhere}`).all() as any[];
+    // Upcoming appointments. The "Upcoming Appointments" stat card is inherently
+    // personal — when an assistantId is provided, scope to that user; otherwise
+    // (team view) include the whole org.
+    const allOutcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE 1=1${orgWhere}${userWhere}`).all() as any[];
     const upcomingAppointments = allOutcomes.filter(
       (o: any) => o.outcome_type === "appointment" && o.follow_up_date != null && o.follow_up_date >= todayStr
     ).length;
