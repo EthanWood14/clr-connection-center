@@ -2670,6 +2670,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         borrowerName: o.borrowerName ?? o.borrower_name ?? null,
         followUpDate: o.followUpDate ?? o.follow_up_date ?? null,
         journeyId: o.journeyId ?? o.journey_id ?? null,
+        phoneNumber: o.phoneNumber ?? o.phone_number ?? null,
         lo,
         assistant,
       };
@@ -2690,7 +2691,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const nullify = (v: any) => (v === undefined || v === '' ? null : v);
       const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
       const nullableFields = [
-        "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
+        "borrowerName", "journeyId", "phoneNumber", "notes", "followUpDate", "transferType",
         "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
         "followupReason", "followupDate", "leadType", "appointmentDatetime",
         "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",
@@ -2764,7 +2765,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const nullify = (v: any) => (v === undefined || v === '' ? null : v);
     const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
     const nullableFields = [
-      "borrowerName", "journeyId", "notes", "followUpDate", "transferType",
+      "borrowerName", "journeyId", "phoneNumber", "notes", "followUpDate", "transferType",
       "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
       "followupReason", "followupDate", "leadType", "appointmentDatetime",
       "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",

@@ -111,6 +111,7 @@ const outcomeFormSchema = z.object({
   transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   borrowerName: z.string().optional(),
   journeyId: z.string().optional(),
+  phoneNumber: z.string().optional(),
   notes: z.string().optional(),
   followUpDate: z.string().optional(),
   // Wizard fields (all optional — filled for transfers if not skipped)
@@ -292,6 +293,7 @@ function OutcomeFormDialog({
       transferType: null,
       borrowerName: "",
       journeyId: "",
+      phoneNumber: "",
       notes: "",
       followUpDate: "",
       conversationNotes: "",
@@ -525,6 +527,12 @@ function OutcomeFormDialog({
                 </FormItem>
               )} />
             </div>
+            <FormField control={form.control} name="phoneNumber" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Phone Number</FormLabel>
+                <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-phone-number" /></FormControl>
+              </FormItem>
+            )} />
             <FormField control={form.control} name="followUpDate" render={({ field }) => (
               <FormItem>
                 <FormLabel>
@@ -784,6 +792,7 @@ const editOutcomeSchema = z.object({
   transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   loId: z.coerce.number().min(1, "Select a loan officer"),
   borrowerName: z.string().optional(),
+  phoneNumber: z.string().optional(),
   followUpDate: z.string().optional(),
   notes: z.string().optional(),
 }).superRefine((val, ctx) => {
@@ -823,6 +832,7 @@ function EditOutcomeDialog({
       transferType: null,
       loId: 0,
       borrowerName: "",
+      phoneNumber: "",
       followUpDate: "",
       notes: "",
     },
@@ -848,6 +858,7 @@ function EditOutcomeDialog({
         transferType: existingTT === "direct" || existingTT === "appointment" ? existingTT : null,
         loId: outcome.loId,
         borrowerName: outcome.borrowerName ?? "",
+        phoneNumber: outcome.phoneNumber ?? "",
         followUpDate: outcome.followUpDate ?? "",
         notes: outcome.notes ?? "",
       });
@@ -942,6 +953,12 @@ function EditOutcomeDialog({
               <FormItem>
                 <FormLabel>Borrower Name</FormLabel>
                 <FormControl><Input {...field} placeholder="Optional" data-testid="input-edit-borrower-name" /></FormControl>
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="phoneNumber" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Phone Number</FormLabel>
+                <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-edit-phone-number" /></FormControl>
               </FormItem>
             )} />
             {showFollowUp && (
@@ -1085,9 +1102,17 @@ export default function Outcomes() {
     return matchType && matchAssistant && matchSearch;
   });
 
-  // Quick-count summary
-  const countByType: Record<string, number> = {};
-  filtered.forEach((o: any) => { countByType[o.outcomeType] = (countByType[o.outcomeType] || 0) + 1; });
+  // Quick-count summary — group by display label so legacy aliases
+  // (e.g. future_contact -> "Deferral") merge into a single chip.
+  const countByLabel: Record<string, { count: number; type: string }> = {};
+  filtered.forEach((o: any) => {
+    const rawType = o.outcomeType;
+    const label = OUTCOME_LABELS[rawType] ?? rawType;
+    if (!countByLabel[label]) {
+      countByLabel[label] = { count: 0, type: rawType };
+    }
+    countByLabel[label].count += 1;
+  });
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
@@ -1115,14 +1140,14 @@ export default function Outcomes() {
       {/* Summary badges */}
       {filtered.length > 0 && (
         <div className="flex gap-2 flex-wrap">
-          {Object.entries(countByType).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
+          {Object.entries(countByLabel).sort((a, b) => b[1].count - a[1].count).map(([label, { count, type }]) => (
             <button
-              key={type}
+              key={label}
               onClick={() => setFilterType(filterType === type ? "all" : type)}
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors font-medium ${filterType === type ? "border-primary bg-primary/10 text-primary" : "border-border"} ${OUTCOME_COLORS[type]}`}
               data-testid={`badge-outcome-${type}`}
             >
-              {OUTCOME_LABELS[type]}: {count}
+              {label}: {count}
             </button>
           ))}
         </div>
@@ -1200,13 +1225,13 @@ export default function Outcomes() {
         <Card>
           <CardContent className="p-0">
             {/* Table header */}
-            <div className="hidden md:grid grid-cols-[80px_1fr_1fr_1fr_120px_80px] gap-3 px-4 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>Date</span><span>Outcome</span><span>LO</span><span>Assistant</span><span>Borrower</span><span></span>
+            <div className="hidden md:grid grid-cols-[80px_1fr_1fr_1fr_120px_120px_80px] gap-3 px-4 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <span>Date</span><span>Outcome</span><span>LO</span><span>Assistant</span><span>Borrower</span><span>Phone</span><span></span>
             </div>
             {filtered.map((o: any) => (
               <div
                 key={o.id}
-                className="grid grid-cols-1 md:grid-cols-[80px_1fr_1fr_1fr_120px_80px] gap-3 px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors items-center group"
+                className="grid grid-cols-1 md:grid-cols-[80px_1fr_1fr_1fr_120px_120px_80px] gap-3 px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors items-center group"
                 data-testid={`row-outcome-${o.id}`}
               >
                 <InlineDateEditor
@@ -1247,6 +1272,13 @@ export default function Outcomes() {
                     </Badge>
                   )}
                 </div>
+                <span className="text-sm text-muted-foreground truncate font-mono" data-testid={`text-outcome-phone-${o.id}`}>
+                  {o.phoneNumber ? (
+                    <a href={`tel:${o.phoneNumber}`} className="hover:text-foreground hover:underline">{o.phoneNumber}</a>
+                  ) : (
+                    <span className="text-muted-foreground/50">—</span>
+                  )}
+                </span>
                 <div className="flex items-center gap-1 justify-end min-w-0">
                   {(() => {
                     const isOwner = authUser?.id != null && o.assistantId === authUser.id;

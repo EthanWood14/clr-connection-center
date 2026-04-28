@@ -160,6 +160,7 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   outcomeType: text("outcome_type").notNull(),
   transferType: text("transfer_type"), // 'direct' | 'appointment' | null (required when outcomeType='transfer')
   journeyId: text("journey_id"),
+  phoneNumber: text("phone_number"),
   notes: text("notes"),
   followUpDate: text("follow_up_date"),
   tags: text("tags").notNull().default("[]"),

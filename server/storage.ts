@@ -263,6 +263,7 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN missed_reason TEXT`); } 
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN rescheduled INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN reschedule_datetime TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN next_steps TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN phone_number TEXT`); } catch {}
 try {
   sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}

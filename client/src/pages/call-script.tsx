@@ -1085,6 +1085,7 @@ function CallRecorder({
   const [wizardTransferType, setWizardTransferType] = useState<"direct" | "appointment" | "">("");
   const [wizardNotes, setWizardNotes] = useState<string>("");
   const [wizardBorrower, setWizardBorrower] = useState<string>("");
+  const [wizardPhone, setWizardPhone] = useState<string>("");
   const [durationTick, setDurationTick] = useState(0);
 
   const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
@@ -1114,6 +1115,7 @@ function CallRecorder({
     setWizardTransferType("");
     setWizardNotes("");
     setWizardBorrower("");
+    setWizardPhone("");
     onStartRecording(false);
   };
 
@@ -1126,6 +1128,7 @@ function CallRecorder({
     setWizardTransferType(choice.transferType ?? "");
     setWizardScheduled("");
     setWizardNotes("");
+    setWizardPhone("");
     setStep("wizard");
   };
 
@@ -1160,6 +1163,7 @@ function CallRecorder({
         assistantId: 1,
         outcomeType: outcomeChoice.outcomeType,
         borrowerName: wizardBorrower.trim(),
+        phoneNumber: wizardPhone.trim() || null,
         notes: wizardNotes.trim(),
       };
       if (needsLo) {
@@ -1192,6 +1196,7 @@ function CallRecorder({
       setWizardTransferType("");
       setWizardNotes("");
       setWizardBorrower("");
+      setWizardPhone("");
       onBorrowerNameChange("");
       onStartRecording(false);
     },
@@ -1266,6 +1271,10 @@ function CallRecorder({
             <div>
               <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Borrower name</label>
               <Input value={wizardBorrower} onChange={e => setWizardBorrower(e.target.value)} className="h-9 text-sm mt-1" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phone Number</label>
+              <Input type="tel" value={wizardPhone} onChange={e => setWizardPhone(e.target.value)} placeholder="Optional" className="h-9 text-sm mt-1" data-testid="script-phone-number" />
             </div>
             {needsLo && (
               <div>
