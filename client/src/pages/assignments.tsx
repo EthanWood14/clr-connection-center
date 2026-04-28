@@ -35,8 +35,10 @@ function formatDate(d: Date) {
 function dateLabel(dateStr: string) {
   const today = formatDate(new Date());
   const yesterday = formatDate(new Date(Date.now() - 86400000));
+  const tomorrow = formatDate(new Date(Date.now() + 86400000));
   if (dateStr === today) return "Today";
   if (dateStr === yesterday) return "Yesterday";
+  if (dateStr === tomorrow) return "Tomorrow";
   return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
@@ -475,6 +477,174 @@ function AdminRegenerateDialog({
   );
 }
 
+interface PreConfigureDialogProps {
+  open: boolean;
+  date: string;
+  existing: any[];
+  assistants: any[];
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function PreConfigureDialog({ open, date, existing, assistants, onClose, onSuccess }: PreConfigureDialogProps) {
+  const { toast } = useToast();
+  const [items, setItems] = useState<Array<{ loId: number; assistantId: number }>>([]);
+  const [selectedLoId, setSelectedLoId] = useState<string>("");
+  const [selectedAssistantId, setSelectedAssistantId] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+
+  const { data: los = [] } = useQuery<any[]>({
+    queryKey: ["/api/loan-officers"],
+    enabled: open,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    setItems(
+      existing.map((a: any) => ({ loId: a.loId, assistantId: a.assistantId }))
+    );
+    setSelectedLoId("");
+    setSelectedAssistantId(assistants[0]?.id ? String(assistants[0].id) : "");
+  }, [open, existing, assistants]);
+
+  const loById = new Map<number, any>();
+  for (const lo of los as any[]) loById.set(lo.id, lo);
+  const userById = new Map<number, any>();
+  for (const u of assistants) userById.set(u.id, u);
+
+  const addItem = () => {
+    const lid = Number(selectedLoId);
+    const aid = Number(selectedAssistantId);
+    if (!lid || !aid) return;
+    if (items.some(it => it.loId === lid)) {
+      toast({ title: "LO already added", variant: "destructive" });
+      return;
+    }
+    setItems(prev => [...prev, { loId: lid, assistantId: aid }]);
+    setSelectedLoId("");
+  };
+
+  const removeItem = (idx: number) => {
+    setItems(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const moveItem = (idx: number, delta: number) => {
+    setItems(prev => {
+      const next = [...prev];
+      const newIdx = idx + delta;
+      if (newIdx < 0 || newIdx >= next.length) return prev;
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
+    });
+  };
+
+  const handleSave = async () => {
+    if (items.length === 0) {
+      toast({ title: "Add at least one LO before saving", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiRequest("POST", "/api/assignments/pre-configure", { date, items });
+      toast({ title: "Pre-configured assignments saved" });
+      onSuccess();
+    } catch (e: any) {
+      toast({ title: "Failed to save", description: e?.message ?? "Error", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+            <ShieldAlert className="w-5 h-5" />
+            Pre-configure Assignments — {date}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300">
+            Saving will mark this date as <strong>manually configured</strong> and the auto-generation cron will skip it.
+          </div>
+
+          {/* Add row */}
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+            <select
+              value={selectedLoId}
+              onChange={e => setSelectedLoId(e.target.value)}
+              className="border rounded px-2 py-1.5 text-sm bg-background"
+            >
+              <option value="">Pick a Loan Officer…</option>
+              {(los as any[])
+                .filter((lo: any) => !items.some(it => it.loId === lo.id))
+                .map((lo: any) => (
+                  <option key={lo.id} value={lo.id}>
+                    {lo.fullName ?? lo.full_name}
+                  </option>
+                ))}
+            </select>
+            <select
+              value={selectedAssistantId}
+              onChange={e => setSelectedAssistantId(e.target.value)}
+              className="border rounded px-2 py-1.5 text-sm bg-background"
+            >
+              <option value="">Pick a CLR…</option>
+              {assistants.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <Button size="sm" onClick={addItem} disabled={!selectedLoId || !selectedAssistantId}>
+              Add
+            </Button>
+          </div>
+
+          {/* Items list */}
+          <div className="border rounded-lg max-h-80 overflow-auto">
+            {items.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">No LOs added yet</p>
+            ) : (
+              items.map((it, idx) => {
+                const lo = loById.get(it.loId);
+                const assistant = userById.get(it.assistantId);
+                return (
+                  <div key={idx} className="flex items-center gap-2 px-3 py-2 border-b last:border-0">
+                    <span className="text-xs font-mono text-muted-foreground w-6">#{idx + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {lo?.fullName ?? lo?.full_name ?? `LO #${it.loId}`}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        → {assistant?.name ?? `CLR #${it.assistantId}`}
+                      </p>
+                    </div>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => moveItem(idx, -1)} disabled={idx === 0}>
+                      <ChevronLeft className="w-3.5 h-3.5 rotate-90" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1}>
+                      <ChevronRight className="w-3.5 h-3.5 rotate-90" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => removeItem(idx)}>
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving || items.length === 0}>
+            {saving ? "Saving…" : `Save ${items.length} Assignment${items.length === 1 ? "" : "s"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Assignments() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -485,6 +655,7 @@ export default function Assignments() {
   const [isBulkPending, setIsBulkPending] = useState(false);
   const [generateLocked, setGenerateLocked] = useState(false);
   const [showOverrideDialog, setShowOverrideDialog] = useState(false);
+  const [showPreConfigureDialog, setShowPreConfigureDialog] = useState(false);
 
   const { data: assignments = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/assignments", currentDate],
@@ -511,9 +682,12 @@ export default function Assignments() {
 
   // When assignments are loaded for today, auto-lock the generate button
   const today = formatDate(new Date());
+  const isAdmin = user?.role === "admin";
   const isPastDate = currentDate < today;
   const isToday = currentDate === today;
+  const isFutureDate = currentDate > today;
   const alreadyGenerated = isToday && (assignments as any[]).length > 0;
+  const isManuallyConfigured = (assignments as any[]).some((a: any) => a.manuallyConfigured);
 
   const generateMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/assignments/generate", { date: currentDate }),
@@ -546,7 +720,12 @@ export default function Assignments() {
   const handleDateChange = (delta: number) => {
     const d = new Date(currentDate + "T00:00:00");
     d.setDate(d.getDate() + delta);
-    setCurrentDate(formatDate(d));
+    const next = formatDate(d);
+    if (!isAdmin && next !== today) {
+      toast({ title: "Only admins can navigate to other dates", variant: "destructive" });
+      return;
+    }
+    setCurrentDate(next);
     setSelectedIds(new Set());
   };
 
@@ -651,13 +830,29 @@ export default function Assignments() {
           )}
           {/* Date nav */}
           <div className="flex items-center gap-1 border rounded-lg px-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDateChange(-1)} data-testid="button-prev-day">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!isAdmin}
+              onClick={() => handleDateChange(-1)}
+              data-testid="button-prev-day"
+              title={!isAdmin ? "Only admins can navigate dates" : ""}
+            >
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <span className="text-sm font-medium px-2 min-w-[120px] text-center" data-testid="text-current-date">
               {dateLabel(currentDate)}
             </span>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDateChange(1)} data-testid="button-next-day">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={!isAdmin}
+              onClick={() => handleDateChange(1)}
+              data-testid="button-next-day"
+              title={!isAdmin ? "Only admins can navigate dates" : ""}
+            >
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
@@ -666,6 +861,19 @@ export default function Assignments() {
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-muted-foreground/20 bg-muted/50 text-muted-foreground text-sm font-medium select-none">
               <Lock className="w-3.5 h-3.5" />
               Past date
+            </div>
+          ) : isFutureDate && isAdmin ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-amber-400 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-xs"
+                onClick={() => setShowPreConfigureDialog(true)}
+                data-testid="button-pre-configure"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                {assignments.length > 0 ? "Edit Pre-config" : "Pre-configure"}
+              </Button>
             </div>
           ) : (alreadyGenerated || generateLocked) ? (
             // Today — already generated, show lock + optional admin override
@@ -701,6 +909,23 @@ export default function Assignments() {
         </div>
       </div>
 
+      {/* Admin Override Banner — Editing Future Dates */}
+      {isFutureDate && isAdmin && (
+        <div className="rounded-lg border-2 border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              Admin Override — Editing {dateLabel(currentDate)}'s Assignments
+            </p>
+            <p className="text-amber-800 dark:text-amber-300 text-xs mt-0.5">
+              {isManuallyConfigured
+                ? "These assignments are pre-configured. Auto-generation will be skipped for this date."
+                : "Pre-configure tomorrow's assignments before the auto-generation cron runs."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       {isLoading ? (
         <div className="space-y-4">
@@ -710,10 +935,16 @@ export default function Assignments() {
         <div className="py-20 text-center">
           <Calendar className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
           <p className="text-sm text-muted-foreground mb-4">No assignments for {dateLabel(currentDate)}.</p>
-          {currentDate === formatDate(new Date()) && (
+          {isToday && (
             <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending} data-testid="button-generate-empty">
               <RefreshCw className={`w-4 h-4 mr-2 ${generateMutation.isPending ? "animate-spin" : ""}`} />
               Generate Today's Assignments
+            </Button>
+          )}
+          {isFutureDate && isAdmin && (
+            <Button onClick={() => setShowPreConfigureDialog(true)} data-testid="button-pre-configure-empty">
+              <ShieldAlert className="w-4 h-4 mr-2" />
+              Pre-configure {dateLabel(currentDate)}
             </Button>
           )}
         </div>
@@ -840,6 +1071,19 @@ export default function Assignments() {
         onSuccess={() => {
           setShowOverrideDialog(false);
           setGenerateLocked(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
+        }}
+      />
+
+      {/* Pre-configure Tomorrow Dialog */}
+      <PreConfigureDialog
+        open={showPreConfigureDialog}
+        date={currentDate}
+        existing={assignments as any[]}
+        assistants={assistants as any[]}
+        onClose={() => setShowPreConfigureDialog(false)}
+        onSuccess={() => {
+          setShowPreConfigureDialog(false);
           queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
         }}
       />

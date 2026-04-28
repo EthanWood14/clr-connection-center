@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield } from "lucide-react";
+import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { PushNotificationsCard } from "@/components/push-notifications-card";
@@ -1691,9 +1692,9 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window === "undefined") return "profile";
     const saved = localStorage.getItem("settings.activeTab");
-    const allowed = ["profile", "reports", "team", "algorithm", "export", "app"];
+    const allowed = ["profile", "reports", "team", "algorithm", "export", "app", "audit"];
     if (saved && allowed.includes(saved)) {
-      if ((saved === "reports" || saved === "team" || saved === "algorithm" || saved === "export") && authUser && authUser.role !== "admin") {
+      if ((saved === "reports" || saved === "team" || saved === "algorithm" || saved === "export" || saved === "audit") && authUser && authUser.role !== "admin") {
         return "profile";
       }
       return saved;
@@ -1709,7 +1710,7 @@ export default function Settings() {
 
   // If non-admin somehow lands on an admin tab (e.g. role changed), fall back.
   useEffect(() => {
-    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm" || activeTab === "export")) {
+    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm" || activeTab === "export" || activeTab === "audit")) {
       setActiveTab("profile");
     }
   }, [isAdmin, activeTab]);
@@ -2174,6 +2175,11 @@ export default function Settings() {
               <Download className="w-3.5 h-3.5" /> Export
             </TabsTrigger>
           )}
+          {isAdmin && (
+            <TabsTrigger value="audit" className="gap-1.5" data-testid="tab-audit">
+              <Shield className="w-3.5 h-3.5" /> Audit Log
+            </TabsTrigger>
+          )}
           <TabsTrigger value="script" className="gap-1.5" data-testid="tab-script">
             <PhoneCall className="w-3.5 h-3.5" /> Script
           </TabsTrigger>
@@ -2187,6 +2193,7 @@ export default function Settings() {
         {isAdmin && <TabsContent value="team" className="mt-6">{teamTab}</TabsContent>}
         {isAdmin && <TabsContent value="algorithm" className="mt-6">{algorithmTab}</TabsContent>}
         {isAdmin && <TabsContent value="export" className="mt-6"><ExportDataCard /></TabsContent>}
+        {isAdmin && <TabsContent value="audit" className="mt-6"><AuditLog /></TabsContent>}
         <TabsContent value="script" className="mt-6"><ScriptDefaultsCard /></TabsContent>
         <TabsContent value="app" className="mt-6">{appTab}</TabsContent>
       </Tabs>

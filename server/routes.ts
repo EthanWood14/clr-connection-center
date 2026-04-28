@@ -2448,6 +2448,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assignmentDate: a.assignmentDate ?? a.assignment_date,
         globalRank: a.globalRank ?? a.global_rank,
         assistantRank: a.assistantRank ?? a.assistant_rank,
+        manuallyConfigured: !!(a.manuallyConfigured ?? a.manually_configured),
         lo: loIdVal != null ? loById.get(loIdVal) : undefined,
         assistant: assistantIdVal != null ? userById.get(assistantIdVal) : undefined,
       };
@@ -2498,9 +2499,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // ── One-per-day lock: block re-generation if assignments already exist ────────
     const existing = storage.getDailyAssignments(date);
     if (existing.length > 0) {
+      const isManual = (existing as any[]).some(a => a.manuallyConfigured || a.manually_configured);
       return res.status(409).json({
-        error: "Assignments have already been generated for today. They are locked until tomorrow.",
+        error: isManual
+          ? "Assignments have been pre-configured by an admin. Auto-generation skipped."
+          : "Assignments have already been generated for today. They are locked until tomorrow.",
         locked: true,
+        manuallyConfigured: isManual,
         date,
       });
     }
@@ -2601,6 +2606,74 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
 
     res.json({ generated: created.length, date });
+  });
+
+  // ── Admin: pre-configure assignments for a future date ─────────────────────
+  // Body: { date: 'YYYY-MM-DD', items: [{ loId, assistantId, assistantRank }] }
+  app.post("/api/assignments/pre-configure", (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const sessionUid = req.session_user?.userId;
+    const user = storage.getUserById(sessionUid) as any;
+    const date = (req.body.date as string) || "";
+    const items = (req.body.items as any[]) || [];
+    const today = new Date().toISOString().split("T")[0];
+    if (!date || date < today) {
+      return res.status(400).json({ error: "Pre-configure requires a current or future date." });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items must be a non-empty array" });
+    }
+
+    storage.clearDailyAssignments(date);
+    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistantOrder: Record<number, number> = {};
+    for (const item of items) {
+      const aid = Number(item.assistantId);
+      assistantOrder[aid] = (assistantOrder[aid] || 0) + 1;
+    }
+    const counters: Record<number, number> = {};
+    const rows = items.map((item: any, index: number) => {
+      const aid = Number(item.assistantId);
+      counters[aid] = (counters[aid] || 0) + 1;
+      return {
+        assignmentDate: date,
+        loId: Number(item.loId),
+        assistantId: aid,
+        globalRank: index + 1,
+        assistantRank: item.assistantRank ? Number(item.assistantRank) : counters[aid],
+        status: "recommended",
+        notes: null,
+        manuallyConfigured: 1 as any,
+      };
+    });
+
+    try {
+      const stmt = sqlite.prepare(`
+        INSERT INTO daily_assignments
+          (assignment_date, lo_id, assistant_id, global_rank, assistant_rank, status, notes, manually_configured, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+      `);
+      const tx = sqlite.transaction((rs: any[]) => {
+        for (const r of rs) {
+          stmt.run(r.assignmentDate, r.loId, r.assistantId, r.globalRank, r.assistantRank, r.status, r.notes);
+        }
+      });
+      tx(rows);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message ?? "insert failed" });
+    }
+
+    audit({
+      userId: user.id,
+      userName: user.name,
+      action: "pre-configure",
+      entityType: "assignment",
+      entityId: null,
+      entityLabel: `Pre-configured assignments for ${date}`,
+      details: JSON.stringify({ date, count: rows.length, by: user.email }),
+    });
+
+    res.json({ ok: true, date, count: rows.length });
   });
 
   app.patch("/api/assignments/:id", (req, res) => {

@@ -264,6 +264,10 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN rescheduled INTEGER`); }
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN reschedule_datetime TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN next_steps TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN phone_number TEXT`); } catch {}
+
+// ── Migration: manually_configured flag on daily_assignments ──────────
+try { sqlite.exec(`ALTER TABLE daily_assignments ADD COLUMN manually_configured INTEGER NOT NULL DEFAULT 0`); } catch {}
+
 try {
   sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}
