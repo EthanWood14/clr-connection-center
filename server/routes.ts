@@ -2266,6 +2266,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(lo);
   });
 
+  // Anyone authed can update an LO's personal preferences (collaborative field).
+  // Body shape is locked to { personalPreferences: string | null } so this route
+  // can't be used to escalate edits to other LO fields.
+  app.patch("/api/loan-officers/:id/preferences", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const raw = req.body?.personalPreferences;
+    const value =
+      raw == null || (typeof raw === "string" && raw.trim() === "")
+        ? null
+        : String(raw).slice(0, 4000);
+    const lo = storage.updateLoanOfficer(id, { personalPreferences: value } as any);
+    if (!lo) return res.status(404).json({ error: "Not found" });
+    const actor = storage.getUsers().find((u: any) => u.id === req.session_user?.userId);
+    audit({
+      userId: req.session_user?.userId ?? 0,
+      userName: actor?.name ?? "Unknown",
+      action: "update",
+      entityType: "loan_officer",
+      entityId: lo.id,
+      entityLabel: (lo as any).fullName ?? `LO #${lo.id}`,
+      details: JSON.stringify({ personalPreferences: value }),
+    });
+    res.json(lo);
+  });
+
   // Admin-only: update LO active/inactive/vacation status
   app.patch("/api/loan-officers/:id/status", requireAuth, (req: any, res) => {
     if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });

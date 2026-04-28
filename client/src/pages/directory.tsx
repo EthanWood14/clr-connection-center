@@ -18,6 +18,7 @@ import {
   Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2, RotateCcw,
   ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
   Upload, CheckCheck, BarChart2, ExternalLink, ShieldCheck, ShieldAlert, Clock,
+  Heart, Save, X as XIcon,
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -200,6 +201,98 @@ function CredBlock({
 }
 
 // ── LO Card ───────────────────────────────────────────────────────────────────
+// ── Personal Preferences inline editor ────────────────────────────────────────
+// Anyone authed can edit — collaborative "how this LO likes to work" notes.
+function PreferencesEditor({ loId, value }: { loId: number; value: string | null | undefined }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(value ?? "");
+
+  // Re-sync draft when the saved value changes (e.g., another user edited it)
+  useEffect(() => { if (!editing) setDraft(value ?? ""); }, [value, editing]);
+
+  const saveMutation = useMutation({
+    mutationFn: (next: string) =>
+      apiRequest("PATCH", `/api/loan-officers/${loId}/preferences`, { personalPreferences: next }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
+      setEditing(false);
+      toast({ title: "Preferences saved" });
+    },
+    onError: () => toast({ title: "Couldn’t save preferences", variant: "destructive" }),
+  });
+
+  const hasValue = !!(value && value.trim());
+
+  if (!editing) {
+    return (
+      <div className="sm:col-span-2">
+        <div className="flex items-center justify-between mb-0.5">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+            <Heart className="w-3 h-3" /> Personal Preferences
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            onClick={() => { setDraft(value ?? ""); setEditing(true); }}
+            data-testid={`button-edit-prefs-${loId}`}
+          >
+            <Edit2 className="w-3 h-3 mr-1" />
+            {hasValue ? "Edit" : "Add"}
+          </Button>
+        </div>
+        {hasValue ? (
+          <p className="text-foreground whitespace-pre-wrap">{value}</p>
+        ) : (
+          <p className="text-muted-foreground italic">No preferences recorded yet. Click “Add” to share what you’ve learned about this LO.</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="sm:col-span-2">
+      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+        <Heart className="w-3 h-3" /> Personal Preferences
+      </div>
+      <Textarea
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        rows={4}
+        maxLength={4000}
+        placeholder="How they like to work — preferred contact times, communication style, lead handoff quirks, etc."
+        className="text-xs"
+        data-testid={`textarea-prefs-inline-${loId}`}
+      />
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-[10px] text-muted-foreground">{draft.length}/4000</span>
+        <div className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            onClick={() => { setDraft(value ?? ""); setEditing(false); }}
+            disabled={saveMutation.isPending}
+          >
+            <XIcon className="w-3 h-3 mr-1" /> Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            onClick={() => saveMutation.mutate(draft.trim())}
+            disabled={saveMutation.isPending || draft === (value ?? "")}
+            data-testid={`button-save-prefs-${loId}`}
+          >
+            <Save className="w-3 h-3 mr-1" />
+            {saveMutation.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LOCard({
   lo,
   score,
@@ -253,6 +346,17 @@ function LOCard({
               {lo.snoozeUntil && new Date(lo.snoozeUntil) > new Date() && (
                 <Badge variant="outline" className="text-xs px-1.5 py-0 text-orange-600 border-orange-300">
                   <BedDouble className="w-3 h-3 mr-1" />Snoozed
+                </Badge>
+              )}
+              {lo.personalPreferences && lo.personalPreferences.trim() && (
+                <Badge
+                  variant="outline"
+                  className="text-xs px-1.5 py-0 text-rose-600 border-rose-300 cursor-pointer"
+                  title="Personal preferences recorded — expand for details"
+                  onClick={() => setExpanded(true)}
+                  data-testid={`badge-prefs-${lo.id}`}
+                >
+                  <Heart className="w-3 h-3 mr-1" />Preferences
                 </Badge>
               )}
             </div>
@@ -359,7 +463,7 @@ function LOCard({
           </div>
         </div>
 
-        {/* ── Expanded section: notes + special requests ─────────────── */}
+        {/* ── Expanded section: notes, special requests, preferences ────── */}
         {expanded && (
           <div className="px-4 pb-4 pt-0 border-t bg-muted/30">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 text-xs">
@@ -384,9 +488,8 @@ function LOCard({
                   <p className="text-foreground">{lo.snoozeUntil}{lo.snoozeReason ? ` — ${lo.snoozeReason}` : ""}</p>
                 </div>
               )}
-              {!lo.notes && !lo.specialRequests && !lo.snoozeUntil && (
-                <p className="text-muted-foreground col-span-2">No additional notes.</p>
-              )}
+              {/* Personal preferences — always visible (anyone can add) */}
+              <PreferencesEditor loId={lo.id} value={lo.personalPreferences} />
             </div>
           </div>
         )}
@@ -481,6 +584,7 @@ const loFormSchema = z.object({
   leadMailboxPassword: z.string().optional(),
   notes: z.string().optional(),
   specialRequests: z.string().optional(),
+  personalPreferences: z.string().optional(),
   boostScore: z.coerce.number().min(0).max(10).default(0),
   priorityTier: z.coerce.number().min(1).max(3).default(2),
   internalStatus: z.string().default("active"),
@@ -528,6 +632,7 @@ function LOFormDialog({
       leadMailboxPassword: initialValues?.leadMailboxPassword ?? "",
       notes: initialValues?.notes ?? "",
       specialRequests: initialValues?.specialRequests ?? "",
+      personalPreferences: (initialValues as any)?.personalPreferences ?? "",
       boostScore: initialValues?.boostScore ?? 0,
       priorityTier: initialValues?.priorityTier ?? 2,
       internalStatus: initialValues?.internalStatus ?? "active",
@@ -552,6 +657,7 @@ function LOFormDialog({
         leadMailboxPassword: initialValues?.leadMailboxPassword ?? "",
         notes: initialValues?.notes ?? "",
         specialRequests: initialValues?.specialRequests ?? "",
+        personalPreferences: (initialValues as any)?.personalPreferences ?? "",
         boostScore: initialValues?.boostScore ?? 0,
         priorityTier: initialValues?.priorityTier ?? 2,
         internalStatus: initialValues?.internalStatus ?? "active",
@@ -694,8 +800,21 @@ function LOFormDialog({
             )} />
             <FormField control={form.control} name="specialRequests" render={({ field }) => (
               <FormItem>
-                <FormLabel>Special Requests / Preferences</FormLabel>
+                <FormLabel>Special Requests</FormLabel>
                 <FormControl><Textarea {...field} rows={2} data-testid="textarea-special-requests" /></FormControl>
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="personalPreferences" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Personal Preferences</FormLabel>
+                <FormControl>
+                  <Textarea
+                    {...field}
+                    rows={3}
+                    placeholder="How they like to work — preferred contact times, communication style, file format preferences, lead handoff quirks, etc."
+                    data-testid="textarea-personal-preferences"
+                  />
+                </FormControl>
               </FormItem>
             )} />
             {/* Availability — only when editing existing LO */}

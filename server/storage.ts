@@ -272,6 +272,8 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_status TEXT`); } ca
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_states TEXT NOT NULL DEFAULT '[]'`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_last_checked TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration TEXT`); } catch {}
+// loan_officers: free-form personal preferences (anyone can edit)
+try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}
 
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}

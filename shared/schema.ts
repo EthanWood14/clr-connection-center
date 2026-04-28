@@ -87,6 +87,7 @@ export const loanOfficers = sqliteTable("loan_officers", {
   otherCredentials: text("other_credentials").notNull().default("{}"), // JSON object
   notes: text("notes"),
   specialRequests: text("special_requests"),
+  personalPreferences: text("personal_preferences"),
   tags: text("tags").notNull().default("[]"), // JSON array
   internalStatus: text("internal_status").notNull().default("active"), // active | inactive | archived
   boostScore: real("boost_score").notNull().default(0), // 0-10
