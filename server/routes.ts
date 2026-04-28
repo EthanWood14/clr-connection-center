@@ -4499,6 +4499,47 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
 
+    // ── Sync daily_assignments + loan_officers freshness from EOD coverage ──
+    // Without this, the algorithm sees the LO's lastWorkedDate as stale and re-recommends
+    // the same top-ranked LOs the next day. Mark assigned LOs the user called as "worked"
+    // and the rest as "attempted" so the recency signal advances. Also bump LO freshness
+    // for additional (off-list) LOs the user called.
+    try {
+      const calledAssignedSet = new Set<number>(assignedIds);
+      const myAssignmentsToday = (storage.getDailyAssignments(reportDate) as any[])
+        .filter((a: any) => (a.assistantId ?? a.assistant_id) === userId);
+      for (const a of myAssignmentsToday) {
+        const aId = a.id;
+        const loId = a.loId ?? a.lo_id;
+        const currentStatus = a.status;
+        // Don't downgrade an explicitly-set status (worked/skipped) or stomp on admin overrides
+        if (currentStatus !== "recommended") continue;
+        if (calledAssignedSet.has(loId)) {
+          storage.updateAssignmentStatus(aId, "worked", null as any);
+          const lo = storage.getLoanOfficerById(loId);
+          if (lo) {
+            storage.updateLoanOfficer(loId, {
+              lastWorkedDate: reportDate,
+              totalTimesWorked: ((lo as any).totalTimesWorked ?? (lo as any).total_times_worked ?? 0) + 1,
+            } as any);
+          }
+        } else {
+          storage.updateAssignmentStatus(aId, "attempted", null as any);
+        }
+      }
+      // Bump freshness for off-list (additional) LOs the user worked
+      for (const loId of additionalIds) {
+        const lo = storage.getLoanOfficerById(loId);
+        if (!lo) continue;
+        storage.updateLoanOfficer(loId, {
+          lastWorkedDate: reportDate,
+          totalTimesWorked: ((lo as any).totalTimesWorked ?? (lo as any).total_times_worked ?? 0) + 1,
+        } as any);
+      }
+    } catch (err) {
+      console.error("[eod] failed to sync assignment freshness:", err);
+    }
+
     // ── Send EOD summary email to managers + CLR themselves ─────────────────
     try {
       const settings = storageExtra.getEmailSettings() as any;
