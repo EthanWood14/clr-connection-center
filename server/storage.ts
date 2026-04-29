@@ -881,6 +881,12 @@ function normalizeLoanOfficer(row: any): any {
     do_not_call: "doNotCall",
     profile_url: "profileUrl",
     license_status: "licenseStatus",
+    bonzo_username: "bonzoUsername",
+    bonzo_password: "bonzoPassword",
+    lead_mailbox_username: "leadMailboxUsername",
+    lead_mailbox_password: "leadMailboxPassword",
+    other_credentials: "otherCredentials",
+    personal_preferences: "personalPreferences",
   };
   for (const [snake, camel] of Object.entries(map)) {
     if (snake in out && out[camel] === undefined) out[camel] = out[snake];
