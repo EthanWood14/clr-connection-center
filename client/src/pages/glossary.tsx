@@ -21,7 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { BookOpen, Search, Plus, Pencil, Trash2 } from "lucide-react";
-import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { HelpIcon, markStep } from "@/components/onboarding";
 
 type GlossaryTerm = {
   id: number;
@@ -143,10 +143,6 @@ export default function GlossaryPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto w-full">
-      <PageTooltip pageKey="glossary" title="Glossary">
-        Definitions for mortgage and CLR industry terms.
-      </PageTooltip>
-
       <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
         <div className="flex items-center gap-3">
           <BookOpen className="w-6 h-6 text-primary" />

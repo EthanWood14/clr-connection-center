@@ -22,7 +22,7 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
-import { HelpIcon, OnboardingChecklist, PageTooltip, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
+import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -905,12 +905,6 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1400px] mx-auto">
-      <PageTooltip
-        pageKey="dashboard"
-        title="Welcome to your Dashboard"
-        body="Your stats and upcoming appointments are here. Use the period selector to switch between Today, This Week, and This Period."
-      />
-
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="border-l-4 border-[#1A2B4A] pl-3">

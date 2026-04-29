@@ -25,7 +25,7 @@ import {
   Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Unlock, Users,
   Play, Square, Clock, Radio, UserPlus, UserCheck,
 } from "lucide-react";
-import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { HelpIcon, markStep } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1802,9 +1802,6 @@ export default function CallScriptPage() {
   return (
     <PlaceholderContext.Provider value={placeholders}>
     <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <PageTooltip pageKey="call-script" title="Call Script">
-        Your personal call script with guided responses. Customize your own copy or use the default.
-      </PageTooltip>
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>

@@ -18,7 +18,7 @@ import {
   History, ChevronDown, ChevronUp, User, Users, X, Save, Printer,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { HelpIcon, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { parseServerTimestamp } from "@/lib/dates";
 
@@ -322,12 +322,6 @@ export default function EodReport() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto print-report">
-      <PageTooltip
-        pageKey="eod-report"
-        title="End-of-day report"
-        body="Submit your end-of-day report here. Check off which LOs you called for and add any notes."
-      />
-
       {/* Print-only header (West Capital Lending) */}
       <div className="print-only print-header">
         <img src="/wcl-logo.png" alt="West Capital Lending" className="print-logo" />

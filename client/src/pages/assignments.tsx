@@ -17,7 +17,7 @@ import {
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { HelpIcon, markStep } from "@/components/onboarding";
 import { LoStatusBadge } from "@/components/lo-status-badge";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
@@ -822,11 +822,6 @@ export default function Assignments() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 max-w-[1400px] mx-auto">
-      <PageTooltip
-        pageKey="assignments"
-        title="Your daily LO assignments"
-        body="Your daily LO assignments are generated here each morning. This locks after generation."
-      />
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>

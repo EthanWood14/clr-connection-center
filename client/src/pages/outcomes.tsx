@@ -21,7 +21,7 @@ import {
   ArrowRightLeft, CalendarPlus, PhoneCall, Hourglass, AlertTriangle,
   PhoneOff, ThumbsDown, PhoneMissed, HelpCircle, ArrowLeft,
 } from "lucide-react";
-import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 
 const OUTCOME_TYPES = [
@@ -1116,11 +1116,6 @@ export default function Outcomes() {
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
-      <PageTooltip
-        pageKey="outcomes"
-        title="Log every call here"
-        body="Select the outcome, borrower name, and LO. Transfers require you to note if it was Direct or Appointment."
-      />
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

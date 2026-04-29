@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { HelpIcon, PageTooltip } from "@/components/onboarding";
+import { HelpIcon } from "@/components/onboarding";
 import {
   Dialog,
   DialogContent,
@@ -761,11 +761,6 @@ export default function Appointments() {
 
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
-      <PageTooltip
-        pageKey="appointments"
-        title="Appointments, callbacks & deferrals"
-        body="Appointment = specific date/time. Callback = within days/weeks. Deferral = month+ out, no date set."
-      />
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div>
