@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
 import { DailyReportGate } from "@/components/daily-report-gate";
+import { CookieNotice } from "@/components/cookie-notice";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
@@ -203,6 +204,7 @@ function AuthenticatedApp() {
   return (
     <SidebarProvider style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
+      <CookieNotice />
       <DailyReportGate>
         <div className="flex h-screen w-full overflow-hidden flex-col">
           <ImpersonationBanner />
