@@ -1067,15 +1067,17 @@ cron.schedule("0 6 * * 1", () => {
 
 function runGoalAutoAdjust() {
   const sqlite = storageExtra.getSqlite();
+  // Process both adjustable and staircase models
   const rows = sqlite.prepare(`
-    SELECT user_id, calls_goal, transfers_goal, appointments_goal
+    SELECT user_id, calls_goal, transfers_goal, appointments_goal,
+           goal_model, adjustment_pct
     FROM clr_goals WHERE auto_adjust = 1
   `).all() as any[];
   if (rows.length === 0) return;
 
   // Last week range (previous Mon-Sun)
   const today = new Date();
-  const dow = today.getDay(); // 0=Sun
+  const dow = today.getDay();
   const daysSinceMon = (dow + 6) % 7;
   const thisMon = new Date(today); thisMon.setDate(today.getDate() - daysSinceMon);
   const lastSun = new Date(thisMon); lastSun.setDate(thisMon.getDate() - 1);
@@ -1087,36 +1089,52 @@ function runGoalAutoAdjust() {
   for (const g of rows) {
     try {
       const userId = g.user_id;
-      // Tally last week's calls/transfers/appointments for this user
-      const calls = (sqlite.prepare(`
-        SELECT COALESCE(SUM(dials_count),0) AS n FROM daily_call_logs
-        WHERE user_id = ? AND log_date BETWEEN ? AND ?
-      `).get(userId, startDate, endDate) as any)?.n ?? 0;
+      const model = (g.goal_model ?? 'adjustable') as string;
+      const pct = Math.max(0, parseFloat(String(g.adjustment_pct ?? 5)) || 5);
+      const multiplier = 1 + pct / 100;
+
+      // Tally last week's actuals for this user
+      const callsRow = sqlite.prepare(`
+        SELECT COALESCE(SUM(calls_made),0) AS n FROM daily_call_logs
+        WHERE assistant_id = ? AND log_date BETWEEN ? AND ?
+      `).get(userId, startDate, endDate) as any;
+      const actualCalls = callsRow?.n ?? 0;
+
       const outcomeRow = sqlite.prepare(`
         SELECT
           SUM(CASE WHEN outcome_type = 'transfer' THEN 1 ELSE 0 END) AS transfers,
           SUM(CASE WHEN outcome_type = 'appointment' THEN 1 ELSE 0 END) AS appointments
         FROM lead_outcomes
-        WHERE assistant_id = ? AND created_at >= ? AND created_at < datetime(?, '+1 day')
+        WHERE assistant_id = ? AND date BETWEEN ? AND ?
       `).get(userId, startDate, endDate) as any;
-      const transfers = outcomeRow?.transfers ?? 0;
-      const appointments = outcomeRow?.appointments ?? 0;
+      const actualTransfers = outcomeRow?.transfers ?? 0;
+      const actualAppointments = outcomeRow?.appointments ?? 0;
 
-      const adjust = (actual: number, goal: number): number => {
-        if (!goal || goal <= 0) return goal;
-        const pct = actual / goal;
-        if (pct > 0.9) return Math.max(1, Math.round(goal * 1.05));
-        if (pct < 0.7) return Math.max(1, Math.round(goal * 0.95));
-        return goal;
-      };
+      let newCalls = g.calls_goal;
+      let newTransfers = g.transfers_goal;
+      let newAppts = g.appointments_goal;
 
-      const newCalls = adjust(calls, g.calls_goal);
-      const newTransfers = adjust(transfers, g.transfers_goal);
-      const newAppts = adjust(appointments, g.appointments_goal);
+      if (model === 'adjustable') {
+        // Adjustable: set goal to X% above last week's actual performance
+        // Only adjust upward if actuals > 0 to avoid zeroing goals
+        if (actualCalls > 0) newCalls = Math.max(1, Math.round(actualCalls * multiplier));
+        if (actualTransfers > 0) newTransfers = Math.max(1, Math.round(actualTransfers * multiplier));
+        if (actualAppointments > 0) newAppts = Math.max(1, Math.round(actualAppointments * multiplier));
+      } else if (model === 'staircase') {
+        // Staircase: only bump UP when goal was hit (>= 100% achieved); never reduce
+        const hitCalls = g.calls_goal > 0 && actualCalls >= g.calls_goal;
+        const hitTransfers = g.transfers_goal > 0 && actualTransfers >= g.transfers_goal;
+        const hitAppts = g.appointments_goal > 0 && actualAppointments >= g.appointments_goal;
+        if (hitCalls) newCalls = Math.max(1, Math.round(g.calls_goal * multiplier));
+        if (hitTransfers) newTransfers = Math.max(1, Math.round(g.transfers_goal * multiplier));
+        if (hitAppts) newAppts = Math.max(1, Math.round(g.appointments_goal * multiplier));
+      }
 
       const basis = JSON.stringify({
         weekOf: startDate,
-        actual: { calls, transfers, appointments },
+        model,
+        pct,
+        actual: { calls: actualCalls, transfers: actualTransfers, appointments: actualAppointments },
         before: { calls: g.calls_goal, transfers: g.transfers_goal, appointments: g.appointments_goal },
         after: { calls: newCalls, transfers: newTransfers, appointments: newAppts },
       });
@@ -4813,6 +4831,101 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       console.error("[eod] failed to sync assignment freshness:", err);
     }
 
+    // ── Goal-hit detection: check if CLR hit any weekly goals this week ────────
+    try {
+      const sqlite2 = storageExtra.getSqlite();
+      const goalRow = sqlite2.prepare(
+        `SELECT calls_goal, transfers_goal, appointments_goal, goal_model FROM clr_goals WHERE user_id = ?`
+      ).get(userId) as any;
+      if (goalRow) {
+        // Get this week's actuals (Sun–Sat containing reportDate)
+        const rd = new Date(reportDate + 'T12:00:00Z');
+        const wkDay = rd.getUTCDay(); // 0=Sun
+        const wkStart = new Date(rd); wkStart.setUTCDate(rd.getUTCDate() - wkDay);
+        const wkEnd = new Date(wkStart); wkEnd.setUTCDate(wkStart.getUTCDate() + 6);
+        const fmtD = (d: Date) => d.toISOString().split('T')[0];
+        const wkStartStr = fmtD(wkStart);
+        const wkEndStr = fmtD(wkEnd);
+
+        const wkCallsRow = sqlite2.prepare(
+          `SELECT COALESCE(SUM(calls_made),0) AS n FROM daily_call_logs WHERE assistant_id=? AND log_date BETWEEN ? AND ?`
+        ).get(userId, wkStartStr, wkEndStr) as any;
+        const wkCalls = wkCallsRow?.n ?? 0;
+
+        const wkOutcomes = sqlite2.prepare(`
+          SELECT
+            SUM(CASE WHEN outcome_type='transfer' THEN 1 ELSE 0 END) AS transfers,
+            SUM(CASE WHEN outcome_type='appointment' THEN 1 ELSE 0 END) AS appointments
+          FROM lead_outcomes WHERE assistant_id=? AND date BETWEEN ? AND ?
+        `).get(userId, wkStartStr, wkEndStr) as any;
+        const wkTransfers = wkOutcomes?.transfers ?? 0;
+        const wkAppts = wkOutcomes?.appointments ?? 0;
+
+        const hitCalls = goalRow.calls_goal > 0 && wkCalls >= goalRow.calls_goal;
+        const hitTransfers = goalRow.transfers_goal > 0 && wkTransfers >= goalRow.transfers_goal;
+        const hitAppts = goalRow.appointments_goal > 0 && wkAppts >= goalRow.appointments_goal;
+
+        if (hitCalls || hitTransfers || hitAppts) {
+          const clrUserG = storage.getUserById(userId) as any;
+          const clrNameG = clrUserG?.name ?? `User #${userId}`;
+          const orgId = req.session_user?.orgId ?? 1;
+          const orgUsers = sqlite2.prepare(
+            `SELECT id FROM users WHERE org_id = ? AND is_active = 1`
+          ).all(orgId) as any[];
+
+          const hitParts: string[] = [];
+          if (hitCalls) hitParts.push(`🎯 Calls (${wkCalls}/${goalRow.calls_goal})`);
+          if (hitTransfers) hitParts.push(`✅ Transfers (${wkTransfers}/${goalRow.transfers_goal})`);
+          if (hitAppts) hitParts.push(`📅 Appointments (${wkAppts}/${goalRow.appointments_goal})`);
+          const hitSummary = hitParts.join(' · ');
+
+          // Send web push notifications to all org users
+          for (const u of orgUsers) {
+            try {
+              const subs = sqlite2.prepare(
+                `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?`
+              ).all(u.id) as any[];
+              for (const sub of subs) {
+                try {
+                  const webpush = await import('web-push');
+                  await webpush.default.sendNotification(
+                    { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+                    JSON.stringify({
+                      title: `🏆 Goal Hit — ${clrNameG}`,
+                      body: hitSummary,
+                      url: '/#/team-stats',
+                    })
+                  );
+                } catch {}
+              }
+            } catch {}
+          }
+
+          // Also staircase: if model is staircase, bump goals immediately on hit
+          if (goalRow.goal_model === 'staircase') {
+            const pctRow = sqlite2.prepare(
+              `SELECT adjustment_pct FROM clr_goals WHERE user_id = ?`
+            ).get(userId) as any;
+            const pct2 = Math.max(0, parseFloat(String(pctRow?.adjustment_pct ?? 5)) || 5);
+            const mult2 = 1 + pct2 / 100;
+            const newCalls2 = hitCalls ? Math.max(1, Math.round(goalRow.calls_goal * mult2)) : goalRow.calls_goal;
+            const newXfers2 = hitTransfers ? Math.max(1, Math.round(goalRow.transfers_goal * mult2)) : goalRow.transfers_goal;
+            const newAppts2 = hitAppts ? Math.max(1, Math.round(goalRow.appointments_goal * mult2)) : goalRow.appointments_goal;
+            sqlite2.prepare(`
+              UPDATE clr_goals SET calls_goal=?, transfers_goal=?, appointments_goal=?,
+              adjustment_basis=?, updated_at=datetime('now') WHERE user_id=?
+            `).run(
+              newCalls2, newXfers2, newAppts2,
+              JSON.stringify({ trigger: 'goal_hit', reportDate, hit: { calls: hitCalls, transfers: hitTransfers, appointments: hitAppts }, after: { calls: newCalls2, transfers: newXfers2, appointments: newAppts2 } }),
+              userId
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[eod] goal-hit check failed:', e?.message ?? e);
+    }
+
     // ── Send EOD summary email to managers + CLR themselves ─────────────────
     try {
       const settings = storageExtra.getEmailSettings() as any;
@@ -5478,6 +5591,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                appointments_goal AS appointmentsGoal,
                auto_adjust AS autoAdjust,
                adjustment_basis AS adjustmentBasis,
+               goal_model AS goalModel,
+               adjustment_pct AS adjustmentPct,
                updated_at AS updatedAt
         FROM clr_goals WHERE user_id = ?
       `).get(userId) as any;
@@ -5492,6 +5607,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           },
           autoAdjust: !!row.autoAdjust,
           adjustmentBasis: row.adjustmentBasis ?? null,
+          goalModel: row.goalModel ?? "manual",
+          adjustmentPct: row.adjustmentPct ?? 5,
         });
       }
       // Fallback: team default from the user's own stored weekly goal fields.
@@ -5522,21 +5639,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const calls = toInt(req.body?.callsGoal ?? req.body?.calls);
     const transfers = toInt(req.body?.transfersGoal ?? req.body?.transfers);
     const appointments = toInt(req.body?.appointmentsGoal ?? req.body?.appointments);
-    const autoAdjust = req.body?.autoAdjust ? 1 : 0;
+    // goal_model: 'manual' | 'adjustable' | 'staircase'
+    const rawModel = String(req.body?.goalModel ?? 'manual');
+    const goalModel = ['manual','adjustable','staircase'].includes(rawModel) ? rawModel : 'manual';
+    const autoAdjust = goalModel !== 'manual' ? 1 : 0;
+    const adjustmentPct = Math.max(0, Math.min(100, parseFloat(String(req.body?.adjustmentPct ?? 5)) || 5));
     const orgId = req.session_user?.orgId ?? 1;
     try {
       const sqlite = storageExtra.getSqlite();
       sqlite.prepare(`
-        INSERT INTO clr_goals (user_id, org_id, calls_goal, transfers_goal, appointments_goal, auto_adjust, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO clr_goals (user_id, org_id, calls_goal, transfers_goal, appointments_goal, auto_adjust, goal_model, adjustment_pct, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(user_id) DO UPDATE SET
           calls_goal = excluded.calls_goal,
           transfers_goal = excluded.transfers_goal,
           appointments_goal = excluded.appointments_goal,
           auto_adjust = excluded.auto_adjust,
+          goal_model = excluded.goal_model,
+          adjustment_pct = excluded.adjustment_pct,
           updated_at = datetime('now')
-      `).run(userId, orgId, calls, transfers, appointments, autoAdjust);
-      res.json({ ok: true, userId, goals: { calls, transfers, appointments }, autoAdjust: !!autoAdjust });
+      `).run(userId, orgId, calls, transfers, appointments, autoAdjust, goalModel, adjustmentPct);
+      res.json({ ok: true, userId, goals: { calls, transfers, appointments }, autoAdjust: !!autoAdjust, goalModel, adjustmentPct });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to update goals" });
     }

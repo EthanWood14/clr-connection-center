@@ -398,6 +398,10 @@ try {
 // Auto-adjustment columns for goals
 try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN auto_adjust INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN adjustment_basis TEXT`); } catch {}
+// goal_model: 'manual' | 'adjustable' | 'staircase'
+try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN goal_model TEXT NOT NULL DEFAULT 'manual'`); } catch {}
+// adjustment_pct: percent to increase in adjustable/staircase mode (default 5)
+try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN adjustment_pct REAL NOT NULL DEFAULT 5`); } catch {}
 
 for (const t of ["users","loan_officers","lead_outcomes","daily_call_logs","forum_posts","forum_answers","forum_votes","forum_subscriptions","lo_assignments","unified_contacts","webhook_settings","webhook_events","bonzo_contacts","mojo_sessions","mojo_contacts"]) {
   try { sqlite.exec(`ALTER TABLE ${t} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}

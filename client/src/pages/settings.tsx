@@ -1442,13 +1442,22 @@ function ManagerToggleButton({ user }: { user: any }) {
 }
 
 // ── Per-CLR Weekly Goals button + modal (admin only) ───────────────────────
+type GoalModel = 'manual' | 'adjustable' | 'staircase';
+
+const GOAL_MODEL_INFO: Record<GoalModel, { label: string; icon: string; desc: string; color: string }> = {
+  manual:     { label: 'Manual',     icon: '✏️', desc: 'Goals are set by an admin and stay fixed until changed manually.', color: 'border-slate-400 bg-slate-50 dark:bg-slate-900' },
+  adjustable: { label: 'Adjustable', icon: '📊', desc: 'Goals auto-update each Monday to a set % above last week’s actual performance.', color: 'border-blue-400 bg-blue-50 dark:bg-blue-950' },
+  staircase:  { label: 'Staircase',  icon: '🏆', desc: 'Goals step up by a set % each time they’re hit — they never decrease.', color: 'border-emerald-400 bg-emerald-50 dark:bg-emerald-950' },
+};
+
 function SetGoalsButton({ user }: { user: any }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [calls, setCalls] = useState("0");
   const [transfers, setTransfers] = useState("0");
   const [appointments, setAppointments] = useState("0");
-  const [autoAdjust, setAutoAdjust] = useState(false);
+  const [goalModel, setGoalModel] = useState<GoalModel>('manual');
+  const [adjustmentPct, setAdjustmentPct] = useState("5");
 
   const { data: goalData, isLoading } = useQuery<any>({
     queryKey: ["/api/goals", user.id],
@@ -1461,9 +1470,11 @@ function SetGoalsButton({ user }: { user: any }) {
       setCalls(String(goalData.goals.calls ?? 0));
       setTransfers(String(goalData.goals.transfers ?? 0));
       setAppointments(String(goalData.goals.appointments ?? 0));
-      setAutoAdjust(!!goalData.autoAdjust);
+      const m = goalData.goalModel ?? 'manual';
+      setGoalModel(['manual','adjustable','staircase'].includes(m) ? m : 'manual');
+      setAdjustmentPct(String(goalData.adjustmentPct ?? 5));
     }
-  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments, goalData?.autoAdjust]);
+  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments, goalData?.goalModel, goalData?.adjustmentPct]);
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -1471,7 +1482,8 @@ function SetGoalsButton({ user }: { user: any }) {
         callsGoal: parseInt(calls) || 0,
         transfersGoal: parseInt(transfers) || 0,
         appointmentsGoal: parseInt(appointments) || 0,
-        autoAdjust,
+        goalModel,
+        adjustmentPct: parseFloat(adjustmentPct) || 5,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/goals"] });
@@ -1483,6 +1495,8 @@ function SetGoalsButton({ user }: { user: any }) {
     onError: (err: Error) =>
       toast({ title: "Failed to save goals", description: err.message, variant: "destructive" }),
   });
+
+  const isAutoModel = goalModel === 'adjustable' || goalModel === 'staircase';
 
   return (
     <>
@@ -1496,46 +1510,116 @@ function SetGoalsButton({ user }: { user: any }) {
         <Target className="w-3 h-3 mr-1" /> Set Goals
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Weekly Goals — {user.name}</DialogTitle>
             <DialogDescription>
               {goalData?.source === "individual"
-                ? "Individual goals are set for this CLR."
-                : "No individual goals set — showing team default. Enter 0 to keep default."}
+                ? "Individual goals configured for this CLR."
+                : "No individual goals set — showing defaults."}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label htmlFor={`calls-${user.id}`}>Weekly Calls Goal</Label>
-              <Input id={`calls-${user.id}`} type="number" min={0} value={calls} onChange={e => setCalls(e.target.value)} />
+
+          <div className="space-y-4 py-1">
+            {/* ── Goal Model selector ── */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Goal Model</Label>
+              <div className="grid grid-cols-1 gap-2">
+                {(Object.keys(GOAL_MODEL_INFO) as GoalModel[]).map(m => {
+                  const info = GOAL_MODEL_INFO[m];
+                  const selected = goalModel === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setGoalModel(m)}
+                      className={`text-left rounded-lg border-2 px-3 py-2.5 transition-all ${
+                        selected
+                          ? info.color + ' border-opacity-100 ring-2 ring-primary/20'
+                          : 'border-border bg-background hover:border-muted-foreground/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{info.icon}</span>
+                        <span className={`text-sm font-semibold ${selected ? '' : 'text-foreground'}`}>{info.label}</span>
+                        {selected && <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-primary">Selected</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 pl-6">{info.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor={`transfers-${user.id}`}>Weekly Transfers Goal</Label>
-              <Input id={`transfers-${user.id}`} type="number" min={0} value={transfers} onChange={e => setTransfers(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor={`appointments-${user.id}`}>Weekly Appointments Goal</Label>
-              <Input id={`appointments-${user.id}`} type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} />
-            </div>
-            <div className="flex items-start justify-between gap-3 pt-2 border-t">
-              <div className="space-y-0.5">
-                <Label htmlFor={`auto-adjust-${user.id}`}>Auto-Adjust</Label>
-                {autoAdjust && (
-                  <p className="text-xs text-muted-foreground">Goal will adjust weekly based on performance (±5%)</p>
+
+            {/* ── Adjustment % (only for adjustable/staircase) ── */}
+            {isAutoModel && (
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                <Label className="text-sm font-medium">
+                  {goalModel === 'staircase' ? 'Step-up %' : 'Adjustment %'}
+                  <span className="ml-1 text-muted-foreground font-normal text-xs">
+                    {goalModel === 'staircase' ? '(increase when goal is hit)' : '(increase above last week’s actual)'}
+                  </span>
+                </Label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number" min={1} max={100} step={0.5}
+                    className="w-24 h-8 text-sm"
+                    value={adjustmentPct}
+                    onChange={e => setAdjustmentPct(e.target.value)}
+                  />
+                  <span className="text-sm text-muted-foreground">% per week</span>
+                </div>
+                {goalModel === 'adjustable' && (
+                  <p className="text-xs text-muted-foreground">
+                    Example: if last week’s calls = 200 and % = 5, next week’s goal = 210.
+                  </p>
+                )}
+                {goalModel === 'staircase' && (
+                  <p className="text-xs text-muted-foreground">
+                    Goals only increase — they step up the moment this CLR hits them during the week.
+                  </p>
                 )}
               </div>
-              <Switch
-                id={`auto-adjust-${user.id}`}
-                checked={autoAdjust}
-                onCheckedChange={setAutoAdjust}
-              />
+            )}
+
+            {/* ── Goal numbers ── */}
+            <div className="border-t pt-3 space-y-3">
+              <Label className="text-sm font-semibold">
+                {goalModel === 'manual' ? 'Weekly Goal Targets' : 'Starting Targets'}
+              </Label>
+              {goalModel !== 'manual' && (
+                <p className="text-xs text-muted-foreground -mt-1">
+                  These are the initial goals. The model will adjust them automatically going forward.
+                </p>
+              )}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor={`calls-${user.id}`} className="text-xs">Calls</Label>
+                  <Input id={`calls-${user.id}`} type="number" min={0} value={calls} onChange={e => setCalls(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`transfers-${user.id}`} className="text-xs">Transfers</Label>
+                  <Input id={`transfers-${user.id}`} type="number" min={0} value={transfers} onChange={e => setTransfers(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`appointments-${user.id}`} className="text-xs">Appointments</Label>
+                  <Input id={`appointments-${user.id}`} type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            {/* ── Goal-hit notifications callout ── */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5">
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                <strong>🔔 Goal notifications are on:</strong> when a goal is hit, everyone in your org gets a push notification instantly.
+              </p>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="mt-2">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={saveMut.isPending}>Cancel</Button>
             <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || isLoading}>
-              {saveMut.isPending ? "Saving…" : "Save"}
+              {saveMut.isPending ? "Saving…" : "Save Goals"}
             </Button>
           </DialogFooter>
         </DialogContent>
