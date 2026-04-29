@@ -14,6 +14,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { CookieNotice } from "@/components/cookie-notice";
+import { PushNudge } from "@/components/push-nudge";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
@@ -205,6 +206,7 @@ function AuthenticatedApp() {
     <SidebarProvider style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
       <CookieNotice />
+      <PushNudge />
       <DailyReportGate>
         <div className="flex h-screen w-full overflow-hidden flex-col">
           <ImpersonationBanner />
