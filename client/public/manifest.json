@@ -2,7 +2,7 @@
   "name": "CLR Connection Center",
   "short_name": "WCLCC",
   "description": "West Capital Lending CLR Connection Center — loan officer management and daily workflow tool.",
-  "start_url": "/",
+  "start_url": "/#/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
