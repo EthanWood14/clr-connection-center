@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1628,6 +1628,204 @@ function SetGoalsButton({ user }: { user: any }) {
   );
 }
 
+// ── Profile Goals Card (own-profile, inline, with model selector) ──────────
+function ProfileGoalsCard({ authUser }: { authUser: any }) {
+  const { toast } = useToast();
+  const userId = authUser?.id;
+  const isAdmin = authUser?.role === "admin";
+  const callsRef = useRef<HTMLInputElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  const [calls, setCalls] = useState("0");
+  const [transfers, setTransfers] = useState("0");
+  const [appointments, setAppointments] = useState("0");
+  const [goalModel, setGoalModel] = useState<GoalModel>('manual');
+  const [adjustmentPct, setAdjustmentPct] = useState("5");
+  const [bannerDismissed, setBannerDismissed] = useState(
+    () => typeof window !== 'undefined' && localStorage.getItem('goals.setup.dismissed') === '1'
+  );
+
+  const { data: goalData } = useQuery<any>({
+    queryKey: ["/api/goals", userId],
+    queryFn: () => fetch(`/api/goals/${userId}`, { credentials: "include" }).then(r => r.json()),
+    enabled: !!userId,
+  });
+
+  useEffect(() => {
+    if (goalData?.goals) {
+      setCalls(String(goalData.goals.calls ?? 0));
+      setTransfers(String(goalData.goals.transfers ?? 0));
+      setAppointments(String(goalData.goals.appointments ?? 0));
+      const m = goalData.goalModel ?? 'manual';
+      setGoalModel(['manual','adjustable','staircase'].includes(m) ? m : 'manual');
+      setAdjustmentPct(String(goalData.adjustmentPct ?? 5));
+    }
+  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments, goalData?.goalModel, goalData?.adjustmentPct]);
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      if (isAdmin) {
+        return apiRequest("PATCH", `/api/goals/${userId}`, {
+          callsGoal: parseInt(calls) || 0,
+          transfersGoal: parseInt(transfers) || 0,
+          appointmentsGoal: parseInt(appointments) || 0,
+          goalModel,
+          adjustmentPct: parseFloat(adjustmentPct) || 5,
+        });
+      }
+      return apiRequest("PUT", "/api/my-goals", {
+        goalCallsWeekly: parseInt(calls) || 0,
+        goalTransfersWeekly: parseInt(transfers) || 0,
+        goalAppointmentsWeekly: parseInt(appointments) || 0,
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/goals"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/goals", userId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/me"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/my-report"] });
+      toast({ title: "Weekly goals saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to save", description: e?.message, variant: "destructive" }),
+  });
+
+  const isAutoModel = goalModel === 'adjustable' || goalModel === 'staircase';
+  const allZero = (parseInt(calls) || 0) === 0 && (parseInt(transfers) || 0) === 0 && (parseInt(appointments) || 0) === 0;
+  const showSetupBanner = allZero && !bannerDismissed;
+
+  const dismissBanner = () => {
+    localStorage.setItem('goals.setup.dismissed', '1');
+    setBannerDismissed(true);
+  };
+
+  const scrollToGoals = () => {
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => callsRef.current?.focus(), 400);
+  };
+
+  return (
+    <>
+      {showSetupBanner && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4 flex items-start gap-3">
+          <span className="text-2xl leading-none">🎯</span>
+          <div className="flex-1 space-y-2">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">Set up your weekly goals</p>
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              You haven't configured your weekly call targets yet. Scroll down to set your goals so your progress bars and reports show meaningful data.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" onClick={scrollToGoals} className="h-7 text-xs">
+                Set Goals Now →
+              </Button>
+              <Button size="sm" variant="ghost" onClick={dismissBanner} className="h-7 text-xs">
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Card ref={cardRef}>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Target className="w-4 h-4 text-muted-foreground" />
+            Weekly Goals
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Set personal weekly targets. Progress bars will appear on My Report and your dashboard. Enter 0 to disable a goal.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isAdmin && (
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Goal Model</Label>
+              <div className="grid grid-cols-1 gap-2">
+                {(Object.keys(GOAL_MODEL_INFO) as GoalModel[]).map(m => {
+                  const info = GOAL_MODEL_INFO[m];
+                  const selected = goalModel === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setGoalModel(m)}
+                      className={`text-left rounded-lg border-2 px-3 py-2.5 transition-all ${
+                        selected
+                          ? info.color + ' border-opacity-100 ring-2 ring-primary/20'
+                          : 'border-border bg-background hover:border-muted-foreground/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{info.icon}</span>
+                        <span className={`text-sm font-semibold ${selected ? '' : 'text-foreground'}`}>{info.label}</span>
+                        {selected && <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-primary">Selected</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 pl-6">{info.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {isAdmin && isAutoModel && (
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <Label className="text-sm font-medium">
+                {goalModel === 'staircase' ? 'Step-up %' : 'Adjustment %'}
+                <span className="ml-1 text-muted-foreground font-normal text-xs">
+                  {goalModel === 'staircase' ? '(increase when goal is hit)' : '(increase above last week’s actual)'}
+                </span>
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number" min={1} max={100} step={0.5}
+                  className="w-24 h-8 text-sm"
+                  value={adjustmentPct}
+                  onChange={e => setAdjustmentPct(e.target.value)}
+                />
+                <span className="text-sm text-muted-foreground">% per week</span>
+              </div>
+              {goalModel === 'adjustable' && (
+                <p className="text-xs text-muted-foreground">
+                  Example: if last week’s calls = 200 and % = 5, next week’s goal = 210.
+                </p>
+              )}
+              {goalModel === 'staircase' && (
+                <p className="text-xs text-muted-foreground">
+                  Goals only increase — they step up the moment you hit them during the week.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Weekly Calls</label>
+              <Input ref={callsRef} type="number" min={0} value={calls} onChange={e => setCalls(e.target.value)} placeholder="0" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Weekly Transfers</label>
+              <Input type="number" min={0} value={transfers} onChange={e => setTransfers(e.target.value)} placeholder="0" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Weekly Appointments</label>
+              <Input type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} placeholder="0" />
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending}
+            className="gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saveMut.isPending ? "Saving…" : "Save Goals"}
+          </Button>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 // ── Resend Intro Emails component ───────────────────────────────────────────
 function ResendIntroEmails({ users }: { users: any[] }) {
   const { toast } = useToast();
@@ -2057,7 +2255,9 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      <WeeklyGoalsCard />
+      {authUser && (authUser.role === 'assistant' || authUser.role === 'admin') && (
+        <ProfileGoalsCard authUser={authUser} />
+      )}
 
       <TimezonePreferenceCard />
 
