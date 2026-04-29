@@ -208,10 +208,14 @@ function ScriptRunner({
   scriptId,
   onEnd,
   onPathChange,
+  resetSignal,
 }: {
   scriptId: number;
   onEnd?: (snapshot: ScriptPathSnapshot) => void;
   onPathChange?: (steps: { nodeText: string; chosenLabel: string }[]) => void;
+  // When the parent's value changes, the script resets to the root node
+  // (used after the recorder successfully logs a call).
+  resetSignal?: number;
 }) {
   const placeholders = usePlaceholders();
   const [currentNode, setCurrentNode] = useState<ScriptNode | null>(null);
@@ -231,8 +235,10 @@ function ScriptRunner({
     if (rootNode) {
       setCurrentNode(rootNode); setHistory([]); setPathSteps([]);
       setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
+      onPathChange?.([]);
     }
-  }, [rootNode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootNode, resetSignal]);
 
   const fetchNode = useCallback(async (nodeId: number): Promise<ScriptNode> => {
     const res = await fetch(`/api/call-scripts/${scriptId}/node/${nodeId}`, { credentials: "include" });
@@ -1138,6 +1144,8 @@ function CallRecorder({
   scriptEndSignal,
   scriptPathSteps,
   onScriptEndConsumed,
+  assistantUserId,
+  onLogged,
 }: {
   borrowerName: string;
   onBorrowerNameChange: (v: string) => void;
@@ -1153,6 +1161,10 @@ function CallRecorder({
   // the user picks an outcome manually before the script ends.
   scriptPathSteps: { nodeText: string; chosenLabel: string }[];
   onScriptEndConsumed: () => void;
+  // Logged-in user id — stored on the outcome as assistantId.
+  assistantUserId: number | null;
+  // Called after a successful log so the parent can reset the script runner.
+  onLogged?: () => void;
 }) {
   const { toast } = useToast();
   const [step, setStep] = useState<RecorderStep>("idle");
@@ -1176,13 +1188,14 @@ function CallRecorder({
 
   const durationMs = recordingStartedAt ? Date.now() - recordingStartedAt : 0;
 
-  const handleStart = () => {
-    // Borrower name is no longer required up front — it's captured in the
-    // wizard step when the call ends. This lets the user dial first and figure
-    // out who they're talking to during the conversation.
-    onStartRecording(true);
-    setStep("recording");
-  };
+  // Auto-arm recording the moment the user starts walking through the script.
+  // No more "Start Call" gate — stepping through the script IS the call.
+  useEffect(() => {
+    if (scriptPathSteps.length > 0 && !isRecording && step === "idle") {
+      onStartRecording(true);
+      setStep("recording");
+    }
+  }, [scriptPathSteps.length, isRecording, step, onStartRecording]);
 
   // Build a friendly notes string from the conversation path so the user
   // doesn't have to retype context. They can still edit it.
@@ -1236,32 +1249,42 @@ function CallRecorder({
   // ── React to a script-end signal: pre-pick outcome + auto-fill notes ─────────
   useEffect(() => {
     if (!scriptEndSignal) return;
-    if (!isRecording) return;
-    // Only act if we're still in the recording step (haven't already picked).
-    if (step !== "recording") {
+    if (step !== "recording" && step !== "idle") {
       onScriptEndConsumed();
       return;
     }
+    // Make sure recording is on so duration tracks even if user never tapped
+    // Start (and there's no Start button anymore).
+    if (!isRecording) onStartRecording(true);
     const inferred = scriptEndSignal.inferredOutcome;
     const auto = buildNotesFromPath(scriptEndSignal.steps, scriptEndSignal.endingLabel);
     setWizardNotes(auto);
     setNotesAutoFilled(true);
+    setWizardLoName(currentLoName || "");
+    setWizardBorrower(borrowerName);
+    setWizardScheduled("");
+    setWizardPhone("");
     if (inferred) {
       const choice = OUTCOME_CHOICES.find(c => c.key === inferred)!;
       setChosenOutcome(inferred);
-      setWizardLoName(currentLoName || "");
-      setWizardBorrower(borrowerName);
       setWizardTransferType(choice.transferType ?? "");
-      setWizardScheduled("");
-      setWizardPhone("");
       setStep("wizard");
       toast({
         title: `Auto-detected: ${choice.label}`,
         description: "Verify the details and log the call.",
       });
+    } else {
+      // No clear inference — still open the wizard so the user can pick from
+      // outcome buttons rendered at the top of the wizard.
+      setChosenOutcome(null);
+      setStep("wizard");
+      toast({
+        title: "Call ended",
+        description: "Pick an outcome to log the call. Notes pre-filled.",
+      });
     }
     onScriptEndConsumed();
-  }, [scriptEndSignal, isRecording, step]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scriptEndSignal, step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const outcomeChoice = chosenOutcome ? OUTCOME_CHOICES.find(c => c.key === chosenOutcome)! : null;
   const needsLo = outcomeChoice && (outcomeChoice.outcomeType === "transfer" || outcomeChoice.outcomeType === "appointment");
@@ -1279,6 +1302,7 @@ function CallRecorder({
   }, [wizardLoName, loanOfficers]);
 
   const canProceedFromWizard = () => {
+    if (!outcomeChoice) return false;
     if (needsLo && !resolvedLoId) return false;
     if (needsScheduled && !wizardScheduled) return false;
     if (needsTransferConfirm && wizardTransferType !== "direct" && wizardTransferType !== "appointment") return false;
@@ -1290,9 +1314,10 @@ function CallRecorder({
     mutationFn: async () => {
       if (!outcomeChoice) throw new Error("No outcome selected");
       if (!wizardBorrower.trim()) throw new Error("Borrower name is required");
+      if (!assistantUserId) throw new Error("Not logged in — please refresh.");
       const payload: Record<string, unknown> = {
         date: new Date().toISOString().split("T")[0],
-        assistantId: 1,
+        assistantId: assistantUserId,
         outcomeType: outcomeChoice.outcomeType,
         borrowerName: wizardBorrower.trim(),
         phoneNumber: wizardPhone.trim() || null,
@@ -1332,6 +1357,7 @@ function CallRecorder({
       setNotesAutoFilled(false);
       onBorrowerNameChange("");
       onStartRecording(false);
+      onLogged?.();
     },
     onError: (e: any) => toast({ title: "Failed to log call", description: e?.message, variant: "destructive" }),
   });
@@ -1344,12 +1370,9 @@ function CallRecorder({
             <div className="rounded-full bg-primary/10 p-2"><Radio className="w-4 h-4 text-primary" /></div>
             <div>
               <p className="text-sm font-semibold">Ready to call</p>
-              <p className="text-xs text-muted-foreground">Start the call to begin recording for call history.</p>
+              <p className="text-xs text-muted-foreground">Tap a script response below — the call will record automatically.</p>
             </div>
           </div>
-          <Button size="sm" className="gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white" onClick={handleStart} data-testid="script-start-call">
-            <Play className="w-3.5 h-3.5" /> Start Call
-          </Button>
         </CardContent>
       </Card>
     );
@@ -1400,6 +1423,29 @@ function CallRecorder({
             <p className="text-sm font-semibold">Complete call details</p>
             <span className="text-xs text-muted-foreground">{outcomeChoice?.label}</span>
           </div>
+          {/* If outcome wasn't auto-detected, let the user pick one here. */}
+          {!outcomeChoice && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                What was the outcome?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {OUTCOME_CHOICES.map(choice => (
+                  <button
+                    key={choice.key}
+                    onClick={() => {
+                      setChosenOutcome(choice.key);
+                      setWizardTransferType(choice.transferType ?? "");
+                    }}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border shadow-sm transition-all hover:scale-105 active:scale-95 ${choice.btn}`}
+                    data-testid={`wizard-outcome-${choice.key}`}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="space-y-2.5">
             <div>
               <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1563,6 +1609,8 @@ export default function CallScriptPage() {
   // calls onScriptEndConsumed to clear it.
   const [scriptEndSignal, setScriptEndSignal] = useState<ScriptPathSnapshot | null>(null);
   const [scriptPathSteps, setScriptPathSteps] = useState<{ nodeText: string; chosenLabel: string }[]>([]);
+  // Bumped after a successful log; ScriptRunner watches this to reset to root.
+  const [scriptResetCounter, setScriptResetCounter] = useState(0);
 
   const handleStartRecording = (started: boolean) => {
     if (started) {
@@ -2061,12 +2109,18 @@ export default function CallScriptPage() {
                 scriptEndSignal={scriptEndSignal}
                 scriptPathSteps={scriptPathSteps}
                 onScriptEndConsumed={() => setScriptEndSignal(null)}
+                assistantUserId={userId ?? null}
+                onLogged={() => {
+                  setScriptPathSteps([]);
+                  setScriptResetCounter(c => c + 1);
+                }}
               />
               <ScriptRunner
                 key={activeScript.id}
                 scriptId={activeScript.id}
                 onPathChange={setScriptPathSteps}
                 onEnd={(snap) => setScriptEndSignal(snap)}
+                resetSignal={scriptResetCounter}
               />
             </>
           )
