@@ -1352,6 +1352,226 @@ cron.schedule("*/5 * * * *", async () => {
   } catch (e: any) { console.error("[appt-30m] cron error:", e?.message ?? e); }
 });
 
+
+// ── EOD Missing-Report Reminders ─────────────────────────────────────────────
+// Tracks which CLRs are missing weekday EOD reports and reminds them (and
+// their managers) every 3 days until the report is submitted.
+//
+// Table: eod_reminder_log(id, org_id, clr_id, report_date, last_sent_at)
+//   — one row per (org_id, clr_id, report_date)
+//   — updated each time a reminder fires for that combo
+//   — deleted automatically when the CLR eventually submits the report
+// ─────────────────────────────────────────────────────────────────────────────
+
+try {
+  storageExtra.getRawSqlite().exec(`
+    CREATE TABLE IF NOT EXISTS eod_reminder_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id       INTEGER NOT NULL DEFAULT 1,
+      clr_id       INTEGER NOT NULL,
+      report_date  TEXT NOT NULL,
+      last_sent_at TEXT NOT NULL,
+      send_count   INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(org_id, clr_id, report_date)
+    )
+  `);
+} catch {}
+
+// Clean up reminder log rows whose report has since been submitted
+function purgeSubmittedEodReminders() {
+  try {
+    const sqlite = storageExtra.getRawSqlite();
+    sqlite.exec(`
+      DELETE FROM eod_reminder_log
+      WHERE EXISTS (
+        SELECT 1 FROM eod_reports r
+        WHERE r.assistant_id = eod_reminder_log.clr_id
+          AND r.report_date  = eod_reminder_log.report_date
+      )
+    `);
+  } catch {}
+}
+
+function buildEodReminderHtml({
+  clrName, reportDate, daysLate, sendCount, appUrl,
+}: { clrName: string; reportDate: string; daysLate: number; sendCount: number; appUrl: string }): string {
+  const dayLabel = daysLate === 1 ? "1 day" : `${daysLate} days`;
+  const countLabel = sendCount === 1 ? "1st reminder" : sendCount === 2 ? "2nd reminder" : sendCount === 3 ? "3rd reminder" : `${sendCount}th reminder`;
+  const urgencyColor = sendCount >= 3 ? "#dc2626" : sendCount === 2 ? "#d97706" : "#1e40af";
+  const urgencyLabel = sendCount >= 3 ? "⚠️ Overdue" : sendCount === 2 ? "🔔 Follow-up" : "📋 Reminder";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EOD Report Reminder</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+        <!-- Header -->
+        <tr><td style="background:#1A2B4A;padding:28px 32px">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td><span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.3px">CLR Connection Center</span></td>
+              <td align="right"><span style="font-size:12px;font-weight:600;color:#93c5fd;background:rgba(255,255,255,0.1);padding:4px 10px;border-radius:20px">${urgencyLabel} · ${countLabel}</span></td>
+            </tr>
+          </table>
+        </td></tr>
+        <!-- Alert bar -->
+        <tr><td style="background:${urgencyColor};padding:12px 32px">
+          <p style="margin:0;font-size:13px;font-weight:600;color:#ffffff">
+            EOD Report Missing — ${reportDate} (${dayLabel} ago)
+          </p>
+        </td></tr>
+        <!-- Body -->
+        <tr><td style="padding:32px">
+          <p style="margin:0 0 16px;font-size:16px;font-weight:600;color:#0f172a">Hi ${clrName},</p>
+          <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.6">
+            Your EOD report for <strong style="color:#0f172a">${reportDate}</strong> hasn't been submitted yet.
+            Daily reports help the team track activity, transfer rates, and weekly goals — please submit it when you get a moment.
+          </p>
+          <table cellpadding="0" cellspacing="0" style="margin:0 0 24px">
+            <tr>
+              <td style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px">
+                <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Missing Report Date</p>
+                <p style="margin:0;font-size:18px;font-weight:700;color:#0f172a">${reportDate}</p>
+                <p style="margin:4px 0 0;font-size:12px;color:#64748b">${dayLabel} overdue · ${countLabel}</p>
+              </td>
+            </tr>
+          </table>
+          <a href="${appUrl}/#/eod-report" style="display:inline-block;background:#1A2B4A;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px">
+            Submit EOD Report →
+          </a>
+          <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;line-height:1.5">
+            This reminder will repeat every 3 days until the report is submitted.<br>
+            If this date was a holiday or you were out, you can log a skip in the app.
+          </p>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 32px">
+          <p style="margin:0;font-size:11px;color:#94a3b8;text-align:center">
+            © 2026 West Capital Lending · Built by Chris Redoble &amp; Ethan Wood
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?: string }) {
+  const sqlite = storageExtra.getRawSqlite();
+  purgeSubmittedEodReminders();
+
+  const isTest = !!opts?.testClrId;
+
+  // Get all orgs (or just org 1 for now — single-tenant production)
+  const orgs: Array<{ id: number }> = sqlite.prepare(`SELECT id FROM organizations WHERE is_demo = 0 OR is_demo IS NULL`).all() as any[];
+
+  for (const org of orgs) {
+    // Get CLRs: role=assistant OR (role=admin AND is_clr=1), active, in this org
+    const clrs: Array<{ id: number; name: string; email: string }> = sqlite.prepare(`
+      SELECT id, name, email
+      FROM users
+      WHERE is_active = 1
+        AND org_id = ?
+        AND (
+          role = 'assistant'
+          OR (role = 'admin' AND is_clr = 1)
+        )
+    `).all(org.id) as any[];
+
+    if (!clrs.length) continue;
+
+    // Build list of weekdays to check: up to 14 calendar days back, skip weekends
+    const today = new Date();
+    const weekdaysToCheck: string[] = [];
+    for (let i = 1; i <= 21; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dow = d.getDay(); // 0=Sun, 6=Sat
+      if (dow === 0 || dow === 6) continue;
+      weekdaysToCheck.push(d.toISOString().split("T")[0]);
+      if (weekdaysToCheck.length >= 14) break;
+    }
+
+    const appUrl = "https://www.westcapitallending.center";
+
+    for (const clr of clrs) {
+      if (isTest && clr.id !== opts!.testClrId) continue;
+
+      for (const reportDate of weekdaysToCheck) {
+        // Check if report exists
+        const submitted = sqlite.prepare(`
+          SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?
+        `).get(clr.id, reportDate) as any;
+        if (submitted) continue;
+
+        // Check reminder log
+        const logRow = sqlite.prepare(`
+          SELECT last_sent_at, send_count FROM eod_reminder_log
+          WHERE org_id = ? AND clr_id = ? AND report_date = ?
+        `).get(org.id, clr.id, reportDate) as any;
+
+        const now = new Date();
+        const nowIso = now.toISOString();
+        const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+
+        if (!isTest && logRow) {
+          const lastSent = new Date(logRow.last_sent_at + (logRow.last_sent_at.endsWith("Z") ? "" : "Z"));
+          if (now.getTime() - lastSent.getTime() < threeDaysMs) continue; // too soon
+        }
+
+        // Calculate days late
+        const reportD = new Date(reportDate + "T00:00:00Z");
+        const daysLate = Math.floor((now.getTime() - reportD.getTime()) / (24 * 60 * 60 * 1000));
+
+        const sendCount = logRow ? logRow.send_count + 1 : 1;
+
+        // Build and send email
+        const html = buildEodReminderHtml({ clrName: clr.name, reportDate, daysLate, sendCount, appUrl });
+        const toEmail = isTest && opts?.testEmail ? opts.testEmail : clr.email;
+
+        const subject = sendCount === 1
+          ? `📋 EOD Report Reminder — ${reportDate}`
+          : sendCount === 2
+          ? `🔔 Follow-up: EOD Report Still Missing — ${reportDate}`
+          : `⚠️ Overdue EOD Report — ${reportDate} (${sendCount}th reminder)`;
+
+        try {
+          await sendEmail({ to: toEmail, subject, html });
+          console.log(`[eod-reminder] sent to ${toEmail} for ${clr.name} date=${reportDate} count=${sendCount}`);
+
+          // Upsert log row
+          sqlite.prepare(`
+            INSERT INTO eod_reminder_log (org_id, clr_id, report_date, last_sent_at, send_count)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(org_id, clr_id, report_date) DO UPDATE SET
+              last_sent_at = excluded.last_sent_at,
+              send_count   = excluded.send_count
+          `).run(org.id, clr.id, reportDate, nowIso, sendCount);
+        } catch (e: any) {
+          console.error(`[eod-reminder] failed for ${clr.name} ${reportDate}:`, e?.message ?? e);
+        }
+
+        // In test mode, only send the first missing date found per CLR
+        if (isTest) break;
+      }
+    }
+  }
+}
+
+// Cron: daily at 9:00 AM UTC — find CLRs missing weekday EOD reports and
+// send reminder every 3 days until they submit
+cron.schedule("0 9 * * 1-5", async () => {
+  try {
+    console.log("[eod-reminder] daily check running...");
+    await checkAndSendEodReminders();
+  } catch (e: any) {
+    console.error("[eod-reminder] cron error:", e?.message ?? e);
+  }
+});
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -1453,6 +1673,34 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   try { startUptimeCron(); } catch (e: any) { console.error("[status] cron init failed:", e?.message ?? e); }
+
+  // ── EOD Reminder: manual test trigger (admin only) ───────────────────────
+  // POST /api/admin/eod-reminders/test
+  // Immediately fires EOD reminder check for the calling user, sending to their
+  // own email address. Useful for verifying the template before relying on the cron.
+  app.post("/api/admin/eod-reminders/test", requireAuth, async (req: any, res: any) => {
+    if (req.user?.role !== "admin" && !req.user?.superAdmin) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    try {
+      await checkAndSendEodReminders({ testClrId: req.user.id, testEmail: req.user.email });
+      return res.json({ ok: true, message: `Test reminder sent to ${req.user.email}` });
+    } catch (e: any) {
+      console.error("[eod-reminder-test]", e?.message ?? e);
+      return res.status(500).json({ error: e?.message ?? "Failed to send test reminder" });
+    }
+  });
+
+  // ── EOD Reminder: force-run cron now (super admin only) ──────────────────
+  app.post("/api/admin/eod-reminders/run-now", requireAuth, async (req: any, res: any) => {
+    if (!req.user?.superAdmin) return res.status(403).json({ error: "Super admin only" });
+    try {
+      await checkAndSendEodReminders();
+      return res.json({ ok: true, message: "EOD reminder check completed" });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message ?? "Failed" });
+    }
+  });
 
   // ── Web Push (VAPID) ──────────────────────────────────────────────────────
   try { initPush(); } catch (e: any) { console.error("[push] init failed:", e?.message ?? e); }
