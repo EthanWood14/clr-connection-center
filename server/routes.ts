@@ -1470,8 +1470,8 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
 
   for (const org of orgs) {
     // Get CLRs: role=assistant OR (role=admin AND is_clr=1), active, in this org
-    const clrs: Array<{ id: number; name: string; email: string }> = sqlite.prepare(`
-      SELECT id, name, email
+    const clrs: Array<{ id: number; name: string; email: string; created_at: string }> = sqlite.prepare(`
+      SELECT id, name, email, created_at
       FROM users
       WHERE is_active = 1
         AND org_id = ?
@@ -1500,7 +1500,20 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
     for (const clr of clrs) {
       if (isTest && clr.id !== opts!.testClrId) continue;
 
+      // Parse CLR creation date (normalize to date-only, UTC)
+      const clrCreatedDate = clr.created_at
+        ? (clr.created_at.endsWith("Z") ? clr.created_at : clr.created_at + "Z").slice(0, 10)
+        : null;
+
       for (const reportDate of weekdaysToCheck) {
+        // Skip dates older than 10 calendar days
+        const reportD0 = new Date(reportDate + "T00:00:00Z");
+        const daysAgo = Math.floor((today.getTime() - reportD0.getTime()) / (24 * 60 * 60 * 1000));
+        if (daysAgo > 10) continue;
+
+        // Skip dates before this CLR account was created
+        if (clrCreatedDate && reportDate < clrCreatedDate) continue;
+
         // Check if report exists
         const submitted = sqlite.prepare(`
           SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?
@@ -1522,9 +1535,8 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
           if (now.getTime() - lastSent.getTime() < threeDaysMs) continue; // too soon
         }
 
-        // Calculate days late
-        const reportD = new Date(reportDate + "T00:00:00Z");
-        const daysLate = Math.floor((now.getTime() - reportD.getTime()) / (24 * 60 * 60 * 1000));
+        // daysAgo already computed above (used for the >10 guard)
+        const daysLate = daysAgo;
 
         const sendCount = logRow ? logRow.send_count + 1 : 1;
 
