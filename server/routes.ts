@@ -2207,13 +2207,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const { email } = req.body ?? {};
     const genericResponse = { message: "If an account exists, a reset link was sent." };
     if (!email || typeof email !== "string") {
+      console.log(`[forgot-password] missing/invalid email field`);
       return res.json(genericResponse);
     }
 
-    const user = storage.getUserByEmail(email);
+    // Normalize the same way the login route does — otherwise a user whose
+    // stored email is e.g. "Foo@bar.com" but who types "foo@bar.com" (or has a
+    // trailing space) silently gets the generic response and no email is sent.
+    const normalizedEmail = email.trim().toLowerCase();
+    const user =
+      storage.getUserByEmail(normalizedEmail) ??
+      storage.getUserByEmail(email.trim()) ??
+      storage.getUserByEmail(email);
     if (!user) {
+      console.log(`[forgot-password] no user for email=${JSON.stringify(normalizedEmail)}`);
       return res.json(genericResponse);
     }
+    console.log(`[forgot-password] user matched id=${user.id} email=${JSON.stringify(user.email)}`);
 
     try {
       const token = crypto.randomBytes(32).toString("hex");
@@ -2254,8 +2264,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           body: resetBody,
         }),
       });
-    } catch (e) {
-      console.error("Forgot password flow failed:", e);
+      console.log(`[forgot-password] reset email dispatched for user id=${user.id}`);
+    } catch (e: any) {
+      console.error(`[forgot-password] flow failed for user id=${user.id}:`, e?.message ?? e);
       // Still return generic response to avoid leaking info
     }
 

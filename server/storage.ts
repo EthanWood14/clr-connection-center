@@ -910,7 +910,12 @@ export class Storage implements IStorage {
   }
   getUserByEmail(email: string) {
     // Login lookup must not be org-scoped — server determines org from user record.
-    return sqlite.prepare(`SELECT *, password_hash FROM users WHERE email = ? LIMIT 1`).get(email) as (User & { password_hash: string | null }) | undefined;
+    // Match case-insensitively so a user whose stored email casing differs from
+    // what they typed still resolves (otherwise login/forgot-password silently
+    // miss).
+    const normalized = String(email ?? "").trim();
+    if (!normalized) return undefined;
+    return sqlite.prepare(`SELECT *, password_hash FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`).get(normalized) as (User & { password_hash: string | null }) | undefined;
   }
   setUserPassword(id: number, hash: string) {
     sqlite.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(hash, id);
