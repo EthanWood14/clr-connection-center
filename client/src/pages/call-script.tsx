@@ -23,7 +23,7 @@ import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
   Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Unlock, Users,
-  Play, Square, Clock, Radio,
+  Play, Square, Clock, Radio, UserPlus, UserCheck,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
@@ -1775,6 +1775,34 @@ export default function CallScriptPage() {
           <Button size="sm" variant={view === "flowchart" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("flowchart")}>
             <GitBranch className="w-3.5 h-3.5" /> Flowchart
           </Button>
+          {/* Always-visible "my own copy" affordance for every CLR. */}
+          {/* When the user has no personal copy yet, this clones the default and switches to it. */}
+          {/* When the user already has one but is viewing something else, this jumps back to it. */}
+          {!hasPersonalCopy ? (
+            <Button
+              size="sm"
+              variant="default"
+              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700"
+              onClick={() => cloneMut.mutate()}
+              disabled={cloneMut.isPending || !defaultScript}
+              title={defaultScript ? "Create your own personal copy of the default script" : "No default script to copy yet"}
+              data-testid="button-make-my-copy"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              {cloneMut.isPending ? "Creating…" : "Make My Own Copy"}
+            </Button>
+          ) : !isMine ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-emerald-500 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+              onClick={() => setSelectedScriptId(myScript!.id)}
+              title="Switch to your personal script"
+              data-testid="button-go-to-my-script"
+            >
+              <UserCheck className="w-3.5 h-3.5" /> My Script
+            </Button>
+          ) : null}
           {isAdmin && isOtherUserScript && !hasAdminOverride ? (
             <Button
               size="sm"

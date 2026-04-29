@@ -4303,27 +4303,59 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── LO Performance History ────────────────────────────────────────────────────
   app.get("/api/loan-officers/:id/performance", (req, res) => {
     const loId = parseInt(req.params.id);
-    const outcomes = storage.getLeadOutcomes({ loId });
+    const outcomes = storage.getLeadOutcomes({ loId }) as any[];
     const lo = storage.getLoanOfficerById(loId);
     if (!lo) return res.status(404).json({ error: "Not found" });
 
-    // Group by month (YYYY-MM)
-    const byMonth: Record<string, { transfers: number; appointments: number; fellThrough: number; noAnswer: number; total: number }> = {};
+    // Group by month (YYYY-MM) — count every outcome type so totals match callers' reality
+    type MonthBucket = {
+      transfers: number;
+      appointments: number;
+      fellThrough: number;
+      noAnswer: number;
+      callbacks: number;
+      futureContact: number;
+      notInterested: number;
+      wrongNumber: number;
+      other: number;
+      total: number;
+    };
+    const emptyMonth = (): MonthBucket => ({
+      transfers: 0, appointments: 0, fellThrough: 0, noAnswer: 0,
+      callbacks: 0, futureContact: 0, notInterested: 0, wrongNumber: 0,
+      other: 0, total: 0,
+    });
+    const byMonth: Record<string, MonthBucket> = {};
+    let totalsByType: Record<string, number> = {};
     outcomes.forEach(o => {
-      const month = o.date.slice(0, 7); // YYYY-MM
-      if (!byMonth[month]) byMonth[month] = { transfers: 0, appointments: 0, fellThrough: 0, noAnswer: 0, total: 0 };
-      byMonth[month].total++;
-      if (o.outcomeType === "transfer") byMonth[month].transfers++;
-      else if (o.outcomeType === "appointment") byMonth[month].appointments++;
-      else if (o.outcomeType === "fell_through") byMonth[month].fellThrough++;
-      else if (o.outcomeType === "no_answer") byMonth[month].noAnswer++;
+      const date: string | undefined = o.date ?? o.created_at ?? o.createdAt;
+      if (!date) return;
+      const month = String(date).slice(0, 7); // YYYY-MM
+      if (!byMonth[month]) byMonth[month] = emptyMonth();
+      const m = byMonth[month];
+      m.total++;
+      const t = o.outcomeType ?? o.outcome_type ?? "other";
+      totalsByType[t] = (totalsByType[t] ?? 0) + 1;
+      if (t === "transfer") m.transfers++;
+      else if (t === "appointment") m.appointments++;
+      else if (t === "fell_through") m.fellThrough++;
+      else if (t === "no_answer") m.noAnswer++;
+      else if (t === "callback_requested") m.callbacks++;
+      else if (t === "future_contact" || t === "deferral") m.futureContact++;
+      else if (t === "not_interested") m.notInterested++;
+      else if (t === "wrong_number") m.wrongNumber++;
+      else m.other++;
     });
 
     const monthlyData = Object.entries(byMonth)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, stats]) => ({ month, ...stats }));
 
-    res.json({ lo, monthlyData, totalOutcomes: outcomes.length });
+    // Total "calls logged" = total outcomes recorded against this LO; this is
+    // a better callers-eye-view than total_times_worked (which only ticks on EOD).
+    const callsLogged = outcomes.length;
+
+    res.json({ lo, monthlyData, totalOutcomes: outcomes.length, callsLogged, totalsByType });
   });
 
   // ── Email Settings ────────────────────────────────────────────────────────────

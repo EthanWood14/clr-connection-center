@@ -177,7 +177,9 @@ export default function LoPerformance() {
 
   // KPI calculations
   const lo = perfData?.lo;
-  const totalWorked = lo?.totalTimesWorked ?? 0;
+  // Prefer callsLogged (every outcome counts) over total_times_worked (only EOD ticks).
+  // Falls back to total_times_worked for older deploys.
+  const callsLogged = perfData?.callsLogged ?? lo?.totalTimesWorked ?? 0;
   const totalTransfers = monthlyData.reduce((s: number, d: any) => s + (d.transfers ?? 0), 0);
   const totalAppointments = monthlyData.reduce((s: number, d: any) => s + (d.appointments ?? 0), 0);
   const totalOutcomes = perfData?.totalOutcomes ?? 0;
@@ -271,10 +273,10 @@ export default function LoPerformance() {
           {/* ── KPI row ── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard
-              title="Total Worked"
-              value={totalWorked}
+              title="Total Calls"
+              value={callsLogged}
               icon={Activity}
-              sub="times worked all-time"
+              sub="outcomes logged all-time"
             />
             <KpiCard
               title="Total Transfers"
@@ -429,10 +431,40 @@ export default function LoPerformance() {
                         fill="#dc2626"
                       />
                       <Bar
+                        dataKey="callbacks"
+                        name="Callbacks"
+                        stackId="a"
+                        fill="#9333ea"
+                      />
+                      <Bar
+                        dataKey="futureContact"
+                        name="Future Contact"
+                        stackId="a"
+                        fill="#d97706"
+                      />
+                      <Bar
+                        dataKey="notInterested"
+                        name="Not Interested"
+                        stackId="a"
+                        fill="#e11d48"
+                      />
+                      <Bar
+                        dataKey="wrongNumber"
+                        name="Wrong Number"
+                        stackId="a"
+                        fill="#475569"
+                      />
+                      <Bar
                         dataKey="noAnswer"
                         name="No Answer"
                         stackId="a"
                         fill="#6b7280"
+                      />
+                      <Bar
+                        dataKey="other"
+                        name="Other"
+                        stackId="a"
+                        fill="#a3a3a3"
                         radius={[4, 4, 0, 0]}
                       />
                     </BarChart>
