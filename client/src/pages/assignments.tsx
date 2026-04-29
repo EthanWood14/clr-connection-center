@@ -939,9 +939,13 @@ export default function Assignments() {
         <div className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div className="flex-1 text-sm">
-            <p className="font-semibold text-amber-900 dark:text-amber-200">Missing EOD Reports</p>
-            <p className="text-amber-800 dark:text-amber-300 text-xs mt-0.5">
-              {clrsMissingEod.join(", ")} {clrsMissingEod.length === 1 ? "has" : "have"} not submitted their EOD report for {prevWeekdayStr(currentDate)}.
+            <p className="font-semibold text-amber-900 dark:text-amber-200">
+              ⚠️ Missing EOD Reports — Assignments May Be Off
+            </p>
+            <p className="text-amber-800 dark:text-amber-300 text-xs mt-1 leading-relaxed">
+              <strong>{clrsMissingEod.join(", ")}</strong> {clrsMissingEod.length === 1 ? "has" : "have"} not submitted {clrsMissingEod.length === 1 ? "their" : "their"} EOD report for {prevWeekdayStr(currentDate)}.
+              Without that data, the algorithm doesn't know which LOs they already worked — so those LOs could be assigned again today,
+              causing duplicate outreach or two CLRs calling the same LO.
             </p>
           </div>
           <button onClick={() => setClrsMissingEod([])} className="text-amber-600 dark:text-amber-400 hover:opacity-70 mt-0.5">
