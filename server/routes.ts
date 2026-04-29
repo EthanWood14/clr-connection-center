@@ -3742,6 +3742,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const user = storage.getUserById(req.session_user!.userId) as any;
     const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", message.trim());
+
+    // Push + in-app notify all other active users in the org
+    try {
+      const orgId = req.session_user!.orgId ?? 1;
+      const senderName = user?.name ?? "Someone";
+      const allUsers = storage.getUsers().filter((u: any) =>
+        u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
+      );
+      const trimmed = message.trim();
+      const preview = trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
+      const pushPayload = {
+        title: `💬 ${senderName}`,
+        body: preview,
+        url: `/chat`,
+      };
+      for (const u of allUsers) {
+        storage.createNotification({
+          userId: u.id,
+          type: "announcement",
+          title: pushPayload.title,
+          message: pushPayload.body,
+          isRead: false,
+        });
+      }
+      sendPushToUsers(allUsers.map((u: any) => u.id), pushPayload).catch(() => {});
+    } catch (e) { console.error("chat notify failed:", e); }
+
     res.json({ message: msg });
   });
 
@@ -6665,14 +6692,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       authorId: userId,
       authorName,
     });
-    // Notify admins
+    // In-app notify admins; push to ALL other active org users
     try {
-      const admins = storage.getUsers().filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId);
+      const orgId = (req.session_user as any).orgId ?? 1;
       const pushPayload = {
         title: `New Forum Question: ${post.title}`,
         body: `${authorName} asked: ${post.title}`,
         url: `/forum`,
       };
+      const allUsers = storage.getUsers();
+      const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId);
       for (const admin of admins) {
         storage.createNotification({
           userId: admin.id,
@@ -6682,8 +6711,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           isRead: false,
         });
       }
-      sendPushToUsers(admins.map((a: any) => a.id), pushPayload).catch(() => {});
-    } catch (e) { console.error("forum admin notify failed:", e); }
+      const pushTargets = allUsers.filter((u: any) =>
+        u.isActive && u.id !== userId && (u.orgId ?? 1) === orgId
+      );
+      sendPushToUsers(pushTargets.map((u: any) => u.id), pushPayload).catch(() => {});
+    } catch (e) { console.error("forum notify failed:", e); }
     res.json({ post });
   });
 

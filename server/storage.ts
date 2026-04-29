@@ -2400,7 +2400,7 @@ try {
 // Seed Ethan's real WCL script — runs once via migrations_applied table
 function seedEthanScript() {
   sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
-  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v2'`).get();
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v3'`).get();
   if (done) return;
 
   // Wipe any previous version of this script
@@ -2631,108 +2631,108 @@ function seedEthanScript() {
   // ══════════════════════════════════════════════════════════════════════════
 
   // ── Opening → first branches ─────────────────────────────────────────────
-  resp(nOpen, "Yes, now is fine — tell me more", "green", nGoalDisc, 1);
-  resp(nOpen, "Already handled / went with someone", "red", nAlready, 2);
-  resp(nOpen, "Just shopping / comparing options", "yellow", nJustShopping, 3);
-  resp(nOpen, "None of your business / too many calls", "yellow", nPrivacy, 4);
-  resp(nOpen, "I'm busy right now", "yellow", nBusy, 5);
+  resp(nOpen, "Yes, go ahead", "green", nGoalDisc, 1);
+  resp(nOpen, "Already handled", "red", nAlready, 2);
+  resp(nOpen, "Just shopping", "yellow", nJustShopping, 3);
+  resp(nOpen, "Too pushy / privacy", "yellow", nPrivacy, 4);
+  resp(nOpen, "Busy right now", "yellow", nBusy, 5);
   resp(nOpen, "Angry / hostile", "red", nAngry, 6);
-  resp(nOpen, "Don't do business over the phone", "yellow", nNoPhone, 7);
-  resp(nOpen, "Rates are too high / bad market", "yellow", nHighRates, 8);
-  resp(nOpen, "Already working with another lender", "yellow", nOtherLender, 9);
-  resp(nOpen, "No response / silent", "gray", nSilent, 10);
-  resp(nOpen, "No answer — leaving voicemail", "gray", nVoicemail, 11);
-  resp(nOpen, "Old lead (60+ days since inquiry)", "blue", nOldLead, 12);
-  resp(nOpen, "Wrong number / not them", "gray", nWrongNumber, 13);
+  resp(nOpen, "No phone business", "yellow", nNoPhone, 7);
+  resp(nOpen, "Rates too high", "yellow", nHighRates, 8);
+  resp(nOpen, "With another lender", "yellow", nOtherLender, 9);
+  resp(nOpen, "No response", "gray", nSilent, 10);
+  resp(nOpen, "No answer — voicemail", "gray", nVoicemail, 11);
+  resp(nOpen, "Old lead (60+ days)", "blue", nOldLead, 12);
+  resp(nOpen, "Wrong number", "gray", nWrongNumber, 13);
 
   // ── Goal discovery → paths ───────────────────────────────────────────────
-  resp(nGoalDisc, "Lower payment / rate (refi)", "green", nQualRefi, 1);
-  resp(nGoalDisc, "Pull cash out / HELOC", "green", nQualHeloc, 2);
-  resp(nGoalDisc, "Not sure / both options", "yellow", nQualRefi, 3);
+  resp(nGoalDisc, "Lower rate (refi)", "green", nQualRefi, 1);
+  resp(nGoalDisc, "Cash out / HELOC", "green", nQualHeloc, 2);
+  resp(nGoalDisc, "Not sure / both", "yellow", nQualRefi, 3);
 
   // ── Refi qual → outcomes ─────────────────────────────────────────────────
-  resp(nQualRefi, "Fully qualified — ready to transfer now", "green", nTransferDirect, 1);
-  resp(nQualRefi, "Qualified — set appointment (LO unavailable)", "blue", nAppointment, 2);
-  resp(nQualRefi, "Not ready — dig into why", "yellow", nNotReady, 3);
+  resp(nQualRefi, "Ready to transfer", "green", nTransferDirect, 1);
+  resp(nQualRefi, "Set appointment", "blue", nAppointment, 2);
+  resp(nQualRefi, "Not ready", "yellow", nNotReady, 3);
 
   // ── HELOC qual → outcomes ────────────────────────────────────────────────
-  resp(nQualHeloc, "Ready to transfer — HELOC / cash-out", "green", nTransferHeloc, 1);
-  resp(nQualHeloc, "Set appointment — HELOC path", "blue", nAppointment, 2);
-  resp(nQualHeloc, "Low equity concern", "yellow", nLowEquity, 3);
-  resp(nQualHeloc, "Not ready — dig into why", "yellow", nNotReady, 4);
+  resp(nQualHeloc, "Transfer — HELOC", "green", nTransferHeloc, 1);
+  resp(nQualHeloc, "Set appointment", "blue", nAppointment, 2);
+  resp(nQualHeloc, "Low equity", "yellow", nLowEquity, 3);
+  resp(nQualHeloc, "Not ready", "yellow", nNotReady, 4);
 
   // ── Not ready → sub-branches ─────────────────────────────────────────────
-  resp(nNotReady, "Waiting for rates to come down", "yellow", nWaitRates, 1);
-  resp(nNotReady, "Concerned about credit", "yellow", nCreditConcern, 2);
-  resp(nNotReady, "Need to talk to spouse / partner", "yellow", nSpouse, 3);
-  resp(nNotReady, "Not the right time financially", "yellow", nFinancialTiming, 4);
+  resp(nNotReady, "Waiting on rates", "yellow", nWaitRates, 1);
+  resp(nNotReady, "Credit concerns", "yellow", nCreditConcern, 2);
+  resp(nNotReady, "Need spouse OK", "yellow", nSpouse, 3);
+  resp(nNotReady, "Bad timing", "yellow", nFinancialTiming, 4);
 
   // ── Not-ready sub-outcomes ───────────────────────────────────────────────
-  resp(nWaitRates, "Agreed to no-obligation call", "green", nAppointment, 1);
-  resp(nWaitRates, "Still not ready — set future contact", "yellow", null, 2);
-  resp(nCreditConcern, "Open to soft-pull conversation", "green", nAppointment, 1);
-  resp(nCreditConcern, "Score too low — future contact in 3–6 months", "yellow", null, 2);
-  resp(nSpouse, "Can grab spouse right now", "green", nGoalDisc, 1);
-  resp(nSpouse, "Set callback when both available", "blue", nAppointment, 2);
-  resp(nFinancialTiming, "Agreed to future contact date", "yellow", null, 1);
-  resp(nFinancialTiming, "Not interested — end call", "gray", null, 2);
+  resp(nWaitRates, "Agreed to call", "green", nAppointment, 1);
+  resp(nWaitRates, "Future contact", "yellow", null, 2);
+  resp(nCreditConcern, "Open to soft pull", "green", nAppointment, 1);
+  resp(nCreditConcern, "Score too low", "yellow", null, 2);
+  resp(nSpouse, "Grabbing spouse", "green", nGoalDisc, 1);
+  resp(nSpouse, "Set joint callback", "blue", nAppointment, 2);
+  resp(nFinancialTiming, "Future contact", "yellow", null, 1);
+  resp(nFinancialTiming, "Not interested", "gray", null, 2);
 
   // ── Transfer outcomes ────────────────────────────────────────────────────
   resp(nTransferDirect, "Transfer complete!", "green", null, 1);
-  resp(nTransferDirect, "LO not available — set appointment", "blue", nAppointment, 2);
-  resp(nTransferDirect, "Borrower changed mind — dig in", "yellow", nNotReady, 3);
+  resp(nTransferDirect, "LO unavailable", "blue", nAppointment, 2);
+  resp(nTransferDirect, "Changed mind", "yellow", nNotReady, 3);
   resp(nTransferHeloc, "Transfer complete!", "green", null, 1);
-  resp(nTransferHeloc, "LO not available — set appointment", "blue", nAppointment, 2);
-  resp(nTransferHeloc, "Borrower changed mind", "yellow", nNotReady, 3);
+  resp(nTransferHeloc, "LO unavailable", "blue", nAppointment, 2);
+  resp(nTransferHeloc, "Changed mind", "yellow", nNotReady, 3);
 
   // ── Appointment outcomes ─────────────────────────────────────────────────
-  resp(nAppointment, "Appointment confirmed and logged", "green", null, 1);
-  resp(nAppointment, "Refused to commit to a time", "yellow", nFinancialTiming, 2);
+  resp(nAppointment, "Confirmed ✓", "green", null, 1);
+  resp(nAppointment, "Won't commit", "yellow", nFinancialTiming, 2);
 
   // ── Already handled ──────────────────────────────────────────────────────
-  resp(nAlready, "Open to rate comparison", "green", nGoalDisc, 1);
-  resp(nAlready, "Already closed — not interested", "gray", nAlreadyClosed, 2);
-  resp(nAlreadyClosed, "Ended gracefully", "gray", null, 1);
+  resp(nAlready, "Open to compare", "green", nGoalDisc, 1);
+  resp(nAlready, "Already closed", "gray", nAlreadyClosed, 2);
+  resp(nAlreadyClosed, "Call ended", "gray", null, 1);
 
   // ── Angry ────────────────────────────────────────────────────────────────
-  resp(nAngry, "Calmed down — back to conversation", "green", nGoalDisc, 1);
-  resp(nAngry, "Still hostile but still on the line", "yellow", nAngryCalmed, 2);
+  resp(nAngry, "Calmed down", "green", nGoalDisc, 1);
+  resp(nAngry, "Still hostile", "yellow", nAngryCalmed, 2);
   resp(nAngry, "Hung up", "gray", nAngryHungUp, 3);
-  resp(nAngryCalmed, "Re-engaged — proceed to qualifying", "green", nGoalDisc, 1);
-  resp(nAngryCalmed, "Still not interested", "gray", null, 2);
-  resp(nAngryHungUp, "Logged as fell through", "gray", null, 1);
+  resp(nAngryCalmed, "Re-engaged", "green", nGoalDisc, 1);
+  resp(nAngryCalmed, "Not interested", "gray", null, 2);
+  resp(nAngryHungUp, "Fell through", "gray", null, 1);
 
   // ── No phone / high rates / other lender / shopping / privacy ────────────
-  resp(nNoPhone, "Agreed to email quote", "green", null, 1);
+  resp(nNoPhone, "Email quote OK", "green", null, 1);
   resp(nNoPhone, "Not interested", "gray", null, 2);
-  resp(nHighRates, "Shared current rate — re-engage", "green", nGoalDisc, 1);
-  resp(nHighRates, "Still not interested", "gray", null, 2);
-  resp(nOtherLender, "Not locked yet — open to comparison", "green", nGoalDisc, 1);
-  resp(nOtherLender, "Already locked — plant seed for later", "gray", nAlreadyClosed, 2);
-  resp(nJustShopping, "Agreed to quick qualifying call", "green", nGoalDisc, 1);
-  resp(nJustShopping, "Not ready to engage yet", "yellow", nFinancialTiming, 2);
+  resp(nHighRates, "Shared rate", "green", nGoalDisc, 1);
+  resp(nHighRates, "Not interested", "gray", null, 2);
+  resp(nOtherLender, "Not locked yet", "green", nGoalDisc, 1);
+  resp(nOtherLender, "Already locked", "gray", nAlreadyClosed, 2);
+  resp(nJustShopping, "Agreed to qualify", "green", nGoalDisc, 1);
+  resp(nJustShopping, "Not ready yet", "yellow", nFinancialTiming, 2);
   resp(nPrivacy, "Willing to continue", "green", nGoalDisc, 1);
   resp(nPrivacy, "Remove from list", "gray", null, 2);
 
   // ── Low equity ───────────────────────────────────────────────────────────
-  resp(nLowEquity, "FHA / VA — streamline path applies", "green", nTransferHeloc, 1);
-  resp(nLowEquity, "Conventional — explore rate savings", "yellow", nNotReady, 2);
+  resp(nLowEquity, "FHA / VA stream", "green", nTransferHeloc, 1);
+  resp(nLowEquity, "Conventional path", "yellow", nNotReady, 2);
 
   // ── Old lead / silent / voicemail / wrong number ─────────────────────────
-  resp(nOldLead, "Still exploring — re-engage", "green", nGoalDisc, 1);
-  resp(nOldLead, "Handled it / not interested", "gray", nAlreadyClosed, 2);
+  resp(nOldLead, "Still exploring", "green", nGoalDisc, 1);
+  resp(nOldLead, "Already handled", "gray", nAlreadyClosed, 2);
   resp(nVoicemail, "Voicemail left", "gray", null, 1);
-  resp(nSilent, "Responded — continue to goal discovery", "green", nGoalDisc, 1);
-  resp(nSilent, "Still no response — hang up", "gray", null, 2);
-  resp(nWrongNumber, "Got alternate contact info", "yellow", null, 1);
-  resp(nWrongNumber, "No info available — log bad data", "gray", null, 2);
+  resp(nSilent, "Responded", "green", nGoalDisc, 1);
+  resp(nSilent, "No response", "gray", null, 2);
+  resp(nWrongNumber, "Got alt contact", "yellow", null, 1);
+  resp(nWrongNumber, "Bad data", "gray", null, 2);
 
   // ── Busy ─────────────────────────────────────────────────────────────────
-  resp(nBusy, "Got specific callback time — set appointment", "blue", nAppointment, 1);
-  resp(nBusy, "Not interested — remove from list", "gray", null, 2);
+  resp(nBusy, "Set callback", "blue", nAppointment, 1);
+  resp(nBusy, "Remove", "gray", null, 2);
 
   sqlite.prepare(`INSERT INTO migrations_applied (name, applied_at) VALUES (?, datetime('now'))`)
-    .run('ethan_wcl_script_v2');
+    .run('ethan_wcl_script_v3');
 }
 seedEthanScript();
 

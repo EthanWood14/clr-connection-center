@@ -899,7 +899,7 @@ function LOFormDialog({
 export default function Directory() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
   const [tierFilter, setTierFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<any | null>(null);
@@ -1052,7 +1052,7 @@ export default function Directory() {
         </Select>
         {(search || statusFilter !== "all" || tierFilter !== "all") && (
           <Button variant="ghost" size="sm"
-            onClick={() => { setSearch(""); setStatusFilter("all"); setTierFilter("all"); }}>
+            onClick={() => { setSearch(""); setStatusFilter("active"); setTierFilter("all"); }}>
             Clear filters
           </Button>
         )}

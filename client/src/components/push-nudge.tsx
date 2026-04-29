@@ -13,8 +13,9 @@ import { Bell, X, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 
-const PERM_DISMISS_KEY = "clr_push_nudge_perm_dismissed";
+const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed";
 const SNOOZE_KEY        = "clr_push_nudge_snoozed_until";
+const FIRST_SHOWN_KEY   = "clr_push_first_shown";
 const BIWEEKLY_MS       = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -67,8 +68,20 @@ export function PushNudge() {
       } catch {}
 
       if (!cancelled) {
-        // Small delay so the app settles before nudging
-        setTimeout(() => { if (!cancelled) setVisible(true); }, 3000);
+        // First ever load — show immediately, no delay
+        let firstTime = false;
+        try {
+          if (localStorage.getItem(FIRST_SHOWN_KEY) === null) {
+            localStorage.setItem(FIRST_SHOWN_KEY, "1");
+            firstTime = true;
+          }
+        } catch {}
+        if (firstTime) {
+          setVisible(true);
+        } else {
+          // Small delay so the app settles before nudging
+          setTimeout(() => { if (!cancelled) setVisible(true); }, 3000);
+        }
       }
     }
 
