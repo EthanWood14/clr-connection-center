@@ -129,12 +129,27 @@ function CredBlock({
     setLoading(true);
     try {
       const res = await fetch(`/api/loan-officers/${loId}/credentials`, { credentials: "include" });
+      if (!res.ok) {
+        toast({
+          title: res.status === 401 ? "Please log in again" : "Failed to load credentials",
+          description: `Server returned ${res.status}`,
+          variant: "destructive",
+        });
+        return null;
+      }
       const data = await res.json();
       const pass = system === "Bonzo" ? data.bonzoPassword : data.leadMailboxPassword;
+      if (!pass) {
+        toast({
+          title: "No password saved",
+          description: `No ${system} password is stored for this LO.`,
+          variant: "destructive",
+        });
+      }
       setPlainPass(pass ?? null);
       return pass ?? null;
-    } catch {
-      toast({ title: "Failed to load credentials", variant: "destructive" });
+    } catch (e: any) {
+      toast({ title: "Failed to load credentials", description: e?.message, variant: "destructive" });
       return null;
     } finally {
       setLoading(false);

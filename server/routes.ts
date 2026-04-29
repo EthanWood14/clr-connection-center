@@ -2453,14 +2453,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Copy credential endpoint (reveals plaintext password)
   app.get("/api/loan-officers/:id/credentials", (req, res) => {
-    const lo = storage.getLoanOfficerById(parseInt(req.params.id));
+    const lo: any = storage.getLoanOfficerById(parseInt(req.params.id));
     if (!lo) return res.status(404).json({ error: "Not found" });
+    // Defense in depth: accept either camelCase (Drizzle / normalized) or
+    // snake_case (raw sqlite SELECT *) so a missed normalization can't
+    // silently strip credentials again.
     res.json({
-      bonzoUsername: lo.bonzoUsername,
-      bonzoPassword: lo.bonzoPassword,
-      leadMailboxUsername: lo.leadMailboxUsername,
-      leadMailboxPassword: lo.leadMailboxPassword,
-      otherCredentials: lo.otherCredentials,
+      bonzoUsername: lo.bonzoUsername ?? lo.bonzo_username ?? null,
+      bonzoPassword: lo.bonzoPassword ?? lo.bonzo_password ?? null,
+      leadMailboxUsername: lo.leadMailboxUsername ?? lo.lead_mailbox_username ?? null,
+      leadMailboxPassword: lo.leadMailboxPassword ?? lo.lead_mailbox_password ?? null,
+      otherCredentials: lo.otherCredentials ?? lo.other_credentials ?? null,
     });
   });
 
