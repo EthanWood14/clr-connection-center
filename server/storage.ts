@@ -351,7 +351,7 @@ try {
 try {
   sqlite.prepare(`
     INSERT OR IGNORE INTO organizations (id, name, slug, company_name, resend_api_key, from_email, manager_emails, plan)
-    VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', 're_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q', 'reports@wlc.it.com', ?, 'active')
+    VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', 're_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q', 'reports@westcapitallending.center', ?, 'active')
   `).run(JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"]));
 } catch {}
 
@@ -1278,10 +1278,13 @@ function runNewMigrations() {
     const defaultManagers = JSON.stringify(["scott.petrie@westcapitallending.com", "chris.redoble@westcapitallending.com"]);
     sqlite.exec(`UPDATE email_settings SET manager_emails='${defaultManagers}' WHERE id=1`);
   }
-  // Fix stale from_address_resend from info@wlc.it.com -> reports@wlc.it.com
-  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@wlc.it.com' WHERE from_address_resend = 'info@wlc.it.com'`); } catch {}
+  // Migrate stale from_address_resend values to the current default
+  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@westcapitallending.center' WHERE from_address_resend = 'info@wlc.it.com'`); } catch {}
+  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@westcapitallending.center' WHERE from_address_resend = 'reports@wlc.it.com'`); } catch {}
   // Seed default from_address_resend if empty
-  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@wlc.it.com' WHERE from_address_resend IS NULL OR from_address_resend = ''`); } catch {}
+  try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@westcapitallending.center' WHERE from_address_resend IS NULL OR from_address_resend = ''`); } catch {}
+  // Migrate organizations.from_email from old wlc.it.com domain to westcapitallending.center
+  try { sqlite.exec(`UPDATE organizations SET from_email = 'reports@westcapitallending.center' WHERE from_email = 'reports@wlc.it.com' OR from_email = 'info@wlc.it.com'`); } catch {}
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
   try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"])}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 

@@ -4,7 +4,7 @@ import { sendPushToUser } from "./push";
 import { sendSms, isTwilioConfigured, normalizePhone } from "./sms";
 
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
-const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
+const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
 function resolveResendKey(): string {
   try {
@@ -141,7 +141,7 @@ function buildEmail(o: PendingOutcome): { subject: string; html: string } {
   </div>
   <p>Log in to CLR Connection Center to complete or reschedule.</p>
   <p style="margin-top:18px">
-    <a href="https://www.wlc.it.com" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Login</a>
+    <a href="https://www.westcapitallending.center" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Login</a>
   </p>
   <p style="color:#64748b;font-size:12px;margin-top:28px">
     You're receiving this because reminder emails are enabled on your account. Disable them in Settings → Profile.
@@ -208,7 +208,7 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
         const kind = o.outcome_type === "appointment" ? "appointment" : "callback";
         const when = fmtDateTime(o.scheduled_date);
         const borrower = o.borrower_name?.trim() || "Unknown";
-        const smsBody = `CLR Connection Center: Reminder — you have a ${kind} scheduled at ${when} with borrower ${borrower}. Log in: https://www.wlc.it.com`;
+        const smsBody = `CLR Connection Center: Reminder — you have a ${kind} scheduled at ${when} with borrower ${borrower}. Log in: https://www.westcapitallending.center`;
         const smsResult = await sendSms(o.clr_phone, smsBody, o.org_id);
         if (smsResult.ok) {
           insertSmsLog.run(o.outcome_id, o.assistant_id);

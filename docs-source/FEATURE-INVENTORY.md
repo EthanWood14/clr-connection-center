@@ -9,7 +9,7 @@ This document is the source of truth for the three user-facing PDFs: **Why CLR C
 - **Company:** West Capital Lending (WCL), headquartered in Irvine, CA.
 - **Primary product:** CLR Connection Center — an internal web and PWA application for the Client Loan Representative (CLR) team.
 - **Product owner / developer:** Ethan Wood (CLR) — ethan.anthony.wood@gmail.com.
-- **Live URL:** https://www.wlc.it.com (branded "WCLCC").
+- **Live URL:** https://www.westcapitallending.center (branded "WCLCC").
 - **Theme color:** #0F182D (navy).
 - **Accent color:** Gold.
 
@@ -156,7 +156,7 @@ Order of groups top-to-bottom:
 - **Frontend:** React 19 + Vite 7, TypeScript, Tailwind CSS, shadcn/ui components, Wouter for routing.
 - **Backend:** Node.js + Express, TypeScript, SQLite with prepared statements, `better-sqlite3`.
 - **Auth:** Session-based with secure cookies.
-- **Hosting:** Railway (Dockerfile builder) on US East region, bound to `www.wlc.it.com`.
+- **Hosting:** Railway (Dockerfile builder) on US East region, bound to `www.westcapitallending.center` (legacy alias `www.wlc.it.com`).
 - **CI/CD:** Push to `main` on GitHub → Railway auto-deploy via GitHub App (branch-to-environment binding required).
 - **Database:** SQLite at `/data/app.db` on Railway mounted volume (500 MB, ~52 MB used).
 - **Health check:** `GET /api/health` returns `{status:"ok",uptime:<sec>,db:true}`.

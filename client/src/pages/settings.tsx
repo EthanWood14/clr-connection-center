@@ -559,7 +559,7 @@ function EmailReportsCard() {
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-          <span>Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@wlc.it.com</span>. The default API key is pre-configured — no setup needed.</span>
+          <span>Emails are sent via <strong>Resend</strong> from <span className="font-mono text-xs">reports@westcapitallending.center</span>. The default API key is pre-configured — no setup needed.</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -579,7 +579,7 @@ function EmailReportsCard() {
                   onChange={e => setResendApiKey(e.target.value)}
                   autoComplete="off"
                 />
-                <p className="text-[10px] text-muted-foreground">Emails send from <span className="font-mono">reports@wlc.it.com</span>. To use a different API key, get one at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a>.</p>
+                <p className="text-[10px] text-muted-foreground">Emails send from <span className="font-mono">reports@westcapitallending.center</span>. To use a different API key, get one at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a>.</p>
               </div>
             </div>
 

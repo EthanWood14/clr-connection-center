@@ -268,7 +268,7 @@ function buildEmail(opts: {
           <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:18px 36px">
             <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.7">
               <strong style="color:#64748b">CLR Connection Center</strong> &mdash; West Capital Lending<br />
-              Sent from <a href="mailto:reports@wlc.it.com" style="color:#1A2B4A;text-decoration:none">reports@wlc.it.com</a>.
+              Sent from <a href="mailto:reports@westcapitallending.center" style="color:#1A2B4A;text-decoration:none">reports@westcapitallending.center</a>.
               If you didn't expect this, check your spam folder.<br />
               To use a custom sender, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and configure your own domain.
             </p>
@@ -283,7 +283,7 @@ function buildEmail(opts: {
 
 // ── Shared Resend send helper ─────────────────────────────────────────────────
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
-const DEFAULT_FROM = "CLR Connection Center <reports@wlc.it.com>";
+const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
 async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
@@ -1896,7 +1896,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const expiry = Date.now() + 60 * 60 * 1000; // 1 hour
       (storage as any).setResetToken(user.id, token, expiry);
 
-      const resetUrl = `https://www.wlc.it.com/#/reset-password?token=${token}`;
+      const resetUrl = `https://www.westcapitallending.center/#/reset-password?token=${token}`;
       const resetBody = `
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
           Hi <strong style="color:#1e293b">${user.name}</strong>,
@@ -2028,7 +2028,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           </p>
         </div>
         <div style="text-align:center;margin-bottom:24px">
-          <a href="https://www.wlc.it.com" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+          <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
             Log In to CLR Connection Center
           </a>
         </div>
@@ -2136,7 +2136,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         </p>
       </div>
       <div style="text-align:center;margin-bottom:24px">
-        <a href="https://www.wlc.it.com" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+        <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
           Log In to CLR Connection Center
         </a>
       </div>
@@ -4003,7 +4003,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-top:8px">
               <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7">
                 <strong style="color:#1e293b">Sent to:</strong> ${userEmail}<br />
-                <strong style="color:#1e293b">From:</strong> reports@wlc.it.com<br />
+                <strong style="color:#1e293b">From:</strong> reports@westcapitallending.center<br />
                 <strong style="color:#1e293b">Note:</strong> If managers aren't receiving emails, ask them to check their spam folder.
               </p>
             </div>
@@ -6563,7 +6563,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     try {
       const org = sqliteRaw.prepare(`SELECT name, company_name, resend_api_key, from_email FROM organizations WHERE id = ?`).get(orgId) as any;
       const apiKey = org?.resend_api_key || process.env.RESEND_API_KEY;
-      const from = org?.from_email || "reports@wlc.it.com";
+      const from = org?.from_email || "reports@westcapitallending.center";
       if (apiKey) {
         const resend = new Resend(apiKey);
         resend.emails.send({

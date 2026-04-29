@@ -22,7 +22,7 @@ export function initPush() {
   }
 
   try {
-    webpush.setVapidDetails("mailto:reports@wlc.it.com", pub!, priv!);
+    webpush.setVapidDetails("mailto:reports@westcapitallending.center", pub!, priv!);
     publicKey = pub!;
     initialized = true;
     console.log("[push] Web Push initialized");
