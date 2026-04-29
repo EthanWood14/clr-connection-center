@@ -22,18 +22,18 @@ type VideoCard = {
 
 const videos: VideoCard[] = [
   {
-    title: "Platform Introduction",
-    badge: "All Users · 6 min",
+    title: "Platform Walkthrough",
+    badge: "All Users · ~1 min",
     description:
-      "A quick overview of CLR Connection Center — what it is, how it works, and how it fits into your daily workflow.",
+      "A 12-step screenshot tour of every page in CLR Connection Center — Dashboard, Assignments, Call Script, Stats, and more.",
     href: "/intro-video",
-    buttonLabel: "Watch Now",
+    buttonLabel: "Start Walkthrough",
   },
   {
-    title: "CLR Walkthrough",
+    title: "CLR Deep-Dive Video",
     badge: "CLRs · 10 min · Ask for Development",
     description:
-      "A complete step-by-step walkthrough of every tab and feature a CLR uses daily.",
+      "A full video walkthrough covering every tab and feature a CLR uses daily.",
     disabled: true,
     buttonLabel: "Ask for Development",
   },
