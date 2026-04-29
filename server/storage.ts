@@ -1221,21 +1221,20 @@ export class Storage implements IStorage {
 
   upsertDailyCallLog(data: InsertDailyCallLog) {
     const oid = currentOrgId();
-    const existing = db.select().from(dailyCallLogs)
-      .where(and(eq(dailyCallLogs.logDate, data.logDate), eq(dailyCallLogs.assistantId, data.assistantId)))
-      .get();
+    // Use raw SQLite so org_id is respected in the lookup
+    const existingRaw = oid != null
+      ? sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date=? AND assistant_id=? AND org_id=? LIMIT 1`).get(data.logDate, data.assistantId, oid) as any
+      : sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date=? AND assistant_id=? LIMIT 1`).get(data.logDate, data.assistantId) as any;
     const now = new Date().toISOString();
-    if (existing) {
-      const result = db.update(dailyCallLogs)
-        .set({ callsMade: data.callsMade, notes: data.notes ?? null, updatedAt: now })
-        .where(eq(dailyCallLogs.id, existing.id))
-        .returning().get()!;
-      if (oid != null) sqlite.prepare(`UPDATE daily_call_logs SET org_id = ? WHERE id = ?`).run(oid, result.id);
-      return result;
+    if (existingRaw) {
+      sqlite.prepare(`UPDATE daily_call_logs SET calls_made=?, notes=?, updated_at=? WHERE id=?`)
+        .run(data.callsMade, data.notes ?? null, now, existingRaw.id);
+      return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE id=?`).get(existingRaw.id);
     }
-    const result = db.insert(dailyCallLogs).values({ ...data, updatedAt: now }).returning().get()!;
-    if (oid != null) sqlite.prepare(`UPDATE daily_call_logs SET org_id = ? WHERE id = ?`).run(oid, result.id);
-    return result;
+    const insertResult = sqlite.prepare(
+      `INSERT INTO daily_call_logs (log_date, assistant_id, calls_made, notes, updated_at, org_id) VALUES (?,?,?,?,?,?)`
+    ).run(data.logDate, data.assistantId, data.callsMade, data.notes ?? null, now, oid ?? 1);
+    return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE id=?`).get(insertResult.lastInsertRowid);
   }
 
   createAuditLog(data: InsertAuditLog) {

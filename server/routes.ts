@@ -3551,14 +3551,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
 
     const logs = storage.getDailyCallLogs(todayStr);
-    const logForUser = logs.find(l => l.assistantId === userId);
+    // Normalize snake_case (raw SQLite) vs camelCase (Drizzle) field names
+    const logForUser = logs.find(l => (l.assistantId ?? l.assistant_id) === userId);
     const hasLog = !!logForUser;
     const outcomes = getOutcomeBreakdownFor(userId, todayStr);
     res.json({
       hasLog,
       date: todayStr,
       outcomes,
-      callsMadeLogged: logForUser?.callsMade ?? 0,
+      callsMadeLogged: logForUser?.callsMade ?? logForUser?.calls_made ?? 0,
     });
   });
 
@@ -3595,13 +3596,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(Object.values(summary));
   });
 
-  app.post("/api/call-logs", (req, res) => {
-    const { logDate, assistantId, callsMade, notes } = req.body;
-    if (!logDate || !assistantId || callsMade === undefined) {
-      return res.status(400).json({ error: "logDate, assistantId, and callsMade are required" });
+  app.post("/api/call-logs", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    const { logDate, callsMade, notes } = req.body;
+    // Always use the authenticated user's ID — ignore body assistantId to prevent spoofing
+    const assistantId = userId;
+    if (!logDate || callsMade === undefined) {
+      return res.status(400).json({ error: "logDate and callsMade are required" });
     }
-    const log = storage.upsertDailyCallLog({ logDate, assistantId: Number(assistantId), callsMade: Number(callsMade), notes: notes ?? null });
-    res.json(log);
+    try {
+      const log = storage.upsertDailyCallLog({ logDate, assistantId: Number(assistantId), callsMade: Number(callsMade), notes: notes ?? null });
+      res.json(log);
+    } catch (err: any) {
+      console.error("[POST /api/call-logs] error:", err?.message ?? err);
+      res.status(500).json({ error: err?.message ?? "Failed to save call log" });
+    }
   });
 
   // ── Webhook endpoints (PUBLIC — no auth; external services POST here) ───────
