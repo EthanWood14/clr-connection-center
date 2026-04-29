@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import {
   CalendarDays, Eye, Mail, FileText, Loader2, AlertCircle, Inbox, Clock, ArrowLeft,
+  Pencil, RotateCcw,
 } from "lucide-react";
 
 type ReportType = "daily" | "weekly" | "monthly";
@@ -26,15 +27,21 @@ function todayISO(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-function describeRange(type: ReportType, picked: string): { hint: string } {
-  if (!picked) return { hint: "" };
-  if (type === "daily") return { hint: `${picked}` };
+// Returns the canonical { startDate, endDate } the server would resolve when
+// given a single `picked` date for the chosen report type. Used to (a) show a
+// read-only "Resolved range" hint, and (b) seed the editable range inputs.
+function resolveRange(type: ReportType, picked: string): { startDate: string; endDate: string } {
+  if (!picked) return { startDate: "", endDate: "" };
+  if (type === "daily") return { startDate: picked, endDate: picked };
   if (type === "weekly") {
     const d = new Date(picked + "T00:00:00");
     const dow = d.getUTCDay();
     const sun = new Date(d); sun.setUTCDate(d.getUTCDate() - dow);
     const sat = new Date(sun); sat.setUTCDate(sun.getUTCDate() + 6);
-    return { hint: `${sun.toISOString().split("T")[0]} → ${sat.toISOString().split("T")[0]}` };
+    return {
+      startDate: sun.toISOString().split("T")[0],
+      endDate: sat.toISOString().split("T")[0],
+    };
   }
   // monthly: 16th of prev month → 15th of containing month
   const d = new Date(picked + "T00:00:00Z");
@@ -46,7 +53,7 @@ function describeRange(type: ReportType, picked: string): { hint: string } {
   const startM = endM === 0 ? 11 : endM - 1;
   const fmt = (y: number, m: number, dd: number) =>
     `${y}-${String(m + 1).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
-  return { hint: `${fmt(startY, startM, 16)} → ${fmt(endY, endM, 15)}` };
+  return { startDate: fmt(startY, startM, 16), endDate: fmt(endY, endM, 15) };
 }
 
 export default function ReportsArchive() {
@@ -58,6 +65,13 @@ export default function ReportsArchive() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   // 0 means "All CLRs (whole team)"; otherwise a specific user id
   const [selectedClrId, setSelectedClrId] = useState<number>(0);
+  // Custom range editing. When `editingRange` is false the server expands
+  // `picked` to the natural window for the report type. When true, the user
+  // can override the start/end dates directly.
+  const [editingRange, setEditingRange] = useState(false);
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "Report Archive · WCLCC";
@@ -65,7 +79,36 @@ export default function ReportsArchive() {
 
   const isAuthorized = user?.role === "admin" || user?.role === "viewer";
 
-  const { hint } = useMemo(() => describeRange(type, picked), [type, picked]);
+  const resolved = useMemo(() => resolveRange(type, picked), [type, picked]);
+  const hint = resolved.startDate && resolved.endDate
+    ? (resolved.startDate === resolved.endDate
+        ? resolved.startDate
+        : `${resolved.startDate} → ${resolved.endDate}`)
+    : "";
+
+  // The dates we'll actually send to the server.
+  const effectiveStart = editingRange ? customStart : picked;
+  const effectiveEnd = editingRange ? customEnd : picked;
+
+  // Reset the custom range whenever the user changes report type or picked
+  // date — the natural window changes, and the previously-typed dates may no
+  // longer make sense. Also exit edit mode so they see the new resolved range.
+  useEffect(() => {
+    setEditingRange(false);
+    setCustomStart(resolved.startDate);
+    setCustomEnd(resolved.endDate);
+    setRangeError(null);
+  }, [type, picked, resolved.startDate, resolved.endDate]);
+
+  function validateCustomRange(): string | null {
+    if (!editingRange) return null;
+    if (!customStart || !customEnd) return "Both start and end dates are required.";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(customStart) || !/^\d{4}-\d{2}-\d{2}$/.test(customEnd)) {
+      return "Use YYYY-MM-DD dates.";
+    }
+    if (customStart > customEnd) return "Start date must be on or before end date.";
+    return null;
+  }
 
   // Fetch the list of CLRs to filter by
   const { data: clrs } = useQuery<{ id: number; name: string; email: string }[]>({
@@ -78,8 +121,8 @@ export default function ReportsArchive() {
     mutationFn: async () => {
       const data = await apiRequest("POST", "/api/reports/preview", {
         type,
-        startDate: picked,
-        endDate: picked,
+        startDate: effectiveStart,
+        endDate: effectiveEnd,
         clrId: selectedClrId,
       });
       return data as PreviewResult;
@@ -92,8 +135,8 @@ export default function ReportsArchive() {
     mutationFn: async (toList: string[]) => {
       const data = await apiRequest("POST", "/api/reports/email", {
         type,
-        startDate: picked,
-        endDate: picked,
+        startDate: effectiveStart,
+        endDate: effectiveEnd,
         recipients: toList,
         clrId: selectedClrId,
       });
@@ -111,12 +154,18 @@ export default function ReportsArchive() {
 
   const onPreview = () => {
     if (!picked) return;
+    const err = validateCustomRange();
+    if (err) { setRangeError(err); toast({ title: "Invalid range", description: err, variant: "destructive" }); return; }
+    setRangeError(null);
     setPreview(null);
     previewMutation.mutate();
   };
 
   const onEmailToMe = () => {
     if (!picked) return;
+    const err = validateCustomRange();
+    if (err) { setRangeError(err); toast({ title: "Invalid range", description: err, variant: "destructive" }); return; }
+    setRangeError(null);
     emailMutation.mutate([]); // empty → server uses requester's email
   };
 
@@ -129,7 +178,23 @@ export default function ReportsArchive() {
       toast({ title: "Enter at least one email", variant: "destructive" });
       return;
     }
+    const err = validateCustomRange();
+    if (err) { setRangeError(err); toast({ title: "Invalid range", description: err, variant: "destructive" }); return; }
+    setRangeError(null);
     emailMutation.mutate(list);
+  };
+
+  const onStartEdit = () => {
+    setCustomStart(resolved.startDate);
+    setCustomEnd(resolved.endDate);
+    setEditingRange(true);
+    setRangeError(null);
+  };
+  const onResetRange = () => {
+    setCustomStart(resolved.startDate);
+    setCustomEnd(resolved.endDate);
+    setEditingRange(false);
+    setRangeError(null);
   };
 
   if (!isAuthorized) {
@@ -223,13 +288,67 @@ export default function ReportsArchive() {
               />
             </div>
             <div>
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                Resolved range
-              </Label>
-              <div className="mt-1.5 flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/20 text-sm">
-                <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                <span className="font-mono">{hint || "—"}</span>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Resolved range
+                </Label>
+                {!editingRange ? (
+                  <button
+                    type="button"
+                    onClick={onStartEdit}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition"
+                    data-testid="btn-edit-range"
+                  >
+                    <Pencil className="w-3 h-3" /> Edit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onResetRange}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition"
+                    data-testid="btn-reset-range"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Reset to auto
+                  </button>
+                )}
               </div>
+              {!editingRange ? (
+                <div className="mt-1.5 flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/20 text-sm">
+                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                  <span className="font-mono">{hint || "—"}</span>
+                </div>
+              ) : (
+                <div className="mt-1.5 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={customStart}
+                      max={customEnd || undefined}
+                      onChange={(e) => { setCustomStart(e.target.value); setRangeError(null); setPreview(null); }}
+                      className="text-sm"
+                      data-testid="report-custom-start"
+                      aria-label="Custom start date"
+                    />
+                    <span className="text-muted-foreground text-sm">→</span>
+                    <Input
+                      type="date"
+                      value={customEnd}
+                      min={customStart || undefined}
+                      onChange={(e) => { setCustomEnd(e.target.value); setRangeError(null); setPreview(null); }}
+                      className="text-sm"
+                      data-testid="report-custom-end"
+                      aria-label="Custom end date"
+                    />
+                  </div>
+                  {rangeError ? (
+                    <p className="text-xs text-red-600">{rangeError}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Custom range overrides the auto window. Server still labels the report as <span className="font-medium">{type}</span>.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
