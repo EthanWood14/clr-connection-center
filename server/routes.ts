@@ -1679,12 +1679,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // Immediately fires EOD reminder check for the calling user, sending to their
   // own email address. Useful for verifying the template before relying on the cron.
   app.post("/api/admin/eod-reminders/test", requireAuth, async (req: any, res: any) => {
-    if (req.user?.role !== "admin" && !req.user?.superAdmin) {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
       return res.status(403).json({ error: "Admin only" });
     }
     try {
-      await checkAndSendEodReminders({ testClrId: req.user.id, testEmail: req.user.email });
-      return res.json({ ok: true, message: `Test reminder sent to ${req.user.email}` });
+      await checkAndSendEodReminders({ testClrId: me.id, testEmail: me.email });
+      return res.json({ ok: true, message: `Test reminder sent to ${me.email}` });
     } catch (e: any) {
       console.error("[eod-reminder-test]", e?.message ?? e);
       return res.status(500).json({ error: e?.message ?? "Failed to send test reminder" });
@@ -1693,7 +1695,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── EOD Reminder: force-run cron now (super admin only) ──────────────────
   app.post("/api/admin/eod-reminders/run-now", requireAuth, async (req: any, res: any) => {
-    if (!req.user?.superAdmin) return res.status(403).json({ error: "Super admin only" });
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me?.superAdmin) return res.status(403).json({ error: "Super admin only" });
     try {
       await checkAndSendEodReminders();
       return res.json({ ok: true, message: "EOD reminder check completed" });
