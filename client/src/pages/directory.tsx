@@ -30,6 +30,7 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LoCsvImport } from "@/components/lo-csv-import";
 import { LoStatusBadge } from "@/components/lo-status-badge";
+import { copyToClipboard } from "@/lib/utils";
 
 // ── Tier / Status display maps ────────────────────────────────────────────────
 const TIER_LABELS: Record<number, string> = { 1: "VIP", 2: "Standard", 3: "Low" };
@@ -85,7 +86,7 @@ function CopyBtn({ value, label }: { value: string; label: string }) {
   const { toast } = useToast();
   const [done, setDone] = useState(false);
   const copy = () => {
-    navigator.clipboard.writeText(value).then(() => {
+    copyToClipboard(value).then(() => {
       setDone(true);
       toast({ title: `${label} copied` });
       setTimeout(() => setDone(false), 1500);
@@ -148,7 +149,7 @@ function CredBlock({
   const handleCopy = async () => {
     const pass = await fetchPlaintext();
     if (pass) {
-      navigator.clipboard.writeText(pass).then(() => {
+      copyToClipboard(pass).then(() => {
         toast({ title: "password copied" });
       });
     }

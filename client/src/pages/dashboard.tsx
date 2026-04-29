@@ -23,6 +23,7 @@ import {
 import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
 import { HelpIcon, OnboardingChecklist, PageTooltip, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
+import { copyToClipboard } from "@/lib/utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -136,7 +137,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0"
-      onClick={() => { navigator.clipboard.writeText(value).then(() => { setCopied(true); toast({ title: `${label} copied` }); setTimeout(() => setCopied(false), 1500); }); }}>
+      onClick={() => { copyToClipboard(value).then(() => { setCopied(true); toast({ title: `${label} copied` }); setTimeout(() => setCopied(false), 1500); }); }}>
       <Copy className={`w-3 h-3 ${copied ? "text-green-500" : ""}`} />
     </Button>
   );

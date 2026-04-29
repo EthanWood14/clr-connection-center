@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { copyToClipboard } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -563,7 +564,7 @@ function InviteUserDialog({ open, onOpenChange, orgId }: { open: boolean; onOpen
             <p>Invite created. Share this link with the user:</p>
             <div className="font-mono text-xs break-all rounded-md border bg-muted/40 p-3">{inviteLink}</div>
             <Button variant="outline" size="sm" onClick={() => {
-              navigator.clipboard.writeText(inviteLink);
+              copyToClipboard(inviteLink);
               toast({ title: "Copied" });
             }}>
               <Copy className="w-4 h-4 mr-2" /> Copy Link

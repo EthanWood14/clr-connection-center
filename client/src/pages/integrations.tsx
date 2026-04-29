@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { parseDbTimestamp } from "@/lib/utils";
+import { parseDbTimestamp, copyToClipboard } from "@/lib/utils";
 import { Copy, Eye, EyeOff, Save, CheckCircle2, Circle, Plug, RefreshCw, Lock } from "lucide-react";
 import { useLocation } from "wouter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -69,7 +69,7 @@ function CopyBtn({ value }: { value: string }) {
       variant="outline"
       size="sm"
       onClick={() => {
-        navigator.clipboard.writeText(value);
+        copyToClipboard(value);
         toast({ title: "Copied!", description: value });
       }}
     >

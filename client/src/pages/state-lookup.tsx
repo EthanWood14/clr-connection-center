@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight } from "lucide-react";
+import { copyToClipboard } from "@/lib/utils";
 
 const ALL_STATES: { abbr: string; name: string }[] = [
   { abbr: "AL", name: "Alabama" }, { abbr: "AK", name: "Alaska" },
@@ -53,7 +54,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       size="icon"
       className="h-6 w-6 shrink-0"
       onClick={() => {
-        navigator.clipboard.writeText(value).then(() => {
+        copyToClipboard(value).then(() => {
           setCopied(true);
           toast({ title: `${label} copied` });
           setTimeout(() => setCopied(false), 1500);

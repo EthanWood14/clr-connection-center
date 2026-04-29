@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -168,7 +169,7 @@ export default function SuperAdmin() {
             </p>
             <Button variant="outline" size="sm"
               onClick={() => {
-                navigator.clipboard.writeText(`${createResult?.adminEmail} / ${createResult?.tempPassword}`);
+                copyToClipboard(`${createResult?.adminEmail} / ${createResult?.tempPassword}`);
                 toast({ title: "Copied", description: "Credentials copied to clipboard" });
               }}>
               <Copy className="w-4 h-4 mr-2" /> Copy Credentials

@@ -1216,8 +1216,8 @@ cron.schedule("* * * * *", async () => {
       lastReportFiredAt.weekly = nowDateKey;
       try { await sendReport("weekly"); } catch (e: any) { console.error("Scheduled weekly report failed:", e?.message ?? e); }
     }
-    // monthly — 16th
-    if (s.monthly_enabled && now.getDate() === 16 && lastReportFiredAt.monthly !== nowDateKey) {
+    // monthly — 1st of the month
+    if (s.monthly_enabled && now.getDate() === 1 && lastReportFiredAt.monthly !== nowDateKey) {
       lastReportFiredAt.monthly = nowDateKey;
       try { await sendReport("monthly"); } catch (e: any) { console.error("Scheduled monthly report failed:", e?.message ?? e); }
     }
@@ -1657,7 +1657,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -4884,7 +4884,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             </tr>
           </table>
 
-          <!-- Full outcome breakdown — all 6 outcome types -->
+          <!-- Full outcome breakdown — all 7 outcome types (callbacks + deferrals grouped) -->
           <div style="margin-bottom:20px">
             <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#0F182D">📊 Outcome Breakdown</p>
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;font-size:12px;table-layout:fixed">

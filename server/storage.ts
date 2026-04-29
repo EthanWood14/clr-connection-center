@@ -825,6 +825,39 @@ export interface IStorage {
   upsertDailyCallLog(data: InsertDailyCallLog): DailyCallLog;
 }
 
+function normalizeLoanOfficer(row: any): any {
+  if (!row) return row;
+  // Convert snake_case columns from raw sqlite into camelCase fields the
+  // frontend expects (mirrors what Drizzle returns).
+  const out = { ...row };
+  const map: Record<string, string> = {
+    full_name: "fullName",
+    first_name: "firstName",
+    last_name: "lastName",
+    nmls_id: "nmlsId",
+    nmls_status: "nmlsStatus",
+    nmls_states: "nmlsStates",
+    nmls_last_checked: "nmlsLastChecked",
+    nmls_license_expiration: "nmlsLicenseExpiration",
+    internal_status: "internalStatus",
+    total_times_worked: "totalTimesWorked",
+    last_assigned_date: "lastAssignedDate",
+    snooze_until: "snoozeUntil",
+    snooze_reason: "snoozeReason",
+    contact_email: "contactEmail",
+    org_id: "orgId",
+    created_at: "createdAt",
+    updated_at: "updatedAt",
+    do_not_call: "doNotCall",
+    profile_url: "profileUrl",
+    license_status: "licenseStatus",
+  };
+  for (const [snake, camel] of Object.entries(map)) {
+    if (snake in out && out[camel] === undefined) out[camel] = out[snake];
+  }
+  return out;
+}
+
 export class Storage implements IStorage {
   getUsers() {
     const oid = currentOrgId();
@@ -886,14 +919,16 @@ export class Storage implements IStorage {
   getLoanOfficers() {
     const oid = currentOrgId();
     if (oid != null) {
-      return sqlite.prepare(`SELECT * FROM loan_officers WHERE org_id = ?`).all(oid) as any[];
+      const rows = sqlite.prepare(`SELECT * FROM loan_officers WHERE org_id = ?`).all(oid) as any[];
+      return rows.map(normalizeLoanOfficer);
     }
     return db.select().from(loanOfficers).all();
   }
   getLoanOfficerById(id: number) {
     const oid = currentOrgId();
     if (oid != null) {
-      return sqlite.prepare(`SELECT * FROM loan_officers WHERE id = ? AND org_id = ? LIMIT 1`).get(id, oid) as any;
+      const row = sqlite.prepare(`SELECT * FROM loan_officers WHERE id = ? AND org_id = ? LIMIT 1`).get(id, oid) as any;
+      return row ? normalizeLoanOfficer(row) : undefined;
     }
     return db.select().from(loanOfficers).where(eq(loanOfficers.id, id)).get();
   }

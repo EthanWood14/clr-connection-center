@@ -26,6 +26,7 @@ import {
   Play, Square, Clock, Radio,
 } from "lucide-react";
 import { HelpIcon, PageTooltip, markStep } from "@/components/onboarding";
+import { copyToClipboard } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
@@ -219,7 +220,7 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   const handleCopy = () => {
     if (!currentNode) return;
     const plain = placeholders ? resolvePlaceholdersPlain(currentNode.text, placeholders) : currentNode.text;
-    navigator.clipboard.writeText(plain);
+    copyToClipboard(plain);
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
