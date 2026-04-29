@@ -13,9 +13,9 @@ import { useLocation } from "wouter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InfoBanner } from "@/components/info-banner";
 
-const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
-const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
-const ZAPIER_INBOUND_URL = "https://www.wlc.it.com/api/webhook/mojo/zapier";
+const MOJO_URL = "https://www.westcapitallending.center/api/webhook/mojo";
+const BONZO_URL = "https://www.westcapitallending.center/api/webhook/bonzo";
+const ZAPIER_INBOUND_URL = "https://www.westcapitallending.center/api/webhook/mojo/zapier";
 
 type Settings = {
   mojoSecret: string;

@@ -12,8 +12,8 @@ import { Copy, Eye, EyeOff, Save, Webhook, CheckCircle2, Circle } from "lucide-r
 import { useLocation } from "wouter";
 import { formatLocalTime } from "@/lib/dates";
 
-const MOJO_URL = "https://www.wlc.it.com/api/webhook/mojo";
-const BONZO_URL = "https://www.wlc.it.com/api/webhook/bonzo";
+const MOJO_URL = "https://www.westcapitallending.center/api/webhook/mojo";
+const BONZO_URL = "https://www.westcapitallending.center/api/webhook/bonzo";
 
 type Settings = { mojoSecret: string; bonzoSecret: string };
 type WebhookEvent = {

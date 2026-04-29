@@ -1331,7 +1331,7 @@ cron.schedule("*/5 * * * *", async () => {
               <p>Hi ${String(r.clr_name || "")},</p>
               <p>Your appointment with <strong>${borrower}</strong> (LO: ${loName}) is in about 30 minutes.</p>
               <p><strong>Scheduled:</strong> ${when}</p>
-              <p style="margin-top:18px"><a href="https://www.wlc.it.com/#/outcomes" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Open CLR Connection Center</a></p>
+              <p style="margin-top:18px"><a href="https://www.westcapitallending.center/#/outcomes" style="background:#1A2B4A;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:500">Open CLR Connection Center</a></p>
             </body></html>`,
           });
         } catch (e: any) { console.error(`[appt-30m] email failed outcome=${r.id}:`, e?.message ?? e); }
