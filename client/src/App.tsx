@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
-import { NmlsOverduePopup } from "@/components/nmls-overdue-popup";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
@@ -204,7 +203,6 @@ function AuthenticatedApp() {
   return (
     <SidebarProvider style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
-      <NmlsOverduePopup />
       <DailyReportGate>
         <div className="flex h-screen w-full overflow-hidden flex-col">
           <ImpersonationBanner />

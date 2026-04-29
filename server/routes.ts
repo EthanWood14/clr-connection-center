@@ -1049,17 +1049,6 @@ function runNmlsEscalations() {
   }
 }
 
-// Run NMLS checks on the 1st of every other month (Jan, Mar, May, Jul, Sep, Nov) at 8am UTC.
-// Default interval is 2 months; the period key logic handles other intervals automatically.
-cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
-  try { triggerNmlsChecks(); } catch (e) { console.error("NMLS check trigger error:", e); }
-});
-
-// Check for escalations every morning at 9am
-cron.schedule("0 9 * * *", () => {
-  try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
-});
-
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
@@ -1152,32 +1141,6 @@ function runGoalAutoAdjust() {
   console.log(`[goal-auto-adjust] processed ${rows.length} users for week ${startDate} – ${endDate}`);
 }
 
-// Re-notify pending NMLS checks every morning at 8:30am so they surface daily
-cron.schedule("30 8 * * *", () => {
-  try {
-    const periodKey = getNmlsPeriodKey();
-    const allChecks = storageExtra.getNmlsChecksForPeriod(periodKey);
-    const los = storage.getLoanOfficers();
-    const pending = allChecks.filter((c: any) => c.status === "pending");
-    for (const check of pending) {
-      if (!check.assigned_to) continue;
-      const lo = los.find((l: any) => l.id === check.lo_id);
-      if (!lo) continue;
-      const title = "NMLS License Check Reminder";
-      const message = `Reminder: Please verify ${lo.fullName}'s NMLS license is still active. Click here to confirm.`;
-      // Create a fresh unread notification so it appears daily
-      storage.createNotification({
-        userId: check.assigned_to,
-        type: "nmls_check",
-        title,
-        message,
-        isRead: false,
-      });
-      sendPushToUser(check.assigned_to, { title, body: message, url: "/nmls-checks" }).catch(() => {});
-    }
-  } catch (e) { console.error("NMLS daily reminder error:", e); }
-});
-
 // ── NMLS license auto-verification (Consumer Access) ────────────────────────
 // Hits NMLS Consumer Access for each LO with an NMLS ID, stores status + licensed
 // states. Consumer Access is usually behind Cloudflare Turnstile; when blocked
@@ -1246,15 +1209,6 @@ async function verifyAllLoNmls(): Promise<{ checked: number; blocked: number; fl
   }
   return { checked, blocked, flagged };
 }
-
-// Nightly NMLS license check — 2am UTC
-cron.schedule("0 2 * * *", async () => {
-  try {
-    console.log("[nmls] starting nightly license verification");
-    const result = await verifyAllLoNmls();
-    console.log(`[nmls] nightly verify complete: checked=${result.checked} blocked=${result.blocked} flagged=${result.flagged}`);
-  } catch (e) { console.error("NMLS nightly verify error:", e); }
-});
 
 // ── Incomplete LO profile notifications ─────────────────────────────────────
 // Runs every 3 days at 9am UTC. For each active LO missing nmlsId, phone, or
@@ -6749,6 +6703,43 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/super-admin/exit-impersonate", requireAuth, requireSuperAdmin, (req: any, res) => {
     const originalOrgId = clearImpersonationCookie(req, res);
     res.json({ ok: true, orgId: originalOrgId });
+  });
+
+  // List all users across all orgs (for SA user management)
+  app.get("/api/super-admin/users", requireAuth, requireSuperAdmin, (_req: any, res) => {
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const users = sqlite.prepare(`
+        SELECT u.id, u.name, u.email, u.org_id, u.super_admin,
+               COALESCE(o.name, 'Unknown') AS org_name
+        FROM users u
+        LEFT JOIN orgs o ON o.id = u.org_id
+        ORDER BY u.super_admin DESC, o.name, u.name
+      `).all();
+      res.json(users);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Toggle super_admin on any user
+  app.patch("/api/super-admin/users/:id/toggle-super-admin", requireAuth, requireSuperAdmin, (req: any, res) => {
+    const targetId = parseInt(req.params.id);
+    if (isNaN(targetId)) return res.status(400).json({ error: "Invalid user id" });
+    // Prevent self-revocation
+    if (req.session_user?.id === targetId) {
+      return res.status(400).json({ error: "Cannot change your own super admin status" });
+    }
+    try {
+      const sqlite = storageExtra.getSqlite();
+      const row = sqlite.prepare("SELECT super_admin FROM users WHERE id = ?").get(targetId) as any;
+      if (!row) return res.status(404).json({ error: "User not found" });
+      const newVal = row.super_admin ? 0 : 1;
+      sqlite.prepare("UPDATE users SET super_admin = ? WHERE id = ?").run(newVal, targetId);
+      res.json({ ok: true, superAdmin: newVal === 1 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── Invite flow ────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Building2, Plus, Shield, ExternalLink, Pause, Copy, AlertTriangle } from "lucide-react";
+import { Building2, Plus, Shield, ExternalLink, Pause, Copy, AlertTriangle, UserCog } from "lucide-react";
 
 interface Org {
   id: number;
@@ -33,6 +33,31 @@ export default function SuperAdmin() {
   const [createResult, setCreateResult] = useState<{
     adminEmail: string; tempPassword: string; name: string;
   } | null>(null);
+  const [promoteConfirm, setPromoteConfirm] = useState<number | null>(null);
+
+  interface SAUser {
+    id: number;
+    name: string;
+    email: string;
+    org_id: number;
+    org_name: string;
+    super_admin: number;
+  }
+
+  const { data: saUsers = [], isLoading: usersLoading } = useQuery<SAUser[]>({
+    queryKey: ["/api/super-admin/users"],
+    enabled: !!user?.superAdmin,
+  });
+
+  const toggleSuperAdmin = useMutation({
+    mutationFn: (id: number) => apiRequest("PATCH", `/api/super-admin/users/${id}/toggle-super-admin`),
+    onSuccess: () => {
+      toast({ title: "Updated", description: "Super admin status changed." });
+      queryClient.invalidateQueries({ queryKey: ["/api/super-admin/users"] });
+      setPromoteConfirm(null);
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   const { data: orgs = [], isLoading } = useQuery<Org[]>({
     queryKey: ["/api/super-admin/orgs"],
@@ -149,6 +174,87 @@ export default function SuperAdmin() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserCog className="w-5 h-5" /> Super Admin Users
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {usersLoading ? (
+            <div className="text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-12 text-xs text-muted-foreground px-3 py-2 border-b font-medium">
+                <div className="col-span-4">Name</div>
+                <div className="col-span-4">Email</div>
+                <div className="col-span-2">Org</div>
+                <div className="col-span-2 text-right">SA Status</div>
+              </div>
+              {saUsers.map((u) => (
+                <div key={u.id} className="grid grid-cols-12 items-center px-3 py-3 rounded-md border hover:bg-accent/30 text-sm">
+                  <div className="col-span-4 font-medium">{u.name}</div>
+                  <div className="col-span-4 text-xs text-muted-foreground truncate">{u.email}</div>
+                  <div className="col-span-2 text-xs">{u.org_name}</div>
+                  <div className="col-span-2 flex justify-end">
+                    {u.super_admin ? (
+                      <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 cursor-pointer"
+                        onClick={() => {
+                          if (u.id === user?.id) {
+                            toast({ title: "Cannot remove yourself", description: "You cannot revoke your own super admin.", variant: "destructive" });
+                            return;
+                          }
+                          setPromoteConfirm(u.id);
+                        }}>
+                        Super Admin
+                      </Badge>
+                    ) : (
+                      <Button size="sm" variant="outline"
+                        onClick={() => setPromoteConfirm(u.id)}
+                        data-testid={`button-promote-${u.id}`}>
+                        <Shield className="w-3 h-3 mr-1" /> Grant SA
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Promote/Revoke confirm dialog */}
+      <Dialog open={promoteConfirm !== null} onOpenChange={(v) => !v && setPromoteConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {saUsers.find(u => u.id === promoteConfirm)?.super_admin
+                ? "Revoke Super Admin"
+                : "Grant Super Admin"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-sm space-y-2">
+            <p>User: <strong>{saUsers.find(u => u.id === promoteConfirm)?.name}</strong></p>
+            <p className="text-muted-foreground">
+              {saUsers.find(u => u.id === promoteConfirm)?.super_admin
+                ? "This will remove their super admin access immediately."
+                : "This grants full super admin access to the entire platform. Only do this for trusted administrators."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPromoteConfirm(null)}>Cancel</Button>
+            <Button
+              variant={saUsers.find(u => u.id === promoteConfirm)?.super_admin ? "destructive" : "default"}
+              disabled={toggleSuperAdmin.isPending}
+              onClick={() => promoteConfirm !== null && toggleSuperAdmin.mutate(promoteConfirm)}
+            >
+              {toggleSuperAdmin.isPending ? "Saving…" :
+                saUsers.find(u => u.id === promoteConfirm)?.super_admin ? "Revoke" : "Grant"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <CreateOrgDialog open={createOpen} onOpenChange={setCreateOpen}
         onCreated={(r) => { setCreateResult(r); queryClient.invalidateQueries({ queryKey: ["/api/super-admin/orgs"] }); }}

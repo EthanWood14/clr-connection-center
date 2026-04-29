@@ -170,13 +170,13 @@ const help = {
 } as const;
 
 const mainItems: NavItem[] = [
-  { title: "Dashboard",       url: "/",            icon: LayoutDashboard, help: help.dashboard },
-  { title: "Script",          url: "/call-script", icon: PhoneCall,       help: help.script },
-  { title: "Assignments",     url: "/assignments", icon: CalendarCheck,   help: help.assignments },
-  { title: "Directory",       url: "/directory",   icon: Users,           help: help.directory },
-  { title: "Call History",    url: "/outcomes",    icon: ClipboardList,   help: help.callHistory },
-  { title: "EOD Report",      url: "/eod-report",  icon: FileText,        help: help.eodReport },
-  { title: "Appointments",    url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
+  { title: "Home",                  url: "/",            icon: LayoutDashboard, help: help.dashboard },
+  { title: "Calling Script",        url: "/call-script", icon: PhoneCall,       help: help.script },
+  { title: "Your Call List",        url: "/assignments", icon: CalendarCheck,   help: help.assignments },
+  { title: "LO Directory",          url: "/directory",   icon: Users,           help: help.directory },
+  { title: "Input Results",         url: "/outcomes",    icon: ClipboardList,   help: help.callHistory },
+  { title: "EOD Report",            url: "/eod-report",  icon: FileText,        help: help.eodReport },
+  { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
 ];
 
 const teamItems: NavItem[] = [
@@ -190,8 +190,7 @@ const toolItems: NavItem[] = [
   { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
   { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
   { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
-  { title: "NMLS License",    url: "/nmls-status", icon: ShieldCheck },
-  { title: "NMLS",            url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
+  { title: "NMLS Tracker",    url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
 ];
 
 const adminItems: NavItem[] = [
@@ -254,14 +253,6 @@ export function AppSidebar() {
     },
   });
 
-  // Pending NMLS checks badge
-  const { data: nmlsData } = useQuery<any>({
-    queryKey: ["/api/nmls-checks/my-pending"],
-    refetchInterval: 60000,
-    enabled: !!user,
-  });
-  const nmslPendingCount = nmlsData?.checks?.length ?? 0;
-
   const appointmentCount = outcomes.length;
 
   // ── Chat unread badge ──────────────────────────────────────────────────────
@@ -310,7 +301,6 @@ export function AppSidebar() {
   function getBadgeCount(badge?: string) {
     if (badge === "appointments") return appointmentCount;
     if (badge === "chat") return unreadChatCount;
-    if (badge === "nmls") return nmslPendingCount;
     return 0;
   }
 
@@ -439,21 +429,21 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {/* SUPER ADMIN (super-admin only) */}
-        {user?.superAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-              Super Admin
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {renderItems([
-                  { title: "Organizations", url: "/super-admin", icon: ShieldCheck },
-                ])}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
+        {/* HELP — always visible, above Integrations and Super Admin */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Help
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems([
+                { title: "Help & Support",  url: "/support",  icon: LifeBuoy },
+                { title: "Help Videos",     url: "/support",  icon: Video },
+                { title: "Install App",     url: "/install",  icon: Smartphone },
+              ])}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
         {/* INTEGRATIONS (admin only) */}
         {user?.role === "admin" && (
@@ -467,24 +457,21 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {/* HELP */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Help
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {renderItems([
-                { title: "Help & Support", url: "/support", icon: LifeBuoy },
-                { title: "Help Videos", url: "/support", icon: Video },
-                { title: "Install App", url: "/install", icon: Smartphone },
-                ...(user?.role === "admin"
-                  ? [{ title: "Integrations", url: "/integrations", icon: Plug } as NavItem]
-                  : []),
-              ])}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* SUPER ADMIN (super-admin only) */}
+        {user?.superAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+              Super Admin
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {renderItems([
+                  { title: "SA Console", url: "/super-admin", icon: ShieldCheck },
+                ])}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-4 border-t border-sidebar-border">
