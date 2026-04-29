@@ -18,6 +18,28 @@ import {
 } from "@shared/schema";
 
 const dbPath = process.env.DATABASE_PATH ?? "clr.db";
+
+// Ensure the parent directory exists before opening the SQLite database.
+// On Railway, the volume should mount at /data and create the dir for us.
+// If the volume isn't mounted (or hasn't been provisioned yet), better-sqlite3
+// would otherwise throw "Cannot open database because the directory does not exist"
+// and crash the process before any HTTP server starts — leaving the site fully down.
+// Creating the dir here lets the process boot; if the volume is missing, the
+// data lives only in the container until the volume is reattached.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require("path");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require("fs");
+  const parentDir = path.dirname(path.resolve(dbPath));
+  if (parentDir && parentDir !== "." && !fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
+    console.warn(`[storage] Created missing DB parent directory: ${parentDir} (volume may not be mounted)`);
+  }
+} catch (e: any) {
+  console.error(`[storage] Failed to ensure DB parent dir for ${dbPath}:`, e?.message || e);
+}
+
 const sqlite = new Database(dbPath);
 
 // ── Critical pre-Drizzle migrations ──────────────────────────────────────────
