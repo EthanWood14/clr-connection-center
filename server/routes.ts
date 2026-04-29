@@ -424,7 +424,7 @@ async function sendReport(
     const myTransfers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "transfer").length;
     const myAppointments    = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "appointment").length;
     const myFellThrough     = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "fell_through").length;
-    const myCallbacks       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "callback_requested").length;
+    const myCallbacks       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "callback_requested" || outcomeTypeOf(o) === "deferral").length;
     const myFutureContacts  = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "future_contact").length;
     const myNoAnswers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "no_answer").length;
 
@@ -587,7 +587,7 @@ async function sendReport(
             ${cellHead("Transfers")}
             ${cellHead("Appointments")}
             ${cellHead("Fell Throughs")}
-            ${cellHead("Callbacks")}
+            ${cellHead("Callbacks &amp; Deferrals")}
             ${cellHead("Future Contacts")}
             ${cellHead("No Answers")}
           </tr>
@@ -772,7 +772,7 @@ async function sendReport(
             <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
             <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appointments</th>
             <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
-            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks</th>
+            <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks &amp; Deferrals</th>
             <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Future Contacts</th>
             <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">No Answer</th>
           </tr>
