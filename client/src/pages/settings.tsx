@@ -2204,7 +2204,7 @@ export default function Settings() {
                   >
                     {u.isActive ? "Active" : "Inactive"}
                   </Badge>
-                  {(u.role === 'assistant' || (u.role === 'admin' && (u.isClr ?? u.is_clr))) && <SetGoalsButton user={u} />}
+                  {(u.role === 'assistant' || u.role === 'admin') && <SetGoalsButton user={u} />}
                   <ManagerToggleButton user={u} />
                 </div>
               </div>

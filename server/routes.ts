@@ -413,10 +413,10 @@ async function sendReport(
   const clrStats: ClrStats[] = clrs.map((u: any) => {
     const uid = u.id;
 
-    // Calls from call logs
+    // Calls from call logs (raw SQLite returns snake_case)
     const myCallsFromLogs = callLogs
-      .filter((l: any) => l.assistantId === uid)
-      .reduce((sum: number, l: any) => sum + (l.callsMade || 0), 0);
+      .filter((l: any) => (l.assistant_id ?? l.assistantId) === uid)
+      .reduce((sum: number, l: any) => sum + Number(l.calls_made ?? l.callsMade ?? 0), 0);
 
     // Outcomes
     const myOutcomes = outcomes.filter((o: any) => (o.assistantId || o.assistant_id) === uid);
@@ -3564,16 +3564,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/call-logs/summary", (req, res) => {
     const from = (req.query.from as string) || "2000-01-01";
     const to = (req.query.to as string) || new Date().toISOString().split("T")[0];
-    const allLogs = storage.getCallLogsByRange(from, to);
+    const allLogs = storage.getCallLogsByRange(from, to) as any[];
     const users = storage.getUsers();
-    // Aggregate by assistant
+    // Aggregate by assistant — getCallLogsByRange returns snake_case from raw SQLite
     const summary: Record<number, { assistantId: number; name: string; totalCalls: number }> = {};
-    allLogs.forEach(l => {
-      if (!summary[l.assistantId]) {
-        const u = users.find(u => u.id === l.assistantId);
-        summary[l.assistantId] = { assistantId: l.assistantId, name: u?.name ?? `CLR #${l.assistantId}`, totalCalls: 0 };
+    allLogs.forEach((l: any) => {
+      const aid = Number(l.assistant_id ?? l.assistantId);
+      const calls = Number(l.calls_made ?? l.callsMade ?? 0);
+      if (!aid) return;
+      if (!summary[aid]) {
+        const u = users.find(u => u.id === aid);
+        summary[aid] = { assistantId: aid, name: u?.name ?? `CLR #${aid}`, totalCalls: 0 };
       }
-      summary[l.assistantId].totalCalls += l.callsMade;
+      summary[aid].totalCalls += calls;
     });
     res.json(Object.values(summary));
   });
@@ -4637,6 +4640,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         }
       } catch (e) {
         // Enrichment is best-effort; fall back to the unenriched report.
+        if (report && (report as any).outcomeBreakdown == null) {
+          (report as any).outcomeBreakdown = {};
+        }
       }
     }
     res.json({ report, activities });
@@ -5294,7 +5300,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const totalAppointments = outcomes.filter(o => ot(o) === "appointment").length;
     const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
     const totalDeferrals = outcomes.filter(o => ot(o) === "deferral").length;
+    const totalCallbacks = outcomes.filter(o => ot(o) === "callback_requested").length;
+    const totalFutureContacts = outcomes.filter(o => ot(o) === "future_contact").length;
+    const totalNoAnswer = outcomes.filter(o => ot(o) === "no_answer").length;
     const transferRate = totalCalls > 0 ? +((totalTransfers / totalCalls) * 100).toFixed(1) : 0;
+
+    // Full outcome breakdown — always returns all 7 keys (zero counts for missing types)
+    const outcomeBreakdown: Record<string, number> = {
+      transfer: totalTransfers,
+      appointment: totalAppointments,
+      callback_requested: totalCallbacks,
+      deferral: totalDeferrals,
+      future_contact: totalFutureContacts,
+      fell_through: totalFellThrough,
+      no_answer: totalNoAnswer,
+    };
 
     // Per-day breakdown for trend chart
     const start = new Date(startDate + "T00:00:00");
@@ -5476,9 +5496,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         appointments: totalAppointments,
         fellThrough: totalFellThrough,
         deferrals: totalDeferrals,
+        callbacks: totalCallbacks,
+        futureContacts: totalFutureContacts,
+        noAnswer: totalNoAnswer,
         transferRate,
         avgCallsPerDay,
       },
+      outcomeBreakdown,
       daily,
       hourly,
       transferByType,
