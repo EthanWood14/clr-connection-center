@@ -171,10 +171,52 @@ function EndState({ isTransfer, onReset }: { isTransfer: boolean; onReset: () =>
 }
 
 // ─── Script Runner ────────────────────────────────────────────────────────────
-function ScriptRunner({ scriptId }: { scriptId: number }) {
+// ─── Map script terminal label/text to a recorder outcome ────────────────────
+// Used when the script ends to pre-fill the call recorder. Falls back to null
+// (recorder shows the picker) if no clear match is found.
+function inferOutcomeFromScriptEnd(
+  endingLabel: string,
+  endingNodeText: string,
+): RecorderOutcomeKey | null {
+  const l = (endingLabel || "").toLowerCase();
+  const n = (endingNodeText || "").toLowerCase();
+  const both = `${l} ${n}`;
+
+  // Most specific patterns first.
+  if (/transfer.*appointment|appointment.*transfer|warm transfer.*appt/.test(both)) return "transfer_appointment";
+  if (/transfer|warm transfer|hand off|connecting you|connect you|loan officer now/.test(both)) return "transfer_direct";
+  if (/(book|schedule|set).*appointment|appointment (set|booked|scheduled)|prequal.*appt/.test(both)) return "appointment";
+  if (/call.*back|callback|i'?ll call|call later|reach out (later|tomorrow)|follow.?up call/.test(both)) return "callback_requested";
+  if (/voicemail|left.*message|leave.*message|\bvm\b/.test(both)) return "no_answer";
+  if (/no answer|didn'?t pick|busy signal|ring.*no answer/.test(both)) return "no_answer";
+  if (/not interested|don'?t want|remove me|\bdnc\b|do not call|hang up|hung up/.test(both)) return "fell_through";
+  if (/wrong (number|person)|not (the )?right (number|person)/.test(both)) return "fell_through";
+  if (/future contact|reach out (in|later)|months out|not ready/.test(both)) return "future_contact";
+  return null;
+}
+
+// Snapshot of the conversation path the user took through the script — used to
+// auto-populate notes on the recorder so they don't have to retype context.
+export interface ScriptPathSnapshot {
+  steps: { nodeText: string; chosenLabel: string }[];
+  endingLabel: string;
+  endingNodeText: string;
+  inferredOutcome: RecorderOutcomeKey | null;
+}
+
+function ScriptRunner({
+  scriptId,
+  onEnd,
+  onPathChange,
+}: {
+  scriptId: number;
+  onEnd?: (snapshot: ScriptPathSnapshot) => void;
+  onPathChange?: (steps: { nodeText: string; chosenLabel: string }[]) => void;
+}) {
   const placeholders = usePlaceholders();
   const [currentNode, setCurrentNode] = useState<ScriptNode | null>(null);
   const [history, setHistory] = useState<ScriptNode[]>([]);
+  const [pathSteps, setPathSteps] = useState<{ nodeText: string; chosenLabel: string }[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [ended, setEnded] = useState(false);
   const [wasTransfer, setWasTransfer] = useState(false);
@@ -186,7 +228,10 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   });
 
   useEffect(() => {
-    if (rootNode) { setCurrentNode(rootNode); setHistory([]); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1); }
+    if (rootNode) {
+      setCurrentNode(rootNode); setHistory([]); setPathSteps([]);
+      setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
+    }
   }, [rootNode]);
 
   const fetchNode = useCallback(async (nodeId: number): Promise<ScriptNode> => {
@@ -197,8 +242,24 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
   const handleResponse = async (resp: ScriptResponse) => {
     if (!currentNode) return;
     setSelectedLabel(resp.label);
+    // Capture the step (current node + chosen label) into the path snapshot.
+    const stepEntry = { nodeText: currentNode.text, chosenLabel: resp.label };
+    const newSteps = [...pathSteps, stepEntry];
+    setPathSteps(newSteps);
+    onPathChange?.(newSteps);
     await new Promise(r => setTimeout(r, 350));
-    if (!resp.next_node_id) { setEnded(true); setWasTransfer(resp.label.toLowerCase().includes("transfer")); return; }
+    if (!resp.next_node_id) {
+      setEnded(true);
+      const isXfer = resp.label.toLowerCase().includes("transfer");
+      setWasTransfer(isXfer);
+      onEnd?.({
+        steps: newSteps,
+        endingLabel: resp.label,
+        endingNodeText: currentNode.text,
+        inferredOutcome: inferOutcomeFromScriptEnd(resp.label, currentNode.text),
+      });
+      return;
+    }
     const next = await fetchNode(resp.next_node_id);
     setHistory(h => [...h, currentNode]);
     setCurrentNode(next); setSelectedLabel(null); setAnimKey(k => k + 1);
@@ -208,12 +269,17 @@ function ScriptRunner({ scriptId }: { scriptId: number }) {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
     const fresh = await fetchNode(prev.id);
+    const newSteps = pathSteps.slice(0, -1);
+    setPathSteps(newSteps);
+    onPathChange?.(newSteps);
     setCurrentNode(fresh); setHistory(h => h.slice(0, -1)); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
   };
 
   const handleReset = async () => {
     if (!rootNode) return;
     const fresh = await fetchNode(rootNode.id);
+    setPathSteps([]);
+    onPathChange?.([]);
     setCurrentNode(fresh); setHistory([]); setEnded(false); setSelectedLabel(null); setAnimKey(k => k + 1);
   };
 
@@ -1069,6 +1135,9 @@ function CallRecorder({
   onStartRecording,
   isRecording,
   recordingStartedAt,
+  scriptEndSignal,
+  scriptPathSteps,
+  onScriptEndConsumed,
 }: {
   borrowerName: string;
   onBorrowerNameChange: (v: string) => void;
@@ -1077,6 +1146,13 @@ function CallRecorder({
   onStartRecording: (started: boolean) => void;
   isRecording: boolean;
   recordingStartedAt: number | null;
+  // When the script reaches a terminal node, the parent passes the snapshot
+  // here. The recorder pre-fills the outcome + auto-builds notes from the path.
+  scriptEndSignal: ScriptPathSnapshot | null;
+  // Live conversation path — used to build a default notes string even when
+  // the user picks an outcome manually before the script ends.
+  scriptPathSteps: { nodeText: string; chosenLabel: string }[];
+  onScriptEndConsumed: () => void;
 }) {
   const { toast } = useToast();
   const [step, setStep] = useState<RecorderStep>("idle");
@@ -1087,6 +1163,7 @@ function CallRecorder({
   const [wizardNotes, setWizardNotes] = useState<string>("");
   const [wizardBorrower, setWizardBorrower] = useState<string>("");
   const [wizardPhone, setWizardPhone] = useState<string>("");
+  const [notesAutoFilled, setNotesAutoFilled] = useState(false);
   const [durationTick, setDurationTick] = useState(0);
 
   const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
@@ -1100,12 +1177,24 @@ function CallRecorder({
   const durationMs = recordingStartedAt ? Date.now() - recordingStartedAt : 0;
 
   const handleStart = () => {
-    if (!borrowerName.trim()) {
-      toast({ title: "Enter borrower name first", variant: "destructive" });
-      return;
-    }
+    // Borrower name is no longer required up front — it's captured in the
+    // wizard step when the call ends. This lets the user dial first and figure
+    // out who they're talking to during the conversation.
     onStartRecording(true);
     setStep("recording");
+  };
+
+  // Build a friendly notes string from the conversation path so the user
+  // doesn't have to retype context. They can still edit it.
+  const buildNotesFromPath = (steps: { nodeText: string; chosenLabel: string }[], endingLabel?: string) => {
+    if (steps.length === 0) return "";
+    const lines: string[] = [];
+    steps.forEach((s, i) => {
+      const trimmed = s.nodeText.length > 100 ? s.nodeText.slice(0, 100) + "…" : s.nodeText;
+      lines.push(`${i + 1}. “${trimmed}” → ${s.chosenLabel}`);
+    });
+    if (endingLabel) lines.push(`→ Ended: ${endingLabel}`);
+    return lines.join("\n");
   };
 
   const handleCancel = () => {
@@ -1117,6 +1206,7 @@ function CallRecorder({
     setWizardNotes("");
     setWizardBorrower("");
     setWizardPhone("");
+    setNotesAutoFilled(false);
     onStartRecording(false);
   };
 
@@ -1128,10 +1218,50 @@ function CallRecorder({
     setWizardBorrower(borrowerName);
     setWizardTransferType(choice.transferType ?? "");
     setWizardScheduled("");
-    setWizardNotes("");
+    // Auto-fill notes from the script conversation path if we have one and
+    // the user hasn't already typed something.
+    if (!notesAutoFilled) {
+      const auto = buildNotesFromPath(scriptPathSteps);
+      if (auto) {
+        setWizardNotes(auto);
+        setNotesAutoFilled(true);
+      } else {
+        setWizardNotes("");
+      }
+    }
     setWizardPhone("");
     setStep("wizard");
   };
+
+  // ── React to a script-end signal: pre-pick outcome + auto-fill notes ─────────
+  useEffect(() => {
+    if (!scriptEndSignal) return;
+    if (!isRecording) return;
+    // Only act if we're still in the recording step (haven't already picked).
+    if (step !== "recording") {
+      onScriptEndConsumed();
+      return;
+    }
+    const inferred = scriptEndSignal.inferredOutcome;
+    const auto = buildNotesFromPath(scriptEndSignal.steps, scriptEndSignal.endingLabel);
+    setWizardNotes(auto);
+    setNotesAutoFilled(true);
+    if (inferred) {
+      const choice = OUTCOME_CHOICES.find(c => c.key === inferred)!;
+      setChosenOutcome(inferred);
+      setWizardLoName(currentLoName || "");
+      setWizardBorrower(borrowerName);
+      setWizardTransferType(choice.transferType ?? "");
+      setWizardScheduled("");
+      setWizardPhone("");
+      setStep("wizard");
+      toast({
+        title: `Auto-detected: ${choice.label}`,
+        description: "Verify the details and log the call.",
+      });
+    }
+    onScriptEndConsumed();
+  }, [scriptEndSignal, isRecording, step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const outcomeChoice = chosenOutcome ? OUTCOME_CHOICES.find(c => c.key === chosenOutcome)! : null;
   const needsLo = outcomeChoice && (outcomeChoice.outcomeType === "transfer" || outcomeChoice.outcomeType === "appointment");
@@ -1159,6 +1289,7 @@ function CallRecorder({
   const submitMut = useMutation({
     mutationFn: async () => {
       if (!outcomeChoice) throw new Error("No outcome selected");
+      if (!wizardBorrower.trim()) throw new Error("Borrower name is required");
       const payload: Record<string, unknown> = {
         date: new Date().toISOString().split("T")[0],
         assistantId: 1,
@@ -1198,6 +1329,7 @@ function CallRecorder({
       setWizardNotes("");
       setWizardBorrower("");
       setWizardPhone("");
+      setNotesAutoFilled(false);
       onBorrowerNameChange("");
       onStartRecording(false);
     },
@@ -1270,8 +1402,20 @@ function CallRecorder({
           </div>
           <div className="space-y-2.5">
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Borrower name</label>
-              <Input value={wizardBorrower} onChange={e => setWizardBorrower(e.target.value)} className="h-9 text-sm mt-1" />
+              <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Borrower name <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                value={wizardBorrower}
+                onChange={e => setWizardBorrower(e.target.value)}
+                className={`h-9 text-sm mt-1 ${!wizardBorrower.trim() ? "ring-2 ring-amber-400 border-amber-400 focus-visible:ring-amber-500" : ""}`}
+                placeholder="Who did you talk to?"
+                autoFocus={!wizardBorrower.trim()}
+                data-testid="script-borrower-name"
+              />
+              {!wizardBorrower.trim() && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">Required to log the call.</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phone Number</label>
@@ -1412,6 +1556,13 @@ export default function CallScriptPage() {
   const [borrowerName, setBorrowerName] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+
+  // Bridge between ScriptRunner (which knows the conversation path) and
+  // CallRecorder (which logs the outcome). When the script ends, the snapshot
+  // is set; the recorder picks it up via useEffect, pre-fills the wizard, then
+  // calls onScriptEndConsumed to clear it.
+  const [scriptEndSignal, setScriptEndSignal] = useState<ScriptPathSnapshot | null>(null);
+  const [scriptPathSteps, setScriptPathSteps] = useState<{ nodeText: string; chosenLabel: string }[]>([]);
 
   const handleStartRecording = (started: boolean) => {
     if (started) {
@@ -1879,8 +2030,16 @@ export default function CallScriptPage() {
                 onStartRecording={handleStartRecording}
                 isRecording={isRecording}
                 recordingStartedAt={recordingStartedAt}
+                scriptEndSignal={scriptEndSignal}
+                scriptPathSteps={scriptPathSteps}
+                onScriptEndConsumed={() => setScriptEndSignal(null)}
               />
-              <ScriptRunner key={activeScript.id} scriptId={activeScript.id} />
+              <ScriptRunner
+                key={activeScript.id}
+                scriptId={activeScript.id}
+                onPathChange={setScriptPathSteps}
+                onEnd={(snap) => setScriptEndSignal(snap)}
+              />
             </>
           )
           : view === "flowchart"
