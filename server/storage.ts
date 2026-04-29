@@ -373,6 +373,10 @@ try {
   `);
 } catch {}
 
+// Auto-adjustment columns for goals
+try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN auto_adjust INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE clr_goals ADD COLUMN adjustment_basis TEXT`); } catch {}
+
 for (const t of ["users","loan_officers","lead_outcomes","daily_call_logs","forum_posts","forum_answers","forum_votes","forum_subscriptions","lo_assignments","unified_contacts","webhook_settings","webhook_events","bonzo_contacts","mojo_sessions","mojo_contacts"]) {
   try { sqlite.exec(`ALTER TABLE ${t} ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 }

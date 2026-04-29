@@ -3,12 +3,22 @@ import { ExternalLink, Mail } from "lucide-react";
 
 const NAV_LINKS = [
   { label: "Dashboard", href: "/" },
+  { label: "Script", href: "/call-script" },
   { label: "Assignments", href: "/assignments" },
   { label: "Directory", href: "/directory" },
-  { label: "Team Stats", href: "/leaderboard" },
-  { label: "Outcomes", href: "/outcomes" },
-  { label: "Reporting", href: "/reporting" },
+  { label: "Call History", href: "/outcomes" },
+  { label: "EOD Report", href: "/eod-report" },
+  { label: "Appointments", href: "/appointments" },
+  { label: "Stats", href: "/team-stats" },
+  { label: "Chat", href: "/chat" },
+  { label: "Forum", href: "/forum" },
+];
+
+const RESOURCE_LINKS = [
   { label: "Settings", href: "/settings" },
+  { label: "Integrations", href: "/integrations" },
+  { label: "Glossary", href: "/glossary" },
+  { label: "Status", href: "/status" },
 ];
 
 const LEGAL_LINKS = [
@@ -20,7 +30,7 @@ export function AppFooter() {
   return (
     <footer className="border-t bg-background text-muted-foreground text-xs mt-auto">
       <div className="max-w-[1400px] mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
 
           {/* Brand column */}
           <div className="space-y-3">
@@ -64,9 +74,25 @@ export function AppFooter() {
             </nav>
           </div>
 
+          {/* Resources column */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">Resources</p>
+            <div className="flex flex-col gap-1.5">
+              {RESOURCE_LINKS.map(({ label, href }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="hover:text-foreground transition-colors"
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
           {/* Legal & External column */}
           <div className="space-y-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">Legal & Resources</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mb-1">Legal</p>
             <div className="flex flex-col gap-1.5">
               {LEGAL_LINKS.map(({ label, href }) => (
                 <Link

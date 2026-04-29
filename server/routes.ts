@@ -199,6 +199,9 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
 
       const weightRecentTransfers = settings.weightRecentTransfers ?? 0.10;
 
+      // Small bonus for never-worked LOs so new additions get tried
+      const neverWorkedBonus = lastWorked ? 0 : 0.05;
+
       const score =
         settings.weightDaysSinceWorked * daysSinceNorm +
         settings.weightFrequency * freqScore +
@@ -206,7 +209,8 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
         settings.weightBoost * boostNorm +
         settings.weightPriorityTier * tierScore +
         weightRecentTransfers * recentXferScore +
-        Math.random() * 0.01; // tiny tiebreak noise
+        neverWorkedBonus +
+        ((lo.id % 100) / 10000); // deterministic tiebreak (stable across runs same day)
 
       return { lo, score, daysSince };
     })
@@ -1055,6 +1059,80 @@ cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
 cron.schedule("0 9 * * *", () => {
   try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
 });
+
+// ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
+cron.schedule("0 6 * * 1", () => {
+  try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
+});
+
+function runGoalAutoAdjust() {
+  const sqlite = storageExtra.getSqlite();
+  const rows = sqlite.prepare(`
+    SELECT user_id, calls_goal, transfers_goal, appointments_goal
+    FROM clr_goals WHERE auto_adjust = 1
+  `).all() as any[];
+  if (rows.length === 0) return;
+
+  // Last week range (previous Mon-Sun)
+  const today = new Date();
+  const dow = today.getDay(); // 0=Sun
+  const daysSinceMon = (dow + 6) % 7;
+  const thisMon = new Date(today); thisMon.setDate(today.getDate() - daysSinceMon);
+  const lastSun = new Date(thisMon); lastSun.setDate(thisMon.getDate() - 1);
+  const lastMon = new Date(thisMon); lastMon.setDate(thisMon.getDate() - 7);
+  const fmt = (d: Date) => d.toISOString().split("T")[0];
+  const startDate = fmt(lastMon);
+  const endDate = fmt(lastSun);
+
+  for (const g of rows) {
+    try {
+      const userId = g.user_id;
+      // Tally last week's calls/transfers/appointments for this user
+      const calls = (sqlite.prepare(`
+        SELECT COALESCE(SUM(dials_count),0) AS n FROM daily_call_logs
+        WHERE user_id = ? AND log_date BETWEEN ? AND ?
+      `).get(userId, startDate, endDate) as any)?.n ?? 0;
+      const outcomeRow = sqlite.prepare(`
+        SELECT
+          SUM(CASE WHEN outcome_type = 'transfer' THEN 1 ELSE 0 END) AS transfers,
+          SUM(CASE WHEN outcome_type = 'appointment' THEN 1 ELSE 0 END) AS appointments
+        FROM lead_outcomes
+        WHERE assistant_id = ? AND created_at >= ? AND created_at < datetime(?, '+1 day')
+      `).get(userId, startDate, endDate) as any;
+      const transfers = outcomeRow?.transfers ?? 0;
+      const appointments = outcomeRow?.appointments ?? 0;
+
+      const adjust = (actual: number, goal: number): number => {
+        if (!goal || goal <= 0) return goal;
+        const pct = actual / goal;
+        if (pct > 0.9) return Math.max(1, Math.round(goal * 1.05));
+        if (pct < 0.7) return Math.max(1, Math.round(goal * 0.95));
+        return goal;
+      };
+
+      const newCalls = adjust(calls, g.calls_goal);
+      const newTransfers = adjust(transfers, g.transfers_goal);
+      const newAppts = adjust(appointments, g.appointments_goal);
+
+      const basis = JSON.stringify({
+        weekOf: startDate,
+        actual: { calls, transfers, appointments },
+        before: { calls: g.calls_goal, transfers: g.transfers_goal, appointments: g.appointments_goal },
+        after: { calls: newCalls, transfers: newTransfers, appointments: newAppts },
+      });
+
+      sqlite.prepare(`
+        UPDATE clr_goals
+        SET calls_goal = ?, transfers_goal = ?, appointments_goal = ?,
+            adjustment_basis = ?, updated_at = datetime('now')
+        WHERE user_id = ?
+      `).run(newCalls, newTransfers, newAppts, basis, userId);
+    } catch (e) {
+      console.error(`[goal-auto-adjust] user ${g.user_id} failed:`, e);
+    }
+  }
+  console.log(`[goal-auto-adjust] processed ${rows.length} users for week ${startDate} – ${endDate}`);
+}
 
 // Re-notify pending NMLS checks every morning at 8:30am so they surface daily
 cron.schedule("30 8 * * *", () => {
@@ -5389,6 +5467,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                calls_goal AS callsGoal,
                transfers_goal AS transfersGoal,
                appointments_goal AS appointmentsGoal,
+               auto_adjust AS autoAdjust,
+               adjustment_basis AS adjustmentBasis,
                updated_at AS updatedAt
         FROM clr_goals WHERE user_id = ?
       `).get(userId) as any;
@@ -5401,6 +5481,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             transfers: row.transfersGoal ?? 0,
             appointments: row.appointmentsGoal ?? 0,
           },
+          autoAdjust: !!row.autoAdjust,
+          adjustmentBasis: row.adjustmentBasis ?? null,
         });
       }
       // Fallback: team default from the user's own stored weekly goal fields.
@@ -5431,19 +5513,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const calls = toInt(req.body?.callsGoal ?? req.body?.calls);
     const transfers = toInt(req.body?.transfersGoal ?? req.body?.transfers);
     const appointments = toInt(req.body?.appointmentsGoal ?? req.body?.appointments);
+    const autoAdjust = req.body?.autoAdjust ? 1 : 0;
     const orgId = req.session_user?.orgId ?? 1;
     try {
       const sqlite = storageExtra.getSqlite();
       sqlite.prepare(`
-        INSERT INTO clr_goals (user_id, org_id, calls_goal, transfers_goal, appointments_goal, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO clr_goals (user_id, org_id, calls_goal, transfers_goal, appointments_goal, auto_adjust, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(user_id) DO UPDATE SET
           calls_goal = excluded.calls_goal,
           transfers_goal = excluded.transfers_goal,
           appointments_goal = excluded.appointments_goal,
+          auto_adjust = excluded.auto_adjust,
           updated_at = datetime('now')
-      `).run(userId, orgId, calls, transfers, appointments);
-      res.json({ ok: true, userId, goals: { calls, transfers, appointments } });
+      `).run(userId, orgId, calls, transfers, appointments, autoAdjust);
+      res.json({ ok: true, userId, goals: { calls, transfers, appointments }, autoAdjust: !!autoAdjust });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to update goals" });
     }

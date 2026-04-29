@@ -1448,6 +1448,7 @@ function SetGoalsButton({ user }: { user: any }) {
   const [calls, setCalls] = useState("0");
   const [transfers, setTransfers] = useState("0");
   const [appointments, setAppointments] = useState("0");
+  const [autoAdjust, setAutoAdjust] = useState(false);
 
   const { data: goalData, isLoading } = useQuery<any>({
     queryKey: ["/api/goals", user.id],
@@ -1460,8 +1461,9 @@ function SetGoalsButton({ user }: { user: any }) {
       setCalls(String(goalData.goals.calls ?? 0));
       setTransfers(String(goalData.goals.transfers ?? 0));
       setAppointments(String(goalData.goals.appointments ?? 0));
+      setAutoAdjust(!!goalData.autoAdjust);
     }
-  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments]);
+  }, [goalData?.goals?.calls, goalData?.goals?.transfers, goalData?.goals?.appointments, goalData?.autoAdjust]);
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -1469,6 +1471,7 @@ function SetGoalsButton({ user }: { user: any }) {
         callsGoal: parseInt(calls) || 0,
         transfersGoal: parseInt(transfers) || 0,
         appointmentsGoal: parseInt(appointments) || 0,
+        autoAdjust,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/goals"] });
@@ -1514,6 +1517,19 @@ function SetGoalsButton({ user }: { user: any }) {
             <div className="space-y-1">
               <Label htmlFor={`appointments-${user.id}`}>Weekly Appointments Goal</Label>
               <Input id={`appointments-${user.id}`} type="number" min={0} value={appointments} onChange={e => setAppointments(e.target.value)} />
+            </div>
+            <div className="flex items-start justify-between gap-3 pt-2 border-t">
+              <div className="space-y-0.5">
+                <Label htmlFor={`auto-adjust-${user.id}`}>Auto-Adjust</Label>
+                {autoAdjust && (
+                  <p className="text-xs text-muted-foreground">Goal will adjust weekly based on performance (±5%)</p>
+                )}
+              </div>
+              <Switch
+                id={`auto-adjust-${user.id}`}
+                checked={autoAdjust}
+                onCheckedChange={setAutoAdjust}
+              />
             </div>
           </div>
           <DialogFooter>

@@ -312,6 +312,15 @@ function LOCard({
   onConfirmNmls?: (loId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { toast } = useToast();
+  const tierLabel = TIER_LABELS[lo.priorityTier] ?? "—";
+  const statusLabel = lo.internalStatus ?? "active";
+  const handleCopy = () => {
+    const text = `${lo.fullName ?? "(unnamed)"} | NMLS: ${lo.nmlsId ?? "n/a"} | Tier: ${tierLabel} | Status: ${statusLabel}`;
+    copyToClipboard(text).then(() => {
+      toast({ title: "Copied to clipboard", description: text });
+    });
+  };
   const states: string[] = (() => {
     try { return JSON.parse(lo.licensedStates || "[]"); } catch { return []; }
   })();
@@ -442,9 +451,30 @@ function LOCard({
               </Button>
             )}
             <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => onEdit(lo)}
+              title="Edit"
               data-testid={`button-edit-lo-${lo.id}`}>
               <Edit2 className="w-3.5 h-3.5" />
             </Button>
+            <Button variant="ghost" size="icon" className="w-7 h-7"
+              onClick={handleCopy}
+              title="Copy LO info to clipboard"
+              data-testid={`button-copy-lo-${lo.id}`}>
+              <Copy className="w-3.5 h-3.5" />
+            </Button>
+            {lo.nmlsId && (
+              <Button variant="ghost" size="icon" className="w-7 h-7" asChild
+                title="Open NMLS Consumer Access"
+                data-testid={`button-nmls-lo-${lo.id}`}>
+                <a
+                  href={`https://www.nmlsconsumeraccess.org/EntityDetails.aspx/INDIVIDUAL/${lo.nmlsId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </Button>
+            )}
             {lo.internalStatus === "archived" ? (
               <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-emerald-600"
                 onClick={() => onRestore(lo.id)} title="Restore to active"
@@ -453,13 +483,16 @@ function LOCard({
               </Button>
             ) : (
               <Button variant="ghost" size="icon" className="w-7 h-7 hover:text-destructive"
-                onClick={() => onDelete(lo.id)} data-testid={`button-delete-lo-${lo.id}`}>
+                onClick={() => onDelete(lo.id)} title="Delete"
+                data-testid={`button-delete-lo-${lo.id}`}>
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             )}
-            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={() => setExpanded(e => !e)}
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1"
+              onClick={() => setExpanded(e => !e)}
               data-testid={`button-expand-lo-${lo.id}`}>
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              <span>{expanded ? "Hide" : "View"}</span>
             </Button>
           </div>
         </div>
