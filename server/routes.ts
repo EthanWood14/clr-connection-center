@@ -2810,9 +2810,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
-  app.post("/api/assignments/generate", (req, res) => {
+  app.post("/api/assignments/generate", requireAuth, (req: any, res: any) => {
     const date = (req.body.date as string) || new Date().toISOString().split("T")[0];
     const today = new Date().toISOString().split("T")[0];
+    const callingUser = req.session_user!;
+    const sqlite = storageExtra.getRawSqlite();
 
     // ── Block generation for past dates entirely ────────────────────────────────
     if (date < today) {
@@ -2821,6 +2823,48 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         locked: true,
         date,
       });
+    }
+
+    // ── EOD gate: previous weekday must have an EOD report for this CLR ─────────
+    // Compute the previous weekday (skip weekends)
+    const prevWeekday = (() => {
+      const d = new Date(today + "T12:00:00Z");
+      do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+      return d.toISOString().split("T")[0];
+    })();
+
+    // Check if the calling user is a CLR (assistant or admin+isClr)
+    const callerIsClr = callingUser.role === "assistant" || (callingUser.role === "admin" && (callingUser as any).isClr);
+
+    if (callerIsClr) {
+      const myEod = sqlite.prepare(
+        `SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?`
+      ).get(callingUser.userId, prevWeekday) as any;
+      if (!myEod) {
+        return res.status(403).json({
+          error: `You must submit your EOD report for ${prevWeekday} before generating today's assignments.`,
+          eodMissing: true,
+          missingDate: prevWeekday,
+        });
+      }
+    }
+
+    // ── Warn about other CLRs without yesterday's EOD ────────────────────────────
+    // Only check; do NOT block — just surface who's missing so the generator knows.
+    const allClrs: Array<{ id: number; name: string }> = sqlite.prepare(`
+      SELECT id, name FROM users
+      WHERE is_active = 1
+        AND org_id = ?
+        AND (role = 'assistant' OR (role = 'admin' AND is_clr = 1))
+        AND id != ?
+    `).all(callingUser.orgId ?? 1, callingUser.userId) as any[];
+
+    const clrsMissingEod: string[] = [];
+    for (const clr of allClrs) {
+      const submitted = sqlite.prepare(
+        `SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?`
+      ).get(clr.id, prevWeekday) as any;
+      if (!submitted) clrsMissingEod.push(clr.name);
     }
 
     // ── One-per-day lock: block re-generation if assignments already exist ────────
@@ -2932,7 +2976,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       isRead: false,
     });
 
-    res.json({ generated: created.length, date });
+    res.json({ generated: created.length, date, clrsMissingEod });
   });
 
   // ── Admin: pre-configure assignments for a future date ─────────────────────
@@ -5175,8 +5219,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           if (hitAppts) hitParts.push(`📅 Appointments (${wkAppts}/${goalRow.appointments_goal})`);
           const hitSummary = hitParts.join(' · ');
 
-          // Send web push notifications to all org users
+          // In-app notifications + web push to all org users
           for (const u of orgUsers) {
+            // In-app notification
+            try {
+              storage.createNotification({
+                userId: u.id,
+                type: "goal_hit",
+                title: `🏆 Goal Hit — ${clrNameG}`,
+                message: hitSummary,
+                isRead: false,
+              });
+            } catch {}
+            // Web push
             try {
               const subs = sqlite2.prepare(
                 `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?`

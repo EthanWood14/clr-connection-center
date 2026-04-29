@@ -689,22 +689,47 @@ export default function Assignments() {
   const alreadyGenerated = isToday && (assignments as any[]).length > 0;
   const isManuallyConfigured = (assignments as any[]).some((a: any) => a.manuallyConfigured);
 
+  const [clrsMissingEod, setClrsMissingEod] = useState<string[]>([]);
+
   const generateMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/assignments/generate", { date: currentDate }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
-      toast({ title: "Assignments generated" });
+      const missing: string[] = data?.clrsMissingEod ?? [];
+      setClrsMissingEod(missing);
+      if (missing.length > 0) {
+        toast({
+          title: "Assignments generated",
+          description: `Note: ${missing.join(", ")} ${missing.length === 1 ? "has" : "have"} not submitted their EOD report for ${prevWeekdayStr(currentDate)}.`,
+          variant: "default",
+        });
+      } else {
+        toast({ title: "Assignments generated" });
+      }
     },
     onError: (err: any) => {
       const msg: string = err?.message ?? "";
-      if (msg.includes("locked") || msg.includes("already been generated")) {
+      if (msg.toLowerCase().includes("eod report")) {
+        toast({
+          title: "EOD report required",
+          description: msg,
+          variant: "destructive",
+        });
+      } else if (msg.includes("locked") || msg.includes("already been generated")) {
         setGenerateLocked(true);
         toast({ title: "Already generated today", description: "Assignments are locked until tomorrow.", variant: "destructive" });
       } else {
-        toast({ title: "Error generating assignments", variant: "destructive" });
+        toast({ title: "Error generating assignments", description: msg, variant: "destructive" });
       }
     },
   });
+
+  // Helper: previous weekday string from a YYYY-MM-DD date
+  function prevWeekdayStr(fromDate: string): string {
+    const d = new Date(fromDate + "T12:00:00Z");
+    do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    return d.toISOString().split("T")[0];
+  }
 
   const updateMutation = useMutation({
     mutationFn: ({ id, status, notes }: { id: number; status: string; notes: string }) =>
@@ -908,6 +933,22 @@ export default function Assignments() {
           )}
         </div>
       </div>
+
+      {/* Missing EOD Warning Banner */}
+      {clrsMissingEod.length > 0 && (
+        <div className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">Missing EOD Reports</p>
+            <p className="text-amber-800 dark:text-amber-300 text-xs mt-0.5">
+              {clrsMissingEod.join(", ")} {clrsMissingEod.length === 1 ? "has" : "have"} not submitted their EOD report for {prevWeekdayStr(currentDate)}.
+            </p>
+          </div>
+          <button onClick={() => setClrsMissingEod([])} className="text-amber-600 dark:text-amber-400 hover:opacity-70 mt-0.5">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Admin Override Banner — Editing Future Dates */}
       {isFutureDate && isAdmin && (
