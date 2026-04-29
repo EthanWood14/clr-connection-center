@@ -1049,6 +1049,16 @@ function runNmlsEscalations() {
   }
 }
 
+// Run NMLS checks on the 1st of every other month (Jan, Mar, May, Jul, Sep, Nov) at 8am UTC.
+cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
+  try { triggerNmlsChecks(); } catch (e) { console.error("NMLS check trigger error:", e); }
+});
+
+// Check for escalations every morning at 9am
+cron.schedule("0 9 * * *", () => {
+  try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
+});
+
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
