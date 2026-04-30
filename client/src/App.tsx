@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
 import { DailyReportGate } from "@/components/daily-report-gate";
+import { EodLockGate } from "@/components/eod-lock-gate";
 import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { AppFooter } from "@/components/app-footer";
@@ -222,7 +223,9 @@ function AuthenticatedApp() {
             </header>
             <main className="flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
               <div className="flex-1">
-                <AppRouter />
+                <EodLockGate>
+                  <AppRouter />
+                </EodLockGate>
               </div>
               <AppFooter />
             </main>

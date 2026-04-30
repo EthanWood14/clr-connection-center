@@ -1987,6 +1987,52 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // EOD lock status: locks CLRs who haven't submitted EODs for any of the last
+  // 3 weekdays. Skips dates before the user's created_at and dates >10 days ago.
+  // Non-CLRs (admin without isClr, viewers) are never locked.
+  app.get("/api/auth/eod-lock-status", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const user = storage.getUserById(userId) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const isClr = user.role === "assistant" || (user.role === "admin" && !!(user.isClr ?? user.is_clr));
+    if (!isClr) return res.json({ locked: false, missingDates: [] });
+
+    const fmt = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tenDaysAgo = new Date(today);
+    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+
+    const createdAtRaw = user.createdAt ?? user.created_at ?? null;
+    const createdAt = createdAtRaw ? new Date(String(createdAtRaw).replace(" ", "T")) : null;
+    if (createdAt) createdAt.setHours(0, 0, 0, 0);
+
+    const lastWeekdays: string[] = [];
+    const cursor = new Date(today);
+    cursor.setDate(cursor.getDate() - 1);
+    while (lastWeekdays.length < 3 && cursor >= tenDaysAgo) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) {
+        if (!createdAt || cursor >= createdAt) lastWeekdays.push(fmt(cursor));
+      }
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    const missingDates: string[] = [];
+    for (const d of lastWeekdays) {
+      const r = storageExtra.getEodReport(d, userId);
+      if (!r) missingDates.push(d);
+    }
+    res.json({ locked: missingDates.length > 0, missingDates });
+  });
+
   // Admin-only: Complete System Manual PDF.
   // Also intercepts the public static path so old links still enforce auth.
   const serveCompleteManual = (req: any, res: Response) => {

@@ -272,6 +272,7 @@ export default function EodReport() {
       queryClient.invalidateQueries({ queryKey: ["/api/eod-reports"] });
       queryClient.invalidateQueries({ queryKey: ["/api/call-logs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/eod-lock-status"] });
       refetch();
       setDirty(false);
       // Final submission succeeded — draft is no longer needed.
