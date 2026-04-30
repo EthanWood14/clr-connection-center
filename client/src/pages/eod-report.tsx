@@ -1170,6 +1170,29 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                     </div>
                   )}
 
+                  {/* Additional activity log — the "other tasks done that day" */}
+                  {Array.isArray(r.activities) && r.activities.length > 0 && (
+                    <div className="rounded-lg bg-violet-50 dark:bg-violet-900/10 border border-violet-200 dark:border-violet-800 px-3 py-2.5 space-y-2">
+                      <p className="text-xs font-semibold text-violet-700 dark:text-violet-400">
+                        Additional Activities ({r.activities.length})
+                      </p>
+                      <div className="space-y-1">
+                        {r.activities.map((a: any) => (
+                          <div key={a.id} className="flex items-start gap-2">
+                            <Badge
+                              className={`text-[10px] shrink-0 ${ACTIVITY_COLORS[a.activity_type] ?? ACTIVITY_COLORS.other}`}
+                            >
+                              {ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground leading-relaxed">
+                              {a.description?.trim() || "—"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {r.submitted_at && (
                     <p className="text-xs text-muted-foreground">Submitted: {format(parseServerTimestamp(r.submitted_at) ?? new Date(), "MMM d, yyyy 'at' h:mm a")}</p>
                   )}

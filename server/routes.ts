@@ -5044,6 +5044,38 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         `).all() as any[]
       : sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId) as any[];
 
+    // Pre-fetch all activities for the reports we're returning, in one query,
+    // then group by (assistant_id, report_date) so each card can show the
+    // "Additional Activity Log" entries the CLR logged that day.
+    const activitiesByKey = new Map<string, Array<{ id: number; activity_type: string; description: string }>>();
+    if (reports.length > 0) {
+      // Earliest date in the result determines how far back to query.
+      const minDate = reports.reduce(
+        (m: string, r: any) => (r.report_date < m ? r.report_date : m),
+        reports[0].report_date as string,
+      );
+      const assistantIds = Array.from(new Set(reports.map((r: any) => r.assistant_id))).filter((n: any) => Number.isFinite(n));
+      if (assistantIds.length > 0) {
+        const placeholders = assistantIds.map(() => "?").join(",");
+        const activityRows = sqlite.prepare(
+          `SELECT id, assistant_id, report_date, activity_type, description
+             FROM eod_activities
+            WHERE report_date >= ? AND assistant_id IN (${placeholders})
+            ORDER BY report_date ASC, id ASC`,
+        ).all(minDate, ...assistantIds) as any[];
+        for (const a of activityRows) {
+          const key = `${a.assistant_id}|${a.report_date}`;
+          const list = activitiesByKey.get(key) ?? [];
+          list.push({
+            id: a.id,
+            activity_type: a.activity_type,
+            description: a.description ?? "",
+          });
+          activitiesByKey.set(key, list);
+        }
+      }
+    }
+
     // Cache LO names once, then enrich each report with LO coverage + transfer prospects.
     const allLos = storage.getLoanOfficers() as any[];
     const loNameById = (id: number): string => {
@@ -5100,6 +5132,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const notCalledNames = assignedLoIds.filter((id: number) => !calledSet.has(id)).map(loNameById);
       const additionalNames = additionalCalledIds.map(loNameById);
 
+      const activities = activitiesByKey.get(`${r.assistant_id}|${r.report_date}`) ?? [];
+
       return {
         ...r,
         outcomeBreakdown,
@@ -5112,6 +5146,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           additional: additionalNames,
           otherNotes: (r.additional_los_other_notes ?? null),
         },
+        activities,
       };
     });
 
