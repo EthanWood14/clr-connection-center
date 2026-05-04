@@ -2710,8 +2710,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.patch("/api/loan-officers/:id", (req, res) => {
     const id = parseInt(req.params.id);
-    const lo = storage.updateLoanOfficer(id, req.body);
-    if (lo) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(req.body) });
+    // Defense in depth: the list endpoint masks passwords as "••••••••". If a
+    // client somehow round-trips the masked value back to us, drop it so we
+    // don't overwrite the real stored credential.
+    const body = { ...req.body };
+    if (body.bonzoPassword === "••••••••") delete body.bonzoPassword;
+    if (body.leadMailboxPassword === "••••••••") delete body.leadMailboxPassword;
+    const lo = storage.updateLoanOfficer(id, body);
+    if (lo) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(body) });
     res.json(lo);
   });
 

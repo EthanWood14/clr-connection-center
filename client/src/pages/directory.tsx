@@ -676,9 +676,9 @@ function LOFormDialog({
       email: initialValues?.email ?? "",
       licensedStates: "", // managed separately via statesSelected
       bonzoUsername: initialValues?.bonzoUsername ?? "",
-      bonzoPassword: initialValues?.bonzoPassword ?? "",
+      bonzoPassword: initialValues?.bonzoPassword === "••••••••" ? "" : (initialValues?.bonzoPassword ?? ""),
       leadMailboxUsername: initialValues?.leadMailboxUsername ?? "",
-      leadMailboxPassword: initialValues?.leadMailboxPassword ?? "",
+      leadMailboxPassword: initialValues?.leadMailboxPassword === "••••••••" ? "" : (initialValues?.leadMailboxPassword ?? ""),
       notes: initialValues?.notes ?? "",
       specialRequests: initialValues?.specialRequests ?? "",
       personalPreferences: (initialValues as any)?.personalPreferences ?? "",
@@ -701,9 +701,9 @@ function LOFormDialog({
         email: initialValues?.email ?? "",
         licensedStates: "",
         bonzoUsername: initialValues?.bonzoUsername ?? "",
-        bonzoPassword: initialValues?.bonzoPassword ?? "",
+        bonzoPassword: initialValues?.bonzoPassword === "••••••••" ? "" : (initialValues?.bonzoPassword ?? ""),
         leadMailboxUsername: initialValues?.leadMailboxUsername ?? "",
-        leadMailboxPassword: initialValues?.leadMailboxPassword ?? "",
+        leadMailboxPassword: initialValues?.leadMailboxPassword === "••••••••" ? "" : (initialValues?.leadMailboxPassword ?? ""),
         notes: initialValues?.notes ?? "",
         specialRequests: initialValues?.specialRequests ?? "",
         personalPreferences: (initialValues as any)?.personalPreferences ?? "",
@@ -984,16 +984,39 @@ export default function Directory() {
     return matchSearch && matchStatus && matchTier;
   });
 
-  const handleEdit = (lo: any) => {
-    setEditTarget(lo);
+  const handleEdit = async (lo: any) => {
+    // The list endpoint masks passwords as "••••••••". Fetch plaintext so the
+    // edit form prefills with real values; otherwise saving would overwrite
+    // stored credentials with the bullet string.
+    let bonzoPassword = lo.bonzoPassword;
+    let leadMailboxPassword = lo.leadMailboxPassword;
+    try {
+      const res = await fetch(`/api/loan-officers/${lo.id}/credentials`, { credentials: "include" });
+      if (res.ok) {
+        const creds = await res.json();
+        bonzoPassword = creds.bonzoPassword ?? "";
+        leadMailboxPassword = creds.leadMailboxPassword ?? "";
+      } else {
+        bonzoPassword = "";
+        leadMailboxPassword = "";
+      }
+    } catch {
+      bonzoPassword = "";
+      leadMailboxPassword = "";
+    }
+    setEditTarget({ ...lo, bonzoPassword, leadMailboxPassword });
     setDialogOpen(true);
   };
 
   const handleSubmit = (values: any) => {
+    // Defensive: never write the masked placeholder back to the DB.
+    const sanitized = { ...values };
+    if (sanitized.bonzoPassword === "••••••••") delete sanitized.bonzoPassword;
+    if (sanitized.leadMailboxPassword === "••••••••") delete sanitized.leadMailboxPassword;
     if (editTarget) {
-      updateMutation.mutate({ id: editTarget.id, data: values });
+      updateMutation.mutate({ id: editTarget.id, data: sanitized });
     } else {
-      createMutation.mutate(values);
+      createMutation.mutate(sanitized);
     }
   };
 
