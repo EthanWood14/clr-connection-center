@@ -1296,29 +1296,53 @@ cron.schedule("*/5 * * * *", async () => {
     const sqlite = storageExtra.getRawSqlite();
     const nowMs = Date.now();
     const cutoffMs = nowMs + 35 * 60 * 1000;
+    // The Appointments page binds its datetime-local input to follow_up_date,
+    // not appointment_datetime, so most rows in production have only
+    // follow_up_date populated. Treat either field as a valid scheduled time;
+    // appointment_datetime takes precedence when present.
     const rows = sqlite.prepare(`
-      SELECT lo.id, lo.assistant_id, lo.borrower_name, lo.appointment_datetime,
+      SELECT lo.id, lo.assistant_id, lo.borrower_name,
+             lo.appointment_datetime, lo.follow_up_date,
              u.email AS clr_email, u.name AS clr_name, u.reminder_email_enabled,
              loff.full_name AS lo_name
       FROM lead_outcomes lo
       JOIN users u ON u.id = lo.assistant_id
       LEFT JOIN loan_officers loff ON loff.id = lo.lo_id
       WHERE lo.outcome_type = 'appointment'
-        AND lo.appointment_datetime IS NOT NULL
-        AND lo.appointment_datetime <> ''
         AND COALESCE(lo.reminder_sent_30m, 0) = 0
+        AND (
+          (lo.appointment_datetime IS NOT NULL AND lo.appointment_datetime <> '')
+          OR
+          (lo.follow_up_date IS NOT NULL AND lo.follow_up_date <> '')
+        )
     `).all() as any[];
+    if (rows.length > 0) {
+      console.log(`[appt-30m] cron tick: ${rows.length} candidate appointment row(s) without reminder yet`);
+    }
 
     for (const r of rows) {
-      const t = Date.parse(r.appointment_datetime);
-      if (!Number.isFinite(t)) continue;
+      // Prefer appointment_datetime, fall back to follow_up_date. The latter
+      // can be either a date (YYYY-MM-DD) or a datetime (YYYY-MM-DDTHH:MM).
+      // Date-only values have no time component, so treat them as midnight
+      // local time — a date-only follow_up_date will never be in the
+      // "now → now+35min" window unless the cron happens to run within 35
+      // minutes after midnight, which is fine.
+      const rawTime = (r.appointment_datetime && String(r.appointment_datetime).trim())
+        || (r.follow_up_date && String(r.follow_up_date).trim())
+        || "";
+      if (!rawTime) continue;
+      const t = Date.parse(rawTime);
+      if (!Number.isFinite(t)) {
+        console.warn(`[appt-30m] skip outcome=${r.id}: unparseable time=${JSON.stringify(rawTime)}`);
+        continue;
+      }
       if (t <= nowMs || t > cutoffMs) continue;
 
       const borrower = r.borrower_name?.trim() || "Unknown";
       const loName = r.lo_name || "Unknown LO";
       const when = (() => {
-        try { return new Date(r.appointment_datetime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
-        catch { return r.appointment_datetime; }
+        try { return new Date(rawTime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
+        catch { return rawTime; }
       })();
 
       // Email (only if user opted in + has address)
@@ -1338,16 +1362,19 @@ cron.schedule("*/5 * * * *", async () => {
       }
 
       // Push (best-effort)
+      let pushSummary: { sent: number; failed: number } = { sent: 0, failed: 0 };
       try {
-        await sendPushToUser(r.assistant_id, {
+        pushSummary = await sendPushToUser(r.assistant_id, {
           title: "⏰ Appointment in 30 minutes",
           body: `${borrower} — ${loName}`,
           url: "/outcomes",
         });
-      } catch {}
+      } catch (e: any) {
+        console.error(`[appt-30m] push failed outcome=${r.id}:`, e?.message ?? e);
+      }
 
       try { sqlite.prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 1 WHERE id = ?`).run(r.id); } catch {}
-      console.log(`[appt-30m] reminder fired outcome=${r.id} to=${r.clr_email}`);
+      console.log(`[appt-30m] reminder fired outcome=${r.id} user=${r.assistant_id} push.sent=${pushSummary.sent} push.failed=${pushSummary.failed} to=${r.clr_email ?? "(no email)"}`);
     }
   } catch (e: any) { console.error("[appt-30m] cron error:", e?.message ?? e); }
 });
@@ -3285,6 +3312,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if ("rescheduled" in body) body.rescheduled = boolToInt(body.rescheduled);
     const outcome = storage.updateLeadOutcome(id, body);
     if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
+    // If the appointment time changed (reschedule, edit, etc.), clear the
+    // 30-minute reminder flag so the cron can fire a fresh reminder against
+    // the new scheduled time. We check whether either field that the cron
+    // reads from is being touched in this PATCH.
+    if ("appointmentDatetime" in body || "followUpDate" in body) {
+      try {
+        storageExtra.getRawSqlite()
+          .prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 0 WHERE id = ?`)
+          .run(id);
+      } catch (e: any) {
+        console.error(`[appt-30m] failed to reset reminder flag for outcome=${id}:`, e?.message ?? e);
+      }
+    }
     res.json(outcome);
   });
 

@@ -710,11 +710,17 @@ export default function Appointments() {
     },
   });
 
-  // Reschedule mutation (quick date-only update)
+  // Reschedule mutation (quick date-only update). When the new value is a
+  // datetime (datetime-local format includes a 'T'), mirror it onto
+  // appointment_datetime as well so the 30-minute reminder cron picks it up.
   const rescheduleMutation = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) => {
       setPendingRescheduleId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { followUpDate: date });
+      const payload: Record<string, any> = { followUpDate: date };
+      if (typeof date === "string" && date.includes("T")) {
+        payload.appointmentDatetime = date;
+      }
+      return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
@@ -727,16 +733,25 @@ export default function Appointments() {
     },
   });
 
-  // Full edit mutation
+  // Full edit mutation. Mirror datetime-local values onto appointment_datetime
+  // for appointment-typed entries so the 30-minute reminder cron triggers.
   const editMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: EditValues }) => {
-      return apiRequest("PATCH", `/api/outcomes/${id}`, {
+      const fud = data.followUpDate || null;
+      const payload: Record<string, any> = {
         outcomeType: data.outcomeType,
         loId: data.loId,
         borrowerName: data.borrowerName ?? "",
         notes: data.notes ?? "",
-        followUpDate: data.followUpDate || null,
-      });
+        followUpDate: fud,
+      };
+      if (data.outcomeType === "appointment") {
+        // Sync appointment_datetime: set when there's a time component, clear
+        // otherwise so a stale value doesn't shadow the new follow-up date.
+        payload.appointmentDatetime =
+          fud && typeof fud === "string" && fud.includes("T") ? fud : null;
+      }
+      return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
