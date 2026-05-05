@@ -1780,6 +1780,37 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  // Admin diagnostic: shows total subscription count, per-user counts, and
+  // whether VAPID is initialized. Useful when troubleshooting "why isn't push
+  // firing" — if push.sent is always 0, this tells you whether the issue is
+  // an empty subscription table or a delivery failure.
+  app.get("/api/push/diagnostics", requireAuth, (req: any, res) => {
+    const me = req.session_user?.userId;
+    const meUser = me ? (storage.getUserById(me) as any) : null;
+    if (!me || meUser?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM push_subscriptions`).get() as any).c as number;
+      const perUser = sqlite.prepare(`
+        SELECT ps.user_id AS userId, u.name, u.email, COUNT(*) AS subscriptions
+          FROM push_subscriptions ps
+          LEFT JOIN users u ON u.id = ps.user_id
+         GROUP BY ps.user_id
+         ORDER BY subscriptions DESC, u.name ASC
+      `).all();
+      const usersTotal = (sqlite.prepare(`SELECT COUNT(*) AS c FROM users`).get() as any).c as number;
+      res.json({
+        vapidInitialized: !!getVapidPublicKey(),
+        totalSubscriptions: total,
+        usersTotal,
+        usersWithSubscription: perUser.length,
+        perUser,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "diagnostics failed" });
+    }
+  });
+
   // Internal-ish helper: admins can send a push to any user; users can self-test
   app.post("/api/push/send", requireAuth, async (req: any, res) => {
     const me = req.session_user?.userId;

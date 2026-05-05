@@ -56,6 +56,11 @@ export function PushNotificationsCard() {
       if (!keyRes.ok) throw new Error("VAPID key unavailable");
       const { publicKey } = await keyRes.json();
       const reg = await navigator.serviceWorker.ready;
+      // Clear any stale subscription (e.g. from a previous VAPID key) before
+      // subscribing again, otherwise pushManager.subscribe rejects with
+      // InvalidStateError on browsers that already have one.
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) { try { await existing.unsubscribe(); } catch {} }
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),

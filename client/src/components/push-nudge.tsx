@@ -6,16 +6,24 @@
  * - Never shows if the user has clicked "Don't ask again" (permanent dismiss).
  * - After a temporary dismiss ("Later"), re-appears after 14 days.
  * - Appears as a toast-style banner anchored above the bottom nav.
+ *
+ * The Enable button now runs the full subscribe flow inline (request
+ * permission → fetch VAPID key → subscribe → save to server). Previously it
+ * routed users to /settings, which was 3 clicks deep and meant most users
+ * never actually finished subscribing.
  */
 
 import { useState, useEffect } from "react";
-import { Bell, X, ArrowRight } from "lucide-react";
+import { Bell, X, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
-const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed";
-const SNOOZE_KEY        = "clr_push_nudge_snoozed_until";
-const FIRST_SHOWN_KEY   = "clr_push_first_shown";
+// Bumped key suffix — want previously-dismissed users to see the new
+// one-click flow once. Old keys are left in localStorage harmlessly.
+const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed_v2";
+const SNOOZE_KEY        = "clr_push_nudge_snoozed_until_v2";
+const FIRST_SHOWN_KEY   = "clr_push_first_shown_v2";
 const BIWEEKLY_MS       = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -41,7 +49,8 @@ async function isPushEnabled(): Promise<boolean> {
 
 export function PushNudge() {
   const [visible, setVisible] = useState(false);
-  const [, navigate] = useLocation();
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -99,9 +108,44 @@ export function PushNudge() {
     setVisible(false);
   }
 
-  function goToSettings() {
-    snooze(); // reset snooze timer — they're going to try; re-nudge in 2w if they don't finish
-    navigate("/settings");
+  async function enableNow() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        toast({ title: "Not supported", description: "This browser doesn't support push notifications.", variant: "destructive" });
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        toast({
+          title: perm === "denied" ? "Permission denied" : "Permission required",
+          description: "Allow notifications in your browser to continue.",
+          variant: perm === "denied" ? "destructive" : undefined,
+        });
+        if (perm === "denied") setVisible(false);
+        return;
+      }
+      const keyRes = await fetch("/api/push/vapid-public-key", { credentials: "include" });
+      if (!keyRes.ok) throw new Error("VAPID key unavailable");
+      const { publicKey } = await keyRes.json();
+      const reg = await navigator.serviceWorker.ready;
+      // If a stale subscription exists (e.g. from a prior VAPID key), clear it
+      // first so the new subscribe call doesn't fail with InvalidStateError.
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) { try { await existing.unsubscribe(); } catch {} }
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      await apiRequest("POST", "/api/push/subscribe", { subscription: sub.toJSON() });
+      toast({ title: "Notifications enabled", description: "You'll get push alerts on this device." });
+      setVisible(false);
+    } catch (e: any) {
+      toast({ title: "Couldn't enable notifications", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!visible) return null;
@@ -143,10 +187,15 @@ export function PushNudge() {
             <Button
               size="sm"
               className="h-8 text-xs gap-1.5 flex-1"
-              onClick={goToSettings}
+              onClick={enableNow}
+              disabled={busy}
               data-testid="button-push-nudge-enable"
             >
-              Go to Settings <ArrowRight className="w-3 h-3" />
+              {busy ? (
+                <>Enabling… <Loader2 className="w-3 h-3 animate-spin" /></>
+              ) : (
+                <>Enable now <ArrowRight className="w-3 h-3" /></>
+              )}
             </Button>
             <Button
               size="sm"
