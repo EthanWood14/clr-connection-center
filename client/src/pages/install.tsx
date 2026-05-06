@@ -84,8 +84,13 @@ export default function InstallPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-6">
-      {/* Hero */}
-      <div className="rounded-2xl overflow-hidden bg-gradient-to-br from-[#0F182D] to-[#1A3A6A] text-white p-6 sm:p-8">
+      {/* Hero — inline gradient (Tailwind arbitrary-color stops weren't always emitting,
+           which made the navy background drop out and left white text invisible on the
+           light-mode page). Inline style is bulletproof. */}
+      <div
+        className="rounded-2xl overflow-hidden text-white p-6 sm:p-8"
+        style={{ background: "linear-gradient(to bottom right, #0F182D, #1A3A6A)" }}
+      >
         <div className="flex items-center gap-4 mb-5">
           <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shadow-lg">
             <img
