@@ -70,6 +70,17 @@ type RangeBlock = {
     phonesRejected: number;
     rejectedSamples: string[];
   };
+  clrTrend?: {
+    dates: string[];
+    series: {
+      userId: number;
+      name: string;
+      transfers: number[];
+      appointments: number[];
+      fellThrough: number[];
+      calls: number[];
+    }[];
+  };
 };
 type ManagerData = {
   generatedAt: string;
@@ -327,6 +338,11 @@ export default function ManagerDashboard() {
   const [rangeCompare, setRangeCompare] = useState<RangeKey>("30d");
   type CompareSort = "transferPct" | "appointmentPct" | "fellThroughPct" | "totalOutcomes" | "name";
   const [compareSort, setCompareSort] = useState<CompareSort>("transferPct");
+  // Per-CLR trend comparison chart
+  const [rangeClrTrend, setRangeClrTrend] = useState<RangeKey>("30d");
+  type ClrTrendMetric = "transfers" | "appointments" | "fellThrough" | "calls";
+  const [clrTrendMetric, setClrTrendMetric] = useState<ClrTrendMetric>("transfers");
+  const [clrTrendSelected, setClrTrendSelected] = useState<number[] | null>(null); // null = auto (top 5)
   const [pipelineRange, setPipelineRange] = useState<PipelineRange>("1d");
 
   const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
@@ -429,6 +445,48 @@ export default function ManagerDashboard() {
     fellThrough: r.fellThrough,
     totalOutcomes: r.totalOutcomes,
   }));
+
+  // ── Per-CLR trend comparison ──
+  const clrTrendBlock = byRange[rangeClrTrend];
+  const clrTrendSeries = clrTrendBlock?.clrTrend?.series ?? [];
+  const clrTrendDates = clrTrendBlock?.clrTrend?.dates ?? [];
+  // Default selection: top 5 CLRs by current metric total (so the chart isn't empty/cluttered).
+  const clrTrendTotals = clrTrendSeries
+    .map((s: any) => ({
+      userId: s.userId,
+      name: s.name,
+      total: (s[clrTrendMetric] as number[] | undefined)?.reduce((a, b) => a + (b || 0), 0) ?? 0,
+    }))
+    .sort((a: any, b: any) => b.total - a.total);
+  const autoSelectedIds = clrTrendTotals.filter(t => t.total > 0).slice(0, 5).map(t => t.userId);
+  const effectiveSelected = clrTrendSelected ?? autoSelectedIds;
+  // Build chart rows: one row per date, one column per selected CLR.
+  const clrTrendChartData = clrTrendDates.map((d: string, i: number) => {
+    const row: any = { date: d, label: format(parseISO(d), "MMM d") };
+    for (const s of clrTrendSeries) {
+      if (!effectiveSelected.includes(s.userId)) continue;
+      const arr = (s as any)[clrTrendMetric] as number[];
+      row[`u${s.userId}`] = arr[i] ?? 0;
+    }
+    return row;
+  });
+  // Stable color palette for CLR lines.
+  const CLR_LINE_COLORS = ["#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#0ea5e9", "#f59e0b"];
+  const colorForId = (uid: number) => {
+    const idx = clrTrendSeries.findIndex((s: any) => s.userId === uid);
+    return CLR_LINE_COLORS[(idx >= 0 ? idx : 0) % CLR_LINE_COLORS.length];
+  };
+  const clrTrendMetricLabel = ({
+    transfers: "Transfers",
+    appointments: "Appointments",
+    fellThrough: "Fell through",
+    calls: "Calls",
+  } as Record<ClrTrendMetric, string>)[clrTrendMetric];
+  const toggleClrSelection = (uid: number) => {
+    const current = clrTrendSelected ?? autoSelectedIds;
+    const next = current.includes(uid) ? current.filter(x => x !== uid) : [...current, uid];
+    setClrTrendSelected(next);
+  };
 
   const handleExportCsv = () => {
     const rows = clrCards.map(c => ({
@@ -762,6 +820,121 @@ export default function ManagerDashboard() {
                 ))}
               </tbody>
             </table>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Per-CLR trend comparison — one line per selected CLR */}
+      <div>
+        <SectionTitle
+          icon={TrendingUp}
+          action={
+            <div className="flex items-center gap-2 flex-wrap">
+              <RangePills options={RANGE_OPTIONS} value={rangeClrTrend} onChange={setRangeClrTrend} ariaLabel="CLR trend range" />
+              <select
+                value={clrTrendMetric}
+                onChange={(e) => setClrTrendMetric(e.target.value as ClrTrendMetric)}
+                aria-label="Trend metric"
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium brand-text focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="transfers">Transfers</option>
+                <option value="appointments">Appointments</option>
+                <option value="fellThrough">Fell through</option>
+                <option value="calls">Calls</option>
+              </select>
+            </div>
+          }
+        >
+          CLR trend comparison — {clrTrendMetricLabel} · {clrTrendBlock?.window?.label ?? ""}
+        </SectionTitle>
+        <Card>
+          <CardContent className="p-4">
+            {/* CLR selection pills */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {clrTrendTotals.length === 0 ? (
+                <span className="text-xs text-muted-foreground">No CLRs available</span>
+              ) : (
+                <>
+                  {clrTrendTotals.map((t: any) => {
+                    const active = effectiveSelected.includes(t.userId);
+                    const c = colorForId(t.userId);
+                    return (
+                      <button
+                        key={t.userId}
+                        type="button"
+                        onClick={() => toggleClrSelection(t.userId)}
+                        className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                          active
+                            ? "font-semibold"
+                            : "bg-transparent text-muted-foreground border-input hover:bg-muted/40"
+                        }`}
+                        style={active ? { backgroundColor: c, borderColor: c, color: "#fff" } : undefined}
+                        aria-pressed={active}
+                      >
+                        {t.name}
+                        {t.total > 0 ? <span className="ml-1 opacity-80">· {t.total}</span> : null}
+                      </button>
+                    );
+                  })}
+                  {clrTrendSelected !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setClrTrendSelected(null)}
+                      className="text-xs px-2.5 py-1 rounded-full border border-input text-muted-foreground hover:bg-muted/40"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {clrTrendChartData.length === 0 || effectiveSelected.length === 0 ? (
+              <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                {effectiveSelected.length === 0 ? "Select a CLR to display" : "No data in this range"}
+              </div>
+            ) : (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={clrTrendChartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }}
+                      interval={Math.max(0, Math.floor(clrTrendChartData.length / 8))}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: isDark ? "#1f1d1c" : "#ffffff",
+                        border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`,
+                        color: isDark ? "#e4e4e7" : "#0f172a",
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {clrTrendSeries
+                      .filter((s: any) => effectiveSelected.includes(s.userId))
+                      .map((s: any) => (
+                        <Line
+                          key={s.userId}
+                          type="monotone"
+                          dataKey={`u${s.userId}`}
+                          stroke={colorForId(s.userId)}
+                          strokeWidth={2}
+                          dot={false}
+                          name={s.name}
+                        />
+                      ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground mt-3">
+              Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
+            </p>
           </CardContent>
         </Card>
       </div>

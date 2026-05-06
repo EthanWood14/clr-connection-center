@@ -4542,6 +4542,66 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
 
+      // Per-CLR daily trend (transfers / appointments / fell-through, plus calls)
+      // Used by the "CLR trend comparison" chart.
+      const clrOutcomeRows = sqlite.prepare(`
+        SELECT assistant_id, date, outcome_type, COUNT(*) AS count
+        FROM lead_outcomes
+        WHERE date >= ? AND date <= ?
+        GROUP BY assistant_id, date, outcome_type
+      `).all(startDate, endDate) as any[];
+      const clrCallRows = sqlite.prepare(`
+        SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
+        FROM daily_call_logs
+        WHERE log_date >= ? AND log_date <= ?
+        GROUP BY assistant_id, log_date
+      `).all(startDate, endDate) as any[];
+      // Build the date axis the same way as the team trend so they line up exactly.
+      const clrTrendDates: string[] = trend.map((t: any) => t.date);
+      const clrIndex: Record<string, number> = {};
+      clrTrendDates.forEach((d, i) => { clrIndex[d] = i; });
+      const clrTrendMap: Record<number, { transfers: number[]; appointments: number[]; fellThrough: number[]; calls: number[] }> = {};
+      function ensureClr(uid: number) {
+        if (!clrTrendMap[uid]) {
+          clrTrendMap[uid] = {
+            transfers:    new Array(clrTrendDates.length).fill(0),
+            appointments: new Array(clrTrendDates.length).fill(0),
+            fellThrough:  new Array(clrTrendDates.length).fill(0),
+            calls:        new Array(clrTrendDates.length).fill(0),
+          };
+        }
+        return clrTrendMap[uid];
+      }
+      for (const r of clrOutcomeRows) {
+        const idx = clrIndex[r.date];
+        if (idx === undefined) continue;
+        const bucket = ensureClr(r.assistant_id);
+        const c = Number(r.count) || 0;
+        if (r.outcome_type === "transfer")     bucket.transfers[idx]    += c;
+        else if (r.outcome_type === "appointment")  bucket.appointments[idx] += c;
+        else if (r.outcome_type === "fell_through") bucket.fellThrough[idx]  += c;
+      }
+      for (const r of clrCallRows) {
+        const idx = clrIndex[r.date];
+        if (idx === undefined) continue;
+        const bucket = ensureClr(r.assistant_id);
+        bucket.calls[idx] = Number(r.calls) || 0;
+      }
+      const clrTrend = {
+        dates: clrTrendDates,
+        series: allClrs.map((u: any) => {
+          const b = clrTrendMap[u.id];
+          return {
+            userId: u.id,
+            name: u.name,
+            transfers:    b ? b.transfers    : new Array(clrTrendDates.length).fill(0),
+            appointments: b ? b.appointments : new Array(clrTrendDates.length).fill(0),
+            fellThrough:  b ? b.fellThrough  : new Array(clrTrendDates.length).fill(0),
+            calls:        b ? b.calls        : new Array(clrTrendDates.length).fill(0),
+          };
+        }),
+      };
+
       // Outcome activity heatmap (CLR × day)
       const heatmapRows = sqlite.prepare(`
         SELECT assistant_id, date, COUNT(*) AS activity
@@ -4626,7 +4686,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           .slice(0, 8);
       } catch (e) { /* phone_number column may not exist on older DBs */ }
 
-      return { trend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, heatmap, callsHeatmap, topStates, statesDiagnostics };
+      return { trend, clrTrend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, heatmap, callsHeatmap, topStates, statesDiagnostics };
     }
 
     const byRange: Record<string, any> = {};
