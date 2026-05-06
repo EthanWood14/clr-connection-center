@@ -3222,19 +3222,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (settings.roundRobinEnabled) {
       // ── Spaced Round Robin: CLRs take turns, no CLR gets back-to-back same LO ──
       // Interleave: slot 0→CLR0, slot 1→CLR1, slot 2→CLR2, slot 3→CLR0, ...
-      // This ensures max spacing between any CLR's consecutive LO assignments
-      const slots = assistants.length;
+      // Even rounds go 0..N-1, odd rounds go N-1..0 (snake pattern for fairness)
+      //
+      // FAIRNESS NOTE: When the LO count isn't a multiple of CLR count, the
+      // last (partial) round leaves one CLR with one fewer LO. Previously the
+      // CLR order was the database order of `assistants`, so the same CLR(s)
+      // always landed at the front of the list and consistently got the
+      // "shortest-stick" position depending on round parity. To make this
+      // fair across days, shuffle the assistant order before slotting so the
+      // CLR who ends up with one fewer LO is random each generation.
+      const shuffledAssistants = [...assistants];
+      for (let i = shuffledAssistants.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledAssistants[i], shuffledAssistants[j]] = [shuffledAssistants[j], shuffledAssistants[i]];
+      }
+
+      const slots = shuffledAssistants.length;
       topRanked.forEach((item, index) => {
-        // Rotate starting CLR each "round" to distribute top-ranked LOs fairly
         const round = Math.floor(index / slots);
         const posInRound = index % slots;
-        // Even rounds go 0..N-1, odd rounds go N-1..0 (snake pattern for fairness)
         const assistantIndex = round % 2 === 0 ? posInRound : (slots - 1 - posInRound);
         const assistantRank = round + 1;
         assignments.push({
           assignmentDate: date,
           loId: item.lo.id,
-          assistantId: assistants[assistantIndex].id,
+          assistantId: shuffledAssistants[assistantIndex].id,
           globalRank: index + 1,
           assistantRank,
           status: "recommended",
