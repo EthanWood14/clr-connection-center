@@ -376,17 +376,31 @@ async function sendReport(
     : getDefaultPeriod();
   const { startDate, endDate } = period;
 
-  const outcomes   = storage.getLeadOutcomes({ startDate, endDate });
-  const los        = storage.getLoanOfficers();
-  const users      = storage.getUsers();
-  const callLogs   = storage.getCallLogsByRange(startDate, endDate);
-  const assignments = storage.getAssignmentsByRange(startDate, endDate);
+  const outcomesAll   = storage.getLeadOutcomes({ startDate, endDate });
+  const los           = storage.getLoanOfficers();
+  const users         = storage.getUsers();
+  const callLogsAll   = storage.getCallLogsByRange(startDate, endDate);
+  const assignmentsAll = storage.getAssignmentsByRange(startDate, endDate);
+
+  // When clrId is set, scope ALL downstream data sources to that CLR so
+  // history/details sections (transfer details, call notes, daily breakdown)
+  // don't leak other CLRs' activity into a single-CLR report.
+  const scopedClrId = opts.clrId;
+  const outcomes = scopedClrId
+    ? outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === scopedClrId)
+    : outcomesAll;
+  const callLogs = scopedClrId
+    ? callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === scopedClrId)
+    : callLogsAll;
+  const assignments = scopedClrId
+    ? assignmentsAll.filter((a: any) => (a.assistantId ?? a.assistant_id) === scopedClrId)
+    : assignmentsAll;
 
   // CLR list — assistants + admin-CLRs. When clrId is set, scope to that CLR.
   const clrs = users.filter((u: any) =>
     u.isActive
     && (u.role === "assistant" || (u.role === "admin" && u.isClr))
-    && (opts.clrId ? u.id === opts.clrId : true)
+    && (scopedClrId ? u.id === scopedClrId : true)
   );
 
   // Per-CLR aggregates
