@@ -24,6 +24,7 @@ import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
 import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
+import ManagerDashboard from "./manager-dashboard";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -861,6 +862,17 @@ function ScopeSelector({ value, onChange }: { value: ScopeKey; onChange: (s: Sco
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const { user: _authUser } = useAuth();
+  // Admins see the manager view at Home; CLRs (and other roles) see the
+  // existing personal dashboard. Hooks must not run conditionally, so each
+  // branch renders its own self-contained component below.
+  if (_authUser?.role === "admin") {
+    return <ManagerDashboard />;
+  }
+  return <ClrDashboard />;
+}
+
+function ClrDashboard() {
   const [period, setPeriod] = useState<PeriodKey>(() => {
     if (typeof window === "undefined") return "week";
     const saved = window.localStorage.getItem("dashboard.period");

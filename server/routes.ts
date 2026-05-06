@@ -4045,6 +4045,182 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ leaderboard: leaderboardWithCompletion, startDate, endDate });
   });
 
+  // ── Manager Dashboard (admin-only aggregate view) ─────────────────────────────
+  // Returns team-wide stats, leaderboard, EOD report status grid, pipeline
+  // (today's transfers / overdue appointments / overdue NMLS), and a 30-day trend
+  // for the manager dashboard route. Replaces the regular CLR home for admins.
+  app.get("/api/manager-dashboard", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const week = resolveNamedPeriod("week");
+    const month = resolveNamedPeriod("month");
+    const last30 = resolveNamedPeriod("30days");
+
+    // ── Team-wide totals ──
+    const todayStats = storage.getDashboardStats(todayStr, todayStr);
+    const weekStats = storage.getDashboardStats(week.startDate, week.endDate);
+    const monthStats = storage.getDashboardStats(month.startDate, month.endDate);
+
+    // ── Leaderboard (current month) ──
+    const leaderboardRaw = storage.getLeaderboard(month.startDate, month.endDate) as any[];
+    const monthAssignments = storage.getAssignmentsByRange(month.startDate, month.endDate) as any[];
+    const completionByUser: Record<number, { assigned: number; completed: number }> = {};
+    for (const a of monthAssignments) {
+      const uid = a.assistantId || a.assistant_id;
+      if (!uid) continue;
+      if (!completionByUser[uid]) completionByUser[uid] = { assigned: 0, completed: 0 };
+      completionByUser[uid].assigned++;
+      if (a.status === "worked" || a.status === "skipped") completionByUser[uid].completed++;
+    }
+    const leaderboard = leaderboardRaw.map((entry: any) => {
+      const uid = entry.userId || entry.user_id;
+      const comp = completionByUser[uid] ?? { assigned: 0, completed: 0 };
+      const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
+      return { ...entry, assignedCount: comp.assigned, completedCount: comp.completed, completionPct };
+    });
+
+    // ── EOD Report status grid (today) ──
+    const allClrs = storage.getUsers().filter((u: any) =>
+      u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr))
+    ) as any[];
+    const todayReports = (storageExtra.getEodReportsByRange(todayStr, todayStr) as any[]);
+    const reportByUser = new Map<number, any>();
+    for (const r of todayReports) {
+      const uid = r.assistantId || r.assistant_id;
+      if (uid != null) reportByUser.set(uid, r);
+    }
+    const eodStatus = allClrs.map((u: any) => {
+      const r = reportByUser.get(u.id);
+      return {
+        userId: u.id,
+        name: u.name,
+        email: u.email,
+        submitted: !!r,
+        submittedAt: r ? (r.createdAt || r.created_at || null) : null,
+      };
+    });
+    const eodSubmittedCount = eodStatus.filter(e => e.submitted).length;
+
+    // ── Pipeline ──
+    // Today's transfers (across whole org, with CLR + LO names)
+    const sqlite = storageExtra.getSqlite();
+    const todayTransfers = sqlite.prepare(`
+      SELECT o.id, o.borrower_name, o.transfer_type, o.notes,
+             o.assistant_id, o.lo_id,
+             u.name AS clr_name, lo.full_name AS lo_name
+      FROM lead_outcomes o
+      LEFT JOIN users u ON u.id = o.assistant_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      WHERE o.date = ? AND o.outcome_type = 'transfer'
+      ORDER BY o.id DESC
+    `).all(todayStr) as any[];
+
+    // Overdue appointments (follow_up_date < today, type=appointment, status not done)
+    const overdueAppointments = sqlite.prepare(`
+      SELECT o.id, o.borrower_name, o.follow_up_date, o.notes,
+             o.assistant_id, o.lo_id,
+             u.name AS clr_name, lo.full_name AS lo_name
+      FROM lead_outcomes o
+      LEFT JOIN users u ON u.id = o.assistant_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      WHERE o.outcome_type = 'appointment'
+        AND o.follow_up_date IS NOT NULL
+        AND o.follow_up_date < ?
+      ORDER BY o.follow_up_date ASC
+      LIMIT 25
+    `).all(todayStr) as any[];
+
+    // NMLS overdue checks across the team
+    let overdueNmls: any[] = [];
+    try {
+      const periodKey = (typeof getNmlsPeriodKey === "function") ? getNmlsPeriodKey() : null;
+      if (periodKey) {
+        const checks = storageExtra.getNmlsChecksForPeriod(periodKey) as any[];
+        const los = storage.getLoanOfficers() as any[];
+        const users = storage.getUsers() as any[];
+        const schedule = storageExtra.getNmlsSchedule() as any;
+        const escalationDays = schedule?.escalation_days ?? 7;
+        overdueNmls = checks
+          .filter((c: any) => c.status === "pending")
+          .map((c: any) => {
+            const assignedAt = new Date(c.assigned_at);
+            const daysOverdue = Math.floor((Date.now() - assignedAt.getTime()) / 86400000);
+            return { ...c, daysOverdue, lo: los.find(l => l.id === c.lo_id), assignedTo: users.find(u => u.id === c.assigned_to) };
+          })
+          .filter((c: any) => c.daysOverdue >= escalationDays)
+          .sort((a: any, b: any) => b.daysOverdue - a.daysOverdue)
+          .slice(0, 25);
+      }
+    } catch (e) { /* nmls module may not be available */ }
+
+    // ── 30-day trend (per-day team totals) ──
+    const trendRows = sqlite.prepare(`
+      SELECT date,
+             SUM(CASE WHEN outcome_type = 'transfer'     THEN 1 ELSE 0 END) AS transfers,
+             SUM(CASE WHEN outcome_type = 'appointment'  THEN 1 ELSE 0 END) AS appointments,
+             SUM(CASE WHEN outcome_type = 'fell_through' THEN 1 ELSE 0 END) AS fell_through
+      FROM lead_outcomes
+      WHERE date >= ? AND date <= ?
+      GROUP BY date
+      ORDER BY date ASC
+    `).all(last30.startDate, last30.endDate) as any[];
+
+    const callsTrendRows = sqlite.prepare(`
+      SELECT log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
+      FROM daily_call_logs
+      WHERE log_date >= ? AND log_date <= ?
+      GROUP BY log_date
+      ORDER BY log_date ASC
+    `).all(last30.startDate, last30.endDate) as any[];
+    const callsByDate = new Map<string, number>();
+    for (const r of callsTrendRows) callsByDate.set(r.date, Number(r.calls) || 0);
+
+    // Build a contiguous date series so the chart has no gaps
+    const trend: any[] = [];
+    const trendMap = new Map<string, any>();
+    for (const r of trendRows) trendMap.set(r.date, r);
+    const cursor = new Date(last30.startDate + "T00:00:00");
+    const end = new Date(last30.endDate + "T00:00:00");
+    while (cursor <= end) {
+      const d = cursor.toISOString().split("T")[0];
+      const row = trendMap.get(d);
+      trend.push({
+        date: d,
+        calls: callsByDate.get(d) ?? 0,
+        transfers: row ? Number(row.transfers) || 0 : 0,
+        appointments: row ? Number(row.appointments) || 0 : 0,
+        fellThrough: row ? Number(row.fell_through) || 0 : 0,
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      today: todayStr,
+      ranges: { week, month, last30 },
+      stats: { today: todayStats, week: weekStats, month: monthStats },
+      leaderboard,
+      eod: {
+        date: todayStr,
+        total: allClrs.length,
+        submitted: eodSubmittedCount,
+        missing: allClrs.length - eodSubmittedCount,
+        rows: eodStatus,
+      },
+      pipeline: {
+        todayTransfers,
+        overdueAppointments,
+        overdueNmls,
+      },
+      trend,
+    });
+  });
+
   // ── Algorithm Settings ────────────────────────────────────────────────────────
   app.get("/api/settings/algorithm", (req, res) => {
     res.json(storage.getAlgorithmSettings());
