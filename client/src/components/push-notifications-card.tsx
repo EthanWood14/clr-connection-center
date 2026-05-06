@@ -4,7 +4,8 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Bell, BellOff } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { Bell, BellOff, CalendarClock } from "lucide-react";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -19,8 +20,10 @@ type Status = "loading" | "unsupported" | "denied" | "disabled" | "enabled";
 
 export function PushNotificationsCard() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [status, setStatus] = useState<Status>("loading");
   const [busy, setBusy] = useState(false);
+  const isAdmin = user?.role === "admin";
 
   async function refresh() {
     if (typeof window === "undefined") return;
@@ -111,6 +114,25 @@ export function PushNotificationsCard() {
     }
   }
 
+  async function sendSampleAppointment() {
+    setBusy(true);
+    try {
+      const result = await apiRequest("POST", "/api/push/test-appointment", {
+        borrower: "Sample Borrower",
+        loName: "Sample LO",
+      }) as { sent: number; failed: number };
+      toast({
+        title: result.sent > 0 ? "Sample appointment heads-up sent" : "No devices reached",
+        description: `Delivered to ${result.sent} device${result.sent === 1 ? "" : "s"}${result.failed ? `, ${result.failed} failed` : ""}.`,
+        variant: result.sent > 0 ? undefined : "destructive",
+      });
+    } catch (e: any) {
+      toast({ title: "Sample push failed", description: e?.message ?? "Unknown", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const statusText = {
     loading: "Checking…",
     unsupported: "Your browser doesn't support push notifications.",
@@ -141,9 +163,24 @@ export function PushNotificationsCard() {
           />
         </div>
         {status === "enabled" && (
-          <Button onClick={sendTest} size="sm" variant="outline" disabled={busy}>
-            Send test notification
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={sendTest} size="sm" variant="outline" disabled={busy}>
+              Send test notification
+            </Button>
+            {isAdmin && (
+              <Button
+                onClick={sendSampleAppointment}
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                className="gap-1.5"
+                data-testid="btn-sample-appointment-push"
+              >
+                <CalendarClock className="w-3.5 h-3.5" />
+                Send sample appointment heads-up
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

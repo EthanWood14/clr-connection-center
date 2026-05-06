@@ -1811,6 +1811,27 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Admin test: fire a sample appointment-reminder push at the requesting
+  // user (or a target userId). Mirrors the format the [appt-30m] cron sends
+  // so we can verify end-to-end push delivery without waiting for a real
+  // appointment to come within 30 minutes.
+  app.post("/api/push/test-appointment", requireAuth, async (req: any, res) => {
+    const me = req.session_user?.userId;
+    if (!me) return res.status(401).json({ error: "Unauthorized" });
+    const meUser = storage.getUserById(me) as any;
+    if (meUser?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const targetId = Number(req.body?.userId ?? me);
+    const borrower = (req.body?.borrower as string) || "Sample Borrower";
+    const loName = (req.body?.loName as string) || "Sample LO";
+    const result = await sendPushToUser(targetId, {
+      title: "⏰ Appointment in 30 minutes",
+      body: `${borrower} — ${loName}`,
+      url: "/outcomes",
+    });
+    console.log(`[push-test] sample appointment reminder fired to user=${targetId} sent=${result.sent} failed=${result.failed}`);
+    res.json({ targetUserId: targetId, ...result });
+  });
+
   // Internal-ish helper: admins can send a push to any user; users can self-test
   app.post("/api/push/send", requireAuth, async (req: any, res) => {
     const me = req.session_user?.userId;
