@@ -2589,6 +2589,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return res.json({ ok: true });
   });
 
+  // ── Welcome magic-link login: consume reset_token, set session cookie, redirect ──
+  // Used by the welcome email's "Log In Instantly" button so new users land in
+  // the app already authenticated. Token is single-use (cleared after consumption);
+  // mustChangePassword is left true so the app forces a password change on entry.
+  app.get("/api/auth/welcome-login", async (req, res) => {
+    const token = String((req.query as any)?.token ?? "").trim();
+    const failHtml = (msg: string) => `<!doctype html><html><head><meta charset="utf-8"><title>Link expired</title><style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0F182D;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#1A2B4A;border:1px solid #C9A24A33;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center}h1{margin:0 0 12px;color:#C9A24A;font-size:20px}p{margin:0 0 18px;color:#cbd5e1;line-height:1.6;font-size:14px}a{display:inline-block;background:#C9A24A;color:#0F182D;font-weight:600;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:14px}</style></head><body><div class="card"><h1>Link expired</h1><p>${msg}</p><a href="https://www.westcapitallending.center">Go to log in</a></div></body></html>`;
+    if (!token) return res.status(400).send(failHtml("This welcome link is missing its token."));
+    const user = (storage as any).getUserByResetToken(token) as any;
+    if (!user || !user.reset_token_expiry || user.reset_token_expiry < Date.now()) {
+      return res.status(400).send(failHtml("This welcome link is invalid or has expired. Use your temporary password to log in instead, or request a new welcome email from your admin."));
+    }
+    // Single-use: consume the token immediately
+    try { (storage as any).clearResetToken(user.id); } catch {}
+
+    const isProduction = process.env.NODE_ENV === "production";
+    const orgId = Number(user.orgId ?? user.org_id ?? 1);
+    const superAdmin = !!(user.superAdmin ?? user.super_admin);
+    const payload = JSON.stringify({ userId: user.id, role: user.role, orgId, superAdmin });
+    res.cookie(COOKIE_NAME, payload, {
+      signed: true,
+      httpOnly: true,
+      sameSite: isProduction ? "strict" : "none",
+      secure: isProduction,
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    audit({ userId: user.id, userName: user.name, action: "welcome_login", entityType: "auth", entityId: user.id, entityLabel: user.email, details: JSON.stringify({ via: "magic_link" }) });
+    // mustChangePassword stays true; the SPA will route them to the change-password
+    // screen on first load.
+    return res.redirect(302, "/");
+  });
+
   // ── Auth guard for all /api/* routes except /api/auth/* and /api/invite/* ──
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
@@ -2613,13 +2646,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const special = WCL_SPECIALS[Math.floor(Math.random() * WCL_SPECIALS.length)];
     const word = WCL_WORDS[Math.floor(Math.random() * WCL_WORDS.length)];
     const tempPassword = `WCL${digits}${special}${word}`;
+    // Magic-link token: 7-day, single-use — lets the welcome email "Log In Instantly"
+    // button drop the user straight into the app with no typing required.
+    const welcomeToken = crypto.randomBytes(32).toString("hex");
+    const welcomeExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
     try {
       const hash = await bcrypt.hash(tempPassword, 10);
       storage.setUserPassword(newUser.id, hash);
       storage.setMustChangePassword(newUser.id, true);
+      (storage as any).setResetToken(newUser.id, welcomeToken, welcomeExpiry);
     } catch (e) {
       console.error("Failed to set temp password for new user:", e);
     }
+    const welcomeLoginUrl = `https://www.westcapitallending.center/api/auth/welcome-login?token=${welcomeToken}`;
 
     // Send welcome email if requested (non-blocking — don't fail the request if email fails)
     let emailSent = false;
@@ -2652,9 +2691,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             You will be prompted to change your password on first login.
           </p>
         </div>
+        <div style="text-align:center;margin-bottom:14px">
+          <a href="${welcomeLoginUrl}" style="display:inline-block;background:#C9A24A;color:#0F182D;font-size:15px;font-weight:700;padding:14px 32px;border-radius:8px;text-decoration:none;letter-spacing:0.2px;box-shadow:0 2px 6px rgba(15,24,45,0.15)">
+            Log In Instantly
+          </a>
+          <p style="margin:10px 0 0;font-size:11px;color:#94a3b8;line-height:1.5">
+            One-tap link — no password needed. Expires in 7 days.
+          </p>
+        </div>
         <div style="text-align:center;margin-bottom:24px">
-          <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
-            Log In to CLR Connection Center
+          <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:13px;font-weight:600;padding:10px 22px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+            Or log in manually with your password
           </a>
         </div>
         <div style="border-top:1px solid #e2e8f0;padding-top:16px">
@@ -2737,6 +2784,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     storage.setUserPassword(id, hash);
     storage.updateUser(id, { mustChangePassword: true } as any);
 
+    // Magic-link token — same flow as new user creation. 7-day, single-use.
+    const welcomeToken = crypto.randomBytes(32).toString("hex");
+    const welcomeExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    try { (storage as any).setResetToken(id, welcomeToken, welcomeExpiry); } catch (e) { console.error("setResetToken (resend-welcome) failed:", e); }
+    const welcomeLoginUrl = `https://www.westcapitallending.center/api/auth/welcome-login?token=${welcomeToken}`;
+
     const roleLabel = user.role === "admin" ? "Administrator" : user.role === "assistant" ? "CLR Assistant" : "Viewer";
     const welcomeBody = `
       <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
@@ -2760,9 +2813,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           You will be prompted to change your password on first login.
         </p>
       </div>
+      <div style="text-align:center;margin-bottom:14px">
+        <a href="${welcomeLoginUrl}" style="display:inline-block;background:#C9A24A;color:#0F182D;font-size:15px;font-weight:700;padding:14px 32px;border-radius:8px;text-decoration:none;letter-spacing:0.2px;box-shadow:0 2px 6px rgba(15,24,45,0.15)">
+          Log In Instantly
+        </a>
+        <p style="margin:10px 0 0;font-size:11px;color:#94a3b8;line-height:1.5">
+          One-tap link — no password needed. Expires in 7 days.
+        </p>
+      </div>
       <div style="text-align:center;margin-bottom:24px">
-        <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
-          Log In to CLR Connection Center
+        <a href="https://www.westcapitallending.center" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:13px;font-weight:600;padding:10px 22px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+          Or log in manually with your password
         </a>
       </div>
       <div style="border-top:1px solid #e2e8f0;padding-top:16px">
