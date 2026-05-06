@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { getRawSqlite, storage } from "./storage";
 import { sendPushToUser } from "./push";
 import { sendSms, isTwilioConfigured, normalizePhone } from "./sms";
+import { parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
 
 const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
@@ -24,13 +25,17 @@ function resolveFrom(): string {
   return DEFAULT_FROM;
 }
 
-function fmtDateTime(iso: string): string {
+function fmtDateTime(iso: string, tz?: string): string {
+  // The stored value (e.g. "2026-05-06T15:00") has no timezone offset, so
+  // resolve it as a wall-clock time in the user's tz before formatting —
+  // otherwise it would render in the server's local tz (UTC on Railway).
   try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString("en-US", {
+    const ms = parseWallClockInTz(iso, tz || BUSINESS_DAY_DEFAULT_TZ);
+    if (!Number.isFinite(ms)) return iso;
+    return new Date(ms).toLocaleString("en-US", {
       weekday: "short", month: "short", day: "numeric",
       hour: "numeric", minute: "2-digit", hour12: true,
+      timeZone: tz || BUSINESS_DAY_DEFAULT_TZ,
     });
   } catch { return iso; }
 }
@@ -48,6 +53,7 @@ type PendingOutcome = {
   clr_phone: string | null;
   clr_reminder_enabled: number;
   clr_sms_enabled: number;
+  clr_timezone: string;
   lo_name: string;
 };
 
@@ -82,6 +88,7 @@ function findPendingReminders(): PendingOutcome[] {
       u.phone AS clr_phone,
       u.reminder_email_enabled AS clr_reminder_enabled,
       u.sms_reminders_enabled AS clr_sms_enabled,
+      COALESCE(u.timezone, 'America/Los_Angeles') AS clr_timezone,
       COALESCE(u.org_id, 1) AS org_id,
       loff.full_name AS lo_name
     FROM lead_outcomes lo
@@ -119,7 +126,10 @@ function findPendingReminders(): PendingOutcome[] {
       // Allow row through anyway so push still gets a shot. Push delivery
       // itself is a no-op when there are no subscriptions.
     }
-    const t = Date.parse(r.scheduled_date);
+    // Parse the stored wall-clock datetime in the CLR's timezone, not the
+    // server's. Without this, on a UTC-running server, "3:00 PM" picked by a
+    // Pacific user resolves to 8:00 AM Pacific — 7 hours early.
+    const t = parseWallClockInTz(r.scheduled_date, r.clr_timezone || BUSINESS_DAY_DEFAULT_TZ);
     if (!Number.isFinite(t)) return false;
     if (t <= now || t > in24h) return false; // must be in the future, within 24h
     const existing = existingReminderStmt.get(r.outcome_id) as any;
@@ -132,7 +142,7 @@ function buildEmail(o: PendingOutcome): { subject: string; html: string } {
   const label = o.outcome_type === "appointment" ? "Appointment" : "Callback";
   const actionNoun = o.outcome_type === "appointment" ? "appointment" : "callback";
   const borrower = o.borrower_name?.trim() || "Unknown";
-  const when = fmtDateTime(o.scheduled_date);
+  const when = fmtDateTime(o.scheduled_date, o.clr_timezone);
   const subject = `Reminder: ${label} with ${borrower} — ${when}`;
   const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c] || c));
   const notesRow = o.notes?.trim()
@@ -194,6 +204,7 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
 
   for (const o of pending) {
     const { subject, html } = buildEmail(o);
+    const oTz = o.clr_timezone || BUSINESS_DAY_DEFAULT_TZ;
     const emailEligible = !!o.clr_reminder_enabled && !!o.clr_email;
     try {
       if (emailEligible) {
@@ -215,7 +226,7 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
         isTwilioConfigured(o.org_id)
       ) {
         const kind = o.outcome_type === "appointment" ? "appointment" : "callback";
-        const when = fmtDateTime(o.scheduled_date);
+        const when = fmtDateTime(o.scheduled_date, oTz);
         const borrower = o.borrower_name?.trim() || "Unknown";
         const smsBody = `CLR Connection Center: Reminder — you have a ${kind} scheduled at ${when} with borrower ${borrower}. Log in: https://www.westcapitallending.center`;
         const smsResult = await sendSms(o.clr_phone, smsBody, o.org_id);
@@ -231,7 +242,7 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
       // notification opens the upcoming-appointments view.
       try {
         const borrower = o.borrower_name?.trim() || "this lead";
-        const when = fmtDateTime(o.scheduled_date);
+        const when = fmtDateTime(o.scheduled_date, oTz);
         const kind = o.outcome_type === "appointment" ? "Appointment" : "Callback";
         await sendPushToUser(o.assistant_id, {
           title: `⏰ ${kind} reminder — ${borrower}`,

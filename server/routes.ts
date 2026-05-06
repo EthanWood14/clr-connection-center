@@ -220,7 +220,9 @@ function buildEmail(opts: {
   body: string;
 }): string {
   const { subject, preheader = "", body } = opts;
-  const now = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  // Render "today" in the business-day default tz so a 6pm PT send doesn't get
+  // labeled with tomorrow's date because the host server is on UTC.
+  const now = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -594,7 +596,7 @@ async function sendReport(
     </div>`;
   })();
 
-  const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ })}`;
 
   // Stat card helper — 25% wide (4 cards)
   const statCard = (value: string | number, label: string, color = "#1A2B4A") =>
@@ -6454,14 +6456,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const notCalledNames: string[] = assignedLoIds.filter((id: number) => !calledSet.has(id)).map(loNameById);
         const additionalNames: string[] = additionalIds.map(loNameById);
 
-        const reportDateLong = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-        const reportDateShort = new Date(reportDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+        // Render date-only fields anchored to UTC so the calendar day matches
+        // the stored YYYY-MM-DD regardless of the host server's local tz.
+        const reportDateLong = new Date(reportDate + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+        const reportDateShort = new Date(reportDate + "T00:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 
         // ── Week-to-date summary (Sun–Sat containing the report date) ──
-        const rd = new Date(reportDate + "T00:00:00");
-        const dow = rd.getDay(); // 0=Sun..6=Sat
-        const wkStart = new Date(rd); wkStart.setDate(rd.getDate() - dow);
-        const wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate() + 6);
+        const rd = new Date(reportDate + "T00:00:00Z");
+        const dow = rd.getUTCDay(); // 0=Sun..6=Sat (UTC, matches the UTC-anchored rd)
+        const wkStart = new Date(rd); wkStart.setUTCDate(rd.getUTCDate() - dow);
+        const wkEnd = new Date(wkStart); wkEnd.setUTCDate(wkStart.getUTCDate() + 6);
         const wkStartStr = wkStart.toISOString().split("T")[0];
         const wkEndStr = wkEnd.toISOString().split("T")[0];
         const wtdOutcomes = storage.getLeadOutcomes({ startDate: wkStartStr, endDate: wkEndStr, assistantId: userId }) as any[];
@@ -6476,8 +6480,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const goalAppointments = Number((clrUser as any)?.goalAppointmentsWeekly ?? (clrUser as any)?.goal_appointments_weekly ?? 0);
         const hasGoals = goalCalls > 0 || goalTransfers > 0 || goalAppointments > 0;
 
-        const wkStartLabel = wkStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        const wkEndLabel = wkEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const wkStartLabel = wkStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+        const wkEndLabel = wkEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
         const progressBar = (current: number, goal: number, color: string) => {
           if (goal <= 0) return "";
@@ -6611,19 +6615,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           </div>` : ""}
 
           ${(() => {
-            // Helper for appointment/callback rendering — shared formatter
+            // Helper for appointment/callback rendering — shared formatter.
+            // Wall-clock strings (no offset) are interpreted in the CLR's timezone,
+            // and rendering is forced to that tz so a 3pm PT appointment doesn't
+            // get mangled into 8am on a UTC server.
+            const eodTz = (clrUser?.timezone as string | null) || BUSINESS_DAY_DEFAULT_TZ;
             const escTxt = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
             const fmtWhen = (raw: string | null) => {
               if (!raw) return null;
               const s = String(raw).trim();
               if (!s) return null;
-              const ms = Date.parse(s);
-              if (!Number.isFinite(ms)) return s;
               const hasTime = s.includes('T') || s.includes(' ');
               try {
+                const ms = hasTime ? parseWallClockInTz(s, eodTz) : Date.parse(s + 'T00:00:00Z');
+                if (!Number.isFinite(ms)) return s;
                 return new Date(ms).toLocaleString('en-US', hasTime
-                  ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }
-                  : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                  ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: eodTz }
+                  : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
               } catch { return s; }
             };
             const aRow = (i: number, total: number, color: string, name: string, loName: string | null, when: string | null, notes: string | null, tag?: string | null) => `
