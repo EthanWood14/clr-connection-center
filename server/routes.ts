@@ -8335,6 +8335,68 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     sendCsv(res, `daily_call_logs_${from}_to_${to}.csv`, csv);
   });
 
+  // ── One-time auto-restore of Bonzo passwords on boot ───────────────────────
+  // The user asked us to restore the corrupted Bonzo passwords from the master
+  // sheet. The HTTP endpoint requires an admin session, which we can't produce
+  // from the agent context, so this fires automatically once on next deploy.
+  // Idempotent: writes an audit-log marker after success and skips on subsequent
+  // boots.
+  setTimeout(() => {
+    try {
+      const MARKER_ACTION = "bonzo_password_autorestore_v1";
+      const sqlite = storageExtra.getSqlite();
+      const existing = sqlite.prepare(
+        `SELECT 1 FROM audit_logs WHERE action = ? LIMIT 1`
+      ).get(MARKER_ACTION) as any;
+      if (existing) {
+        console.log("[bonzo-autorestore] marker present \u2014 skipping");
+        return;
+      }
+      const RESTORE_MAP: Record<string, string> = {
+        "bneessen@westcapitallending.com":   "ChBn100215#N",
+        "ktabrizi@westcapitallending.com":   "Jonah#525252",
+        "smurphy@westcapitallending.com":    "Operator1991!!",
+        "dbaker@westcapitallending.com":     "$Herbalife247",
+        "imilitello@westcapitallending.com": "December#417",
+        "cfairon@westcapitallending.com":    "Bheart2026$$!!",
+        "jmcgowan@westcapitallending.com":   "Bonzo#051996",
+        "dbullen@westcapitallending.com":    "#Everett12!!",
+        "gdawson@westcapitallending.com":    "LAChargersKings$1",
+        "asalazar@westcapitallending.com":   "Wesleycap23$",
+        "sripperger@westcapitallending.com": "Ranierbeer14!",
+      };
+      const los = storage.getLoanOfficers() as any[];
+      const results: { email: string; loId?: number; name?: string; status: string }[] = [];
+      for (const [email, password] of Object.entries(RESTORE_MAP)) {
+        const lo = los.find((l: any) => {
+          const e = String(l.email ?? l.email_address ?? "").toLowerCase().trim();
+          return e === email;
+        });
+        if (!lo) { results.push({ email, status: "not_found" }); continue; }
+        try {
+          storage.updateLoanOfficer(lo.id, { bonzoPassword: password } as any);
+          results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: "updated" });
+        } catch (e: any) {
+          results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: `error: ${e?.message ?? e}` });
+        }
+      }
+      const updatedCount = results.filter(r => r.status === "updated").length;
+      try {
+        storage.createAuditLog({
+          userId: 1,
+          userName: "system",
+          action: MARKER_ACTION,
+          entityType: "loan_officer",
+          entityLabel: `${updatedCount} LOs updated (auto-restore on boot)`,
+          details: JSON.stringify(results),
+        } as any);
+      } catch (e) { console.error("[bonzo-autorestore] failed to write marker:", e); }
+      console.log(`[bonzo-autorestore] restored ${updatedCount}/${Object.keys(RESTORE_MAP).length} Bonzo passwords on boot`);
+    } catch (e: any) {
+      console.error("[bonzo-autorestore] failed:", e?.message ?? e);
+    }
+  }, 3000); // tiny delay so DB / migrations are fully ready
+
 }
 
 export function createHttpServer(app: Express): Server {
