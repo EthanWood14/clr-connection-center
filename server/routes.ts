@@ -4321,12 +4321,207 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       cursor.setDate(cursor.getDate() + 1);
     }
 
+    // ── Prior-period stats for week/month deltas ──
+    const priorWeekStart = new Date(week.startDate + "T00:00:00"); priorWeekStart.setDate(priorWeekStart.getDate() - 7);
+    const priorWeekEnd = new Date(week.endDate + "T00:00:00"); priorWeekEnd.setDate(priorWeekEnd.getDate() - 7);
+    const priorMonthStart = new Date(month.startDate + "T00:00:00"); priorMonthStart.setMonth(priorMonthStart.getMonth() - 1);
+    const priorMonthEnd = new Date(month.startDate + "T00:00:00"); priorMonthEnd.setDate(priorMonthEnd.getDate() - 1);
+    const fmtD = (d: Date) => d.toISOString().split("T")[0];
+    const priorWeekStats = storage.getDashboardStats(fmtD(priorWeekStart), fmtD(priorWeekEnd));
+    const priorMonthStats = storage.getDashboardStats(fmtD(priorMonthStart), fmtD(priorMonthEnd));
+
+    // ── Team outcome breakdown (last 30d) for pie chart ──
+    const outcomeBreakdownRows = sqlite.prepare(`
+      SELECT outcome_type, COUNT(*) AS count
+      FROM lead_outcomes
+      WHERE date >= ? AND date <= ?
+      GROUP BY outcome_type
+      ORDER BY count DESC
+    `).all(last30.startDate, last30.endDate) as any[];
+
+    // ── Top states (last 30d transfers) ──
+    let topStates: any[] = [];
+    try {
+      topStates = sqlite.prepare(`
+        SELECT lo.state AS state, COUNT(*) AS transfers
+        FROM lead_outcomes o
+        LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+        WHERE o.date >= ? AND o.date <= ?
+          AND o.outcome_type = 'transfer'
+          AND lo.state IS NOT NULL AND lo.state != ''
+        GROUP BY lo.state
+        ORDER BY transfers DESC
+        LIMIT 8
+      `).all(last30.startDate, last30.endDate) as any[];
+    } catch (e) { /* state column may not exist */ }
+
+    // ── Top LOs by transfers (last 30d) ──
+    const topLos = sqlite.prepare(`
+      SELECT lo.id, lo.full_name AS name, COUNT(*) AS transfers
+      FROM lead_outcomes o
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      WHERE o.date >= ? AND o.date <= ?
+        AND o.outcome_type = 'transfer'
+        AND lo.id IS NOT NULL
+      GROUP BY lo.id
+      ORDER BY transfers DESC
+      LIMIT 10
+    `).all(last30.startDate, last30.endDate) as any[];
+
+    // ── Per-CLR deep cards (this month) with goals + completion + outcome mix ──
+    const monthOutcomesAll = sqlite.prepare(`
+      SELECT assistant_id, outcome_type, COUNT(*) AS count
+      FROM lead_outcomes
+      WHERE date >= ? AND date <= ?
+      GROUP BY assistant_id, outcome_type
+    `).all(month.startDate, month.endDate) as any[];
+    const outcomesByUser: Record<number, Record<string, number>> = {};
+    for (const r of monthOutcomesAll) {
+      const uid = r.assistant_id;
+      if (!uid) continue;
+      if (!outcomesByUser[uid]) outcomesByUser[uid] = {};
+      outcomesByUser[uid][r.outcome_type] = Number(r.count) || 0;
+    }
+    const monthCallsRows = sqlite.prepare(`
+      SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
+      FROM daily_call_logs
+      WHERE log_date >= ? AND log_date <= ?
+      GROUP BY assistant_id
+    `).all(month.startDate, month.endDate) as any[];
+    const callsByUserMonth = new Map<number, number>();
+    for (const r of monthCallsRows) callsByUserMonth.set(r.assistant_id, Number(r.calls) || 0);
+
+    // Approximate weeks-in-month elapsed for goal proration
+    const monthDaysElapsed = Math.max(1, (Date.now() - new Date(month.startDate + "T00:00:00").getTime()) / 86400000);
+    const weeksElapsed = Math.max(1, monthDaysElapsed / 7);
+    const clrCards = allClrs.map((u: any) => {
+      const om = outcomesByUser[u.id] ?? {};
+      const transfers = om.transfer ?? 0;
+      const appointments = om.appointment ?? 0;
+      const fellThrough = om.fell_through ?? 0;
+      const callbacks = (om.callback_requested ?? 0) + (om.deferral ?? 0);
+      const noAnswer = om.no_answer ?? 0;
+      const futureContact = om.future_contact ?? 0;
+      const calls = callsByUserMonth.get(u.id) ?? 0;
+      const goalCalls = Math.round((Number(u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0)) * weeksElapsed);
+      const goalTransfers = Math.round((Number(u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0)) * weeksElapsed);
+      const goalAppts = Math.round((Number(u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0)) * weeksElapsed);
+      const comp = completionByUser[u.id] ?? { assigned: 0, completed: 0 };
+      const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
+      const callToTransferRatio = calls > 0 ? Math.round((transfers / calls) * 1000) / 10 : null; // %
+      return {
+        userId: u.id,
+        name: u.name,
+        email: u.email,
+        transfers, appointments, fellThrough, callbacks, noAnswer, futureContact,
+        calls,
+        goalCalls, goalTransfers, goalAppts,
+        callsPct: goalCalls > 0 ? Math.min(999, Math.round((calls / goalCalls) * 100)) : null,
+        transfersPct: goalTransfers > 0 ? Math.min(999, Math.round((transfers / goalTransfers) * 100)) : null,
+        apptsPct: goalAppts > 0 ? Math.min(999, Math.round((appointments / goalAppts) * 100)) : null,
+        assigned: comp.assigned,
+        completed: comp.completed,
+        completionPct,
+        callToTransferRatio,
+      };
+    });
+
+    // ── Activity feed: last 25 outcomes across the team ──
+    const activityFeed = sqlite.prepare(`
+      SELECT o.id, o.date, o.outcome_type, o.borrower_name, o.notes,
+             o.created_at, u.name AS clr_name, lo.full_name AS lo_name
+      FROM lead_outcomes o
+      LEFT JOIN users u ON u.id = o.assistant_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      ORDER BY o.id DESC
+      LIMIT 25
+    `).all() as any[];
+
+    // ── Fell-through reason analysis (notes keyword tally, last 30d) ──
+    const fellThroughRows = sqlite.prepare(`
+      SELECT notes FROM lead_outcomes
+      WHERE date >= ? AND date <= ? AND outcome_type = 'fell_through'
+    `).all(last30.startDate, last30.endDate) as any[];
+    const reasonBuckets: Record<string, number> = {};
+    const KEYWORDS: { label: string; pattern: RegExp }[] = [
+      { label: "Credit", pattern: /\b(credit|score|fico)\b/i },
+      { label: "Income / DTI", pattern: /\b(income|dti|debt[- ]to[- ]income|qualif)\b/i },
+      { label: "Rate / pricing", pattern: /\b(rate|pricing|too high|cost|fees)\b/i },
+      { label: "Equity / LTV", pattern: /\b(equity|ltv|appraisal|value)\b/i },
+      { label: "Not interested", pattern: /\b(not interested|no thanks|decline|hung up|disconnected)\b/i },
+      { label: "Going elsewhere", pattern: /\b(other lender|already (working|locked)|competit|going with)\b/i },
+      { label: "Spouse / co-borrower", pattern: /\b(spouse|wife|husband|co[- ]?borrower|partner)\b/i },
+      { label: "Timing / not ready", pattern: /\b(not ready|timing|wait|later|next year|few months)\b/i },
+    ];
+    let unclassified = 0;
+    for (const r of fellThroughRows) {
+      const note = String(r.notes || "").trim();
+      if (!note) { unclassified++; continue; }
+      let matched = false;
+      for (const k of KEYWORDS) {
+        if (k.pattern.test(note)) { reasonBuckets[k.label] = (reasonBuckets[k.label] ?? 0) + 1; matched = true; break; }
+      }
+      if (!matched) unclassified++;
+    }
+    if (unclassified > 0) reasonBuckets["Other / unspecified"] = unclassified;
+    const fellThroughReasons = Object.entries(reasonBuckets).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+
+    // ── CLR-by-day activity heatmap (last 14 days × CLR) ──
+    const heatmapRange: string[] = [];
+    {
+      const cur = new Date(); cur.setDate(cur.getDate() - 13);
+      for (let i = 0; i < 14; i++) {
+        heatmapRange.push(cur.toISOString().split("T")[0]);
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    const heatmapStart = heatmapRange[0];
+    const heatmapEnd = heatmapRange[heatmapRange.length - 1];
+    const heatmapRows = sqlite.prepare(`
+      SELECT assistant_id, date, COUNT(*) AS activity
+      FROM lead_outcomes
+      WHERE date >= ? AND date <= ?
+      GROUP BY assistant_id, date
+    `).all(heatmapStart, heatmapEnd) as any[];
+    const heatmapMap: Record<string, number> = {};
+    for (const r of heatmapRows) heatmapMap[`${r.assistant_id}|${r.date}`] = Number(r.activity) || 0;
+    const heatmap = {
+      dates: heatmapRange,
+      rows: allClrs.map((u: any) => ({
+        userId: u.id,
+        name: u.name,
+        cells: heatmapRange.map(d => heatmapMap[`${u.id}|${d}`] ?? 0),
+      })),
+    };
+
+    // ── Alerts banner ──
+    const alerts: { level: "warn" | "danger" | "info"; text: string; href?: string }[] = [];
+    if (eodStatus.length - eodSubmittedCount > 0) {
+      alerts.push({ level: "warn", text: `${eodStatus.length - eodSubmittedCount} CLR${eodStatus.length - eodSubmittedCount === 1 ? "" : "s"} haven't submitted today's EOD report.` });
+    }
+    if (overdueAppointments.length >= 5) {
+      alerts.push({ level: "danger", text: `${overdueAppointments.length} appointments are overdue.`, href: "/appointments" });
+    } else if (overdueAppointments.length > 0) {
+      alerts.push({ level: "warn", text: `${overdueAppointments.length} appointment${overdueAppointments.length === 1 ? " is" : "s are"} overdue.`, href: "/appointments" });
+    }
+    if (overdueNmls.length >= 3) {
+      alerts.push({ level: "danger", text: `${overdueNmls.length} NMLS checks are overdue.`, href: "/nmls-checks" });
+    }
+    const stalledClrs = clrCards.filter(c => c.assigned > 0 && (c.completionPct ?? 100) < 50);
+    if (stalledClrs.length > 0) {
+      alerts.push({ level: "warn", text: `${stalledClrs.length} CLR${stalledClrs.length === 1 ? "" : "s"} below 50% list completion: ${stalledClrs.slice(0, 3).map(c => c.name).join(", ")}${stalledClrs.length > 3 ? "\u2026" : ""}.` });
+    }
+    if (alerts.length === 0) {
+      alerts.push({ level: "info", text: "All systems normal \u2014 no outstanding issues." });
+    }
+
     res.json({
       generatedAt: new Date().toISOString(),
       today: todayStr,
       ranges: { week, month, last30 },
-      stats: { today: todayStats, week: weekStats, month: monthStats },
+      stats: { today: todayStats, week: weekStats, month: monthStats, priorWeek: priorWeekStats, priorMonth: priorMonthStats },
       leaderboard,
+      clrCards,
       eod: {
         date: todayStr,
         total: allClrs.length,
@@ -4340,6 +4535,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         overdueNmls,
       },
       trend,
+      outcomeBreakdown: outcomeBreakdownRows,
+      topStates,
+      topLos,
+      activityFeed,
+      fellThroughReasons,
+      heatmap,
+      alerts,
     });
   });
 
