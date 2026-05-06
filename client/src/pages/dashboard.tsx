@@ -25,6 +25,7 @@ import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns
 import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
 import ManagerDashboard from "./manager-dashboard";
+import { businessTodayClient } from "@/lib/business-day";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -148,7 +149,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 function CallEntryWidget() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = businessTodayClient();
   const [editing, setEditing] = useState(false);
   const [callInput, setCallInput] = useState("");
 
@@ -898,11 +899,11 @@ function ClrDashboard() {
   const { data: losData } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
   const generateAssignments = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/assignments/generate", { date: new Date().toISOString().split("T")[0] }),
+    mutationFn: () => apiRequest("POST", "/api/assignments/generate", { date: businessTodayClient() }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/assignments"] }),
   });
 
-  const todayDate = new Date().toISOString().split("T")[0];
+  const todayDate = businessTodayClient();
   const { data: todayAssignments = [] } = useQuery<any[]>({ queryKey: [`/api/assignments?date=${todayDate}`] });
 
   const subLabel = PERIOD_SUBLABEL[period];

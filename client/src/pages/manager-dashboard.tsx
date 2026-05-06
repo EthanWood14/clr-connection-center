@@ -19,6 +19,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
 } from "recharts";
 import { useAuth } from "@/lib/auth";
+import { businessTodayClient } from "@/lib/business-day";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -515,7 +516,7 @@ export default function ManagerDashboard() {
       "Assigned": c.assigned, "Completed": c.completed, "Completion %": c.completionPct ?? "",
       "Call→Transfer %": c.callToTransferRatio ?? "",
     }));
-    const dateTag = format(new Date(), "yyyy-MM-dd");
+    const dateTag = businessTodayClient();
     downloadCsv(`clr-team-report-${dateTag}.csv`, rows);
   };
 

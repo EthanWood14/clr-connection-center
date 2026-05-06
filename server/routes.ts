@@ -18,6 +18,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -102,46 +103,35 @@ function getDefaultPeriod() {
 
 // Resolve a named period to date range.
 // Supported: today | week | month | 30days | 90days | alltime | period
-function resolveNamedPeriod(name: string): { startDate: string; endDate: string } {
-  const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
+function resolveNamedPeriod(name: string, tz?: string): { startDate: string; endDate: string } {
+  // Anchor every range to the *business* today (10pm forward rollover) in the
+  // caller's timezone. Week boundaries derive from this business today.
+  const todayStr = businessTodayInTz(tz || BUSINESS_DAY_DEFAULT_TZ);
   if (name === "today") {
     return { startDate: todayStr, endDate: todayStr };
   }
   if (name === "week") {
-    const dow = now.getDay();
-    const sunday = new Date(now);
-    sunday.setDate(now.getDate() - dow);
-    const saturday = new Date(sunday);
-    saturday.setDate(sunday.getDate() + 6);
-    return {
-      startDate: sunday.toISOString().split("T")[0],
-      endDate: saturday.toISOString().split("T")[0],
-    };
+    // Business-week boundaries: Sunday…Saturday, anchored to business today.
+    const [y, m, d] = todayStr.split("-").map(n => parseInt(n, 10));
+    const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const dow = anchor.getUTCDay();
+    const sunday = new Date(anchor); sunday.setUTCDate(anchor.getUTCDate() - dow);
+    const saturday = new Date(sunday); saturday.setUTCDate(sunday.getUTCDate() + 6);
+    const fmt = (dt: Date) => dt.toISOString().split("T")[0];
+    return { startDate: fmt(sunday), endDate: fmt(saturday) };
   }
   if (name === "month") {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    return {
-      startDate: start.toISOString().split("T")[0],
-      endDate: end.toISOString().split("T")[0],
-    };
+    const [y, m] = todayStr.split("-").map(n => parseInt(n, 10));
+    const start = new Date(Date.UTC(y, m - 1, 1, 12, 0, 0));
+    const end   = new Date(Date.UTC(y, m,     0, 12, 0, 0)); // last day of this month
+    const fmt = (dt: Date) => dt.toISOString().split("T")[0];
+    return { startDate: fmt(start), endDate: fmt(end) };
   }
   if (name === "30days") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 29);
-    return {
-      startDate: start.toISOString().split("T")[0],
-      endDate: todayStr,
-    };
+    return { startDate: addIsoDays(todayStr, -29), endDate: todayStr };
   }
   if (name === "90days") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 89);
-    return {
-      startDate: start.toISOString().split("T")[0],
-      endDate: todayStr,
-    };
+    return { startDate: addIsoDays(todayStr, -89), endDate: todayStr };
   }
   if (name === "alltime") {
     return { startDate: "2000-01-01", endDate: todayStr };
@@ -378,7 +368,7 @@ async function sendReport(
   const period = opts.customRange
     ? opts.customRange
     : type === "daily"
-    ? (() => { const t = new Date().toISOString().split("T")[0]; return { startDate: t, endDate: t }; })()
+    ? (() => { const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ); return { startDate: t, endDate: t }; })()
     : type === "weekly"
     ? resolveNamedPeriod("week")
     : getDefaultPeriod();
@@ -2936,7 +2926,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.get("/api/loan-officers/snoozed", (req, res) => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const snoozed = storage.getLoanOfficers().filter(
       (lo) => lo.snoozeUntil && lo.snoozeUntil >= today && lo.internalStatus === "active"
     );
@@ -2948,7 +2938,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Compute 90-day transfer counts for score preview
     const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
     const xfer90Start = ninetyDaysAgo.toISOString().split("T")[0];
-    const today = new Date().toISOString().split("T")[0];
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const recentOutcomes = storage.getLeadOutcomes({ startDate: xfer90Start, endDate: today });
     const recentTransferCounts = new Map<number, number>();
     for (const o of recentOutcomes) {
@@ -3126,7 +3116,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     licensedStates: l.licensedStates ?? l.licensed_states ?? null,
   });
   app.get("/api/assignments", (req, res) => {
-    const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
+    const date = (req.query.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     const assignments = storage.getDailyAssignments(date);
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();
@@ -3156,7 +3146,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/assignments/today", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const date = new Date().toISOString().split("T")[0];
+    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const assignments = (storage.getDailyAssignments(date) as any[]).filter(
       a => (a.assistantId ?? a.assistant_id) === userId,
     );
@@ -3180,8 +3170,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.post("/api/assignments/generate", requireAuth, (req: any, res: any) => {
-    const date = (req.body.date as string) || new Date().toISOString().split("T")[0];
-    const today = new Date().toISOString().split("T")[0];
+    const date = (req.body.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const callingUser = req.session_user!;
     const sqlite = storageExtra.getRawSqlite();
 
@@ -3368,7 +3358,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const user = storage.getUserById(sessionUid) as any;
     const date = (req.body.date as string) || "";
     const items = (req.body.items as any[]) || [];
-    const today = new Date().toISOString().split("T")[0];
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
     if (!date || date < today) {
       return res.status(400).json({ error: "Pre-configure requires a current or future date." });
     }
@@ -3739,10 +3729,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Personal scope filters base outcome stats (transfers / fellThrough /
     // appointments / outcomesByType / upcomingAppointments) to the current user.
     // Team scope returns org-wide aggregates.
+    const reqTz = (req.user as any)?.timezone ?? BUSINESS_DAY_DEFAULT_TZ;
     const stats = scope === "personal" && userId
-      ? storage.getDashboardStats(startDate, endDate, userId)
-      : storage.getDashboardStats(startDate, endDate);
-    const todayStr = new Date().toISOString().split("T")[0];
+      ? storage.getDashboardStats(startDate, endDate, userId, reqTz)
+      : storage.getDashboardStats(startDate, endDate, undefined, reqTz);
+    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
 
     let myCallsToday: number | null = null;
     let futureContactsCount = 0;
@@ -4179,15 +4170,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(403).json({ error: "Admin only" });
     }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const week = resolveNamedPeriod("week");
     const month = resolveNamedPeriod("month");
     const last30 = resolveNamedPeriod("30days");
 
     // ── Team-wide totals ──
-    const todayStats = storage.getDashboardStats(todayStr, todayStr);
-    const weekStats = storage.getDashboardStats(week.startDate, week.endDate);
-    const monthStats = storage.getDashboardStats(month.startDate, month.endDate);
+    const reqTz = (req.user as any)?.timezone ?? BUSINESS_DAY_DEFAULT_TZ;
+    const todayStats = storage.getDashboardStats(todayStr, todayStr, undefined, reqTz);
+    const weekStats = storage.getDashboardStats(week.startDate, week.endDate, undefined, reqTz);
+    const monthStats = storage.getDashboardStats(month.startDate, month.endDate, undefined, reqTz);
 
     // ── Per-user list-completion (current month) — feeds clrCards below ──
     const monthAssignments = storage.getAssignmentsByRange(month.startDate, month.endDate) as any[];
@@ -4280,8 +4272,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const priorMonthStart = new Date(month.startDate + "T00:00:00"); priorMonthStart.setMonth(priorMonthStart.getMonth() - 1);
     const priorMonthEnd = new Date(month.startDate + "T00:00:00"); priorMonthEnd.setDate(priorMonthEnd.getDate() - 1);
     const fmtD = (d: Date) => d.toISOString().split("T")[0];
-    const priorWeekStats = storage.getDashboardStats(fmtD(priorWeekStart), fmtD(priorWeekEnd));
-    const priorMonthStats = storage.getDashboardStats(fmtD(priorMonthStart), fmtD(priorMonthEnd));
+    const priorWeekStats = storage.getDashboardStats(fmtD(priorWeekStart), fmtD(priorWeekEnd), undefined, reqTz);
+    const priorMonthStats = storage.getDashboardStats(fmtD(priorMonthStart), fmtD(priorMonthEnd), undefined, reqTz);
 
     // ── Per-CLR deep cards (this month) with goals + completion + outcome mix ──
     const monthOutcomesAll = sqlite.prepare(`
@@ -4844,7 +4836,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     const user = storage.getUserById(userId) as any;
     const isClr = !!(user && (user.isClr ?? user.is_clr) && user.role !== "admin");
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
 
     if (!isClr) {
       return res.json({ hasLog: true, date: todayStr, exempt: true, outcomes: emptyOutcomeBreakdown() });
@@ -4864,7 +4856,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.get("/api/call-logs", (req, res) => {
-    const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
+    const date = (req.query.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     const logs = storage.getDailyCallLogs(date);
     const users = storage.getUsers();
     const rawStats = storageExtra.getCallStatsForDay(date) as any[];
@@ -4881,7 +4873,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.get("/api/call-logs/summary", (req, res) => {
     const from = (req.query.from as string) || "2000-01-01";
-    const to = (req.query.to as string) || new Date().toISOString().split("T")[0];
+    const to = (req.query.to as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     const allLogs = storage.getCallLogsByRange(from, to) as any[];
     const users = storage.getUsers();
     // Aggregate by assistant — getCallLogsByRange returns snake_case from raw SQLite
@@ -4969,7 +4961,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const phoneGuess = body.agent_phone || body.user_phone || body.rep_phone || body.phone || body.caller_id || null;
     const nameGuess = body.agent_name || body.user_name || body.rep_name || body.name || body.agent || body.user || null;
     const matched = findUserByWebhookPhoneOrName(phoneGuess, nameGuess);
-    const today = new Date().toISOString().split("T")[0];
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
 
     let action = "ignored";
     let createdOutcome = false;
@@ -5480,7 +5472,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let s = ymd(body?.startDate);
     let e = ymd(body?.endDate);
     if (!s) {
-      const t = new Date().toISOString().split("T")[0];
+      const t = businessTodayForRequest(req, storageExtra.getRawSqlite());
       s = t; e = t;
     }
     if (!e) e = s;
@@ -5732,7 +5724,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const { reason } = req.body;
     if (!reason?.trim()) return res.status(400).json({ error: "A reason is required" });
 
-    const date = new Date().toISOString().split("T")[0];
+    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
     const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
@@ -6792,7 +6784,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     const periodName = (req.query.period as string) || "week";
     const { startDate, endDate } = resolveNamedPeriod(periodName);
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
 
     const user = storage.getUserById(userId) as any;
     // Per-CLR admin-set goals take precedence over the user's own (team default) goals.

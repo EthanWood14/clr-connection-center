@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { businessTodayClient } from "@/lib/business-day";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -347,7 +348,7 @@ export default function Appointments() {
   const loMap = new Map<number, string>(los.map((lo) => [lo.id, lo.fullName]));
 
   // Filter: followUpDate not null AND date portion <= today
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = businessTodayClient();
   // Extract the YYYY-MM-DD portion so datetime values compare correctly.
   const datePart = (s: string) => (s.length >= 10 ? s.slice(0, 10) : s);
 

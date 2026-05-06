@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
+import { businessTodayClient } from "@/lib/business-day";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ScriptResponse { id: number; node_id: number; label: string; color: string; next_node_id: number | null; response_order: number; }
@@ -1316,7 +1317,7 @@ function CallRecorder({
       if (!wizardBorrower.trim()) throw new Error("Borrower name is required");
       if (!assistantUserId) throw new Error("Not logged in — please refresh.");
       const payload: Record<string, unknown> = {
-        date: new Date().toISOString().split("T")[0],
+        date: businessTodayClient(),
         assistantId: assistantUserId,
         outcomeType: outcomeChoice.outcomeType,
         borrowerName: wizardBorrower.trim(),

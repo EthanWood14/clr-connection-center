@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight } from "lucide-react";
 import { copyToClipboard } from "@/lib/utils";
+import { businessTodayClient } from "@/lib/business-day";
 
 const ALL_STATES: { abbr: string; name: string }[] = [
   { abbr: "AL", name: "Alabama" }, { abbr: "AK", name: "Alaska" },
@@ -75,7 +76,7 @@ export default function StateLookup() {
   });
 
   // Only active, non-snoozed LOs for lookup
-  const today = new Date().toISOString().split("T")[0];
+  const today = businessTodayClient();
   const activeLOs = useMemo(
     () => allLOs.filter(
       (lo) => lo.internalStatus === "active" && (!lo.snoozeUntil || lo.snoozeUntil < today)

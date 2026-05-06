@@ -1165,7 +1165,7 @@ export class Storage implements IStorage {
     return this.getAlgorithmSettings();
   }
 
-  getDashboardStats(startDate: string, endDate: string, assistantId?: number) {
+  getDashboardStats(startDate: string, endDate: string, assistantId?: number, tz?: string) {
     const oid = currentOrgId();
     const orgWhere = oid != null ? ` AND org_id = ${Number(oid)}` : "";
     const userWhere = assistantId != null ? ` AND assistant_id = ${Number(assistantId)}` : "";
@@ -1184,7 +1184,15 @@ export class Storage implements IStorage {
     });
 
     // Today's call totals (scoped to user when assistantId provided)
-    const todayStr = new Date().toISOString().split("T")[0];
+    // Uses business-day rollover (10pm forward) in the caller's timezone.
+    const todayStr = (() => {
+      try {
+        const { businessTodayInTz } = require("./business-day") as typeof import("./business-day");
+        return businessTodayInTz(tz);
+      } catch {
+        return new Date().toISOString().split("T")[0];
+      }
+    })();
     const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}${userWhere}`).all(todayStr) as any[];
     const totalCallsToday = todayLogs.reduce((sum: number, l: any) => sum + (l.calls_made ?? 0), 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;

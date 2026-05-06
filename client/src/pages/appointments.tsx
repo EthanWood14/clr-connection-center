@@ -64,6 +64,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { businessTodayClient } from "@/lib/business-day";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -396,7 +397,7 @@ function AppointmentCard({
   };
 
   const dateStr = outcome.followUpDate ?? "";
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = businessTodayClient();
   const isOverdue = !!dateStr && dateStr < todayStr;
   const isUpcoming = !!dateStr && dateStr > todayStr;
   const isTodayAppt = dateStr === todayStr;
@@ -669,7 +670,7 @@ export default function Appointments() {
   );
   const clrNameFor = (id: number) => userMap.get(id) ?? `CLR #${id}`;
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = businessTodayClient();
 
   // Active appointments: followUpDate required for appointment/callback, but deferrals may not have a date
   const matchesFilter = (o: Outcome) => {

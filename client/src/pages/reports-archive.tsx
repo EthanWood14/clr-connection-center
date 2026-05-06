@@ -12,6 +12,7 @@ import {
   CalendarDays, Eye, Mail, FileText, Loader2, AlertCircle, Inbox, Clock, ArrowLeft,
   Pencil, RotateCcw,
 } from "lucide-react";
+import { businessTodayClient } from "@/lib/business-day";
 
 type ReportType = "daily" | "weekly" | "monthly";
 
@@ -24,7 +25,7 @@ type PreviewResult = {
 };
 
 function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  return businessTodayClient();
 }
 
 // Returns the canonical { startDate, endDate } the server would resolve when

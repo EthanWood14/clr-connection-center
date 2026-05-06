@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { parseServerTimestamp } from "@/lib/dates";
+import { businessTodayClient } from "@/lib/business-day";
 
 const ACTIVITY_TYPES = [
   { value: "follow_up",          label: "Follow-Up Call" },
@@ -58,7 +59,7 @@ export default function EodReport() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = (user as any)?.isAdmin || (user as any)?.role === 'admin';
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = businessTodayClient();
   const [selectedDate, setSelectedDate] = useState(todayStr);
 
   // Form state — calls + notes + LO coverage

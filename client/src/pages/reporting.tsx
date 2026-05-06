@@ -33,6 +33,7 @@ import {
   Cell,
 } from "recharts";
 import { format, parseISO, startOfDay, isWithinInterval, subDays } from "date-fns";
+import { businessTodayClient } from "@/lib/business-day";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ export default function Reporting() {
 
   function setAllTime() {
     setFromDate("2000-01-01");
-    setToDate2(format(new Date(), "yyyy-MM-dd"));
+    setToDate2(businessTodayClient());
   }
 
   // ── filtered outcomes ──

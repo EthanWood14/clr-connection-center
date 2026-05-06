@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
+import { businessTodayClient } from "@/lib/business-day";
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "callback_requested", "deferral", "fell_through",
@@ -286,7 +287,7 @@ function OutcomeFormDialog({
   const form = useForm<OutcomeFormValues>({
     resolver: zodResolver(outcomeFormSchema),
     defaultValues: {
-      date: new Date().toISOString().split("T")[0],
+      date: businessTodayClient(),
       assistantId: 1, // default to Ethan
       loId: 0,
       outcomeType: "transfer",
