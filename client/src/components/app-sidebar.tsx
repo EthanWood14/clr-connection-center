@@ -172,8 +172,6 @@ const help = {
 const mainItems: NavItem[] = [
   { title: "Home",                  url: "/",             icon: LayoutDashboard, help: help.dashboard },
   { title: "Calling Script",        url: "/call-script",  icon: PhoneCall,       help: help.script },
-  { title: "LO Directory",          url: "/directory",    icon: Users,           help: help.directory },
-  { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
   { title: "State Lookup",          url: "/state-lookup", icon: MapPin },
   { title: "Call Hours",            url: "/call-hours",   icon: Clock },
 ];
@@ -182,6 +180,7 @@ const reportingItems: NavItem[] = [
   { title: "Your Call List",        url: "/assignments",  icon: CalendarCheck,   help: help.assignments },
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
+  { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
 ];
 
 const teamItems: NavItem[] = [
@@ -191,10 +190,11 @@ const teamItems: NavItem[] = [
 ];
 
 const toolItems: NavItem[] = [
+  { title: "LO Directory",    url: "/directory",      icon: Users,        help: help.directory },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
-  { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
-  { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
-  { title: "NMLS Tracker",    url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
+  { title: "LO Vacation",     url: "/snooze",         icon: BedDouble,    help: help.loVacation },
+  { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
+  { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
 ];
 
 const adminItems: NavItem[] = [

@@ -1020,14 +1020,20 @@ function triggerNmlsChecks() {
     const assignee = assistants[Math.floor(Math.random() * assistants.length)];
     storageExtra.createNmlsCheck({ loId: lo.id, assignedTo: assignee.id, periodKey });
 
-    // Notify the assigned CLR
+    // Notify the assigned CLR (in-app + push). The notification bell and push
+    // both deep-link to /nmls-checks (the NMLS Tracker tab).
     storage.createNotification({
       userId: assignee.id,
       type: "nmls_check",
       title: "NMLS License Check Due",
-      message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Go to Directory to confirm.`,
+      message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Open the NMLS Tracker to confirm.`,
       isRead: false,
     });
+    sendPushToUser(assignee.id, {
+      title: "NMLS License Check Due",
+      body: `Verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) — tap to open NMLS Tracker.`,
+      url: "/nmls-checks",
+    }).catch(() => {});
   }
 }
 
@@ -1046,9 +1052,21 @@ function runNmlsEscalations() {
       userId: null as any,
       type: "nmls_escalation",
       title: "NMLS Check Overdue ⚠️",
-      message: `${lo.fullName}'s NMLS license check has not been confirmed in ${schedule.escalation_days} days. Someone needs to verify it now.`,
+      message: `${lo.fullName}'s NMLS license check has not been confirmed in ${schedule.escalation_days} days. Open the NMLS Tracker to verify it now.`,
       isRead: false,
     });
+    // Mirror as push to all active users so they see it on mobile/desktop too,
+    // deep-linked to the NMLS Tracker tab.
+    try {
+      const recipients = (storage.getUsers() as any[])
+        .filter((u: any) => u.isActive)
+        .map((u: any) => u.id);
+      sendPushToUsers(recipients, {
+        title: "NMLS Check Overdue",
+        body: `${lo.fullName}'s NMLS license check is ${schedule.escalation_days}+ days overdue — tap to verify.`,
+        url: "/nmls-checks",
+      }).catch(() => {});
+    } catch {}
   }
 }
 
