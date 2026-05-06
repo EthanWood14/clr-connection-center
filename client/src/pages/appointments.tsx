@@ -52,7 +52,18 @@ import {
   ChevronUp,
   StickyNote,
   Save,
+  Trash2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -344,9 +355,11 @@ function AppointmentCard({
   onEdit,
   onReschedule,
   onSaveNotes,
+  onDelete,
   isPendingComplete,
   isPendingReschedule,
   isPendingNotes,
+  isPendingDelete,
 }: {
   outcome: Outcome;
   loName: string;
@@ -358,9 +371,11 @@ function AppointmentCard({
   onEdit: (outcome: Outcome) => void;
   onReschedule: (id: number, date: string) => void;
   onSaveNotes: (id: number, notes: string) => void;
+  onDelete: (outcome: Outcome) => void;
   isPendingComplete: boolean;
   isPendingReschedule: boolean;
   isPendingNotes: boolean;
+  isPendingDelete: boolean;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
   const [newDate, setNewDate] = useState("");
@@ -559,6 +574,18 @@ function AppointmentCard({
                 <Pencil className="w-3 h-3" />
                 Edit Details
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 border-red-200 dark:border-red-900/50 ml-auto"
+                onClick={() => onDelete(outcome)}
+                disabled={isPendingDelete}
+                data-testid={`button-delete-${outcome.id}`}
+                title="Permanently delete this appointment"
+              >
+                {isPendingDelete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Delete
+              </Button>
             </div>
 
             {/* Inline reschedule picker */}
@@ -618,6 +645,8 @@ export default function Appointments() {
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
   const [editTarget, setEditTarget] = useState<Outcome | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Outcome | null>(null);
   const [filterType, setFilterType] = useState<FilterKey>("all");
 
   const { data: outcomes = [], isLoading: loadingOutcomes } = useQuery<Outcome[]>({
@@ -834,12 +863,31 @@ export default function Appointments() {
     onError: () => toast({ title: "Error updating appointment", variant: "destructive" }),
   });
 
+  // Delete mutation — permanently removes the outcome record.
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => {
+      setPendingDeleteId(id);
+      return apiRequest("DELETE", `/api/outcomes/${id}`);
+    },
+    onSuccess: () => {
+      refreshAll();
+      setPendingDeleteId(null);
+      setDeleteTarget(null);
+      toast({ title: "Appointment deleted" });
+    },
+    onError: () => {
+      setPendingDeleteId(null);
+      toast({ title: "Error deleting appointment", variant: "destructive" });
+    },
+  });
+
   const handleComplete = (outcome: Outcome) => setCompleteTarget(outcome);
   const handleQuickComplete = (id: number) => quickCompleteMutation.mutate(id);
   const handleConfirmComplete = (id: number, type: "transfer" | "fell_through") => completeMutation.mutate({ id, type });
   const handleReschedule = (id: number, date: string) => rescheduleMutation.mutate({ id, date });
   const handleSaveNotes = (id: number, notes: string) => notesMutation.mutate({ id, notes });
   const handleEdit = (outcome: Outcome) => setEditTarget(outcome);
+  const handleDelete = (outcome: Outcome) => setDeleteTarget(outcome);
   const handleSubmitEdit = (values: EditValues) => {
     if (!editTarget) return;
     editMutation.mutate({ id: editTarget.id, data: values });
@@ -941,9 +989,11 @@ export default function Appointments() {
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
+                onDelete={handleDelete}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
                 isPendingNotes={pendingNotesId === o.id}
+                isPendingDelete={pendingDeleteId === o.id}
               />
             ))}
           </div>
@@ -962,9 +1012,11 @@ export default function Appointments() {
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
+                onDelete={handleDelete}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
                 isPendingNotes={pendingNotesId === o.id}
+                isPendingDelete={pendingDeleteId === o.id}
               />
             ))}
           </div>
@@ -983,9 +1035,11 @@ export default function Appointments() {
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
+                onDelete={handleDelete}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
                 isPendingNotes={pendingNotesId === o.id}
+                isPendingDelete={pendingDeleteId === o.id}
               />
             ))}
           </div>
@@ -1004,9 +1058,11 @@ export default function Appointments() {
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
+                onDelete={handleDelete}
                 isPendingComplete={pendingCompleteId === o.id}
                 isPendingReschedule={pendingRescheduleId === o.id}
                 isPendingNotes={pendingNotesId === o.id}
+                isPendingDelete={pendingDeleteId === o.id}
               />
             ))}
           </div>
@@ -1034,6 +1090,31 @@ export default function Appointments() {
         isPending={editMutation.isPending}
         los={los}
       />
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this appointment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.borrowerName?.trim() || "Unknown borrower"} — this permanently removes the outcome record. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
