@@ -1833,6 +1833,55 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // ── One-shot Bonzo password restore (admin only) ─────────────────────────
+  // Restores Bonzo passwords from the CLR Master Sheet source-of-truth
+  // (parsed 2026-05-05). Idempotent — safe to re-run. Matches LOs by email
+  // (case-insensitive). LOs not in the list are skipped.
+  app.post("/api/admin/restore-bonzo-passwords", requireAuth, async (req: any, res: any) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const RESTORE_MAP: Record<string, string> = {
+      "bneessen@westcapitallending.com":   "ChBn100215#N",
+      "ktabrizi@westcapitallending.com":   "Jonah#525252",
+      "smurphy@westcapitallending.com":    "Operator1991!!",
+      "dbaker@westcapitallending.com":     "$Herbalife247",
+      "imilitello@westcapitallending.com": "December#417",
+      "cfairon@westcapitallending.com":    "Bheart2026$$!!",
+      "jmcgowan@westcapitallending.com":   "Bonzo#051996",
+      "dbullen@westcapitallending.com":    "#Everett12!!",
+      "gdawson@westcapitallending.com":    "LAChargersKings$1",
+      "asalazar@westcapitallending.com":   "Wesleycap23$",
+      "sripperger@westcapitallending.com": "Ranierbeer14!",
+    };
+    const los = storage.getLoanOfficers() as any[];
+    const results: { email: string; loId?: number; name?: string; status: string }[] = [];
+    for (const [email, password] of Object.entries(RESTORE_MAP)) {
+      const lo = los.find((l: any) => {
+        const e = String(l.email ?? l.email_address ?? "").toLowerCase().trim();
+        return e === email;
+      });
+      if (!lo) { results.push({ email, status: "not_found" }); continue; }
+      try {
+        storage.updateLoanOfficer(lo.id, { bonzoPassword: password } as any);
+        results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: "updated" });
+      } catch (e: any) {
+        results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: `error: ${e?.message ?? e}` });
+      }
+    }
+    audit({
+      userId: me.id,
+      userName: me.name,
+      action: "restore_bonzo_passwords",
+      entityType: "loan_officer",
+      entityLabel: `${results.filter(r => r.status === "updated").length} LOs updated`,
+      details: JSON.stringify(results),
+    });
+    return res.json({ ok: true, updated: results.filter(r => r.status === "updated").length, results });
+  });
+
   // ── EOD Reminder: force-run cron now (super admin only) ──────────────────
   app.post("/api/admin/eod-reminders/run-now", requireAuth, async (req: any, res: any) => {
     const sess = req.session_user;
