@@ -336,6 +336,8 @@ function CompleteDialog({
 function AppointmentCard({
   outcome,
   loName,
+  clrName,
+  isMine,
   onComplete,
   onQuickComplete,
   onEdit,
@@ -347,6 +349,8 @@ function AppointmentCard({
 }: {
   outcome: Outcome;
   loName: string;
+  clrName: string;
+  isMine: boolean;
   onComplete: (outcome: Outcome) => void;
   onQuickComplete: (id: number) => void;
   onEdit: (outcome: Outcome) => void;
@@ -418,6 +422,18 @@ function AppointmentCard({
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span
+                className={`inline-flex items-center gap-1 font-medium ${isMine ? "text-primary" : "text-foreground/80"}`}
+                title={isMine ? "This appointment is assigned to you" : `Assigned CLR: ${clrName}`}
+                data-testid={`text-clr-${outcome.id}`}
+              >
+                <span className="font-semibold">CLR:</span> {clrName}
+                {isMine && (
+                  <Badge className="text-[10px] leading-none px-1.5 py-0.5 bg-primary/10 text-primary border-primary/30 ml-0.5">
+                    You
+                  </Badge>
+                )}
+              </span>
               <span><span className="font-medium text-foreground/70">LO:</span> {loName}</span>
               <span><span className="font-medium text-foreground/70">Logged:</span> {outcome.date ? format(parseISO(outcome.date), "MMM d, yyyy") : "—"}</span>
               {outcome.followUpDate && (
@@ -600,8 +616,17 @@ export default function Appointments() {
     queryKey: ["/api/loan-officers"],
   });
 
+  // Users — to display the CLR (assistant) assigned to each appointment
+  const { data: users = [] } = useQuery<Array<{ id: number; name?: string; email?: string }>>({
+    queryKey: ["/api/users"],
+  });
+
   const isLoading = loadingOutcomes || loadingLos;
   const loMap = new Map<number, string>(los.map((lo) => [lo.id, lo.fullName]));
+  const userMap = new Map<number, string>(
+    users.map((u) => [u.id, (u.name && u.name.trim()) || u.email || `User #${u.id}`]),
+  );
+  const clrNameFor = (id: number) => userMap.get(id) ?? `CLR #${id}`;
 
   const todayStr = new Date().toISOString().split("T")[0];
 
@@ -866,6 +891,7 @@ export default function Appointments() {
             {overdueList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -885,6 +911,7 @@ export default function Appointments() {
             {todayList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -904,6 +931,7 @@ export default function Appointments() {
             {upcomingList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -923,6 +951,7 @@ export default function Appointments() {
             {undatedList.map((o) => (
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}

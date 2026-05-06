@@ -3368,7 +3368,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // 30-minute reminder flag so the cron can fire a fresh reminder against
     // the new scheduled time. We check whether either field that the cron
     // reads from is being touched in this PATCH.
-    if ("appointmentDatetime" in body || "followUpDate" in body) {
+    if ("appointmentDatetime" in body || "followUpDate" in body || "assistantId" in body) {
       try {
         storageExtra.getRawSqlite()
           .prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 0 WHERE id = ?`)
