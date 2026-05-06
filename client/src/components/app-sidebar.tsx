@@ -177,20 +177,19 @@ const mainItems: NavItem[] = [
   { title: "Input Results",         url: "/outcomes",    icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",  icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
+  { title: "Team Stats",            url: "/leaderboard", icon: Trophy,          help: help.stats },
+  { title: "Forum",                 url: "/forum",       icon: MessagesSquare,  help: help.forum },
+  { title: "Chat",                  url: "/chat",        icon: MessageCircle,   badge: "chat", help: help.chat },
+  { title: "State Lookup",          url: "/state-lookup", icon: MapPin },
+  { title: "Call Hours",            url: "/call-hours",   icon: Clock },
 ];
 
-const teamItems: NavItem[] = [
-  { title: "Stats",           url: "/leaderboard", icon: Trophy,          help: help.stats },
-  { title: "Chat",            url: "/chat",        icon: MessageCircle,   badge: "chat", help: help.chat },
-  { title: "Forum",           url: "/forum",       icon: MessagesSquare,  help: help.forum },
-];
+const teamItems: NavItem[] = [];
 
 const toolItems: NavItem[] = [
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
   { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
   { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
-  { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
-  { title: "Call Hours",      url: "/call-hours",   icon: Clock },
   { title: "NMLS Tracker",    url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
 ];
 
@@ -395,7 +394,7 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* ADVANCED SETTINGS — collapsible folder containing every other group */}
-        <SidebarGroup>
+        <SidebarGroup className="mt-3">
           <button
             type="button"
             onClick={() => setAdvancedOpen(o => !o)}
@@ -410,16 +409,6 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {advancedOpen && <>
-        {/* TEAM */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Team
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(teamItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
         {/* TOOLS */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
