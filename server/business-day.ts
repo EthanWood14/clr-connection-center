@@ -104,3 +104,62 @@ export function businessTodayForRequest(req: any, sqlite?: any, now: Date = new 
 
 export const BUSINESS_DAY_ROLLOVER_HOUR = ROLLOVER_HOUR;
 export const BUSINESS_DAY_DEFAULT_TZ = DEFAULT_TZ;
+
+/**
+ * Parse a wall-clock string (e.g. "2026-05-06T15:00" or "2026-05-06 15:00")
+ * as if it were observed in the given IANA timezone, and return the
+ * corresponding absolute Unix epoch in ms.
+ *
+ * Why this exists: HTML <input type="datetime-local"> values have NO timezone
+ * suffix, so Date.parse() interprets them in the *runtime's* local timezone.
+ * On a server running in UTC (e.g. Railway), that means "3:00 PM picked by a
+ * Pacific user" gets parsed as 3:00 PM UTC, which is 8:00 AM Pacific — 7 hours
+ * earlier than intended. This helper fixes the interpretation by resolving
+ * the wall-clock time in the user's actual timezone.
+ *
+ * Strings already containing an explicit offset ("...Z", "...+05:00") are
+ * passed straight through to Date.parse() and the tz argument is ignored.
+ */
+export function parseWallClockInTz(input: string | null | undefined, tz: string): number {
+  if (!input) return NaN;
+  const s = String(input).trim();
+  if (!s) return NaN;
+  // If the string already has an explicit timezone offset / Z, just parse it.
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return Date.parse(s);
+  // Match "YYYY-MM-DD" with optional time "HH:MM" or "HH:MM:SS" (separator T or space).
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+  if (!m) return Date.parse(s); // give Date.parse a last shot, even if imperfect
+  const [, y, mo, d, hh, mm, ss] = m;
+  const yi  = parseInt(y, 10);
+  const moi = parseInt(mo, 10);
+  const di  = parseInt(d, 10);
+  const hi  = hh != null ? parseInt(hh, 10) : 0;
+  const mi  = mm != null ? parseInt(mm, 10) : 0;
+  const si  = ss != null ? parseInt(ss, 10) : 0;
+  // Strategy: pick the UTC instant that, when displayed in `tz`, yields the
+  // requested wall-clock components. Start with a guess (the desired wall
+  // clock interpreted as UTC), then correct by the timezone's offset at that
+  // instant. Two iterations handle DST edge cases.
+  let guess = Date.UTC(yi, moi - 1, di, hi, mi, si);
+  for (let iter = 0; iter < 2; iter++) {
+    const offsetMs = tzOffsetMsAt(guess, tz);
+    guess = Date.UTC(yi, moi - 1, di, hi, mi, si) - offsetMs;
+  }
+  return guess;
+}
+
+// Returns the offset (ms) from UTC that the given timezone is observing at the
+// given instant. East-of-UTC is positive, west-of-UTC is negative — same
+// convention as date-fns / luxon. Used internally by parseWallClockInTz.
+function tzOffsetMsAt(instantMs: number, tz: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const parts = dtf.formatToParts(new Date(instantMs));
+  const get = (t: string) => parseInt(parts.find(p => p.type === t)?.value || "0", 10);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return asUtc - instantMs;
+}

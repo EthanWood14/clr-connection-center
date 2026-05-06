@@ -18,7 +18,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1376,6 +1376,7 @@ cron.schedule("*/5 * * * *", async () => {
       SELECT lo.id, lo.assistant_id, lo.borrower_name,
              lo.appointment_datetime, lo.follow_up_date,
              u.email AS clr_email, u.name AS clr_name, COALESCE(u.reminder_email_enabled, 1) AS reminder_email_enabled,
+             COALESCE(u.timezone, 'America/Los_Angeles') AS clr_timezone,
              loff.full_name AS lo_name
       FROM lead_outcomes lo
       JOIN users u ON u.id = lo.assistant_id
@@ -1403,9 +1404,15 @@ cron.schedule("*/5 * * * *", async () => {
         || (r.follow_up_date && String(r.follow_up_date).trim())
         || "";
       if (!rawTime) continue;
-      const t = Date.parse(rawTime);
+      // CRITICAL: the appointments page stores datetime-local strings like
+      // "2026-05-06T15:00" with NO timezone offset. Date.parse() then
+      // interprets them in the *server's* local timezone, which on Railway
+      // is UTC — making the reminder fire 7–8 hours early for Pacific users.
+      // Resolve the wall-clock time in the CLR's stored timezone instead.
+      const clrTz = r.clr_timezone || "America/Los_Angeles";
+      const t = parseWallClockInTz(rawTime, clrTz);
       if (!Number.isFinite(t)) {
-        console.warn(`[appt-30m] skip outcome=${r.id}: unparseable time=${JSON.stringify(rawTime)}`);
+        console.warn(`[appt-30m] skip outcome=${r.id}: unparseable time=${JSON.stringify(rawTime)} tz=${clrTz}`);
         continue;
       }
       if (t <= nowMs || t > cutoffMs) continue;
@@ -1413,8 +1420,13 @@ cron.schedule("*/5 * * * *", async () => {
       const borrower = r.borrower_name?.trim() || "Unknown";
       const loName = r.lo_name || "Unknown LO";
       const when = (() => {
-        try { return new Date(rawTime).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
-        catch { return rawTime; }
+        try {
+          return new Date(t).toLocaleString("en-US", {
+            weekday: "short", month: "short", day: "numeric",
+            hour: "numeric", minute: "2-digit", hour12: true,
+            timeZone: clrTz,
+          });
+        } catch { return rawTime; }
       })();
 
       // Email (only if user opted in + has address)
