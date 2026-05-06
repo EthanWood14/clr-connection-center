@@ -4589,8 +4589,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         })),
       };
 
-      // Top states by phone area code (NPA → state). Falls back to LO state if phone column missing.
+      // Top states by phone area code (NPA → state).
+      // Counts all transfers in window whose phone column parses to a valid US NPA.
+      // Diagnostics (phonesTotal/phonesParsed/phonesRejected) surface data-quality issues
+      // when callers report wrong-looking results (e.g. "every state shows 1").
       let topStates: { state: string; transfers: number }[] = [];
+      let statesDiagnostics: {
+        phonesTotal: number;
+        phonesParsed: number;
+        phonesRejected: number;
+        rejectedSamples: string[];
+      } = { phonesTotal: 0, phonesParsed: 0, phonesRejected: 0, rejectedSamples: [] };
       try {
         const phoneRows = sqlite.prepare(`
           SELECT phone_number FROM lead_outcomes
@@ -4598,18 +4607,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             AND phone_number IS NOT NULL AND phone_number != ''
         `).all(startDate, endDate) as any[];
         const stateCounts: Record<string, number> = {};
+        const rejectedSet = new Set<string>();
         for (const r of phoneRows) {
+          statesDiagnostics.phonesTotal += 1;
           const st = npaToState(r.phone_number);
-          if (!st) continue;
+          if (!st) {
+            statesDiagnostics.phonesRejected += 1;
+            if (rejectedSet.size < 5) rejectedSet.add(String(r.phone_number).slice(0, 32));
+            continue;
+          }
+          statesDiagnostics.phonesParsed += 1;
           stateCounts[st] = (stateCounts[st] ?? 0) + 1;
         }
+        statesDiagnostics.rejectedSamples = Array.from(rejectedSet);
         topStates = Object.entries(stateCounts)
           .map(([state, transfers]) => ({ state, transfers }))
           .sort((a, b) => b.transfers - a.transfers)
           .slice(0, 8);
       } catch (e) { /* phone_number column may not exist on older DBs */ }
 
-      return { trend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, heatmap, callsHeatmap, topStates };
+      return { trend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, heatmap, callsHeatmap, topStates, statesDiagnostics };
     }
 
     const byRange: Record<string, any> = {};

@@ -64,6 +64,12 @@ type RangeBlock = {
   heatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   callsHeatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   topStates: { state: string; transfers: number }[];
+  statesDiagnostics?: {
+    phonesTotal: number;
+    phonesParsed: number;
+    phonesRejected: number;
+    rejectedSamples: string[];
+  };
 };
 type ManagerData = {
   generatedAt: string;
@@ -1005,6 +1011,15 @@ export default function ManagerDashboard() {
                 <p className="text-[11px] text-muted-foreground mt-3">
                   Derived from caller area codes (NPA → state). Excludes non-US numbers.
                 </p>
+                {statesBlock?.statesDiagnostics && statesBlock.statesDiagnostics.phonesRejected > 0 ? (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {statesBlock.statesDiagnostics.phonesParsed} of {statesBlock.statesDiagnostics.phonesTotal} transfers had a parseable US area code
+                    {statesBlock.statesDiagnostics.rejectedSamples.length > 0
+                      ? ` — skipped formats: ${statesBlock.statesDiagnostics.rejectedSamples.map(s => `“${s}”`).join(", ")}`
+                      : ""}
+                    .
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </div>

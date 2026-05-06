@@ -143,18 +143,34 @@ const NPA_TO_STATE: Record<string, string> = {
 
 /**
  * Extract a US state code from a phone number using NPA (area code) lookup.
- * Returns null if the number can't be parsed or the area code isn't a US assignment.
+ * Returns null if the number can't be parsed, isn't a 10-digit NANP number, or the
+ * area code isn't a US assignment.
+ *
+ * Strict mode: requires exactly 10 digits (or 11 with leading 1). Reject anything
+ * else so junk data (lead ids, emails, SIDs, etc.) shoved into a phone column
+ * doesn't get mis-parsed into bogus area codes.
  */
 export function npaToState(phone: string | null | undefined): string | null {
   if (!phone) return null;
   // Strip all non-digits
   const digits = String(phone).replace(/\D/g, "");
   if (digits.length === 0) return null;
-  // Drop leading 1 (country code) if present and length is 11
-  let local = digits;
-  if (local.length === 11 && local.startsWith("1")) local = local.slice(1);
-  if (local.length < 10) return null;
+  // Accept exactly 10 digits, or 11 digits if it starts with "1" (US country code)
+  let local: string;
+  if (digits.length === 10) {
+    local = digits;
+  } else if (digits.length === 11 && digits.startsWith("1")) {
+    local = digits.slice(1);
+  } else {
+    return null;
+  }
   // Take first 3 digits as NPA
   const npa = local.slice(0, 3);
+  // NANP rules: NPA cannot start with 0 or 1; rule out N11 codes (e.g. 211, 311, 411, 911)
+  if (npa[0] === "0" || npa[0] === "1") return null;
+  if (npa[1] === "1" && npa[2] === "1") return null;
+  // Reject the reserved 555 area code (used in fiction/test data)
+  if (npa === "555") return null;
   return NPA_TO_STATE[npa] ?? null;
 }
+
