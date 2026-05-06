@@ -174,6 +174,7 @@ const mainItems: NavItem[] = [
   { title: "Calling Script",        url: "/call-script",  icon: PhoneCall,       help: help.script },
   { title: "State Lookup",          url: "/state-lookup", icon: MapPin },
   { title: "Call Hours",            url: "/call-hours",   icon: Clock },
+  { title: "Install App",           url: "/install",      icon: Smartphone },
 ];
 
 const reportingItems: NavItem[] = [
@@ -181,6 +182,7 @@ const reportingItems: NavItem[] = [
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
+  { title: "Install App",           url: "/install",      icon: Smartphone },
 ];
 
 const teamItems: NavItem[] = [
