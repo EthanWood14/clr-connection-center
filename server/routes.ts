@@ -4318,9 +4318,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const noAnswer = om.no_answer ?? 0;
       const futureContact = om.future_contact ?? 0;
       const calls = callsByUserMonth.get(u.id) ?? 0;
-      const goalCalls = Math.round((Number(u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0)) * weeksElapsed);
-      const goalTransfers = Math.round((Number(u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0)) * weeksElapsed);
-      const goalAppts = Math.round((Number(u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0)) * weeksElapsed);
+      // Weekly goals (raw, as stored on the user record) — used for tooltip clarity.
+      const goalCallsWeekly        = Number(u.goalCallsWeekly        ?? u.goal_calls_weekly        ?? 0);
+      const goalTransfersWeekly    = Number(u.goalTransfersWeekly    ?? u.goal_transfers_weekly    ?? 0);
+      const goalAppointmentsWeekly = Number(u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0);
+      // Month-to-date prorated goals (weekly × weeks-elapsed in current month).
+      const goalCalls     = Math.round(goalCallsWeekly        * weeksElapsed);
+      const goalTransfers = Math.round(goalTransfersWeekly    * weeksElapsed);
+      const goalAppts     = Math.round(goalAppointmentsWeekly * weeksElapsed);
       const comp = completionByUser[u.id] ?? { assigned: 0, completed: 0 };
       const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
       const callToTransferRatio = calls > 0 ? Math.round((transfers / calls) * 1000) / 10 : null; // %
@@ -4330,7 +4335,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         email: u.email,
         transfers, appointments, fellThrough, callbacks, noAnswer, futureContact,
         calls,
+        // Weekly base goals (so the UI can show "weekly goal: N")
+        goalCallsWeekly, goalTransfersWeekly, goalAppointmentsWeekly,
+        // Prorated goals matching the month-to-date counts above.
         goalCalls, goalTransfers, goalAppts,
+        goalPeriod: "month-to-date" as const,
+        weeksElapsed: Math.round(weeksElapsed * 10) / 10,
         callsPct: goalCalls > 0 ? Math.min(999, Math.round((calls / goalCalls) * 100)) : null,
         transfersPct: goalTransfers > 0 ? Math.min(999, Math.round((transfers / goalTransfers) * 100)) : null,
         apptsPct: goalAppts > 0 ? Math.min(999, Math.round((appointments / goalAppts) * 100)) : null,

@@ -236,13 +236,29 @@ function AlertsBanner({ alerts }: { alerts: Alert[] }) {
   );
 }
 
-function GoalBar({ value, goal, pct, color }: { value: number; goal: number; pct: number | null; color: string }) {
+function GoalBar({ label, value, goal, pct, color, weeklyGoal, weeksElapsed }: {
+  label?: string;
+  value: number;
+  goal: number;
+  pct: number | null;
+  color: string;
+  weeklyGoal?: number;
+  weeksElapsed?: number;
+}) {
   const width = pct == null ? 0 : Math.min(100, pct);
   const overflow = pct != null && pct > 100;
+  const tip = weeklyGoal
+    ? `${label ?? "Goal"}: ${weeklyGoal}/wk × ${weeksElapsed ?? "?"} wks elapsed = ${goal} this month`
+    : pct == null
+      ? `${label ?? "Goal"}: not set`
+      : undefined;
   return (
-    <div>
+    <div title={tip}>
       <div className="flex justify-between items-baseline text-xs mb-0.5">
-        <span className="text-muted-foreground tabular-nums">{value} / {goal || "—"}</span>
+        <span className="text-muted-foreground tabular-nums">
+          {label ? <span className="font-medium brand-text-soft mr-1">{label}</span> : null}
+          {value} / {goal || "—"}
+        </span>
         <span className="tabular-nums font-medium" style={{ color: pct == null ? "#94a3b8" : overflow ? GREEN : color }}>
           {pct == null ? "no goal" : `${pct}%`}
         </span>
@@ -692,7 +708,7 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      {/* Per-CLR drilldown cards (kept month-to-date — goals are weekly-prorated) */}
+      {/* Per-CLR drilldown cards — month-to-date counts vs weekly-goal prorated to month-to-date. */}
       <div>
         <SectionTitle icon={Target} action={
           <Button variant="ghost" size="sm" className="px-0 h-auto brand-text underline-offset-4 hover:underline"
@@ -702,6 +718,9 @@ export default function ManagerDashboard() {
         }>
           Per-CLR performance — month to date
         </SectionTitle>
+        <p className="text-xs text-muted-foreground mb-3 -mt-1">
+          Counts cover the current calendar month so far. Each CLR’s goals are stored as <span className="font-medium brand-text-soft">weekly</span> targets and prorated by weeks elapsed{clrCards[0]?.weeksElapsed != null ? ` (${clrCards[0].weeksElapsed} wks)` : ""}. Hover a bar to see that CLR’s exact weekly goal.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {visibleClrs.map(c => (
             <Card key={c.userId}>
@@ -718,9 +737,12 @@ export default function ManagerDashboard() {
                   )}
                 </div>
                 <div className="space-y-2.5">
-                  <GoalBar value={c.calls} goal={c.goalCalls} pct={c.callsPct} color={isDark ? GOLD_2 : NAVY_2} />
-                  <GoalBar value={c.transfers} goal={c.goalTransfers} pct={c.transfersPct} color={GREEN} />
-                  <GoalBar value={c.appointments} goal={c.goalAppts} pct={c.apptsPct} color={BLUE} />
+                  <GoalBar label="Calls" value={c.calls} goal={c.goalCalls} pct={c.callsPct} color={isDark ? GOLD_2 : NAVY_2}
+                           weeklyGoal={c.goalCallsWeekly} weeksElapsed={c.weeksElapsed} />
+                  <GoalBar label="Transfers" value={c.transfers} goal={c.goalTransfers} pct={c.transfersPct} color={GREEN}
+                           weeklyGoal={c.goalTransfersWeekly} weeksElapsed={c.weeksElapsed} />
+                  <GoalBar label="Appointments" value={c.appointments} goal={c.goalAppts} pct={c.apptsPct} color={BLUE}
+                           weeklyGoal={c.goalAppointmentsWeekly} weeksElapsed={c.weeksElapsed} />
                 </div>
                 <div className="mt-3 pt-3 border-t grid grid-cols-3 gap-2 text-center">
                   <div>
