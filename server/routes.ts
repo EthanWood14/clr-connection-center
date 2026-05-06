@@ -5660,6 +5660,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           kind: "callback" | "deferral";
         }> = [];
         let fellThroughCount = 0;
+        let fellThroughProspects: Array<{
+          name: string;
+          loName: string | null;
+          notes: string | null;
+        }> = [];
         const outcomeCounts = {
           transfer: 0,
           appointment: 0,
@@ -5712,7 +5717,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                 notes: (o.notes as string | null) ?? null,
                 kind: o.outcome_type === 'callback_requested' ? 'callback' as const : 'deferral' as const,
               }));
-            fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
+            const fellThroughRows = dayRows.filter((o: any) => o.outcome_type === 'fell_through');
+            fellThroughCount = fellThroughRows.length;
+            fellThroughProspects = fellThroughRows
+              .map((o: any) => ({
+                name: (o.borrower_name || '').trim(),
+                loName: (o.lo_full_name || '').trim() || null,
+                notes: (o.notes as string | null) ?? null,
+              }))
+              .filter((p: any) => p.name.length > 0);
             for (const r of dayRows) {
               const t = String(r.outcome_type ?? "");
               if (t in outcomeCounts) (outcomeCounts as any)[t] += 1;
@@ -5834,7 +5847,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           ${xfers > 0 ? `
           <!-- Transfer prospects -->
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
-            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfer Prospects (${xfers})</p>
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfers (${xfers})</p>
             ${transferProspects.length > 0
               ? transferProspects.map((p, i) => {
                   const escHtml = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
@@ -5863,6 +5876,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   </div>`;
                 }).join('')
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
+            }
+          </div>` : ""}
+
+          ${fellThroughCount > 0 ? `
+          <!-- Fell-through prospects -->
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#991b1b">❌ Fell Through (${fellThroughCount})</p>
+            ${fellThroughProspects.length > 0
+              ? fellThroughProspects.map((p, i) => {
+                  const escHtml = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+                  const safeName = p.name.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  const safeLo = p.loName ? p.loName.replace(/</g,'&lt;').replace(/>/g,'&gt;') : null;
+                  const notesLine = p.notes && String(p.notes).trim()
+                    ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:#991b1b">Notes:</strong> ${escHtml(String(p.notes).trim())}</div>`
+                    : '';
+                  return `<div style="padding:10px 0;${i < fellThroughProspects.length - 1 ? 'border-bottom:1px solid #fecaca' : ''}">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="display:inline-block;width:22px;height:22px;background:#dc2626;color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
+                      <span style="font-size:13px;font-weight:600;color:#7f1d1d">${safeName}</span>
+                      ${safeLo ? `<span style="font-size:13px;color:#b91c1c">&rarr;</span><span style="font-size:13px;font-weight:600;color:#991b1b">${safeLo}</span>` : ''}
+                    </div>
+                    ${notesLine}
+                  </div>`;
+                }).join('')
+              : `<p style="margin:0;font-size:13px;color:#fca5a5;font-style:italic">Names not recorded for these fell-throughs.</p>`
             }
           </div>` : ""}
 
