@@ -678,6 +678,10 @@ export default function Appointments() {
   const deferralCount = allAppointments.filter(o => o.outcomeType === "deferral" || o.outcomeType === "future_contact").length;
   const overdueCount = overdueList.length;
 
+  // After ANY outcome change — refresh every query so the rest of the app
+  // (dashboard counts, leaderboard, EOD stats, etc.) stays in lockstep.
+  const refreshAll = () => queryClient.invalidateQueries();
+
   // Complete mutation — opens dialog flow (Transfer vs Fell Through)
   const completeMutation = useMutation({
     mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
@@ -687,8 +691,7 @@ export default function Appointments() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      refreshAll();
       setPendingCompleteId(null);
       setCompleteTarget(null);
       toast({ title: "Appointment completed" });
@@ -706,8 +709,7 @@ export default function Appointments() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", transferType: "appointment", followUpDate: null });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      refreshAll();
       setPendingCompleteId(null);
       toast({ title: "✓ Marked complete" });
     },
@@ -725,7 +727,7 @@ export default function Appointments() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, { notes });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      refreshAll();
       setPendingNotesId(null);
       toast({ title: "Notes saved" });
     },
@@ -748,7 +750,7 @@ export default function Appointments() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      refreshAll();
       setPendingRescheduleId(null);
       toast({ title: "Appointment rescheduled" });
     },
@@ -779,9 +781,7 @@ export default function Appointments() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      refreshAll();
       setEditTarget(null);
       toast({ title: "Appointment updated" });
     },

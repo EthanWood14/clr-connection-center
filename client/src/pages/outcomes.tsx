@@ -390,13 +390,13 @@ function OutcomeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{step === 0 ? "What was the result?" : "Log Outcome"}</DialogTitle>
+      <DialogContent className="max-w-md p-4 sm:p-5 gap-3">
+        <DialogHeader className="space-y-1">
+          <DialogTitle className="text-base">{step === 0 ? "What was the result?" : "Log Outcome"}</DialogTitle>
         </DialogHeader>
         {step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
 
           {/* ── Step 0: Result Picker ──────────────────────────── */}
           {step === 0 && (
@@ -513,20 +513,12 @@ function OutcomeFormDialog({
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-3">
-              <FormField control={form.control} name="borrowerName" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Borrower Name</FormLabel>
-                  <FormControl><Input {...field} placeholder="Optional" data-testid="input-borrower-name" /></FormControl>
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="journeyId" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Journey ID</FormLabel>
-                  <FormControl><Input {...field} placeholder="Optional" data-testid="input-journey-id" /></FormControl>
-                </FormItem>
-              )} />
-            </div>
+            <FormField control={form.control} name="borrowerName" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Borrower Name</FormLabel>
+                <FormControl><Input {...field} placeholder="Optional" data-testid="input-borrower-name" /></FormControl>
+              </FormItem>
+            )} />
             <FormField control={form.control} name="phoneNumber" render={({ field }) => (
               <FormItem>
                 <FormLabel>Phone Number</FormLabel>
@@ -1037,12 +1029,16 @@ export default function Outcomes() {
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
   const { data: los = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
 
+  // After any outcome submission — create / edit / reschedule / delete —
+  // refresh ALL queries so every page (Dashboard, Appointments, Reports,
+  // Leaderboard, EOD, Sidebar counters, etc.) reflects the change instantly
+  // without the user needing to navigate away and back.
+  const refreshAll = () => queryClient.invalidateQueries();
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/outcomes", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      refreshAll();
       setDialogOpen(false);
       markStep(authUser?.id, "log_outcome");
       toast({ title: "Outcome logged" });
@@ -1063,9 +1059,7 @@ export default function Outcomes() {
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      refreshAll();
       setEditTarget(null);
       toast({ title: "Outcome updated" });
     },
@@ -1076,9 +1070,7 @@ export default function Outcomes() {
     mutationFn: ({ id, date }: { id: number; date: string }) =>
       apiRequest("PATCH", `/api/outcomes/${id}`, { date }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      refreshAll();
       toast({ title: "Date updated" });
     },
     onError: () => toast({ title: "Error updating date", variant: "destructive" }),
@@ -1087,9 +1079,7 @@ export default function Outcomes() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/outcomes/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+      refreshAll();
       toast({ title: "Outcome deleted" });
     },
     onError: () => toast({ title: "Error deleting outcome", variant: "destructive" }),
