@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload, Inbox,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload, Inbox, Clock, ChevronDown, ChevronRight, Settings2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -190,6 +190,7 @@ const toolItems: NavItem[] = [
   { title: "LO Vacation",     url: "/snooze",       icon: BedDouble,      help: help.loVacation },
   { title: "Glossary",        url: "/glossary",    icon: BookOpen,        help: help.glossary },
   { title: "State Lookup",    url: "/state-lookup", icon: MapPin },
+  { title: "Call Hours",      url: "/call-hours",   icon: Clock },
   { title: "NMLS Tracker",    url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
 ];
 
@@ -217,6 +218,14 @@ const integrationItems: NavItem[] = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+
+  // Advanced Settings folder — collapsed by default; preference persisted.
+  const [advancedOpen, setAdvancedOpen] = useState(() => {
+    try { return localStorage.getItem("sidebar.advancedOpen") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("sidebar.advancedOpen", advancedOpen ? "1" : "0"); } catch {}
+  }, [advancedOpen]);
 
   // Live appointment count — active appointment-type outcomes with followUpDate in the next 3 days.
   // Excludes outcomes that already became transfers or that are overdue (< today).
@@ -375,7 +384,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* MAIN */}
+        {/* MAIN — always visible, never collapsed */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Main
@@ -385,6 +394,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* ADVANCED SETTINGS — collapsible folder containing every other group */}
+        <SidebarGroup>
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen(o => !o)}
+            className="flex items-center gap-1.5 px-2 py-1.5 text-xs uppercase tracking-widest text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors w-full"
+            data-testid="sidebar-advanced-toggle"
+            aria-expanded={advancedOpen}
+          >
+            {advancedOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <Settings2 className="w-3.5 h-3.5" />
+            <span className="font-semibold">Advanced Settings</span>
+          </button>
+        </SidebarGroup>
+
+        {advancedOpen && <>
         {/* TEAM */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
@@ -472,6 +497,7 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
         )}
+        </>}
       </SidebarContent>
 
       <SidebarFooter className="p-4 border-t border-sidebar-border">

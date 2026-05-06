@@ -79,6 +79,11 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NO
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
+// 2026-05-05: appointment reminder email opt-in. Defaults to ON for all CLRs
+// so the 30-minute appointment reminder cron actually fires emails. Previously
+// this column was referenced in the SELECT but never existed, so it returned
+// NULL/falsy and emails were silently skipped.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN reminder_email_enabled INTEGER NOT NULL DEFAULT 1`); } catch {}
 
 export const db = drizzle(sqlite);
 
@@ -581,6 +586,7 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NO
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN reminder_email_enabled INTEGER NOT NULL DEFAULT 1`); } catch {}
 
 // Seed default admin user and algorithm settings if empty
 const existingUsers = db.select().from(users).all();
@@ -1304,6 +1310,16 @@ function runNewMigrations() {
   }
   if (!emailCols.find(c => c.name === 'welcome_email_enabled')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN welcome_email_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  // 2026-05-05: per-type send times. Defaults match Ethan's spec:
+  //   daily → already exists as daily_time (default 08:00)
+  //   weekly → Monday 08:00
+  //   monthly → 7:00 on the 1st of the next month
+  if (!emailCols.find(c => c.name === 'weekly_time')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN weekly_time TEXT NOT NULL DEFAULT '08:00'`);
+  }
+  if (!emailCols.find(c => c.name === 'monthly_time')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN monthly_time TEXT NOT NULL DEFAULT '07:00'`);
   }
   // Seed default SMTP credentials (always set if not already a Gmail address)
   const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;

@@ -78,17 +78,20 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// Helper: get current reporting period (16th of prev month to 15th of current)
+// Helper: get current reporting period.
+// Changed 2026-05-05: now returns the full calendar month — previous month if
+// we're on the 1st (i.e. yesterday's month), otherwise the current month.
+// This replaces the older 16th-of-prev-month → 15th-of-current billing window.
 function getDefaultPeriod() {
   const now = new Date();
-  const day = now.getDate();
   let startDate: Date, endDate: Date;
-  if (day >= 16) {
-    startDate = new Date(now.getFullYear(), now.getMonth(), 16);
-    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 15);
+  if (now.getDate() === 1) {
+    // On the 1st we're typically firing the *previous* month's report
+    startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    endDate = new Date(now.getFullYear(), now.getMonth(), 0); // last day of prev month
   } else {
-    startDate = new Date(now.getFullYear(), now.getMonth() - 1, 16);
-    endDate = new Date(now.getFullYear(), now.getMonth(), 15);
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   }
   return {
     startDate: startDate.toISOString().split("T")[0],
@@ -370,7 +373,7 @@ async function sendReport(
   // historical exports; otherwise we default based on type:
   //   daily   → today only
   //   weekly  → Sun–Sat containing today
-  //   monthly → 16th of prev month → 15th of current (billing period)
+  //   monthly → full previous calendar month (when run on the 1st)
   const period = opts.customRange
     ? opts.customRange
     : type === "daily"
@@ -1252,34 +1255,94 @@ cron.schedule("0 9 */3 * *", () => {
 
 // ── Scheduled CLR reports (daily / weekly / monthly) ────────────────────────
 // Fires every minute and checks email_settings to decide whether any of the
-// three reports should be dispatched. Uses configurable daily_time (HH:MM),
-// fires weekly on Monday at the daily_time, monthly on the 16th at daily_time.
+// three reports should be dispatched. Each type has its own configurable HH:MM:
+//   daily_time   (default 08:00) — fires every day
+//   weekly_time  (default 08:00) — fires on Monday only
+//   monthly_time (default 07:00) — fires on the 1st only (covers prev month)
+//
+// Lateness windows (added 2026-05-05) — if cron starts up after these cutoffs
+// without having fired today, it skips the run and waits for the next period:
+//   daily   → 19:00 (7 PM) cutoff → wait for tomorrow's scheduled time
+//   weekly  → Monday 08:00 cutoff → wait for next Monday
+//   monthly → 1st of month 07:00 cutoff → wait for next month
+//
+// Window guard (added 2026-05-05) — weekly and monthly emails are never sent
+// before 06:00 or after 22:00 local server time, regardless of configuration.
 let lastReportFiredAt: Record<"daily" | "weekly" | "monthly", string> = { daily: "", weekly: "", monthly: "" };
+
+function parseHM(s: string | undefined, fallback: string): { h: number; m: number } {
+  const raw = (s || fallback).trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    const fb = fallback.match(/^(\d{1,2}):(\d{2})$/)!;
+    return { h: Number(fb[1]), m: Number(fb[2]) };
+  }
+  return { h: Math.min(23, Math.max(0, Number(m[1]))), m: Math.min(59, Math.max(0, Number(m[2]))) };
+}
+
 cron.schedule("* * * * *", async () => {
   try {
     const s = storageExtra.getEmailSettings() as any;
     const now = new Date();
-    const hh = String(now.getHours()).padStart(2, "0");
-    const mm = String(now.getMinutes()).padStart(2, "0");
-    const nowHM = `${hh}:${mm}`;
+    const hh = now.getHours();
+    const mm = now.getMinutes();
+    const nowMinutes = hh * 60 + mm;
     const nowDateKey = now.toISOString().split("T")[0];
-    const dailyTime = s.daily_time || "08:00";
-    if (nowHM !== dailyTime) return;
 
-    // daily
+    // Hard window for weekly + monthly: never send before 06:00 or after 22:00
+    const inAllowedWindow = nowMinutes >= 6 * 60 && nowMinutes <= 22 * 60;
+
+    // ── Daily report ────────────────────────────────────────────────────────
     if (s.daily_enabled && lastReportFiredAt.daily !== nowDateKey) {
-      lastReportFiredAt.daily = nowDateKey;
-      try { await sendReport("daily"); } catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
+      const { h: dh, m: dm } = parseHM(s.daily_time, "08:00");
+      const targetMin = dh * 60 + dm;
+      const cutoffMin = 19 * 60; // 7 PM lateness cutoff
+      // Fire when we're at-or-just-past the configured time AND before the cutoff.
+      // Also skip the run if cron came up late and we're already past 7 PM —
+      // tomorrow's tick at daily_time will catch it.
+      if (nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+        lastReportFiredAt.daily = nowDateKey;
+        try { await sendReport("daily"); }
+        catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoffMin) {
+        // Past 7 PM and we haven't fired today — mark as "done" so we wait for tomorrow
+        lastReportFiredAt.daily = nowDateKey;
+        console.log(`[report-cron] daily skipped — past 19:00 cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire tomorrow at ${s.daily_time || "08:00"}`);
+      }
     }
-    // weekly — Monday
+
+    // ── Weekly report (Monday only) ─────────────────────────────────────────
     if (s.weekly_enabled && now.getDay() === 1 && lastReportFiredAt.weekly !== nowDateKey) {
-      lastReportFiredAt.weekly = nowDateKey;
-      try { await sendReport("weekly"); } catch (e: any) { console.error("Scheduled weekly report failed:", e?.message ?? e); }
+      const { h: wh, m: wm } = parseHM(s.weekly_time, "08:00");
+      const targetMin = wh * 60 + wm;
+      // 5-minute grace window after 08:00 so the cron can land on the
+      // configured time even though the cutoff is also 08:00
+      const cutoffMin = 8 * 60 + 5;
+      if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+        lastReportFiredAt.weekly = nowDateKey;
+        try { await sendReport("weekly"); }
+        catch (e: any) { console.error("Scheduled weekly report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoffMin) {
+        lastReportFiredAt.weekly = nowDateKey;
+        console.log(`[report-cron] weekly skipped — past 08:00 Monday cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire next Monday`);
+      }
     }
-    // monthly — 1st of the month
+
+    // ── Monthly report (1st of month only — covers previous full month) ────
     if (s.monthly_enabled && now.getDate() === 1 && lastReportFiredAt.monthly !== nowDateKey) {
-      lastReportFiredAt.monthly = nowDateKey;
-      try { await sendReport("monthly"); } catch (e: any) { console.error("Scheduled monthly report failed:", e?.message ?? e); }
+      const { h: mh, m: mmin } = parseHM(s.monthly_time, "07:00");
+      const targetMin = mh * 60 + mmin;
+      // 5-minute grace window after 07:00 so the cron can land on the
+      // configured time even though the cutoff is also 07:00
+      const cutoffMin = 7 * 60 + 5;
+      if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+        lastReportFiredAt.monthly = nowDateKey;
+        try { await sendReport("monthly"); }
+        catch (e: any) { console.error("Scheduled monthly report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoffMin) {
+        lastReportFiredAt.monthly = nowDateKey;
+        console.log(`[report-cron] monthly skipped — past 07:00 cutoff on day 1 (now=${hh}:${String(mm).padStart(2, "0")}); will fire next month`);
+      }
     }
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
@@ -1303,7 +1366,7 @@ cron.schedule("*/5 * * * *", async () => {
     const rows = sqlite.prepare(`
       SELECT lo.id, lo.assistant_id, lo.borrower_name,
              lo.appointment_datetime, lo.follow_up_date,
-             u.email AS clr_email, u.name AS clr_name, u.reminder_email_enabled,
+             u.email AS clr_email, u.name AS clr_name, COALESCE(u.reminder_email_enabled, 1) AS reminder_email_enabled,
              loff.full_name AS lo_name
       FROM lead_outcomes lo
       JOIN users u ON u.id = lo.assistant_id
@@ -1964,6 +2027,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Per-user appointment-reminder email toggle (default ON)
+  app.patch("/api/users/me/reminder-email", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const enabled = !!req.body?.enabled;
+    try {
+      (require("./storage").getRawSqlite() as any)
+        .prepare(`UPDATE users SET reminder_email_enabled = ? WHERE id = ?`)
+        .run(enabled ? 1 : 0, userId);
+      res.json({ ok: true, enabled });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update" });
+    }
+  });
+
   // ── Public marketing landing page ──────────────────────────────────────────
   app.get("/landing", (_req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -2079,7 +2157,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -4596,6 +4674,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Don't overwrite with masked key
     if (data.resendApiKey && data.resendApiKey.includes("•")) delete data.resendApiKey;
     if (data.resend_api_key && data.resend_api_key.includes("•")) delete data.resend_api_key;
+
+    // 2026-05-05: enforce 06:00–22:00 hard window for weekly + monthly send
+    // times. Anything outside that window is clamped to the nearest boundary so
+    // misconfiguration can't ship a CLR an email at 3 AM.
+    function clampTime(hm: any, lo = "06:00", hi = "22:00"): string | undefined {
+      if (typeof hm !== "string") return undefined;
+      const m = hm.match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return undefined;
+      let h = Math.min(23, Math.max(0, Number(m[1])));
+      let mm = Math.min(59, Math.max(0, Number(m[2])));
+      const minutes = h * 60 + mm;
+      const loMin = 6 * 60, hiMin = 22 * 60;
+      if (minutes < loMin) { h = 6; mm = 0; }
+      else if (minutes > hiMin) { h = 22; mm = 0; }
+      return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    }
+    if (data.weeklyTime !== undefined) data.weeklyTime = clampTime(data.weeklyTime) ?? data.weeklyTime;
+    if (data.weekly_time !== undefined) data.weekly_time = clampTime(data.weekly_time) ?? data.weekly_time;
+    if (data.monthlyTime !== undefined) data.monthlyTime = clampTime(data.monthlyTime) ?? data.monthlyTime;
+    if (data.monthly_time !== undefined) data.monthly_time = clampTime(data.monthly_time) ?? data.monthly_time;
+
     storageExtra.updateEmailSettings(data);
     res.json({ ok: true });
   });

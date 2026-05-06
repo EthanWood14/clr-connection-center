@@ -420,6 +420,8 @@ function EmailReportsCard() {
   const [monthlyEnabled, setMonthlyEnabled] = useState(false);
   const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
   const [dailyTime, setDailyTime] = useState("08:00");
+  const [weeklyTime, setWeeklyTime] = useState("08:00");
+  const [monthlyTime, setMonthlyTime] = useState("07:00");
   const [testLoading, setTestLoading] = useState(false);
   const [sendLoading, setSendLoading] = useState(false);
 
@@ -433,6 +435,8 @@ function EmailReportsCard() {
     setMonthlyEnabled(!!(emailSettings.monthly_enabled ?? emailSettings.monthlyEnabled));
     setWelcomeEmailEnabled(!!(emailSettings.welcome_email_enabled ?? emailSettings.welcomeEmailEnabled));
     setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "08:00");
+    setWeeklyTime(emailSettings.weekly_time ?? emailSettings.weeklyTime ?? "08:00");
+    setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
   }, [emailSettings]);
 
   const saveMutation = useMutation({
@@ -452,6 +456,8 @@ function EmailReportsCard() {
       monthlyEnabled: monthlyEnabled ? 1 : 0,
       welcomeEmailEnabled: welcomeEmailEnabled ? 1 : 0,
       dailyTime,
+      weeklyTime,
+      monthlyTime,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -664,16 +670,40 @@ function EmailReportsCard() {
                 <div className="flex items-center justify-between rounded-lg border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Weekly Report</p>
-                    <p className="text-xs text-muted-foreground">Sent every Monday morning</p>
+                    <p className="text-xs text-muted-foreground">Sent every Monday at the configured time (06:00–22:00)</p>
                   </div>
-                  <Switch checked={weeklyEnabled} onCheckedChange={setWeeklyEnabled} />
+                  <div className="flex items-center gap-3">
+                    {weeklyEnabled && (
+                      <Input
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        value={weeklyTime}
+                        onChange={e => setWeeklyTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
+                    <Switch checked={weeklyEnabled} onCheckedChange={setWeeklyEnabled} />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Monthly Report</p>
-                    <p className="text-xs text-muted-foreground">Sent on the 16th of each month</p>
+                    <p className="text-xs text-muted-foreground">Sent on the 1st of each month at the configured time (06:00–22:00) — covers the previous full calendar month</p>
                   </div>
-                  <Switch checked={monthlyEnabled} onCheckedChange={setMonthlyEnabled} />
+                  <div className="flex items-center gap-3">
+                    {monthlyEnabled && (
+                      <Input
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        value={monthlyTime}
+                        onChange={e => setMonthlyTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
+                    <Switch checked={monthlyEnabled} onCheckedChange={setMonthlyEnabled} />
+                  </div>
                 </div>
               </div>
             </div>

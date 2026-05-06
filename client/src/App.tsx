@@ -27,6 +27,7 @@ import Leaderboard from "@/pages/leaderboard";
 import TeamStats from "@/pages/team-stats";
 import Settings from "@/pages/settings";
 import StateLookup from "@/pages/state-lookup";
+import CallHours from "@/pages/call-hours";
 import Appointments from "@/pages/appointments";
 import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
@@ -85,6 +86,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/appointments": "Appointments",
   "/leaderboard":  "Team Stats",
   "/state-lookup": "State Lookup",
+  "/call-hours":   "Call Hours by State",
   "/snooze":       "LO Vacation",
   "/nmls-checks":  "NMLS Checks",
   "/nmls-status":  "NMLS License Status",
@@ -131,6 +133,7 @@ function AppRouter() {
       <Route path="/team-stats" component={TeamStats} />
       <Route path="/leaderboard-classic" component={Leaderboard} />
       <Route path="/state-lookup" component={StateLookup} />
+      <Route path="/call-hours" component={CallHours} />
       <Route path="/chat" component={Chat} />
       <Route path="/snooze" component={Snooze} />
       <Route path="/reporting" component={Reporting} />
