@@ -4495,15 +4495,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         WHERE date >= ? AND date <= ?
         GROUP BY assistant_id, outcome_type
       `).all(startDate, endDate) as any[];
-      const lbByUser: Record<number, { transfers: number; appointments: number; total: number }> = {};
+      const lbByUser: Record<number, { transfers: number; appointments: number; fellThrough: number; total: number }> = {};
       for (const r of lbOutcomes) {
         const uid = r.assistant_id;
         if (!uid) continue;
-        if (!lbByUser[uid]) lbByUser[uid] = { transfers: 0, appointments: 0, total: 0 };
+        if (!lbByUser[uid]) lbByUser[uid] = { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
         const c = Number(r.count) || 0;
         lbByUser[uid].total += c;
         if (r.outcome_type === "transfer") lbByUser[uid].transfers = c;
         if (r.outcome_type === "appointment") lbByUser[uid].appointments = c;
+        if (r.outcome_type === "fell_through") lbByUser[uid].fellThrough = c;
       }
       const lbCalls = sqlite.prepare(`
         SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
@@ -4515,10 +4516,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       for (const r of lbCalls) lbCallsByUser.set(r.assistant_id, Number(r.calls) || 0);
       const leaderboard = allClrs
         .map((u: any) => {
-          const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, total: 0 };
+          const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
           const calls = lbCallsByUser.get(u.id) ?? 0;
           const conversionRate = s.total > 0 ? Math.round((s.transfers / s.total) * 100) : 0;
-          return { userId: u.id, name: u.name, transfers: s.transfers, appointments: s.appointments, calls, conversionRate };
+          // Outcome ratios as percentages of all logged outcomes (excludes pure call counts).
+          const transferPct    = s.total > 0 ? Math.round((s.transfers    / s.total) * 1000) / 10 : 0;
+          const appointmentPct = s.total > 0 ? Math.round((s.appointments / s.total) * 1000) / 10 : 0;
+          const fellThroughPct = s.total > 0 ? Math.round((s.fellThrough  / s.total) * 1000) / 10 : 0;
+          // Call-to-transfer ratio (different denominator: dials).
+          const callToTransferPct = calls > 0 ? Math.round((s.transfers / calls) * 1000) / 10 : null;
+          return {
+            userId: u.id,
+            name: u.name,
+            transfers: s.transfers,
+            appointments: s.appointments,
+            fellThrough: s.fellThrough,
+            totalOutcomes: s.total,
+            calls,
+            conversionRate,
+            transferPct,
+            appointmentPct,
+            fellThroughPct,
+            callToTransferPct,
+          };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
 

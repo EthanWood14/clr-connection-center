@@ -54,7 +54,13 @@ type RangeBlock = {
   outcomeBreakdown: { outcome_type: string; count: number }[];
   fellThroughReasons: { label: string; count: number }[];
   topLos: { id: number; name: string; transfers: number }[];
-  leaderboard: { userId: number; name: string; transfers: number; appointments: number; calls: number; conversionRate: number }[];
+  leaderboard: {
+    userId: number; name: string;
+    transfers: number; appointments: number; fellThrough: number;
+    totalOutcomes: number; calls: number; conversionRate: number;
+    transferPct: number; appointmentPct: number; fellThroughPct: number;
+    callToTransferPct: number | null;
+  }[];
   heatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   callsHeatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   topStates: { state: string; transfers: number }[];
@@ -312,6 +318,9 @@ export default function ManagerDashboard() {
   const [rangeHeatmap, setRangeHeatmap] = useState<RangeKey>("30d");
   const [rangeTopLos, setRangeTopLos] = useState<RangeKey>("30d");
   const [rangeStates, setRangeStates] = useState<RangeKey>("30d");
+  const [rangeCompare, setRangeCompare] = useState<RangeKey>("30d");
+  type CompareSort = "transferPct" | "appointmentPct" | "fellThroughPct" | "totalOutcomes" | "name";
+  const [compareSort, setCompareSort] = useState<CompareSort>("transferPct");
   const [pipelineRange, setPipelineRange] = useState<PipelineRange>("1d");
 
   const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
@@ -391,6 +400,29 @@ export default function ManagerDashboard() {
   const heatmapBlock = byRange[rangeHeatmap];
   const topLosBlock = byRange[rangeTopLos];
   const statesBlock = byRange[rangeStates];
+  const compareBlock = byRange[rangeCompare];
+
+  // Sorted CLR-comparison rows, filtered to CLRs with at least one logged outcome.
+  const compareRows = (compareBlock?.leaderboard ?? [])
+    .filter(r => r.totalOutcomes > 0)
+    .sort((a, b) => {
+      if (compareSort === "name") return a.name.localeCompare(b.name);
+      const av = (a as any)[compareSort] ?? 0;
+      const bv = (b as any)[compareSort] ?? 0;
+      return bv - av;
+    });
+  // Chart data — stacked %s, ordered same as compareRows. Recharts uses one row per CLR.
+  const compareChartData = compareRows.map(r => ({
+    name: r.name,
+    transferPct: r.transferPct,
+    appointmentPct: r.appointmentPct,
+    fellThroughPct: r.fellThroughPct,
+    otherPct: Math.max(0, Math.round((100 - r.transferPct - r.appointmentPct - r.fellThroughPct) * 10) / 10),
+    transfers: r.transfers,
+    appointments: r.appointments,
+    fellThrough: r.fellThrough,
+    totalOutcomes: r.totalOutcomes,
+  }));
 
   const handleExportCsv = () => {
     const rows = clrCards.map(c => ({
@@ -724,6 +756,123 @@ export default function ManagerDashboard() {
                 ))}
               </tbody>
             </table>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* CLR conversion comparison — stacked %s by CLR */}
+      <div>
+        <SectionTitle
+          icon={BarChart3}
+          action={
+            <div className="flex items-center gap-2 flex-wrap">
+              <RangePills options={RANGE_OPTIONS} value={rangeCompare} onChange={setRangeCompare} ariaLabel="Comparison range" />
+              <select
+                value={compareSort}
+                onChange={(e) => setCompareSort(e.target.value as CompareSort)}
+                aria-label="Sort comparison by"
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium brand-text focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="transferPct">Sort: Transfer %</option>
+                <option value="appointmentPct">Sort: Appt %</option>
+                <option value="fellThroughPct">Sort: Fell %</option>
+                <option value="totalOutcomes">Sort: Total outcomes</option>
+                <option value="name">Sort: Name (A–Z)</option>
+              </select>
+            </div>
+          }
+        >
+          CLR conversion comparison — {compareBlock?.window?.label ?? ""}
+        </SectionTitle>
+        <Card>
+          <CardContent className="p-4">
+            {compareRows.length === 0 ? (
+              <div className="h-32 flex items-center justify-center text-muted-foreground text-sm">
+                No outcomes recorded in this range
+              </div>
+            ) : (
+              <>
+                <div style={{ height: Math.max(240, compareRows.length * 36 + 60) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={compareChartData}
+                      layout="vertical"
+                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} horizontal={false} />
+                      <XAxis
+                        type="number"
+                        domain={[0, 100]}
+                        tickFormatter={(v) => `${v}%`}
+                        tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        width={130}
+                        tick={{ fontSize: 11, fill: isDark ? "#e4e4e7" : "#0f172a" }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDark ? "#1f1d1c" : "#ffffff",
+                          border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`,
+                          color: isDark ? "#e4e4e7" : "#0f172a",
+                        }}
+                        formatter={(value: any, name: any, props: any) => {
+                          const r = props?.payload ?? {};
+                          if (name === "Transfer %") return [`${value}% (${r.transfers})`, name];
+                          if (name === "Appt %") return [`${value}% (${r.appointments})`, name];
+                          if (name === "Fell %") return [`${value}% (${r.fellThrough})`, name];
+                          if (name === "Other %") return [`${value}%`, name];
+                          return [value, name];
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar dataKey="transferPct" stackId="a" fill={GREEN} name="Transfer %" />
+                      <Bar dataKey="appointmentPct" stackId="a" fill={BLUE} name="Appt %" />
+                      <Bar dataKey="fellThroughPct" stackId="a" fill={RED} name="Fell %" />
+                      <Bar dataKey="otherPct" stackId="a" fill="#94a3b8" name="Other %" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium">#</th>
+                        <th className="text-left px-3 py-2 font-medium">CLR</th>
+                        <th className="text-right px-3 py-2 font-medium">Transfer %</th>
+                        <th className="text-right px-3 py-2 font-medium">Appt %</th>
+                        <th className="text-right px-3 py-2 font-medium">Fell %</th>
+                        <th className="text-right px-3 py-2 font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareRows.map((row, idx) => (
+                        <tr key={row.userId} className="border-t hover:bg-muted/40">
+                          <td className="px-3 py-2 tabular-nums text-muted-foreground">{idx + 1}</td>
+                          <td className="px-3 py-2 font-medium brand-text">{row.name ?? "—"}</td>
+                          <td className="text-right px-3 py-2 tabular-nums">
+                            <span className="font-semibold" style={{ color: GREEN }}>{row.transferPct}%</span>
+                            <span className="ml-1 text-xs text-muted-foreground">({row.transfers})</span>
+                          </td>
+                          <td className="text-right px-3 py-2 tabular-nums">
+                            <span className="font-semibold" style={{ color: BLUE }}>{row.appointmentPct}%</span>
+                            <span className="ml-1 text-xs text-muted-foreground">({row.appointments})</span>
+                          </td>
+                          <td className="text-right px-3 py-2 tabular-nums">
+                            <span className="font-semibold" style={{ color: RED }}>{row.fellThroughPct}%</span>
+                            <span className="ml-1 text-xs text-muted-foreground">({row.fellThrough})</span>
+                          </td>
+                          <td className="text-right px-3 py-2 tabular-nums font-medium brand-text-soft">{row.totalOutcomes}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
