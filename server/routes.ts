@@ -1442,13 +1442,14 @@ cron.schedule("*/5 * * * *", async () => {
         } catch (e: any) { console.error(`[appt-30m] email failed outcome=${r.id}:`, e?.message ?? e); }
       }
 
-      // Push (best-effort)
+      // Push (best-effort) — deep-link to /appointments so tapping the
+      // notification opens the upcoming appointments view directly.
       let pushSummary: { sent: number; failed: number } = { sent: 0, failed: 0 };
       try {
         pushSummary = await sendPushToUser(r.assistant_id, {
           title: "⏰ Appointment in 30 minutes",
           body: `${borrower} — ${loName}`,
-          url: "/outcomes",
+          url: "/appointments",
         });
       } catch (e: any) {
         console.error(`[appt-30m] push failed outcome=${r.id}:`, e?.message ?? e);
@@ -1926,7 +1927,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const result = await sendPushToUser(targetId, {
       title: "⏰ Appointment in 30 minutes",
       body: `${borrower} — ${loName}`,
-      url: "/outcomes",
+      url: "/appointments",
     });
     console.log(`[push-test] sample appointment reminder fired to user=${targetId} sent=${result.sent} failed=${result.failed}`);
     res.json({ targetUserId: targetId, ...result });

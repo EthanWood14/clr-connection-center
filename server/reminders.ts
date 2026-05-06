@@ -107,9 +107,18 @@ function findPendingReminders(): PendingOutcome[] {
   `);
 
   return rows.filter(r => {
+    // Push always fires (no opt-in column for push specifically). Email/SMS
+    // are gated on their respective opt-ins below. We still want to consider
+    // the row even if the user has all channels disabled — push will at least
+    // attempt to fire — but if NOTHING is enabled we may as well skip.
     const emailOk = !!r.clr_reminder_enabled && !!r.clr_email;
     const smsOk = !!r.clr_sms_enabled && !!r.clr_phone;
-    if (!emailOk && !smsOk) return false;
+    // Only require at least one delivery surface; push is best-effort and
+    // requires a saved subscription which we can't know cheaply here.
+    if (!emailOk && !smsOk) {
+      // Allow row through anyway so push still gets a shot. Push delivery
+      // itself is a no-op when there are no subscriptions.
+    }
     const t = Date.parse(r.scheduled_date);
     if (!Number.isFinite(t)) return false;
     if (t <= now || t > in24h) return false; // must be in the future, within 24h
@@ -217,14 +226,21 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
           stats.errors++;
         }
       }
-      // Mirror to push notifications (best-effort)
+      // Mirror to push notifications (best-effort). Push fires regardless of
+      // email/SMS opt-in. Deep-link into /appointments so tapping the
+      // notification opens the upcoming-appointments view.
       try {
+        const borrower = o.borrower_name?.trim() || "this lead";
+        const when = fmtDateTime(o.scheduled_date);
+        const kind = o.outcome_type === "appointment" ? "Appointment" : "Callback";
         await sendPushToUser(o.assistant_id, {
-          title: subject,
-          body: `Reminder for ${(o as any).borrower_name || "this lead"}`,
-          url: "/followups",
+          title: `⏰ ${kind} reminder — ${borrower}`,
+          body: `${when} — LO: ${o.lo_name || "Unknown"}`,
+          url: "/appointments",
         });
-      } catch {}
+      } catch (e: any) {
+        console.error(`[reminders] push failed outcome=${o.outcome_id}:`, e?.message ?? e);
+      }
     } catch (e: any) {
       stats.errors++;
       console.error(`[reminders] exception outcome=${o.outcome_id}:`, e?.message ?? e);
