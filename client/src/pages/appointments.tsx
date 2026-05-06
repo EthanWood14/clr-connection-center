@@ -338,6 +338,7 @@ function AppointmentCard({
   loName,
   clrName,
   isMine,
+  isConflict,
   onComplete,
   onQuickComplete,
   onEdit,
@@ -351,6 +352,7 @@ function AppointmentCard({
   loName: string;
   clrName: string;
   isMine: boolean;
+  isConflict: boolean;
   onComplete: (outcome: Outcome) => void;
   onQuickComplete: (id: number) => void;
   onEdit: (outcome: Outcome) => void;
@@ -385,7 +387,7 @@ function AppointmentCard({
   const isTodayAppt = dateStr === todayStr;
 
   return (
-    <Card className={`border transition-colors ${isOverdue ? "border-red-200 dark:border-red-900/50" : "border-border hover:border-primary/30"}`}>
+    <Card className={`border transition-colors ${isConflict ? "border-amber-300 dark:border-amber-700/70" : isOverdue ? "border-red-200 dark:border-red-900/50" : "border-border hover:border-primary/30"}`}>
       <CardContent className="p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {/* Left */}
@@ -405,6 +407,16 @@ function AppointmentCard({
               {isUpcoming && (
                 <Badge className="text-xs px-1.5 py-0 bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400">
                   Upcoming
+                </Badge>
+              )}
+              {isConflict && (
+                <Badge
+                  className="text-xs px-1.5 py-0 gap-1 bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700"
+                  title="Another appointment for this CLR is within 30 minutes of this one"
+                  data-testid={`badge-conflict-${outcome.id}`}
+                >
+                  <AlertCircle className="w-3 h-3" />
+                  Conflict
                 </Badge>
               )}
               <Badge
@@ -672,6 +684,40 @@ export default function Appointments() {
 
   const totalCount = allAppointments.length;
 
+  // ── Appointment conflict detection ─────────────────────────────────────────
+  // A conflict = two real time-bound 'appointment' outcomes for the SAME CLR
+  // whose start times are within 30 minutes of each other (overlap window).
+  // We scan ALL outcomes (not just filtered ones) so a callback filter still
+  // catches a conflicting appointment underneath. Only appointments with a
+  // parsable datetime participate — date-only follow-ups have no time so we
+  // can't reason about overlap.
+  const conflictIds = (() => {
+    const CONFLICT_WINDOW_MS = 30 * 60 * 1000;
+    type T = { id: number; t: number; a: number };
+    const items: T[] = [];
+    for (const o of outcomes) {
+      if (o.outcomeType !== "appointment") continue;
+      const raw = o.followUpDate;
+      if (!raw || !raw.includes("T")) continue;
+      const ms = Date.parse(raw);
+      if (!Number.isFinite(ms)) continue;
+      items.push({ id: o.id, t: ms, a: o.assistantId });
+    }
+    items.sort((x, y) => x.a - y.a || x.t - y.t);
+    const ids = new Set<number>();
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length && items[j].a === items[i].a; j++) {
+        if (Math.abs(items[j].t - items[i].t) <= CONFLICT_WINDOW_MS) {
+          ids.add(items[i].id);
+          ids.add(items[j].id);
+        } else {
+          break; // sorted by time within same assistant
+        }
+      }
+    }
+    return ids;
+  })();
+
   // Stats counts (respects current filter since allAppointments is filtered)
   const apptCount = allAppointments.filter(o => o.outcomeType === "appointment").length;
   const callbackCount = allAppointments.filter(o => o.outcomeType === "callback_requested").length;
@@ -892,6 +938,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -912,6 +959,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -932,6 +980,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}
@@ -952,6 +1001,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
                 isPendingComplete={pendingCompleteId === o.id}

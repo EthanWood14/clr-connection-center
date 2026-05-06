@@ -5507,6 +5507,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           followupReason?: string | null;
           followupDate?: string | null;
         }> = [];
+        // Appointments + callbacks logged today — surfaced in the EOD email so
+        // managers and the CLR can see exactly what's on the books for follow-up.
+        let dayAppointments: Array<{
+          name: string;
+          loName: string | null;
+          when: string | null;       // followUpDate / appointmentDatetime, raw
+          notes: string | null;
+        }> = [];
+        let dayCallbacks: Array<{
+          name: string;
+          loName: string | null;
+          when: string | null;
+          notes: string | null;
+          kind: "callback" | "deferral";
+        }> = [];
         let fellThroughCount = 0;
         const outcomeCounts = {
           transfer: 0,
@@ -5541,6 +5556,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                 followupDate: (o.followup_date as string | null) ?? null,
               }))
               .filter((p: any) => p.name.length > 0);
+            // Appointments — anything logged with outcome_type='appointment'.
+            dayAppointments = dayRows
+              .filter((o: any) => o.outcome_type === 'appointment')
+              .map((o: any) => ({
+                name: (o.borrower_name || '').trim() || 'Unknown borrower',
+                loName: (o.lo_full_name || '').trim() || null,
+                when: (o.appointment_datetime as string | null) || (o.follow_up_date as string | null) || null,
+                notes: (o.notes as string | null) ?? null,
+              }));
+            // Callbacks + deferrals (lumped together, kind tagged so we label them).
+            dayCallbacks = dayRows
+              .filter((o: any) => o.outcome_type === 'callback_requested' || o.outcome_type === 'deferral' || o.outcome_type === 'future_contact')
+              .map((o: any) => ({
+                name: (o.borrower_name || '').trim() || 'Unknown borrower',
+                loName: (o.lo_full_name || '').trim() || null,
+                when: (o.follow_up_date as string | null) || null,
+                notes: (o.notes as string | null) ?? null,
+                kind: o.outcome_type === 'callback_requested' ? 'callback' as const : 'deferral' as const,
+              }));
             fellThroughCount = dayRows.filter((o: any) => o.outcome_type === 'fell_through').length;
             for (const r of dayRows) {
               const t = String(r.outcome_type ?? "");
@@ -5694,6 +5728,46 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
               : `<p style="margin:0;font-size:13px;color:#4ade80;font-style:italic">Names not recorded for these transfers.</p>`
             }
           </div>` : ""}
+
+          ${(() => {
+            // Helper for appointment/callback rendering — shared formatter
+            const escTxt = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+            const fmtWhen = (raw: string | null) => {
+              if (!raw) return null;
+              const s = String(raw).trim();
+              if (!s) return null;
+              const ms = Date.parse(s);
+              if (!Number.isFinite(ms)) return s;
+              const hasTime = s.includes('T') || s.includes(' ');
+              try {
+                return new Date(ms).toLocaleString('en-US', hasTime
+                  ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }
+                  : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+              } catch { return s; }
+            };
+            const aRow = (i: number, total: number, color: string, name: string, loName: string | null, when: string | null, notes: string | null, tag?: string | null) => `
+              <div style="padding:10px 0;${i < total - 1 ? `border-bottom:1px solid ${color}33` : ''}">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="display:inline-block;width:22px;height:22px;background:${color};color:#fff;border-radius:50%;text-align:center;font-size:11px;font-weight:700;line-height:22px">${i + 1}</span>
+                  <span style="font-size:13px;font-weight:600;color:#0f172a">${escTxt(name)}</span>
+                  ${loName ? `<span style="font-size:13px;color:#64748b">&rarr;</span><span style="font-size:13px;font-weight:600;color:#334155">${escTxt(loName)}</span>` : ''}
+                  ${tag ? `<span style="font-size:11px;color:#475569;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;font-weight:600">${escTxt(tag)}</span>` : ''}
+                </div>
+                ${when ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:${color}">Scheduled:</strong> ${escTxt(when)}</div>` : ''}
+                ${notes && String(notes).trim() ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:${color}">Notes:</strong> ${escTxt(String(notes).trim())}</div>` : ''}
+              </div>`;
+            const apptHtml = dayAppointments.length > 0 ? `
+              <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+                <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#1e3a8a">📅 Appointments Booked Today (${dayAppointments.length})</p>
+                ${dayAppointments.map((a, i) => aRow(i, dayAppointments.length, '#2563eb', a.name, a.loName, fmtWhen(a.when), a.notes)).join('')}
+              </div>` : '';
+            const cbHtml = dayCallbacks.length > 0 ? `
+              <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+                <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#6b21a8">🔁 Callbacks &amp; Deferrals Logged Today (${dayCallbacks.length})</p>
+                ${dayCallbacks.map((c, i) => aRow(i, dayCallbacks.length, '#7c3aed', c.name, c.loName, fmtWhen(c.when), c.notes, c.kind === 'callback' ? 'Callback' : 'Deferral')).join('')}
+              </div>` : '';
+            return apptHtml + cbHtml;
+          })()}
 
           ${(assignedLoIds.length || additionalNames.length || (otherNotesStr && otherNotesStr.trim())) ? (() => {
             const esc = (s: string) => s.replace(/</g,"&lt;").replace(/>/g,"&gt;");
