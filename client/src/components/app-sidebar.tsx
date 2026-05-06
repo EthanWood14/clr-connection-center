@@ -170,21 +170,25 @@ const help = {
 } as const;
 
 const mainItems: NavItem[] = [
-  { title: "Home",                  url: "/",            icon: LayoutDashboard, help: help.dashboard },
-  { title: "Calling Script",        url: "/call-script", icon: PhoneCall,       help: help.script },
-  { title: "Your Call List",        url: "/assignments", icon: CalendarCheck,   help: help.assignments },
-  { title: "LO Directory",          url: "/directory",   icon: Users,           help: help.directory },
-  { title: "Input Results",         url: "/outcomes",    icon: ClipboardList,   help: help.callHistory },
-  { title: "EOD Report",            url: "/eod-report",  icon: FileText,        help: help.eodReport },
-  { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded, badge: "appointments", help: help.appointments },
-  { title: "Team Stats",            url: "/leaderboard", icon: Trophy,          help: help.stats },
-  { title: "Forum",                 url: "/forum",       icon: MessagesSquare,  help: help.forum },
-  { title: "Chat",                  url: "/chat",        icon: MessageCircle,   badge: "chat", help: help.chat },
+  { title: "Home",                  url: "/",             icon: LayoutDashboard, help: help.dashboard },
+  { title: "Calling Script",        url: "/call-script",  icon: PhoneCall,       help: help.script },
+  { title: "LO Directory",          url: "/directory",    icon: Users,           help: help.directory },
+  { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
   { title: "State Lookup",          url: "/state-lookup", icon: MapPin },
   { title: "Call Hours",            url: "/call-hours",   icon: Clock },
 ];
 
-const teamItems: NavItem[] = [];
+const reportingItems: NavItem[] = [
+  { title: "Your Call List",        url: "/assignments",  icon: CalendarCheck,   help: help.assignments },
+  { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
+  { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
+];
+
+const teamItems: NavItem[] = [
+  { title: "Team Stats",            url: "/leaderboard",  icon: Trophy,          help: help.stats },
+  { title: "Forum",                 url: "/forum",        icon: MessagesSquare,  help: help.forum },
+  { title: "Chat",                  url: "/chat",         icon: MessageCircle,   badge: "chat", help: help.chat },
+];
 
 const toolItems: NavItem[] = [
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
@@ -390,6 +394,26 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(mainItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* REPORTING — always visible */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Reporting
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(reportingItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* TEAM — always visible */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Team
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(teamItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
