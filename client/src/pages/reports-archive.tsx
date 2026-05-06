@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import {
   CalendarDays, Eye, Mail, FileText, Loader2, AlertCircle, Inbox, Clock, ArrowLeft,
-  Pencil, RotateCcw,
+  Pencil, RotateCcw, Download,
 } from "lucide-react";
 import { businessTodayClient } from "@/lib/business-day";
 
@@ -73,6 +73,8 @@ export default function ReportsArchive() {
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
   const [rangeError, setRangeError] = useState<string | null>(null);
+  const [downloadPending, setDownloadPending] = useState(false);
+  const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     document.title = "Report Archive · WCLCC";
@@ -168,6 +170,94 @@ export default function ReportsArchive() {
     if (err) { setRangeError(err); toast({ title: "Invalid range", description: err, variant: "destructive" }); return; }
     setRangeError(null);
     emailMutation.mutate([]); // empty → server uses requester's email
+  };
+
+  // Triggers the browser's native print dialog on the report HTML, where the
+  // user can choose "Save as PDF" as the destination. Works reliably across
+  // Chrome, Edge, Safari, and Firefox without any server-side Chromium
+  // dependency — the PDF is rendered by the user's browser from the same
+  // HTML the email recipients see.
+  const printHtml = (html: string, suggestedTitle: string) => {
+    // Open a new tab and write the HTML into it. We use a blank tab + document.write
+    // (rather than a data: URL) because data: URLs are increasingly blocked as the
+    // top-level frame in modern browsers.
+    const w = window.open("", "_blank");
+    if (!w) {
+      toast({
+        title: "Pop-up blocked",
+        description: "Allow pop-ups for this site to download the PDF, then try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Inject a <title> so the saved-PDF filename suggestion is meaningful.
+    let injected = html;
+    const titleTag = `<title>${suggestedTitle.replace(/</g, "&lt;")}</title>`;
+    if (/<head[^>]*>/i.test(injected)) {
+      injected = injected.replace(/<head([^>]*)>/i, (m) => `${m}\n${titleTag}`);
+    } else if (/<html[^>]*>/i.test(injected)) {
+      injected = injected.replace(/<html([^>]*)>/i, (m) => `${m}<head>${titleTag}</head>`);
+    } else {
+      injected = `<!doctype html><html><head>${titleTag}</head><body>${injected}</body></html>`;
+    }
+    w.document.open();
+    w.document.write(injected);
+    w.document.close();
+    // Give the new window a tick to lay out (images, fonts) before opening the
+    // print dialog. Some browsers also need focus on the window first.
+    const triggerPrint = () => {
+      try {
+        w.focus();
+        w.print();
+      } catch {
+        // Best-effort — fall back to leaving the tab open so the user can print manually.
+      }
+    };
+    if (w.document.readyState === "complete") {
+      setTimeout(triggerPrint, 250);
+    } else {
+      w.addEventListener?.("load", () => setTimeout(triggerPrint, 250));
+      // Belt-and-braces: also fire after a short delay in case the load event already passed.
+      setTimeout(triggerPrint, 800);
+    }
+  };
+
+  const reportTitle = () => {
+    const range = effectiveStart === effectiveEnd ? effectiveStart : `${effectiveStart}_to_${effectiveEnd}`;
+    return `CLR-${type}-report-${range}`;
+  };
+
+  // "Download PDF" path: if a preview is already loaded, print that. Otherwise
+  // fetch a fresh render with the current selections and print it.
+  const onDownloadPdf = async () => {
+    if (!picked) return;
+    const err = validateCustomRange();
+    if (err) { setRangeError(err); toast({ title: "Invalid range", description: err, variant: "destructive" }); return; }
+    setRangeError(null);
+    if (preview?.html) {
+      printHtml(preview.html, reportTitle());
+      return;
+    }
+    try {
+      setDownloadPending(true);
+      const data = await apiRequest("POST", "/api/reports/preview", {
+        type,
+        startDate: effectiveStart,
+        endDate: effectiveEnd,
+        clrId: selectedClrId,
+      }) as PreviewResult;
+      setPreview(data);
+      printHtml(data.html, reportTitle());
+    } catch (e: any) {
+      toast({ title: "Download failed", description: e?.message ?? "", variant: "destructive" });
+    } finally {
+      setDownloadPending(false);
+    }
+  };
+
+  const onPrintPreview = () => {
+    if (!preview?.html) return;
+    printHtml(preview.html, reportTitle());
   };
 
   const onEmailToList = () => {
@@ -358,6 +448,10 @@ export default function ReportsArchive() {
               {previewMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Eye className="w-4 h-4 mr-2" />}
               Preview
             </Button>
+            <Button variant="secondary" onClick={onDownloadPdf} disabled={downloadPending || previewMutation.isPending} data-testid="btn-download-pdf">
+              {downloadPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+              Download PDF
+            </Button>
             <Button variant="secondary" onClick={onEmailToMe} disabled={emailMutation.isPending} data-testid="btn-email-me">
               {emailMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
               Email to me
@@ -404,12 +498,18 @@ export default function ReportsArchive() {
               </p>
               <p className="text-sm font-medium mt-1.5">{preview.subject}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
-              <ArrowLeft className="w-4 h-4 mr-1" /> Close preview
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={onPrintPreview} data-testid="btn-download-pdf-preview">
+                <Download className="w-4 h-4 mr-1" /> Download PDF
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
+                <ArrowLeft className="w-4 h-4 mr-1" /> Close preview
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <iframe
+              ref={previewIframeRef}
               title="Report preview"
               srcDoc={preview.html}
               className="w-full rounded-md border bg-white"
