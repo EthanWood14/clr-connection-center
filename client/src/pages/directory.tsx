@@ -139,15 +139,23 @@ function CredBlock({
       }
       const data = await res.json();
       const pass = system === "Bonzo" ? data.bonzoPassword : data.leadMailboxPassword;
-      if (!pass) {
+      // Defensive: if a previous save round-tripped the masked bullet string
+      // into the DB, treat it as missing rather than rendering bullets as the
+      // "plaintext" password.
+      const isMasked = typeof pass === "string" && /^•+$/.test(pass);
+      if (!pass || isMasked) {
         toast({
-          title: "No password saved",
-          description: `No ${system} password is stored for this LO.`,
+          title: isMasked ? "Stored credential is corrupted" : "No password saved",
+          description: isMasked
+            ? `The ${system} password on file is the masked placeholder — please re-enter it via Edit.`
+            : `No ${system} password is stored for this LO.`,
           variant: "destructive",
         });
+        setPlainPass(null);
+        return null;
       }
-      setPlainPass(pass ?? null);
-      return pass ?? null;
+      setPlainPass(pass);
+      return pass;
     } catch (e: any) {
       toast({ title: "Failed to load credentials", description: e?.message, variant: "destructive" });
       return null;
@@ -157,7 +165,12 @@ function CredBlock({
   };
 
   const handleShow = async () => {
-    if (!showPass && !plainPass) await fetchPlaintext();
+    if (!showPass && !plainPass) {
+      const pass = await fetchPlaintext();
+      // Only flip to "shown" if we actually got a password back — otherwise
+      // the eye icon toggles silently and looks broken.
+      if (!pass) return;
+    }
     setShowPass(s => !s);
   };
 

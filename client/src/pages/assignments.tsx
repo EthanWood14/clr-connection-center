@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
-  Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert
+  Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -113,15 +113,16 @@ interface AssignmentRowProps {
   onLogStatus: (a: any) => void;
   isSelected: boolean;
   onToggle: (id: number) => void;
+  isTopUnworked?: boolean;
 }
 
-function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle }: AssignmentRowProps) {
+function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked }: AssignmentRowProps) {
   const cfg = STATUS_CONFIG[assignment.status] ?? STATUS_CONFIG.recommended;
   const Icon = cfg.icon;
 
   return (
     <div
-      className={`flex items-center gap-3 py-3 px-4 border-b last:border-0 hover:bg-muted/30 transition-colors group ${isSelected ? "bg-teal-50/60 dark:bg-teal-900/10" : ""}`}
+      className={`flex items-center gap-3 py-3 px-4 border-b last:border-0 hover:bg-muted/30 transition-colors group ${isSelected ? "bg-teal-50/60 dark:bg-teal-900/10" : isTopUnworked ? "bg-amber-50/50 dark:bg-amber-900/10 border-l-4 border-l-amber-400" : ""}`}
       data-testid={`row-assignment-${assignment.id}`}
     >
       <div className="flex-shrink-0 flex items-center">
@@ -141,6 +142,11 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle }: Assign
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium" data-testid={`text-assignment-lo-${assignment.id}`}>{assignment.lo?.fullName}</span>
+          {isTopUnworked && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold flex items-center gap-1" title="Start your day with #1 — work the list top to bottom">
+              <Sparkles className="w-3 h-3" />Start here
+            </span>
+          )}
           {assignment.lo?.priorityTier === 1 && (
             <span className="text-[10px] px-1 py-0 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>
           )}
@@ -228,15 +234,20 @@ function AssistantGroup({
         </div>
       </CardHeader>
       <CardContent className="p-0 mt-2">
-        {assignments.map(a => (
-          <AssignmentRow
-            key={a.id}
-            assignment={a}
-            onLogStatus={onLogStatus}
-            isSelected={selectedIds.has(a.id)}
-            onToggle={onToggleSelect}
-          />
-        ))}
+        {(() => {
+          // First unworked row gets the "Start here" highlight
+          const firstUnworkedId = assignments.find(a => a.status === "recommended")?.id;
+          return assignments.map(a => (
+            <AssignmentRow
+              key={a.id}
+              assignment={a}
+              onLogStatus={onLogStatus}
+              isSelected={selectedIds.has(a.id)}
+              onToggle={onToggleSelect}
+              isTopUnworked={a.id === firstUnworkedId}
+            />
+          ));
+        })()}
       </CardContent>
     </Card>
   );
@@ -963,6 +974,17 @@ export default function Assignments() {
                 : "Pre-configure tomorrow's assignments before the auto-generation cron runs."}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Start-at-#1 nudge — shown when there are assignments and at least one is still unworked */}
+      {assignments.length > 0 && (assignments as any[]).some(a => a.status === "recommended") && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50/70 dark:bg-amber-900/20 dark:border-amber-700 px-4 py-2.5 flex items-center gap-2.5">
+          <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <p className="text-xs sm:text-sm text-amber-900 dark:text-amber-200">
+            <span className="font-semibold">Start at #1</span>
+            <span className="text-amber-800/80 dark:text-amber-300/80"> — work the list top to bottom. The order is calibrated by recency, frequency, and priority tier.</span>
+          </p>
         </div>
       )}
 

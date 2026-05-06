@@ -1612,6 +1612,25 @@ cron.schedule("0 9 * * 1-5", async () => {
 });
 
 export function registerRoutes(httpServer: Server, app: Express) {
+  // ── One-time cleanup: scrub LO credentials accidentally saved as the
+  // masked bullet placeholder. Earlier versions of the edit form could
+  // round-trip the "••••••••" mask back into storage; the password reveal
+  // would then appear broken because the "plaintext" was just bullets.
+  try {
+    const result = sqlite.prepare(`
+      UPDATE loan_officers
+      SET bonzo_password = CASE WHEN bonzo_password GLOB '•*' AND TRIM(bonzo_password, '•') = '' THEN NULL ELSE bonzo_password END,
+          lead_mailbox_password = CASE WHEN lead_mailbox_password GLOB '•*' AND TRIM(lead_mailbox_password, '•') = '' THEN NULL ELSE lead_mailbox_password END
+      WHERE (bonzo_password GLOB '•*' AND TRIM(bonzo_password, '•') = '')
+         OR (lead_mailbox_password GLOB '•*' AND TRIM(lead_mailbox_password, '•') = '')
+    `).run();
+    if (result.changes > 0) {
+      console.log(`[lo-creds] scrubbed ${result.changes} loan_officer rows with masked-placeholder credentials`);
+    }
+  } catch (e) {
+    console.error("[lo-creds] scrub failed", e);
+  }
+
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
     try { storage.createAuditLog(data); } catch {}
