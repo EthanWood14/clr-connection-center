@@ -19,6 +19,7 @@ import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProces
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
+import { createBackup, listBackups } from "./backup";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1120,6 +1121,14 @@ cron.schedule("0 9 * * *", () => {
   try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
 });
 
+// Daily SQLite backup at 8am UTC
+cron.schedule("0 8 * * *", () => {
+  try {
+    createBackup('daily');
+    console.log("[backup] Daily backup complete");
+  } catch (e) { console.error("[backup] Daily backup error:", e); }
+});
+
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
@@ -1888,6 +1897,28 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   try { startUptimeCron(); } catch (e: any) { console.error("[status] cron init failed:", e?.message ?? e); }
+
+  // ── Manual backup trigger (admin only) ───────────────────────────────────
+  app.post("/api/admin/backup", requireAuth, (req: any, res: any) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const file = createBackup('manual');
+    if (!file) return res.status(500).json({ success: false, error: "Backup failed" });
+    return res.json({ success: true, file });
+  });
+
+  // ── List backups (admin only) ────────────────────────────────────────────
+  app.get("/api/admin/backups", requireAuth, (req: any, res: any) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    return res.json({ backups: listBackups() });
+  });
 
   // ── EOD Reminder: manual test trigger (admin only) ───────────────────────
   // POST /api/admin/eod-reminders/test
@@ -2931,6 +2962,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (id === requesterId) return res.status(400).json({ error: "You cannot delete your own account" });
     if (id === 1) return res.status(400).json({ error: "The primary admin account cannot be deleted" });
     try {
+      createBackup('pre-delete');
       storageExtra.deleteUserCascade(id);
       res.json({ ok: true });
     } catch (e: any) {
@@ -3151,6 +3183,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.delete("/api/loan-officers/:id", (req, res) => {
+    createBackup('pre-delete');
     const id = parseInt(req.params.id);
     const lo = storage.getLoanOfficerById(id);
     storage.archiveLoanOfficer(id);
@@ -3788,6 +3821,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
       return res.status(403).json({ error: "You can only delete your own outcomes" });
     }
+    createBackup('pre-delete');
     audit({ userId: sessionUser?.userId ?? 0, userName: "", action: "delete", entityType: "outcome", entityId: id, entityLabel: null, details: null });
     storage.deleteLeadOutcome(id);
     res.json({ ok: true });
