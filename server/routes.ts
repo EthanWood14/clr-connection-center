@@ -2042,6 +2042,132 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json({ total: total.c, byType, byDate, placeholder_count: placeholderRows.length });
   });
 
+  // ── One-time import v2: Ryan + Randy outcomes ────────────────────────────
+  app.post("/api/admin/run-import-v2", async (req: any, res: any) => {
+    const bootstrap = req.headers["x-bootstrap-token"];
+    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    if (!isBootstrap) {
+      const sess = req.session_user;
+      const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+      if (!me || (me.role !== "admin" && !me.superAdmin)) {
+        return res.status(403).json({ error: "Admin only" });
+      }
+    }
+
+    try {
+      const sqlite = (storageExtra as any).getRawSqlite();
+      const RYAN_ID = 14;
+
+      const RYAN_OUTCOMES: any[] = [{"date":"2026-04-27","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Bruno Vaitekunas","lo_name":"Khashi Tabrizi","notes":"HELOC Min."},{"date":"2026-04-27","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Victor Gonzalez","lo_name":"Bill Neessen","notes":""},{"date":"2026-04-27","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Yanela/Pedro Sanchez","lo_name":"Bill Neessen","notes":""},{"date":"2026-04-28","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Wladamir Maldonado","lo_name":"Khashi Tabrizi","notes":""},{"date":"2026-04-28","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"John Fretz","lo_name":"Ian Militello","notes":""},{"date":"2026-04-28","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"John Fretz","lo_name":"Ian Militello","notes":"(duplicate entry in report)"},{"date":"2026-04-29","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Tom Knight","lo_name":"Derek Bullen","notes":""},{"date":"2026-04-30","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Gary Ceplina","lo_name":"Gary Dawson","notes":""},{"date":"2026-04-30","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Alberto Tapia","lo_name":"Ian Militello","notes":""},{"date":"2026-05-01","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Michael Daniels","lo_name":"Sean Murphy","notes":""},{"date":"2026-05-01","outcome_type":"transfer","transfer_type":"direct","borrower_name":"James Larson","lo_name":"Sean Murphy","notes":"ORANGE - Home Equity W2"},{"date":"2026-05-04","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Wayne Mclaughliin","lo_name":"Khashi Tabrizi","notes":""},{"date":"2026-05-04","outcome_type":"appointment","borrower_name":null,"lo_name":null,"notes":""},{"date":"2026-05-04","outcome_type":"appointment","borrower_name":null,"lo_name":null,"notes":""},{"date":"2026-05-04","outcome_type":"appointment","borrower_name":null,"lo_name":null,"notes":""},{"date":"2026-05-04","outcome_type":"fell_through","borrower_name":null,"lo_name":null,"notes":""},{"date":"2026-05-05","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Debbie Evonne James","lo_name":"Gary Dawson","notes":"BLACK - W2"},{"date":"2026-05-05","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Cynthia Reynolds","lo_name":"Khashi Tabrizi","notes":""},{"date":"2026-05-06","outcome_type":"fell_through","borrower_name":"Thomas Lahman","lo_name":"Bill Neessen","notes":""},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Darlene Baker","lo_name":"Khashi Tabrizi","notes":"RETREAD - Called back, working with another lender. Saved deal, working with us for a reverse."},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Iris Riley","lo_name":"Gary Dawson","notes":""},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Corey Booth","lo_name":"Ian Militello","notes":""},{"date":"2026-05-07","outcome_type":"appointment","borrower_name":"Rasheeda Marshall","lo_name":"Dan Baker","notes":"Scheduled: Fri, May 8, 7:30 AM"},{"date":"2026-05-07","outcome_type":"appointment","borrower_name":"James Keyes","lo_name":"Gary Dawson","notes":"Scheduled: Mon, May 11, 9:00 AM"},{"date":"2026-05-08","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Nancy Baker","lo_name":"Bill Neessen","notes":"ORANGE W2 - HELOC"},{"date":"2026-05-08","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Victoria Dalton","lo_name":"Bill Neessen","notes":"Spanish speaking only. Transferred to Justin V. to be originated under Chris."},{"date":"2026-05-08","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Bridgett Wade","lo_name":"Derek Bullen","notes":""},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Leanne Hanson","lo_name":"Ian Militello","notes":"Scheduled: Fri, May 8, 4:00 PM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Leigh Sullivan","lo_name":"Bill Neessen","notes":"Scheduled: Fri, May 8, 5:00 PM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"James Midkiff","lo_name":"Bill Neessen","notes":""},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Adrian Nicely","lo_name":"Bill Neessen","notes":"Scheduled: Sat, May 9, 11:00 AM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Joe Fuquay","lo_name":"Khashi Tabrizi","notes":"Scheduled: Fri, May 8, 5:00 PM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"James Midkiff","lo_name":"Bill Neessen","notes":"Scheduled: Mon, May 11, 8:00 AM"},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Michael Whitmer","lo_name":"Gary Dawson","notes":"ORANGE W2 - HELOC"},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"direct","borrower_name":"James Midkiff","lo_name":"Bill Neessen","notes":""},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Leigh Sullivan","lo_name":"Ian Militello","notes":""},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"appointment","borrower_name":"Richard Brown","lo_name":"Gary Dawson","notes":"MAROON - HELOC 580-619 $25-60K LTV 80%+"},{"date":"2026-05-11","outcome_type":"appointment","borrower_name":"Kevin Dimedio","lo_name":"Bill Neessen","notes":"Scheduled: Mon, May 11, 10:00 AM"}];
+
+      const RANDY_OUTCOMES: any[] = [{"date":"2026-05-05","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Debra Hall","lo_name":"Dan Baker","notes":"Client interested in 30k heloc"},{"date":"2026-05-06","outcome_type":"appointment","borrower_name":"Adrian Nicely","lo_name":"Bill Neessen","notes":"Client wants a call 2pm est/11am pst, per previous texts with agent Adrian Salazar client was looking to take out 250k and has a $0 balance. Scheduled: Fri, May 8, 11:00 AM"},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Jimmy Williams","lo_name":"Khashi Tabrizi","notes":"Client was looking for a cash out refi, didn't like the numbers from other companies, mainly a company called Point"},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Donald Kirkpatrick","lo_name":"Dan Baker","notes":"Client is looking for a Cash Out Refinance, received quotes from local credit union, still shopping around"},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Paula Boyle","lo_name":"Dan Baker","notes":"Direct transfer to Dan Baker, client has had issues qualifying with other companies in the past and needs creative solutions"},{"date":"2026-05-07","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Eugene Merello","lo_name":"Cole Fairon","notes":"Client is in need of a loan to fix his roof, direct transfer to Cole"},{"date":"2026-05-07","outcome_type":"appointment","borrower_name":"Marcy Spears","lo_name":"Cole Fairon","notes":"Scheduled: Thu, Jul 9, 4:55 PM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Mark Washington","lo_name":"Gary Dawson","notes":"Scheduled: Mon, May 11, 8:30 AM"},{"date":"2026-05-08","outcome_type":"appointment","borrower_name":"Ron Glazer","lo_name":"Cole Fairon","notes":"Client wants follow up, looking for a 2nd HELOC for 75-80k, wants to follow up the week of 5/18. Scheduled: Mon, May 18, 8:30 AM"},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Roderick Madison","lo_name":"Khashi Tabrizi","notes":"Client wants to pull out 20-30k out of the home"},{"date":"2026-05-11","outcome_type":"transfer","transfer_type":"direct","borrower_name":"Clarence Taylor","lo_name":"Cole Fairon","notes":"Client needs 40k, business owner, further notes sent to cole"},{"date":"2026-05-11","outcome_type":"appointment","borrower_name":"Joseph Lemons","lo_name":"Cole Fairon","notes":"Client responded still interested in tapping into home equity, wants a call at 10am CST/8am PST. Scheduled: Tue, May 12, 8:00 AM"}];
+
+      // Get Ethan's org_id
+      const ethan = sqlite.prepare("SELECT org_id FROM users WHERE id = 1").get() as { org_id: number } | undefined;
+      const orgId = ethan?.org_id ?? 1;
+
+      // Find or create Randy Hammond
+      let randyRow = sqlite.prepare("SELECT id FROM users WHERE LOWER(name) = LOWER(?) OR LOWER(email) = LOWER(?) LIMIT 1")
+        .get("Randy Hammond", "rhammond@westcapitallending.com") as { id: number } | undefined;
+      let randyId: number;
+      let randyCreated = false;
+      if (randyRow) {
+        randyId = randyRow.id;
+      } else {
+        const hash = bcrypt.hashSync("WCL2026!", 10);
+        const nowIso = new Date().toISOString();
+        const ins = sqlite.prepare(`
+          INSERT INTO users
+            (name, email, role, is_active, is_clr, is_manager, super_admin, password_hash, must_change_password, org_id, has_seen_intro, created_at)
+          VALUES (?, ?, 'assistant', 1, 1, 0, 0, ?, 0, ?, 0, ?)
+        `).run("Randy Hammond", "rhammond@westcapitallending.com", hash, orgId, nowIso);
+        randyId = Number(ins.lastInsertRowid);
+        randyCreated = true;
+      }
+
+      // LO matcher (same logic as ethan import)
+      const los = sqlite.prepare("SELECT id, full_name FROM loan_officers").all() as { id: number; full_name: string }[];
+      const matchLoId = (raw: string | null): { loId: number; matched: boolean } => {
+        if (!raw) return { loId: 999, matched: false };
+        const norm = raw.trim().toLowerCase();
+        let hit = los.find(l => (l.full_name || "").trim().toLowerCase() === norm);
+        if (!hit) {
+          const last = norm.split(/\s+/).slice(-1)[0];
+          hit = los.find(l => {
+            const fn = (l.full_name || "").toLowerCase();
+            if (fn.includes(norm)) return true;
+            if (last && fn.includes(last)) return true;
+            return false;
+          });
+        }
+        return hit ? { loId: hit.id, matched: true } : { loId: 999, matched: false };
+      };
+
+      try { createBackup('pre-import-v2'); } catch (e) { console.error('backup failed', e); }
+
+      const delStmt = sqlite.prepare("DELETE FROM lead_outcomes WHERE assistant_id = ?");
+      const ryanDeleted = (delStmt.run(RYAN_ID).changes) as number;
+      const randyDeleted = (delStmt.run(randyId).changes) as number;
+
+      const insStmt = sqlite.prepare(
+        `INSERT INTO lead_outcomes
+          (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, notes, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`
+      );
+
+      const unmatched: string[] = [];
+      const errors: string[] = [];
+      const now = new Date().toISOString();
+
+      const insertBatch = (rows: any[], assistantId: number): number => {
+        let count = 0;
+        const trx = sqlite.transaction((batch: any[]) => {
+          for (const r of batch) {
+            const { loId, matched } = matchLoId(r.lo_name ?? null);
+            if (r.lo_name && !matched) unmatched.push(r.lo_name);
+            try {
+              insStmt.run(
+                r.date,
+                assistantId,
+                loId,
+                (r.borrower_name == null ? "" : r.borrower_name),
+                r.outcome_type,
+                r.transfer_type ?? null,
+                r.notes ?? null,
+                now,
+                now,
+              );
+              count++;
+            } catch (e: any) {
+              errors.push(`row ${JSON.stringify(r)}: ${e?.message || e}`);
+            }
+          }
+        });
+        trx(rows);
+        return count;
+      };
+
+      const ryanInserted = insertBatch(RYAN_OUTCOMES, RYAN_ID);
+      const randyInserted = insertBatch(RANDY_OUTCOMES, randyId);
+
+      return res.json({
+        success: true,
+        randyId,
+        randyCreated,
+        ryanDeleted,
+        randyDeleted,
+        ryanInserted,
+        randyInserted,
+        ryanTotal: RYAN_OUTCOMES.length,
+        randyTotal: RANDY_OUTCOMES.length,
+        unmatchedLOs: Array.from(new Set(unmatched)),
+        errors,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
 
   // ── EOD Reminder: manual test trigger (admin only) ───────────────────────
   // POST /api/admin/eod-reminders/test
