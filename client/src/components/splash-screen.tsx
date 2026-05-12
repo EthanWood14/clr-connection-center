@@ -56,6 +56,10 @@ export function SplashScreen() {
           transform: "translateX(-300px) rotate(-360deg)",
           animation: "splash-logo-roll 0.95s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s forwards",
           willChange: "transform",
+          borderRadius: "50%",
+          overflow: "hidden",
+          boxShadow:
+            "inset -4px -4px 12px rgba(0,0,0,0.4), inset 4px 4px 12px rgba(255,255,255,0.08), 0 8px 32px rgba(0,0,0,0.5)",
           filter: "drop-shadow(0 12px 36px rgba(0,0,0,0.55))",
           position: "relative", zIndex: 1,
         }}
