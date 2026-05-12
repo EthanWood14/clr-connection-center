@@ -378,11 +378,7 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        <img
-          src="/logo-horizontal.svg"
-          alt="CLR Connection Center — West Capital Lending"
-          className="h-10 w-auto"
-        />
+        <img src="/logo-menu.jpg" className="h-10 w-auto rounded" alt="CLR Connection Center" />
       </SidebarHeader>
 
       <SidebarContent>
