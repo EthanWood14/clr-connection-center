@@ -1920,6 +1920,107 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json({ backups: listBackups() });
   });
 
+  // ── One-time import: replace Ethan's lead outcomes (admin only) ──────────
+  app.post("/api/admin/import-ethan-outcomes", requireAuth, async (req: any, res: any) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    try {
+      const sqlite = (storageExtra as any).getRawSqlite();
+      const ASSISTANT_ID = 1;
+      const ETHAN_OUTCOMES: any[] = [{"date": "2026-04-20", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "John Hankin", "lo_name": "Dan Baker", "notes": "Wants small personal loan, seemingly great credit, locked his credit and having trouble unlocking it."}, {"date": "2026-04-20", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Juan Falcon", "lo_name": "Khashi Tabrizi", "notes": "DNQ"}, {"date": "2026-04-20", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Geino Duriel", "lo_name": "Khashi Tabrizi", "notes": "Follow up"}, {"date": "2026-04-20", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": "trash credit lol, said it was 270 HAHA"}, {"date": "2026-04-20", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": "Investment property, interested."}, {"date": "2026-04-21", "outcome_type": "future_contact", "borrower_name": "Unknown", "lo_name": null, "notes": "waiting for credit to get better -- not Gary's lead, from OR"}, {"date": "2026-04-21", "outcome_type": "future_contact", "borrower_name": "Unknown", "lo_name": null, "notes": "was in hospital, said she would save number for the future"}, {"date": "2026-04-21", "outcome_type": "future_contact", "borrower_name": "Unknown", "lo_name": null, "notes": "very nice, dealing with a lot, wants a callback a year from now."}, {"date": "2026-04-22", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Larry Young", "lo_name": "Ian Militello", "notes": "Wants cb at 1:30-2:00 PST, looking for a 20k loan, like a HEL, comparing to Rocket"}, {"date": "2026-04-22", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Gurmeet Singh", "lo_name": "Sean Murphy", "notes": ""}, {"date": "2026-04-23", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Bernard Hudson", "lo_name": "Sean Murphy", "notes": ""}, {"date": "2026-04-24", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Jennifer Wells", "lo_name": "Sean Murphy", "notes": ""}, {"date": "2026-04-27", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Mark Bewley", "lo_name": "Cole Fairon", "notes": "CT (479) 381-6834 Very busy at work, wants cb over the weekend for home imp loan."}, {"date": "2026-04-27", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Marie Michaelle Bazile", "lo_name": "Ian Militello", "notes": "30K hel loan, James old lead that I was able to directly transfer to Ian. LO Plan: I think he was taking an app"}, {"date": "2026-04-27", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": "Man picked up, said to cb later. (540) 479-7509"}, {"date": "2026-04-28", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Jaymie Lebile", "lo_name": "Kurt Christman", "notes": "Need money because her son died, running into a ton of issues. LO Plan: Find other options for a $2000 loan."}, {"date": "2026-04-28", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Stephen Mcgibbon", "lo_name": "Sean Murphy", "notes": "called me during lunch, looking for HELOC or something. LO Plan: more information"}, {"date": "2026-04-28", "outcome_type": "deferral", "borrower_name": "Unknown", "lo_name": null, "notes": "Said he would cb eventually. Got my number and name."}, {"date": "2026-04-28", "outcome_type": "deferral", "borrower_name": "Unknown", "lo_name": null, "notes": "said he needed to wait a year 1/18"}, {"date": "2026-04-30", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Jason Grubbs", "lo_name": "Khashi Tabrizi", "notes": ""}, {"date": "2026-04-30", "outcome_type": "deferral", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-04", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Sylvanus Pratt", "lo_name": "Ian Militello", "notes": "Wanted HTI loan. LO Plan: advised on other options, since we do not offer the loan"}, {"date": "2026-05-04", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Dawn Schwalm", "lo_name": "Cole Fairon", "notes": "looking for either a va refi or heloc, unsure now or later, had a 7.9 quote from another company. LO Plan: start working on the refi in a few weeks"}, {"date": "2026-05-04", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-04", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-04", "outcome_type": "callback_requested", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-05", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "John Ko", "lo_name": "Bill Neessen", "notes": "vm cb that led to live transfer, wanted to talk to Billy. LO Plan: working with the lead on a reverse."}, {"date": "2026-05-05", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-05", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-05", "outcome_type": "fell_through", "borrower_name": "Unknown", "lo_name": null, "notes": ""}, {"date": "2026-05-05", "outcome_type": "deferral", "borrower_name": "Tim Boyle", "lo_name": "Bill Neessen", "notes": "waiting on other lender rates, aware of West Cap. Scheduled: Thu, May 14, 12:00 PM"}, {"date": "2026-05-05", "outcome_type": "callback_requested", "borrower_name": "Mary Nazworth", "lo_name": "Bill Neessen", "notes": "refied recently, needs time, still interested, said she was looking for a higher amount. Scheduled: Tue, Sep 1, 12:00 PM"}, {"date": "2026-05-05", "outcome_type": "callback_requested", "borrower_name": "Donald Mullen", "lo_name": "Sean Murphy", "notes": "has cold, requested callback later. Scheduled: Wed, May 6, 4:00 PM"}, {"date": "2026-05-06", "outcome_type": "transfer", "transfer_type": "direct", "borrower_name": "Kenneth Bellamy", "lo_name": "Dan Baker", "notes": "was super eager to start the process. LO Plan: not sure, finish the application I think"}, {"date": "2026-05-06", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Kyle Greenwood", "lo_name": "Cole Fairon", "notes": ""}, {"date": "2026-05-07", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Stephan Thomas", "lo_name": "Gary Dawson", "notes": ""}, {"date": "2026-05-08", "outcome_type": "appointment", "borrower_name": "Joseph Fritts", "lo_name": "Bill Neessen", "notes": ""}, {"date": "2026-05-11", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Richard Braun", "lo_name": "Ian Militello", "notes": ""}, {"date": "2026-05-11", "outcome_type": "transfer", "transfer_type": "appointment", "borrower_name": "Jody Myatt", "lo_name": "Gary Dawson", "notes": "looking for advice. 1.1 house, 800k loan, looking to consolidate debt and prep for house move. 670 credit score. LO Plan: cb in an hour"}, {"date": "2026-05-11", "outcome_type": "fell_through", "borrower_name": "Alexander Diaz", "lo_name": "Derek Bullen", "notes": "Shopping around, said I could cb later."}, {"date": "2026-05-11", "outcome_type": "appointment", "borrower_name": "Mr Conny Jackson", "lo_name": "Derek Bullen", "notes": "At work, just messing around. Scheduled: Mon, May 11, 3:00 PM"}, {"date": "2026-05-11", "outcome_type": "appointment", "borrower_name": "Tamara Fagatele", "lo_name": "Bill Neessen", "notes": "Texted me to call then. Scheduled: Tue, May 12, 9:00 AM"}, {"date": "2026-05-11", "outcome_type": "callback_requested", "borrower_name": "Anthony Powell", "lo_name": "Bill Neessen", "notes": "Trying to get ex-wife off the deed, cb in a week. Scheduled: Mon, May 18, 2:30 PM"}, {"date": "2026-05-11", "outcome_type": "deferral", "borrower_name": "Mohamed Osman", "lo_name": "Derek Bullen", "notes": "Talked to him, say call him later down the line. Scheduled: Sat, Aug 1, 9:00 AM"}, {"date": "2026-05-11", "outcome_type": "callback_requested", "borrower_name": "Daniel Henry", "lo_name": "Derek Bullen", "notes": "said maybe could talk next week -- already in convos with Derek. Scheduled: Mon, May 18, 12:09 PM"}, {"date": "2026-05-11", "outcome_type": "callback_requested", "borrower_name": "Marcelino Venegas", "lo_name": "Khashi Tabrizi", "notes": "said husband would call back. Scheduled: Mon, May 11, 4:30 PM"}];
+
+      const los = sqlite.prepare("SELECT id, full_name FROM loan_officers").all() as { id: number; full_name: string }[];
+      const matchLoId = (raw: string | null): { loId: number; matched: boolean } => {
+        if (!raw) return { loId: 999, matched: false };
+        const norm = raw.trim().toLowerCase();
+        let hit = los.find(l => (l.full_name || "").trim().toLowerCase() === norm);
+        if (!hit) {
+          const first = norm.split(/\s+/)[0];
+          const last = norm.split(/\s+/).slice(-1)[0];
+          hit = los.find(l => {
+            const fn = (l.full_name || "").toLowerCase();
+            if (fn.includes(norm)) return true;
+            if (last && fn.includes(last)) return true;
+            return false;
+          });
+        }
+        return hit ? { loId: hit.id, matched: true } : { loId: 999, matched: false };
+      };
+
+      try { createBackup('pre-ethan-import'); } catch (e) { console.error('backup failed', e); }
+
+      const delStmt = sqlite.prepare("DELETE FROM lead_outcomes WHERE assistant_id = ?");
+      const delInfo = delStmt.run(ASSISTANT_ID);
+      const deleted = delInfo.changes as number;
+
+      const insStmt = sqlite.prepare(
+        `INSERT INTO lead_outcomes
+          (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, notes, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`
+      );
+
+      const unmatched: string[] = [];
+      const errors: string[] = [];
+      let inserted = 0;
+      const now = new Date().toISOString();
+
+      const trx = sqlite.transaction((rows: any[]) => {
+        for (const r of rows) {
+          const { loId, matched } = matchLoId(r.lo_name ?? null);
+          if (r.lo_name && !matched) unmatched.push(r.lo_name);
+          try {
+            insStmt.run(
+              r.date,
+              ASSISTANT_ID,
+              loId,
+              r.borrower_name ?? null,
+              r.outcome_type,
+              r.transfer_type ?? null,
+              r.notes ?? null,
+              now,
+              now,
+            );
+            inserted++;
+          } catch (e: any) {
+            errors.push(`row ${JSON.stringify(r)}: ${e?.message || e}`);
+          }
+        }
+      });
+      trx(ETHAN_OUTCOMES);
+
+      return res.json({
+        success: true,
+        deleted,
+        inserted,
+        total: ETHAN_OUTCOMES.length,
+        unmatched_lo_names: Array.from(new Set(unmatched)),
+        loan_officers: los.map(l => ({ id: l.id, name: l.full_name })),
+        errors,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
+  // ── Verify Ethan's outcome count (admin only) ────────────────────────────
+  app.get("/api/admin/ethan-outcomes-count", requireAuth, (req: any, res: any) => {
+    const sess = req.session_user;
+    const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
+    if (!me || (me.role !== "admin" && !me.superAdmin)) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+    const sqlite = (storageExtra as any).getRawSqlite();
+    const total = sqlite.prepare("SELECT COUNT(*) AS c FROM lead_outcomes WHERE assistant_id = 1").get() as { c: number };
+    const byType = sqlite.prepare("SELECT outcome_type, COUNT(*) AS c FROM lead_outcomes WHERE assistant_id = 1 GROUP BY outcome_type").all();
+    const byDate = sqlite.prepare("SELECT date, COUNT(*) AS c FROM lead_outcomes WHERE assistant_id = 1 GROUP BY date ORDER BY date").all();
+    const placeholderRows = sqlite.prepare("SELECT id, date, outcome_type, lo_id, borrower_name FROM lead_outcomes WHERE assistant_id = 1 AND lo_id = 999").all();
+    return res.json({ total: total.c, byType, byDate, placeholder_count: placeholderRows.length });
+  });
+
+
   // ── EOD Reminder: manual test trigger (admin only) ───────────────────────
   // POST /api/admin/eod-reminders/test
   // Immediately fires EOD reminder check for the calling user, sending to their
