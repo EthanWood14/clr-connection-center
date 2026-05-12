@@ -22,16 +22,6 @@ function BackgroundPattern() {
   );
 }
 
-function HouseIcon() {
-  return (
-    <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <path d="M5 18L20 5L35 18V36H26V26H14V36H5V18Z" fill="white" fillOpacity="0.15" stroke="white" strokeWidth="1.5" strokeLinejoin="round"/>
-      <path d="M16 36V28H24V36" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      <circle cx="20" cy="17" r="2.5" fill="white" fillOpacity="0.8"/>
-    </svg>
-  );
-}
-
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -81,28 +71,19 @@ export default function Login() {
 
       <div className="w-full max-w-md relative z-10">
         {/* Top branding card */}
-        <div className="bg-[#1A2B4A] rounded-2xl p-8 mb-1 shadow-2xl text-white overflow-hidden relative">
+        <div className="bg-gradient-to-br from-[#3e5379] to-[#1A2B4A] rounded-2xl p-8 mb-1 shadow-2xl text-white overflow-hidden relative">
           {/* Background texture inside card */}
           <div className="absolute inset-0 opacity-10"
             style={{ backgroundImage: "radial-gradient(circle at 80% 20%, white 1px, transparent 1px)", backgroundSize: "20px 20px" }} />
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center flex-shrink-0">
-                <HouseIcon />
-              </div>
-              <div>
-                <div className="font-bold text-lg leading-tight">CLR Connection Center</div>
-                <div className="text-blue-200 text-xs">West Capital Lending</div>
-              </div>
-            </div>
-            {/* WCL Logo */}
-            <div className="mb-4">
-              <img
-                src="/wcl-logo.png"
-                alt="West Capital Lending"
-                className="h-10 opacity-90 brightness-[100] saturate-0"
-                style={{ filter: "brightness(0) invert(1)" }}
-              />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <img
+              src="/logo-white-full.svg"
+              alt="CLR Connection Center"
+              className="w-[200px] max-w-full h-auto mb-3"
+              style={{ filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.35))" }}
+            />
+            <div className="text-blue-100/90 text-[10px] uppercase tracking-[0.32em] font-semibold mb-3">
+              West Capital Lending
             </div>
             <p className="text-blue-100 text-sm leading-relaxed">
               Your daily command center for CLR assignments, LO management, and transfer tracking.

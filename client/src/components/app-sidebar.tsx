@@ -378,13 +378,13 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        <div className="flex flex-col gap-1.5">
-          <img
-            src="/wcl-logo.png"
-            alt="West Capital Lending"
-            className="h-7 w-auto object-contain object-left dark:brightness-0 dark:invert opacity-90"
-          />
-          <p className="text-[11px] font-semibold text-sidebar-foreground/70 uppercase tracking-widest leading-tight">CLR Connection Center</p>
+        <div className="flex items-center gap-2.5">
+          <img src="/logo-navy.svg" alt="" className="h-8 w-8 shrink-0 dark:hidden" />
+          <img src="/logo-white.svg" alt="" className="h-8 w-8 shrink-0 hidden dark:block" />
+          <div className="flex flex-col leading-tight min-w-0">
+            <span className="text-[13px] font-bold text-sidebar-foreground tracking-tight">CLR Connection</span>
+            <span className="text-[13px] font-bold text-sidebar-foreground tracking-tight">Center</span>
+          </div>
         </div>
       </SidebarHeader>
 
