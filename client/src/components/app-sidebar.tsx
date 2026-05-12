@@ -378,7 +378,7 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        <img src="/logo-menu.jpg" className="h-10 w-auto rounded" alt="CLR Connection Center" />
+        <img src="/logo-menu.svg" className="h-9 w-auto" alt="CLR Connection Center" />
       </SidebarHeader>
 
       <SidebarContent>
