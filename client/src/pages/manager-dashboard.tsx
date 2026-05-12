@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+import { aggregateByWeekday } from "@/lib/weekday-date";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -373,11 +374,14 @@ export default function ManagerDashboard() {
     onError: (e: any) => toast({ title: "Failed to send reminders", description: e?.message ?? "Try again", variant: "destructive" }),
   });
 
-  // Trend chart data with formatted labels — depends on range
+  // Trend chart data with formatted labels — depends on range.
+  // Weekend buckets are shifted onto the following Monday so charts only
+  // show Mon–Fri x-axis ticks.
   const trendData = useMemo(() => {
     const block = data?.byRange?.[rangeTrend];
     if (!block) return [];
-    return block.trend.map(d => ({ ...d, label: format(parseISO(d.date), "MMM d") }));
+    const merged = aggregateByWeekday(block.trend as any[], "date");
+    return merged.map((d: any) => ({ ...d, label: format(parseISO(d.date), "MMM d") }));
   }, [data?.byRange, rangeTrend]);
 
   const outcomePieData = useMemo(() => {

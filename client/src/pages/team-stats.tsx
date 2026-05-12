@@ -12,6 +12,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell, LineChart, Line, CartesianGrid,
 } from "recharts";
+import { shiftWeekendBucketsToMonday } from "@/lib/weekday-date";
 
 const COLORS = {
   calls: "#3B82F6",
@@ -147,7 +148,7 @@ export default function TeamStats() {
       return fetch(`/api/analytics/history?${params.toString()}`).then(r => r.json());
     },
   });
-  const histPeriods: any[] = historyData?.periods ?? [];
+  const histPeriods: any[] = shiftWeekendBucketsToMonday(historyData?.periods ?? []);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");

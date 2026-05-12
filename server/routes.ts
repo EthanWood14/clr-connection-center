@@ -365,14 +365,27 @@ async function sendReport(
   // Choose the reporting window. Caller can pass a custom range for
   // historical exports; otherwise we default based on type:
   //   daily   → today only
-  //   weekly  → Sun–Sat containing today
+  //   weekly  → previous Mon–Sun (the week that just ended)
   //   monthly → full previous calendar month (when run on the 1st)
   const period = opts.customRange
     ? opts.customRange
     : type === "daily"
     ? (() => { const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ); return { startDate: t, endDate: t }; })()
     : type === "weekly"
-    ? resolveNamedPeriod("week")
+    ? (() => {
+        // endDate = last Sunday (yesterday if today is Monday, else most recent Sunday)
+        // startDate = the Monday 6 days before endDate
+        const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+        const [y, m, d] = t.split("-").map(n => parseInt(n, 10));
+        const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+        const dow = anchor.getUTCDay(); // 0=Sun, 1=Mon, …, 6=Sat
+        // Days to step back to reach last Sunday: Mon→1, Tue→2, …, Sun→7
+        const stepBack = dow === 0 ? 7 : dow;
+        const endDt = new Date(anchor); endDt.setUTCDate(anchor.getUTCDate() - stepBack);
+        const startDt = new Date(endDt); startDt.setUTCDate(endDt.getUTCDate() - 6);
+        const fmt = (dt: Date) => dt.toISOString().split("T")[0];
+        return { startDate: fmt(startDt), endDate: fmt(endDt) };
+      })()
     : getDefaultPeriod();
   const { startDate, endDate } = period;
 
@@ -610,7 +623,25 @@ async function sendReport(
     </div>`;
   })();
 
-  const subject = `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ })}`;
+  const subject = type === "weekly"
+    ? (() => {
+        // "Last Week's Summary — May 4–10" (or May 30–Jun 5 if month rolls over)
+        const fmt = (iso: string) => {
+          const [yy, mm, dd] = iso.split("-").map(n => parseInt(n, 10));
+          const dt = new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
+          return {
+            month: dt.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }),
+            day: dt.getUTCDate(),
+          };
+        };
+        const s = fmt(startDate);
+        const e = fmt(endDate);
+        const range = s.month === e.month
+          ? `${s.month} ${s.day}\u2013${e.day}`
+          : `${s.month} ${s.day}\u2013${e.month} ${e.day}`;
+        return `Last Week's Summary \u2014 ${range}`;
+      })()
+    : `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report \u2014 ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ })}`;
 
   // Stat card helper — 25% wide (4 cards)
   const statCard = (value: string | number, label: string, color = "#1A2B4A") =>
@@ -759,7 +790,9 @@ async function sendReport(
 
   const body = `
     <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6">
-      Here is the ${type} performance summary for the CLR Connection Center team.
+      ${type === "weekly"
+        ? "Here's how the team performed last week."
+        : `Here is the ${type} performance summary for the CLR Connection Center team.`}
       Reporting period: <strong style="color:#1e293b">${startDate}</strong> &rarr; <strong style="color:#1e293b">${endDate}</strong>.
     </p>
 
@@ -1336,22 +1369,8 @@ cron.schedule("* * * * *", async () => {
       }
     }
 
-    // ── Weekly report (Monday only) ─────────────────────────────────────────
-    if (s.weekly_enabled && now.getDay() === 1 && lastReportFiredAt.weekly !== nowDateKey) {
-      const { h: wh, m: wm } = parseHM(s.weekly_time, "08:00");
-      const targetMin = wh * 60 + wm;
-      // 5-minute grace window after 08:00 so the cron can land on the
-      // configured time even though the cutoff is also 08:00
-      const cutoffMin = 8 * 60 + 5;
-      if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
-        lastReportFiredAt.weekly = nowDateKey;
-        try { await sendReport("weekly"); }
-        catch (e: any) { console.error("Scheduled weekly report failed:", e?.message ?? e); }
-      } else if (nowMinutes >= cutoffMin) {
-        lastReportFiredAt.weekly = nowDateKey;
-        console.log(`[report-cron] weekly skipped — past 08:00 Monday cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire next Monday`);
-      }
-    }
+    // ── Weekly report — handled by its own dedicated cron below
+    //   ("0 15 * * 1" = 8:00 AM PT every Monday). No-op here.
 
     // ── Monthly report (1st of month only — covers previous full month) ────
     if (s.monthly_enabled && now.getDate() === 1 && lastReportFiredAt.monthly !== nowDateKey) {
@@ -1370,6 +1389,22 @@ cron.schedule("* * * * *", async () => {
       }
     }
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
+});
+
+// ── Weekly report — fires Mondays at 8:00 AM PT (15:00 UTC) ─────────────────
+// Summarizes the previous Mon–Sun. The send is still gated by
+// email_settings.weekly_enabled so admins can disable it from Settings.
+cron.schedule("0 15 * * 1", async () => {
+  try {
+    const s = storageExtra.getEmailSettings() as any;
+    if (!s.weekly_enabled) return;
+    const nowDateKey = new Date().toISOString().split("T")[0];
+    if (lastReportFiredAt.weekly === nowDateKey) return;
+    lastReportFiredAt.weekly = nowDateKey;
+    await sendReport("weekly");
+  } catch (e: any) {
+    console.error("Scheduled weekly report failed:", e?.message ?? e);
+  }
 });
 
 // ── 30-minute appointment reminder ──────────────────────────────────────────
@@ -1731,6 +1766,27 @@ export function registerRoutes(httpServer: Server, app: Express) {
   } catch (e) {
     console.error("[lo-creds] scrub failed", e);
   }
+
+  // ── lo_preferences migration ────────────────────────────────────────────────
+  // Per-CLR-per-LO notes, preferred contact time, and pin flag for the daily
+  // call list. Idempotent — wrapped in try/catch so app boots cleanly if the
+  // table already exists.
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS lo_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        lo_id INTEGER NOT NULL,
+        notes TEXT DEFAULT '',
+        preferred_time TEXT DEFAULT '' CHECK(preferred_time IN ('', 'morning', 'afternoon', 'evening')),
+        is_pinned INTEGER DEFAULT 0,
+        created_at TEXT,
+        updated_at TEXT,
+        UNIQUE(org_id, user_id, lo_id)
+      )
+    `);
+  } catch {}
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -3129,6 +3185,85 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const days = (req.body as any[]).map((d: any) => ({ loId, dayOfWeek: d.dayOfWeek, isAvailable: d.isAvailable, timeSlot: d.timeSlot ?? "all" }));
     storage.setLoAvailability(loId, days);
     res.json(storage.getLoAvailability(loId));
+  });
+
+  // ── LO Preferences (per CLR-user, per LO) ───────────────────────────────────
+  // Stores per-user notes, preferred contact time, and pin flag for each LO
+  // shown in the daily call list. Scoped to (org_id, user_id, lo_id).
+  app.get("/api/lo-preferences", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const rows = storageExtra.getRawSqlite().prepare(`
+        SELECT id, org_id, user_id, lo_id, notes, preferred_time, is_pinned, created_at, updated_at
+        FROM lo_preferences WHERE org_id = ? AND user_id = ?
+      `).all(orgId, userId) as any[];
+      const out = rows.map(r => ({
+        id: r.id,
+        orgId: r.org_id,
+        userId: r.user_id,
+        loId: r.lo_id,
+        notes: r.notes ?? "",
+        preferredTime: r.preferred_time ?? "",
+        isPinned: !!r.is_pinned,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      }));
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load preferences" });
+    }
+  });
+
+  app.put("/api/lo-preferences/:loId", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const loId = parseInt(req.params.loId, 10);
+    if (!loId) return res.status(400).json({ error: "Invalid loId" });
+
+    const allowedTimes = new Set(["", "morning", "afternoon", "evening"]);
+    const body = req.body ?? {};
+    const notes = typeof body.notes === "string" ? body.notes.slice(0, 2000) : "";
+    const preferredTimeRaw = typeof body.preferredTime === "string" ? body.preferredTime : "";
+    const preferredTime = allowedTimes.has(preferredTimeRaw) ? preferredTimeRaw : "";
+    const isPinned = body.isPinned ? 1 : 0;
+    const nowIso = new Date().toISOString();
+
+    try {
+      const sqliteDb = storageExtra.getRawSqlite();
+      sqliteDb.prepare(`
+        INSERT INTO lo_preferences (org_id, user_id, lo_id, notes, preferred_time, is_pinned, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(org_id, user_id, lo_id) DO UPDATE SET
+          notes = excluded.notes,
+          preferred_time = excluded.preferred_time,
+          is_pinned = excluded.is_pinned,
+          updated_at = excluded.updated_at
+      `).run(orgId, userId, loId, notes, preferredTime, isPinned, nowIso, nowIso);
+
+      const row = sqliteDb.prepare(`
+        SELECT id, org_id, user_id, lo_id, notes, preferred_time, is_pinned, created_at, updated_at
+        FROM lo_preferences WHERE org_id = ? AND user_id = ? AND lo_id = ?
+      `).get(orgId, userId, loId) as any;
+
+      res.json({
+        id: row.id,
+        orgId: row.org_id,
+        userId: row.user_id,
+        loId: row.lo_id,
+        notes: row.notes ?? "",
+        preferredTime: row.preferred_time ?? "",
+        isPinned: !!row.is_pinned,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to save preference" });
+    }
   });
 
   // ── Daily Assignments ────────────────────────────────────────────────────────

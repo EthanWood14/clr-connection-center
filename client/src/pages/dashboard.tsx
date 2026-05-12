@@ -26,6 +26,7 @@ import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAM
 import { copyToClipboard } from "@/lib/utils";
 import ManagerDashboard from "./manager-dashboard";
 import { businessTodayClient } from "@/lib/business-day";
+import { shiftWeekendBucketsToMonday } from "@/lib/weekday-date";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -377,7 +378,7 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
     queryKey: ["/api/analytics/history", trendRange],
     queryFn: () => fetch(`/api/analytics/history?range=${trendRange}`).then(r => r.json()),
   });
-  const periods = history?.periods ?? [];
+  const periods = shiftWeekendBucketsToMonday(history?.periods ?? []);
   const leaderboard = leaderboardData?.leaderboard ?? [];
   const pieData = stats?.outcomesByType
     ? Object.entries(stats.outcomesByType).map(([key, val]) => ({ name: OUTCOME_LABELS[key] || key, value: val as number }))

@@ -17,6 +17,7 @@ import {
   Users, ArrowRight, Clock, AlertTriangle,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { aggregateByWeekday } from "@/lib/weekday-date";
 
 type Period = "today" | "week" | "month" | "30days" | "90days" | "alltime" | "period";
 
@@ -193,7 +194,10 @@ function ActivityTrendChart() {
         NoAnswer: h.noAnswer,
       }));
     }
-    return (data.daily ?? []).map(d => ({
+    // Shift Sat/Sun rows onto the following Monday so weekends are
+    // excluded from the chart x-axis.
+    const merged = aggregateByWeekday((data.daily ?? []) as any[], "date");
+    return merged.map((d: any) => ({
       date: formatDayLabel(d.date),
       Calls: d.calls,
       Transfers: d.transfers,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,15 +10,156 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
-  Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles
+  Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles,
+  Star, StickyNote, Sunrise, Sun, Sunset
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { LoStatusBadge } from "@/components/lo-status-badge";
+
+interface LoPref {
+  loId: number;
+  notes: string;
+  preferredTime: "" | "morning" | "afternoon" | "evening";
+  isPinned: boolean;
+}
+
+type LoPrefMap = Record<number, LoPref>;
+
+const PREFERRED_TIME_LABEL: Record<string, { label: string; icon: any }> = {
+  morning: { label: "Morning", icon: Sunrise },
+  afternoon: { label: "Afternoon", icon: Sun },
+  evening: { label: "Evening", icon: Sunset },
+};
+
+function LoPrefsButton({
+  loId,
+  pref,
+  onSave,
+}: {
+  loId: number;
+  pref: LoPref | undefined;
+  onSave: (p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
+}) {
+  const [notes, setNotes] = useState(pref?.notes ?? "");
+  const [preferredTime, setPreferredTime] = useState<LoPref["preferredTime"]>(pref?.preferredTime ?? "");
+  const [isPinned, setIsPinned] = useState(!!pref?.isPinned);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentRef = useRef<string>(JSON.stringify({ n: pref?.notes ?? "", t: pref?.preferredTime ?? "", p: !!pref?.isPinned }));
+
+  // Sync local state when the upstream pref changes (e.g. another tab updates it)
+  useEffect(() => {
+    const sig = JSON.stringify({ n: pref?.notes ?? "", t: pref?.preferredTime ?? "", p: !!pref?.isPinned });
+    if (sig !== lastSentRef.current) {
+      setNotes(pref?.notes ?? "");
+      setPreferredTime(pref?.preferredTime ?? "");
+      setIsPinned(!!pref?.isPinned);
+      lastSentRef.current = sig;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pref?.notes, pref?.preferredTime, pref?.isPinned]);
+
+  const scheduleSave = (next: { notes?: string; preferredTime?: LoPref["preferredTime"]; isPinned?: boolean }) => {
+    const merged = {
+      notes: next.notes !== undefined ? next.notes : notes,
+      preferredTime: next.preferredTime !== undefined ? next.preferredTime : preferredTime,
+      isPinned: next.isPinned !== undefined ? next.isPinned : isPinned,
+    };
+    const sig = JSON.stringify({ n: merged.notes, t: merged.preferredTime, p: merged.isPinned });
+    if (sig === lastSentRef.current) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      lastSentRef.current = sig;
+      onSave(merged);
+    }, 500);
+  };
+
+  const hasAny = !!(pref?.notes || pref?.preferredTime || pref?.isPinned);
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Edit LO preferences"
+          className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${
+            pref?.isPinned
+              ? "text-yellow-500 hover:bg-yellow-100/40"
+              : hasAny
+              ? "text-teal-600 hover:bg-teal-100/40"
+              : "text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+          }`}
+          data-testid={`button-prefs-${loId}`}
+          onClick={e => e.stopPropagation()}
+        >
+          {pref?.isPinned ? <Star className="w-4 h-4 fill-current" /> : <StickyNote className="w-4 h-4" />}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-3 space-y-3" align="end" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-foreground">LO Preferences</p>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !isPinned;
+              setIsPinned(next);
+              scheduleSave({ isPinned: next });
+            }}
+            className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
+              isPinned ? "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30" : "text-muted-foreground hover:bg-muted"
+            }`}
+            data-testid={`toggle-pin-${loId}`}
+          >
+            <Star className={`w-3.5 h-3.5 ${isPinned ? "fill-current" : ""}`} />
+            {isPinned ? "Pinned" : "Pin"}
+          </button>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Notes</label>
+          <Textarea
+            value={notes}
+            onChange={e => {
+              setNotes(e.target.value);
+              scheduleSave({ notes: e.target.value });
+            }}
+            placeholder="e.g. call before 10am, ask for Lisa"
+            rows={3}
+            className="text-xs"
+            data-testid={`textarea-prefs-notes-${loId}`}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Preferred time</label>
+          <Select
+            value={preferredTime || "any"}
+            onValueChange={v => {
+              const next = (v === "any" ? "" : v) as LoPref["preferredTime"];
+              setPreferredTime(next);
+              scheduleSave({ preferredTime: next });
+            }}
+          >
+            <SelectTrigger className="h-8 text-xs" data-testid={`select-prefs-time-${loId}`}>
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem value="morning">Morning</SelectItem>
+              <SelectItem value="afternoon">Afternoon</SelectItem>
+              <SelectItem value="evening">Evening</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="text-[10px] text-muted-foreground italic">Saved automatically.</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   recommended: { label: "Recommended", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: AlertCircle },
@@ -114,11 +255,15 @@ interface AssignmentRowProps {
   isSelected: boolean;
   onToggle: (id: number) => void;
   isTopUnworked?: boolean;
+  pref?: LoPref;
+  onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
 }
 
-function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked }: AssignmentRowProps) {
+function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref }: AssignmentRowProps) {
   const cfg = STATUS_CONFIG[assignment.status] ?? STATUS_CONFIG.recommended;
   const Icon = cfg.icon;
+  const timeBadge = pref?.preferredTime ? PREFERRED_TIME_LABEL[pref.preferredTime] : null;
+  const hasNotes = !!(pref?.notes && pref.notes.trim());
 
   return (
     <div
@@ -140,7 +285,7 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
         {(assignment.lo?.fullName ?? "?").split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium" data-testid={`text-assignment-lo-${assignment.id}`}>{assignment.lo?.fullName}</span>
           {isTopUnworked && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold flex items-center gap-1" title="Start your day with #1 — work the list top to bottom">
@@ -149,6 +294,26 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
           )}
           {assignment.lo?.priorityTier === 1 && (
             <span className="text-[10px] px-1 py-0 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>
+          )}
+          {pref?.isPinned && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 font-semibold flex items-center gap-1" title="Pinned to top of your list">
+              <Star className="w-3 h-3 fill-current" />Pinned
+            </span>
+          )}
+          {timeBadge && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300 font-medium flex items-center gap-1"
+              title={`Preferred contact time: ${timeBadge.label}`}
+            >
+              <timeBadge.icon className="w-3 h-3" />{timeBadge.label}
+            </span>
+          )}
+          {hasNotes && !pref?.isPinned && (
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full bg-teal-500"
+              title="Has notes"
+              data-testid={`indicator-prefs-notes-${assignment.id}`}
+            />
           )}
           <LoStatusBadge status={assignment.lo?.internalStatus} hideWhenActive />
         </div>
@@ -159,6 +324,13 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
+        {onSavePref && (
+          <LoPrefsButton
+            loId={assignment.lo?.id ?? assignment.loId}
+            pref={pref}
+            onSave={p => onSavePref(assignment.lo?.id ?? assignment.loId, p)}
+          />
+        )}
         <Badge className={`text-xs px-2 py-0.5 ${cfg.color} flex items-center gap-1`}>
           <Icon className="w-3 h-3" />{cfg.label}
         </Badge>
@@ -184,6 +356,8 @@ interface AssistantGroupProps {
   onToggleSelect: (id: number) => void;
   onSelectGroup: (ids: number[]) => void;
   onDeselectGroup: (ids: number[]) => void;
+  loPrefs?: LoPrefMap;
+  onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
 }
 
 function AssistantGroup({
@@ -194,6 +368,8 @@ function AssistantGroup({
   onToggleSelect,
   onSelectGroup,
   onDeselectGroup,
+  loPrefs,
+  onSavePref,
 }: AssistantGroupProps) {
   const worked = assignments.filter(a => a.status === "worked").length;
   const total = assignments.length;
@@ -237,16 +413,21 @@ function AssistantGroup({
         {(() => {
           // First unworked row gets the "Start here" highlight
           const firstUnworkedId = assignments.find(a => a.status === "recommended")?.id;
-          return assignments.map(a => (
-            <AssignmentRow
-              key={a.id}
-              assignment={a}
-              onLogStatus={onLogStatus}
-              isSelected={selectedIds.has(a.id)}
-              onToggle={onToggleSelect}
-              isTopUnworked={a.id === firstUnworkedId}
-            />
-          ));
+          return assignments.map(a => {
+            const loId = a.lo?.id ?? a.loId;
+            return (
+              <AssignmentRow
+                key={a.id}
+                assignment={a}
+                onLogStatus={onLogStatus}
+                isSelected={selectedIds.has(a.id)}
+                onToggle={onToggleSelect}
+                isTopUnworked={a.id === firstUnworkedId}
+                pref={loPrefs?.[loId]}
+                onSavePref={onSavePref}
+              />
+            );
+          });
         })()}
       </CardContent>
     </Card>
@@ -680,6 +861,34 @@ export default function Assignments() {
     queryFn: () => apiRequest("GET", `/api/call-logs?date=${currentDate}`),
   });
 
+  // ── LO preferences (per CLR-user) — pinned LOs float to top, plus notes/time
+  const { data: loPrefsList = [] } = useQuery<LoPref[]>({
+    queryKey: ["/api/lo-preferences"],
+    queryFn: () => apiRequest("GET", "/api/lo-preferences"),
+  });
+
+  const loPrefs: LoPrefMap = useMemo(() => {
+    const map: LoPrefMap = {};
+    for (const p of loPrefsList) {
+      if (p && typeof p.loId === "number") map[p.loId] = p;
+    }
+    return map;
+  }, [loPrefsList]);
+
+  const savePrefMutation = useMutation({
+    mutationFn: ({ loId, body }: { loId: number; body: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean } }) =>
+      apiRequest("PUT", `/api/lo-preferences/${loId}`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lo-preferences"] });
+    },
+    onError: () => toast({ title: "Couldn't save preference", variant: "destructive" }),
+  });
+
+  const handleSavePref = (loId: number, body: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => {
+    if (!loId) return;
+    savePrefMutation.mutate({ loId, body });
+  };
+
   const saveCallLogMutation = useMutation({
     mutationFn: ({ assistantId, callsMade }: { assistantId: number; callsMade: number }) =>
       apiRequest("POST", "/api/call-logs", { logDate: currentDate, assistantId, callsMade }),
@@ -1015,32 +1224,48 @@ export default function Assignments() {
           {assistants.map((user: any) => {
             const group = byAssistant[user.id] ?? [];
             if (group.length === 0) return null;
+            const sorted = [...group].sort((a: any, b: any) => {
+              const aPin = loPrefs[a.lo?.id ?? a.loId]?.isPinned ? 1 : 0;
+              const bPin = loPrefs[b.lo?.id ?? b.loId]?.isPinned ? 1 : 0;
+              if (aPin !== bPin) return bPin - aPin;
+              return a.assistantRank - b.assistantRank;
+            });
             return (
               <AssistantGroup
                 key={user.id}
                 name={user.name}
-                assignments={group.sort((a: any, b: any) => a.assistantRank - b.assistantRank)}
+                assignments={sorted}
                 onLogStatus={setStatusDialog}
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onSelectGroup={handleSelectGroup}
                 onDeselectGroup={handleDeselectGroup}
+                loPrefs={loPrefs}
+                onSavePref={handleSavePref}
               />
             );
           })}
           {/* Unassigned catch-all */}
           {Object.entries(byAssistant).map(([aid, group]) => {
             if (assistants.find((u: any) => u.id === Number(aid))) return null;
+            const sorted = [...group].sort((a: any, b: any) => {
+              const aPin = loPrefs[a.lo?.id ?? a.loId]?.isPinned ? 1 : 0;
+              const bPin = loPrefs[b.lo?.id ?? b.loId]?.isPinned ? 1 : 0;
+              if (aPin !== bPin) return bPin - aPin;
+              return (a.assistantRank ?? 0) - (b.assistantRank ?? 0);
+            });
             return (
               <AssistantGroup
                 key={aid}
                 name={`Assistant #${aid}`}
-                assignments={group}
+                assignments={sorted}
                 onLogStatus={setStatusDialog}
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onSelectGroup={handleSelectGroup}
                 onDeselectGroup={handleDeselectGroup}
+                loPrefs={loPrefs}
+                onSavePref={handleSavePref}
               />
             );
           })}
