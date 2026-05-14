@@ -3254,13 +3254,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return res.status(400).json({ error: "Request body must include a 'rows' array" });
       }
 
-      const existingLOs = storage.getLoanOfficers();
-      const existingNmlsIds = new Set(existingLOs.map(lo => lo.nmlsId).filter(Boolean));
-      // Also de-dupe by full_name (case-insensitive) for rows without an NMLS,
-      // so re-running the import doesn't create copies of LOs added without an ID.
-      const existingNamesLc = new Set(existingLOs.map(lo => (lo.fullName ?? "").toLowerCase()));
+      const existingLOs = storage.getLoanOfficers() as any[];
+      const byNmls = new Map<string, any>();
+      const byNameLc = new Map<string, any>();
+      for (const lo of existingLOs) {
+        const nm = (lo.nmlsId ?? lo.nmls_id);
+        if (nm) byNmls.set(String(nm), lo);
+        const fn = (lo.fullName ?? lo.full_name ?? "").toLowerCase().trim();
+        if (fn) byNameLc.set(fn, lo);
+      }
 
       let imported = 0;
+      let updated = 0;
       let skipped = 0;
       const errors: string[] = [];
 
@@ -3274,13 +3279,38 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         }
 
         const nmlsId = row.nmlsId ? String(row.nmlsId).trim() : "";
-        if (nmlsId && existingNmlsIds.has(nmlsId)) {
-          skipped++;
-          continue;
-        }
-        if (!nmlsId && existingNamesLc.has(String(row.fullName).toLowerCase().trim())) {
-          skipped++;
-          continue;
+        const nameLc = String(row.fullName).toLowerCase().trim();
+        const existing = (nmlsId && byNmls.get(nmlsId)) || byNameLc.get(nameLc) || null;
+
+        // Build a clean patch with only present fields so we don't blank out
+        // values that aren't in the import row.
+        const patch: any = {
+          fullName: String(row.fullName),
+          internalStatus: row.internalStatus ? String(row.internalStatus) : "active",
+        };
+        if (nmlsId) patch.nmlsId = nmlsId;
+        if (row.phone) patch.phone = String(row.phone);
+        if (row.email) patch.email = String(row.email);
+        if (row.licensedStates) patch.licensedStates = String(row.licensedStates);
+        if (row.bonzoUsername) patch.bonzoUsername = String(row.bonzoUsername);
+        if (row.bonzoPassword) patch.bonzoPassword = String(row.bonzoPassword);
+        if (row.leadMailboxUsername) patch.leadMailboxUsername = String(row.leadMailboxUsername);
+        if (row.leadMailboxPassword) patch.leadMailboxPassword = String(row.leadMailboxPassword);
+        if (row.notes) patch.notes = String(row.notes);
+        if (row.specialRequests) patch.specialRequests = String(row.specialRequests);
+        if (row.priorityTier !== undefined && row.priorityTier !== "") patch.priorityTier = Number(row.priorityTier);
+        if (row.boostScore !== undefined && row.boostScore !== "") patch.boostScore = Number(row.boostScore);
+
+        if (existing) {
+          try {
+            const id = existing.id ?? existing.ID;
+            storage.updateLoanOfficer(Number(id), patch);
+            updated++;
+            continue;
+          } catch (e: any) {
+            errors.push(`${rowLabel} (${row.fullName}) update: ${e.message}`);
+            continue;
+          }
         }
 
         try {
@@ -3301,8 +3331,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             priorityTier: row.priorityTier !== undefined && row.priorityTier !== "" ? Number(row.priorityTier) : 2,
             internalStatus: row.internalStatus ? String(row.internalStatus) : "active",
           });
-          if (nmlsId) existingNmlsIds.add(nmlsId);
-          existingNamesLc.add(String(row.fullName).toLowerCase().trim());
+          if (nmlsId) byNmls.set(nmlsId, { id: 0, nmlsId });
+          byNameLc.set(nameLc, { id: 0, fullName: row.fullName });
           imported++;
         } catch (e: any) {
           errors.push(`${rowLabel} (${row.fullName}): ${e.message}`);
@@ -3315,11 +3345,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         action: "IMPORT_LOS",
         entityType: "loan_officer",
         entityId: null,
-        entityLabel: `Bulk import: ${imported} LOs`,
-        details: JSON.stringify({ imported, skipped, errors: errors.length }),
+        entityLabel: `Bulk import: ${imported} new, ${updated} updated`,
+        details: JSON.stringify({ imported, updated, skipped, errors: errors.length }),
       });
 
-      return res.json({ imported, skipped, errors });
+      return res.json({ imported, updated, skipped, errors });
     } catch (e: any) {
       return res.status(400).json({ error: e.message });
     }
