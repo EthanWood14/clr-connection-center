@@ -17,7 +17,7 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles,
-  Star, StickyNote, Sunrise, Sun, Sunset
+  Star, StickyNote, Sunrise, Sun, Sunset, Clock
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -31,6 +31,20 @@ interface LoPref {
 }
 
 type LoPrefMap = Record<number, LoPref>;
+
+interface LoAvailabilityRow {
+  loId: number;
+  dayOfWeek: number;
+  isAvailable: boolean;
+  timeSlot: string;
+}
+
+const AVAILABILITY_LABEL: Record<string, string> = {
+  all: "all day",
+  morning: "morning",
+  afternoon: "afternoon",
+  evening: "evening",
+};
 
 const PREFERRED_TIME_LABEL: Record<string, { label: string; icon: any }> = {
   morning: { label: "Morning", icon: Sunrise },
@@ -257,13 +271,16 @@ interface AssignmentRowProps {
   isTopUnworked?: boolean;
   pref?: LoPref;
   onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
+  todayAvailabilitySlot?: string;
 }
 
-function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref }: AssignmentRowProps) {
+function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref, todayAvailabilitySlot }: AssignmentRowProps) {
   const cfg = STATUS_CONFIG[assignment.status] ?? STATUS_CONFIG.recommended;
   const Icon = cfg.icon;
   const timeBadge = pref?.preferredTime ? PREFERRED_TIME_LABEL[pref.preferredTime] : null;
-  const hasNotes = !!(pref?.notes && pref.notes.trim());
+  const notesText = pref?.notes?.trim() ?? "";
+  const hasNotes = !!notesText;
+  const availabilityLabel = todayAvailabilitySlot ? (AVAILABILITY_LABEL[todayAvailabilitySlot] ?? todayAvailabilitySlot) : "";
 
   return (
     <div
@@ -308,20 +325,34 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
               <timeBadge.icon className="w-3 h-3" />{timeBadge.label}
             </span>
           )}
-          {hasNotes && !pref?.isPinned && (
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full bg-teal-500"
-              title="Has notes"
-              data-testid={`indicator-prefs-notes-${assignment.id}`}
-            />
-          )}
           <LoStatusBadge status={assignment.lo?.internalStatus} hideWhenActive />
         </div>
-        <div className="text-xs text-muted-foreground">
-          {assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId}` : ""}
-          {assignment.lo?.phone && ` · ${assignment.lo.phone}`}
-          {assignment.notes && <span className="ml-2 italic">"{assignment.notes}"</span>}
+        <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+          <span>
+            {assignment.lo?.nmlsId ? `NMLS ${assignment.lo.nmlsId}` : ""}
+            {assignment.lo?.phone && `${assignment.lo?.nmlsId ? " · " : ""}${assignment.lo.phone}`}
+          </span>
+          {availabilityLabel && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+              title={`Today's availability: ${availabilityLabel}`}
+              data-testid={`text-availability-${assignment.id}`}
+            >
+              <Clock className="w-3 h-3" />Today: {availabilityLabel}
+            </span>
+          )}
+          {assignment.notes && <span className="italic">"{assignment.notes}"</span>}
         </div>
+        {hasNotes && (
+          <div
+            className="text-xs text-muted-foreground italic flex items-start gap-1 mt-0.5 line-clamp-2"
+            title={notesText}
+            data-testid={`text-prefs-notes-${assignment.id}`}
+          >
+            <StickyNote className="w-3 h-3 mt-0.5 flex-shrink-0" />
+            <span className="line-clamp-2">{notesText}</span>
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         {onSavePref && (
@@ -358,6 +389,7 @@ interface AssistantGroupProps {
   onDeselectGroup: (ids: number[]) => void;
   loPrefs?: LoPrefMap;
   onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
+  todayAvailability?: Record<number, string>;
 }
 
 function AssistantGroup({
@@ -370,6 +402,7 @@ function AssistantGroup({
   onDeselectGroup,
   loPrefs,
   onSavePref,
+  todayAvailability,
 }: AssistantGroupProps) {
   const worked = assignments.filter(a => a.status === "worked").length;
   const total = assignments.length;
@@ -425,6 +458,7 @@ function AssistantGroup({
                 isTopUnworked={a.id === firstUnworkedId}
                 pref={loPrefs?.[loId]}
                 onSavePref={onSavePref}
+                todayAvailabilitySlot={todayAvailability?.[loId]}
               />
             );
           });
@@ -875,6 +909,24 @@ export default function Assignments() {
     return map;
   }, [loPrefsList]);
 
+  // ── LO availability (weekly schedule) — used to show today's slot inline
+  const { data: loAvailabilityList = [] } = useQuery<LoAvailabilityRow[]>({
+    queryKey: ["/api/lo-availability"],
+    queryFn: () => apiRequest("GET", "/api/lo-availability"),
+  });
+
+  const todayAvailability: Record<number, string> = useMemo(() => {
+    const map: Record<number, string> = {};
+    const today = new Date(currentDate + "T00:00:00").getDay();
+    for (const r of loAvailabilityList) {
+      if (!r || typeof r.loId !== "number") continue;
+      if (r.dayOfWeek !== today) continue;
+      if (!r.isAvailable) continue;
+      map[r.loId] = r.timeSlot || "all";
+    }
+    return map;
+  }, [loAvailabilityList, currentDate]);
+
   const savePrefMutation = useMutation({
     mutationFn: ({ loId, body }: { loId: number; body: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean } }) =>
       apiRequest("PUT", `/api/lo-preferences/${loId}`, body),
@@ -1242,6 +1294,7 @@ export default function Assignments() {
                 onDeselectGroup={handleDeselectGroup}
                 loPrefs={loPrefs}
                 onSavePref={handleSavePref}
+                todayAvailability={todayAvailability}
               />
             );
           })}
@@ -1266,6 +1319,7 @@ export default function Assignments() {
                 onDeselectGroup={handleDeselectGroup}
                 loPrefs={loPrefs}
                 onSavePref={handleSavePref}
+                todayAvailability={todayAvailability}
               />
             );
           })}

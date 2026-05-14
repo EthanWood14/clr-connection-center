@@ -3522,6 +3522,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── LO Availability ──────────────────────────────────────────────────────────
+  // Bulk fetch: returns all availability rows for all LOs in the org.
+  app.get("/api/lo-availability", (req, res) => {
+    try {
+      const rows = storageExtra.getRawSqlite().prepare(`
+        SELECT a.lo_id AS loId, a.day_of_week AS dayOfWeek, a.is_available AS isAvailable, a.time_slot AS timeSlot
+        FROM lo_availability a
+        INNER JOIN loan_officers lo ON lo.id = a.lo_id
+      `).all() as any[];
+      res.json(rows.map(r => ({
+        loId: r.loId,
+        dayOfWeek: r.dayOfWeek,
+        isAvailable: !!r.isAvailable,
+        timeSlot: r.timeSlot ?? "all",
+      })));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load availability" });
+    }
+  });
+
   app.get("/api/loan-officers/:id/availability", (req, res) => {
     const loId = parseInt(req.params.id);
     res.json(storage.getLoAvailability(loId));
