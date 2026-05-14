@@ -3994,6 +3994,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         transferType: o.transferType ?? o.transfer_type ?? null,
         borrowerName: o.borrowerName ?? o.borrower_name ?? null,
         followUpDate: o.followUpDate ?? o.follow_up_date ?? null,
+        appointmentDatetime: o.appointmentDatetime ?? o.appointment_datetime ?? null,
         journeyId: o.journeyId ?? o.journey_id ?? null,
         phoneNumber: o.phoneNumber ?? o.phone_number ?? null,
         lo,

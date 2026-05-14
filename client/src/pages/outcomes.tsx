@@ -138,6 +138,13 @@ const outcomeFormSchema = z.object({
       message: "Select Direct or Appointment/Callback",
     });
   }
+  if (val.outcomeType === "appointment" && !val.appointmentDatetime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["appointmentDatetime"],
+      message: "Scheduled date & time is required for appointments",
+    });
+  }
 });
 type OutcomeFormValues = z.infer<typeof outcomeFormSchema>;
 
@@ -526,6 +533,20 @@ function OutcomeFormDialog({
                 <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-phone-number" /></FormControl>
               </FormItem>
             )} />
+            {!isTransfer && (watchedType === "appointment" || watchedType === "callback_requested") && (
+              <FormField control={form.control} name="appointmentDatetime" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Scheduled Date &amp; Time{watchedType === "appointment" ? <span className="text-destructive"> *</span> : " (optional)"}{" "}
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    </span>
+                  </FormLabel>
+                  <FormControl><Input type="datetime-local" {...field} data-testid="input-scheduled-datetime" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            )}
             <FormField control={form.control} name="followUpDate" render={({ field }) => (
               <FormItem>
                 <FormLabel>

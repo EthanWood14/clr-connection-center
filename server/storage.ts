@@ -299,6 +299,50 @@ try {
   sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}
 
+// ── Backfill: parse "Scheduled: <date>" out of notes into appointment_datetime ──
+// Many appointment/callback_requested outcomes were imported from EOD emails with
+// the scheduled time embedded in notes as "Scheduled: Mon, May 11, 9:00 AM".
+// Parse those one time so the Upcoming Appointments tab can use the typed
+// appointment_datetime column for filtering and display. Idempotent: only
+// touches rows where appointment_datetime is null/empty AND notes match.
+try {
+  const rows = sqlite.prepare(`
+    SELECT id, notes FROM lead_outcomes
+    WHERE outcome_type IN ('appointment', 'callback_requested')
+      AND (appointment_datetime IS NULL OR appointment_datetime = '')
+      AND notes LIKE '%Scheduled:%'
+  `).all() as Array<{ id: number; notes: string }>;
+  const MONTHS: Record<string, number> = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+  };
+  const update = sqlite.prepare(`UPDATE lead_outcomes SET appointment_datetime = ? WHERE id = ?`);
+  let updated = 0;
+  for (const r of rows) {
+    const m = /Scheduled:\s*([^\n]+)/i.exec(r.notes || "");
+    if (!m) continue;
+    const raw = m[1].trim();
+    // e.g. "Mon, May 11, 9:00 AM" — optional weekday, then "Mon DD, H:MM AM/PM"
+    const dm = /(?:[A-Za-z]+,\s*)?([A-Za-z]+)\s+(\d{1,2}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(raw);
+    if (!dm) continue;
+    const month = MONTHS[dm[1].toLowerCase().slice(0, 3)];
+    if (month === undefined) continue;
+    const day = parseInt(dm[2], 10);
+    let hour = parseInt(dm[3], 10);
+    const minute = parseInt(dm[4], 10);
+    const mer = dm[5].toUpperCase();
+    if (mer === "PM" && hour < 12) hour += 12;
+    if (mer === "AM" && hour === 12) hour = 0;
+    const year = 2026;
+    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
+    update.run(iso, r.id);
+    updated += 1;
+  }
+  if (updated > 0) console.log(`[migration] backfilled appointment_datetime on ${updated} lead_outcomes from notes`);
+} catch (e) {
+  console.error("[migration] appointment_datetime backfill failed:", e);
+}
+
 // loan_officers: relax nmls_id from NOT NULL → nullable so LOs can be added
 // without a verified NMLS number yet (e.g. branch managers, pending licensees).
 // The Drizzle schema already declares nmlsId as nullable; this brings the live

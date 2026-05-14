@@ -516,7 +516,7 @@ function TabAppointments() {
       if (t !== "appointment" && t !== "callback_requested") return false;
       const aId = o.assistantId ?? o.assistant_id;
       if (myUserId != null && aId !== myUserId) return false;
-      const d = o.followUpDate || o.follow_up_date;
+      const d = o.appointmentDatetime || o.appointment_datetime || o.followUpDate || o.follow_up_date;
       if (!d) return false;
       const parsed = parseISO(d);
       return isToday(parsed) || !isPast(parsed);
@@ -535,22 +535,27 @@ function TabAppointments() {
 
   const getLoName = (loId: number) => losData.find((l: any) => l.id === loId)?.fullName ?? `LO #${loId}`;
 
-  const today_ = filtered.filter((o: any) => isToday(parseISO(o.followUpDate || o.follow_up_date)));
+  const getSched = (o: any) => o.appointmentDatetime || o.appointment_datetime || o.followUpDate || o.follow_up_date;
+
+  const today_ = filtered.filter((o: any) => isToday(parseISO(getSched(o))));
   const upcoming = filtered
-    .filter((o: any) => !isToday(parseISO(o.followUpDate || o.follow_up_date)))
+    .filter((o: any) => !isToday(parseISO(getSched(o))))
     .sort((a: any, b: any) => {
-      const aDate = a.followUpDate || a.follow_up_date || '';
-      const bDate = b.followUpDate || b.follow_up_date || '';
+      const aDate = getSched(a) || '';
+      const bDate = getSched(b) || '';
       return aDate.localeCompare(bDate);
     });
 
   function ApptRow({ o }: { o: any }) {
-    const fDate = o.followUpDate || o.follow_up_date;
-    const label = fDate ? formatDistanceToNow(parseISO(fDate), { addSuffix: true }) : "";
-    const exact = fDate
-      ? format(parseISO(fDate), fDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy")
+    const schedDate = getSched(o);
+    const hasTime = !!schedDate && (schedDate.includes("T") || /\d{1,2}:\d{2}/.test(schedDate));
+    const label = schedDate ? formatDistanceToNow(parseISO(schedDate), { addSuffix: true }) : "";
+    const exact = schedDate
+      ? format(parseISO(schedDate), hasTime ? "MMM d · h:mm a" : "MMM d, yyyy")
       : "";
-    const isTd = fDate && isToday(parseISO(fDate));
+    const isTd = schedDate && isToday(parseISO(schedDate));
+    const rawNotes = o.notes || "";
+    const displayNotes = rawNotes.replace(/^\s*Scheduled:\s*[^\n]*\n?/i, "").trim();
     return (
       <div className="flex items-start justify-between py-2.5 border-b last:border-0 gap-3">
         <div className="min-w-0 flex-1">
@@ -561,7 +566,12 @@ function TabAppointments() {
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{getLoName(o.loId || o.lo_id)}</p>
-          {o.notes && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{o.notes}</p>}
+          {schedDate && (
+            <p className="text-xs font-medium text-foreground mt-0.5">
+              {format(parseISO(schedDate), hasTime ? "EEE, MMM d · h:mm a" : "EEE, MMM d, yyyy")}
+            </p>
+          )}
+          {displayNotes && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{displayNotes}</p>}
         </div>
         <div className="text-right shrink-0">
           <p className={`text-xs font-medium ${isTd ? "text-green-600" : "text-muted-foreground"}`}>{label}</p>
