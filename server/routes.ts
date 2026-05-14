@@ -3230,7 +3230,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
 
       const existingLOs = storage.getLoanOfficers();
-      const existingNmlsIds = new Set(existingLOs.map(lo => lo.nmlsId));
+      const existingNmlsIds = new Set(existingLOs.map(lo => lo.nmlsId).filter(Boolean));
+      // Also de-dupe by full_name (case-insensitive) for rows without an NMLS,
+      // so re-running the import doesn't create copies of LOs added without an ID.
+      const existingNamesLc = new Set(existingLOs.map(lo => (lo.fullName ?? "").toLowerCase()));
 
       let imported = 0;
       let skipped = 0;
@@ -3240,12 +3243,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const row = rows[i];
         const rowLabel = `Row ${i + 1}`;
 
-        if (!row.fullName || !row.nmlsId) {
-          errors.push(`${rowLabel}: Missing required fields (fullName, nmlsId)`);
+        if (!row.fullName) {
+          errors.push(`${rowLabel}: Missing required field (fullName)`);
           continue;
         }
 
-        if (existingNmlsIds.has(String(row.nmlsId))) {
+        const nmlsId = row.nmlsId ? String(row.nmlsId).trim() : "";
+        if (nmlsId && existingNmlsIds.has(nmlsId)) {
+          skipped++;
+          continue;
+        }
+        if (!nmlsId && existingNamesLc.has(String(row.fullName).toLowerCase().trim())) {
           skipped++;
           continue;
         }
@@ -3253,7 +3261,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         try {
           storage.createLoanOfficer({
             fullName: String(row.fullName),
-            nmlsId: String(row.nmlsId),
+            // Pass nmlsId only when non-empty so the column stores NULL otherwise.
+            ...(nmlsId ? { nmlsId } : {}),
             phone: row.phone ? String(row.phone) : undefined,
             email: row.email ? String(row.email) : undefined,
             licensedStates: row.licensedStates ? String(row.licensedStates) : "[]",
@@ -3267,7 +3276,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             priorityTier: row.priorityTier !== undefined && row.priorityTier !== "" ? Number(row.priorityTier) : 2,
             internalStatus: row.internalStatus ? String(row.internalStatus) : "active",
           });
-          existingNmlsIds.add(String(row.nmlsId));
+          if (nmlsId) existingNmlsIds.add(nmlsId);
+          existingNamesLc.add(String(row.fullName).toLowerCase().trim());
           imported++;
         } catch (e: any) {
           errors.push(`${rowLabel} (${row.fullName}): ${e.message}`);

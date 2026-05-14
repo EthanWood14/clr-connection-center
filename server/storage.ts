@@ -299,6 +299,61 @@ try {
   sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}
 
+// loan_officers: relax nmls_id from NOT NULL → nullable so LOs can be added
+// without a verified NMLS number yet (e.g. branch managers, pending licensees).
+// The Drizzle schema already declares nmlsId as nullable; this brings the live
+// table definition in sync. Idempotent: only rebuilds if NOT NULL is still set.
+try {
+  const tbl = sqlite.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='loan_officers'`).get() as { sql?: string } | undefined;
+  if (tbl?.sql && /nmls_id\s+TEXT\s+NOT\s+NULL/i.test(tbl.sql)) {
+    // Disable FK enforcement during the rebuild so child tables (lead_outcomes,
+    // lo_assignments, etc.) survive the drop/rename. defer_foreign_keys checks
+    // at COMMIT, but the simpler `foreign_keys = OFF` for the duration is safe
+    // here because we re-INSERT every row with the same id values.
+    const prevFk = (sqlite.prepare(`PRAGMA foreign_keys`).get() as any)?.foreign_keys ?? 1;
+    sqlite.exec(`PRAGMA foreign_keys = OFF;`);
+    sqlite.exec(`
+      BEGIN;
+      CREATE TABLE loan_officers__new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        full_name TEXT NOT NULL,
+        nmls_id TEXT UNIQUE,
+        phone TEXT,
+        email TEXT,
+        licensed_states TEXT NOT NULL DEFAULT '[]',
+        bonzo_username TEXT,
+        bonzo_password TEXT,
+        lead_mailbox_username TEXT,
+        lead_mailbox_password TEXT,
+        other_credentials TEXT NOT NULL DEFAULT '{}',
+        notes TEXT,
+        special_requests TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        internal_status TEXT NOT NULL DEFAULT 'active',
+        boost_score REAL NOT NULL DEFAULT 0,
+        priority_tier INTEGER NOT NULL DEFAULT 2,
+        snooze_until TEXT,
+        snooze_reason TEXT,
+        last_worked_date TEXT,
+        total_times_worked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO loan_officers__new (id, full_name, nmls_id, phone, email, licensed_states, bonzo_username, bonzo_password, lead_mailbox_username, lead_mailbox_password, other_credentials, notes, special_requests, tags, internal_status, boost_score, priority_tier, snooze_until, snooze_reason, last_worked_date, total_times_worked, created_at, updated_at)
+        SELECT id, full_name, nmls_id, phone, email, licensed_states, bonzo_username, bonzo_password, lead_mailbox_username, lead_mailbox_password, other_credentials, notes, special_requests, tags, internal_status, boost_score, priority_tier, snooze_until, snooze_reason, last_worked_date, total_times_worked, created_at, updated_at FROM loan_officers;
+      DROP TABLE loan_officers;
+      ALTER TABLE loan_officers__new RENAME TO loan_officers;
+      COMMIT;
+    `);
+    sqlite.exec(`PRAGMA foreign_keys = ${prevFk ? "ON" : "OFF"};`);
+    console.log("[migration] loan_officers.nmls_id is now nullable");
+  }
+} catch (e) {
+  try { sqlite.exec(`ROLLBACK`); } catch {}
+  try { sqlite.exec(`PRAGMA foreign_keys = ON;`); } catch {}
+  console.warn("[migration] loan_officers nmls_id nullable migration skipped:", (e as Error).message);
+}
+
 // loan_officers: NMLS license verification columns
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_status TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_states TEXT NOT NULL DEFAULT '[]'`); } catch {}
