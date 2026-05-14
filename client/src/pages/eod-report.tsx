@@ -30,6 +30,7 @@ const ACTIVITY_TYPES = [
   { value: "appointment_set",    label: "Appointment Set" },
   { value: "lo_contact",         label: "LO Contact" },
   { value: "training",           label: "Training / Meeting" },
+  { value: "project_work",       label: "Project Work" },
   { value: "admin",              label: "Admin Work" },
   { value: "other",              label: "Other" },
 ];
@@ -41,6 +42,7 @@ const ACTIVITY_COLORS: Record<string, string> = {
   appointment_set:   "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
   lo_contact:        "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
   training:          "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+  project_work:      "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
   admin:             "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
   other:             "bg-muted text-muted-foreground",
 };
