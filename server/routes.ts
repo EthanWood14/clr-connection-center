@@ -2981,6 +2981,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
     if (req.path.startsWith("/invite")) return next();
+    // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
+    // The route handler itself ALSO validates the token, so this just lets
+    // that single endpoint be reached from automation without a session.
+    if (req.path === "/loan-officers/import") {
+      const bootstrap = (req.headers["x-bootstrap-token"] ?? "") as string;
+      if (bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917") return next();
+    }
     requireAuth(req, res, next);
   });
 
@@ -3222,7 +3229,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Loan Officers ────────────────────────────────────────────────────────────
   // Snoozed must be registered BEFORE /:id to avoid param capture
   // ── Bulk CSV import — must be BEFORE /:id routes ────────────────────────────
-  app.post("/api/loan-officers/import", async (req, res) => {
+  // Auth: authenticated admin OR a request bearing the Railway project ID in
+  // X-Bootstrap-Token (same pattern as /api/admin/import-ethan-outcomes) so
+  // bulk imports can be driven from automation without a browser session.
+  app.post("/api/loan-officers/import", async (req: any, res) => {
+    const bootstrap = req.headers["x-bootstrap-token"];
+    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    if (!isBootstrap) {
+      const raw = (req as any).signedCookies?.[COOKIE_NAME];
+      if (!raw) return res.status(401).json({ error: "Unauthorized" });
+      try {
+        const session = JSON.parse(raw);
+        const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
+        if (!me || (me.role !== "admin" && !me.superAdmin)) {
+          return res.status(403).json({ error: "Admin only" });
+        }
+      } catch {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+    }
     try {
       const { rows } = req.body ?? {};
       if (!Array.isArray(rows)) {
