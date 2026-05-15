@@ -41,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, UserPlus, Pencil, Trash2, KeyRound, ShieldAlert, Mail, Copy } from "lucide-react";
+import { Users, UserPlus, Pencil, Trash2, KeyRound, ShieldAlert, Mail, Copy, Archive } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -311,11 +311,14 @@ export function TeamManagement() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "Account deleted", description: `${deleteTarget?.name}'s account has been permanently removed.` });
+      toast({
+        title: "Account archived",
+        description: `${deleteTarget?.name}'s account has been archived. Their reports, outcomes, and call history are preserved.`,
+      });
       setDeleteTarget(null);
     },
     onError: (err: Error) =>
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
+      toast({ title: "Archive failed", description: err.message, variant: "destructive" }),
   });
 
   function openAddDialog() {
@@ -458,8 +461,8 @@ export function TeamManagement() {
                             onClick={() => setDeleteTarget(user)}
                             data-testid={`button-delete-user-${user.id}`}
                           >
-                            <Trash2 className="w-3.5 h-3.5 mr-1" />
-                            Delete
+                            <Archive className="w-3.5 h-3.5 mr-1" />
+                            Archive
                           </Button>
                         )}
                       </div>
@@ -482,31 +485,33 @@ export function TeamManagement() {
         editUser={editUser}
       />
 
-      {/* Delete confirmation */}
+      {/* Archive confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <ShieldAlert className="w-5 h-5" /> Delete Account
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Archive className="w-5 h-5" /> Archive Account
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               <span className="block">
-                You are about to permanently delete <strong>{deleteTarget?.name}</strong>'s account
-                (<span className="font-mono text-xs">{deleteTarget?.email}</span>).
+                <strong>{deleteTarget?.name}</strong>
+                (<span className="font-mono text-xs">{deleteTarget?.email}</span>)
+                will be deactivated and removed from the team list.
               </span>
-              <span className="block text-destructive font-medium">
-                This cannot be undone. All of their assignments and data will be disassociated.
+              <span className="block text-muted-foreground">
+                Their EOD reports, lead outcomes, call logs, and audit history are kept
+                so historical reporting stays accurate. You can restore them later, and
+                the email address can be reused for a new invite.
               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? "Deleting…" : "Yes, delete account"}
+              {deleteMutation.isPending ? "Archiving…" : "Archive account"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

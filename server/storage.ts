@@ -79,6 +79,7 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NO
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN archived_at TEXT`); } catch {}
 // 2026-05-05: appointment reminder email opt-in. Defaults to ON for all CLRs
 // so the 30-minute appointment reminder cron actually fires emails. Previously
 // this column was referenced in the SELECT but never existed, so it returned
@@ -2424,18 +2425,50 @@ export function deleteChatMessage(id: number): void {
 }
 
 export function deleteUserCascade(id: number): void {
-  // Remove FK-linked rows first so SQLite constraints don't block the delete
-  sqlite.prepare(`DELETE FROM daily_assignments WHERE assistant_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM lead_outcomes WHERE assistant_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM daily_call_logs WHERE assistant_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM assignment_overrides WHERE admin_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM notifications WHERE user_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM audit_logs WHERE user_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM nmls_check_logs WHERE assigned_to = ?`).run(id);
-  sqlite.prepare(`DELETE FROM chat_messages WHERE user_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM eod_reports WHERE assistant_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM eod_activities WHERE assistant_id = ?`).run(id);
-  sqlite.prepare(`DELETE FROM users WHERE id = ?`).run(id);
+  // PRESERVED FOR BACKCOMPAT: now performs an ARCHIVE instead of a destructive
+  // delete. The user is deactivated and their email is suffixed so it can be
+  // reused for a new invite, but all of their data — outcomes, EOD reports,
+  // call logs, assignments, audit logs, notifications, NMLS checks, chat —
+  // is left intact for historical reporting.
+  archiveUser(id);
+}
+
+export function archiveUser(id: number): void {
+  const user = sqlite.prepare(`SELECT id, email, is_active, archived_at FROM users WHERE id = ?`).get(id) as any;
+  if (!user) return;
+  if (user.archived_at) return; // already archived — idempotent
+
+  const today = new Date().toISOString().slice(0, 10);
+  // Suffix the email so the address can be reused for a future invite
+  // without violating the UNIQUE constraint. Keep the original visible
+  // in the suffix for forensics.
+  const originalEmail: string = String(user.email ?? "");
+  const suffixedEmail = originalEmail.includes("[archived")
+    ? originalEmail
+    : `${originalEmail} [archived ${today}]`;
+
+  sqlite.prepare(`
+    UPDATE users
+    SET is_active = 0,
+        archived_at = datetime('now'),
+        email = ?
+    WHERE id = ?
+  `).run(suffixedEmail, id);
+
+  // Clear any pending password-reset tokens so the archived account can't be
+  // used to recover access.
+  sqlite.prepare(`UPDATE users SET reset_token = NULL, reset_token_expiry = NULL WHERE id = ?`).run(id);
+}
+
+export function restoreUser(id: number): void {
+  const user = sqlite.prepare(`SELECT id, email, archived_at FROM users WHERE id = ?`).get(id) as any;
+  if (!user || !user.archived_at) return;
+  const restoredEmail = String(user.email ?? "").replace(/\s*\[archived [^\]]+\]\s*$/, "");
+  sqlite.prepare(`
+    UPDATE users
+    SET is_active = 1, archived_at = NULL, email = ?
+    WHERE id = ?
+  `).run(restoredEmail, id);
 }
 
 // ── EOD Reports ───────────────────────────────────────────────────────────────

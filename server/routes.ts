@@ -3210,19 +3210,38 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Archive (formerly DELETE). The endpoint path stays /api/users/:id with
+  // method DELETE so existing clients continue to work, but the behavior is
+  // now non-destructive: the user is deactivated and their email is suffixed
+  // for reuse, while every related row (outcomes, EOD reports, call logs,
+  // assignments, audit logs, notifications) is preserved for reporting.
   app.delete("/api/users/:id", requireAuth, (req: any, res) => {
     const requesterId = req.session_user?.userId;
     const requesterRole = req.session_user?.role;
     if (requesterRole !== "admin") return res.status(403).json({ error: "Admins only" });
     const id = parseInt(req.params.id);
-    if (id === requesterId) return res.status(400).json({ error: "You cannot delete your own account" });
-    if (id === 1) return res.status(400).json({ error: "The primary admin account cannot be deleted" });
+    if (id === requesterId) return res.status(400).json({ error: "You cannot archive your own account" });
+    if (id === 1) return res.status(400).json({ error: "The primary admin account cannot be archived" });
     try {
-      createBackup('pre-delete');
-      storageExtra.deleteUserCascade(id);
-      res.json({ ok: true });
+      createBackup('pre-archive');
+      storageExtra.archiveUser(id);
+      res.json({ ok: true, archived: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message ?? "Delete failed" });
+      res.status(500).json({ error: e.message ?? "Archive failed" });
+    }
+  });
+
+  // Restore an archived user (admins only). Re-activates them and strips the
+  // "[archived YYYY-MM-DD]" suffix from their email.
+  app.post("/api/users/:id/restore", requireAuth, (req: any, res) => {
+    const requesterRole = req.session_user?.role;
+    if (requesterRole !== "admin") return res.status(403).json({ error: "Admins only" });
+    const id = parseInt(req.params.id);
+    try {
+      storageExtra.restoreUser(id);
+      res.json({ ok: true, restored: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message ?? "Restore failed" });
     }
   });
 
