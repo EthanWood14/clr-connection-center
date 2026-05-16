@@ -106,6 +106,35 @@ export const BUSINESS_DAY_ROLLOVER_HOUR = ROLLOVER_HOUR;
 export const BUSINESS_DAY_DEFAULT_TZ = DEFAULT_TZ;
 
 /**
+ * Returns true if the given user has already submitted an EOD report for the
+ * given business date. Used by the post-EOD rollover logic: any new activity
+ * a CLR logs after submitting today's EOD should count toward tomorrow.
+ */
+export function hasEodSubmittedForDate(sqlite: any, userId: number | null | undefined, date: string): boolean {
+  if (!sqlite || !userId || !date) return false;
+  try {
+    const row = sqlite
+      .prepare(`SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?`)
+      .get(userId, date);
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Roll a target business date forward by one day if the user has already
+ * submitted their EOD report for that date. Otherwise returns the date
+ * unchanged. Use this anywhere a CLR is logging time-sensitive activity
+ * (lead outcomes, call logs, EOD extra activities) so that anything done
+ * after they wrap up today flows naturally into tomorrow's report.
+ */
+export function rolloverIfEodSubmitted(sqlite: any, userId: number | null | undefined, date: string): string {
+  if (!date) return date;
+  return hasEodSubmittedForDate(sqlite, userId, date) ? addIsoDays(date, 1) : date;
+}
+
+/**
  * Parse a wall-clock string (e.g. "2026-05-06T15:00" or "2026-05-06 15:00")
  * as if it were observed in the given IANA timezone, and return the
  * corresponding absolute Unix epoch in ms.

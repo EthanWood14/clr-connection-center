@@ -93,6 +93,16 @@ export default function EodReport() {
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
   });
 
+  // Today's report (independent of selectedDate) — drives whether the user is
+  // allowed to navigate to tomorrow and whether tomorrow is treated as a
+  // normal in-progress EOD page.
+  const { data: todayData } = useQuery<{ report: any; activities: any[] }>({
+    queryKey: ["/api/eod-reports", todayStr, "today-flag"],
+    queryFn: () => fetch(`/api/eod-reports?date=${todayStr}`).then(r => r.json()),
+    staleTime: 30_000,
+  });
+  const todaySubmitted = !!todayData?.report;
+
   // Today's (selected-date's) assignments for the current CLR
   const { data: dayAssignments = [] } = useQuery<any[]>({
     queryKey: ["/api/assignments", selectedDate],
@@ -315,8 +325,13 @@ export default function EodReport() {
     );
   }
 
-  const isToday   = selectedDate === todayStr;
-  const isFuture  = selectedDate > todayStr;
+  const tomorrowStr = addDays(parseISO(todayStr), 1).toISOString().split("T")[0];
+  const isToday    = selectedDate === todayStr;
+  const isTomorrow = selectedDate === tomorrowStr;
+  // Once today's EOD is submitted, tomorrow becomes a regular in-progress day.
+  const isFuture   = selectedDate > todayStr && !(isTomorrow && todaySubmitted);
+  // Allow the right arrow to move to tomorrow once today is submitted.
+  const canGoForward = !isFuture && !(isTomorrow);
   const displayDate = format(parseISO(selectedDate), "EEEE, MMMM d, yyyy");
 
   const callsNum = parseInt(callsMade) || 0;
@@ -357,13 +372,24 @@ export default function EodReport() {
       <div className="flex items-start justify-between flex-wrap gap-3 no-print">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
-            <FileText className="w-5 h-5 text-primary" /> EOD Reporting
+            <FileText className="w-5 h-5 text-primary" />{" "}
+            {isToday && report
+              ? "Resubmit EOD Report"
+              : isTomorrow && todaySubmitted
+                ? "EOD Reporting — Tomorrow"
+                : "EOD Reporting"}
             <HelpIcon title="EOD Report">
               Submit your end-of-day summary. Include which LOs you called for, and add any notable notes. This sends an email to your managers.
             </HelpIcon>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {isToday ? "Complete before you log off for the day" : "Viewing a past report"}
+            {isToday && report
+              ? "Today's report is in. You can edit and resubmit, or start tomorrow."
+              : isToday
+                ? "Complete before you log off for the day"
+                : isTomorrow && todaySubmitted
+                  ? "Anything you log now will count toward tomorrow's report."
+                  : "Viewing a past report"}
           </p>
         </div>
 
@@ -386,7 +412,14 @@ export default function EodReport() {
             <ChevronLeft className="w-4 h-4" />
           </Button>
           <span className="text-sm font-medium px-2 min-w-[190px] text-center">{displayDate}</span>
-          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => navigateDate(1)} disabled={isToday}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 w-8 p-0"
+            onClick={() => navigateDate(1)}
+            disabled={!canGoForward || (isToday && !todaySubmitted)}
+            title={isToday && !todaySubmitted ? "Submit today's EOD to unlock tomorrow" : ""}
+          >
             <ChevronRight className="w-4 h-4" />
           </Button>
           {!isToday && (
@@ -650,7 +683,7 @@ export default function EodReport() {
                   ) : report && !dirty ? (
                     <><CheckCircle2 className="w-4 h-4" /> Already submitted</>
                   ) : (
-                    <><Send className="w-4 h-4" /> {report ? "Update Report" : "Submit Report"}</>
+                    <><Send className="w-4 h-4" /> {report ? "Resubmit Report" : "Submit Report"}</>
                   )}
                 </Button>
                 {selectedDate === todayStr && !report && (

@@ -18,7 +18,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
@@ -4064,6 +4064,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       for (const k of nullableFields) body[k] = nullify(body[k]);
       body.requiresFollowup = boolToInt(body.requiresFollowup);
       body.rescheduled = boolToInt(body.rescheduled);
+      // Post-EOD rollover: if this CLR has already submitted EOD for the
+      // outcome's date, push the outcome forward into tomorrow so it counts
+      // toward the next day's report.
+      try {
+        const sqliteRef = storageExtra.getSqlite();
+        const aId = (req as any).session_user?.userId ?? body.assistantId ?? null;
+        if (aId && body.date) {
+          const rolled = rolloverIfEodSubmitted(sqliteRef, Number(aId), String(body.date));
+          if (rolled !== body.date) body.date = rolled;
+        }
+      } catch {}
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
@@ -5449,8 +5460,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!logDate || callsMade === undefined) {
       return res.status(400).json({ error: "logDate and callsMade are required" });
     }
+    // Post-EOD rollover: count calls logged after today's EOD toward tomorrow.
+    let effectiveLogDate = String(logDate);
     try {
-      const log = storage.upsertDailyCallLog({ logDate, assistantId: Number(assistantId), callsMade: Number(callsMade), notes: notes ?? null });
+      effectiveLogDate = rolloverIfEodSubmitted(storageExtra.getSqlite(), Number(assistantId), effectiveLogDate);
+    } catch {}
+    try {
+      const log = storage.upsertDailyCallLog({ logDate: effectiveLogDate, assistantId: Number(assistantId), callsMade: Number(callsMade), notes: notes ?? null });
       res.json(log);
     } catch (err: any) {
       console.error("[POST /api/call-logs] error:", err?.message ?? err);
@@ -7265,7 +7281,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = req.session_user?.userId;
     const { reportDate, activityType, description } = req.body;
     if (!reportDate || !activityType || !description) return res.status(400).json({ error: 'reportDate, activityType, description required' });
-    const activity = storageExtra.addEodActivity({ reportDate, assistantId: userId, activityType, description });
+    // Post-EOD rollover: extra activities added after today's EOD count for tomorrow.
+    let effectiveDate = String(reportDate);
+    try {
+      effectiveDate = rolloverIfEodSubmitted(storageExtra.getSqlite(), Number(userId), effectiveDate);
+    } catch {}
+    const activity = storageExtra.addEodActivity({ reportDate: effectiveDate, assistantId: userId, activityType, description });
     res.json(activity);
   });
 
