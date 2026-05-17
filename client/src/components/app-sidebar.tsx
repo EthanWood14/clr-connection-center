@@ -376,16 +376,33 @@ export function AppSidebar() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   // Hover-expand behavior (desktop): icon-rail by default; opens on hover.
-  const { setOpen, isMobile } = useSidebar();
+  const { setOpen, isMobile, state } = useSidebar();
   function handleEnter() { if (!isMobile) setOpen(true); }
   function handleLeave() { if (!isMobile) setOpen(false); }
+  // When the rail is collapsed (icon-only), always show the advanced groups as
+  // icons so the user can reach them. The Advanced Settings toggle is hidden
+  // in collapsed mode (no room for the label and chevron).
+  const showAdvanced = advancedOpen || state === "collapsed";
 
   return (
     <div onMouseEnter={handleEnter} onMouseLeave={handleLeave} className="contents">
     <Sidebar collapsible="icon" className="glass-rail [&_[data-sidebar=sidebar]]:bg-transparent [&_[data-sidebar=sidebar]]:border-0">
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        <img src="/logo-menu.svg" className="h-9 w-auto self-start pl-1 group-data-[collapsible=icon]:hidden" alt="CLR Connection Center" />
-        <img src="/logo-menu.svg" className="hidden group-data-[collapsible=icon]:block h-8 w-8 object-contain mx-auto" alt="" aria-hidden />
+        {/* Logo SVG is dark navy on dark navy bg; brighten it to cream/gold via CSS filter
+           so it reads as a single-tone glyph on the obsidian sidebar. */}
+        <img
+          src="/logo-menu.svg"
+          className="h-9 w-auto self-start pl-1 group-data-[collapsible=icon]:hidden"
+          style={{ filter: 'brightness(0) saturate(100%) invert(85%) sepia(28%) saturate(541%) hue-rotate(2deg) brightness(96%) contrast(89%)' }}
+          alt="CLR Connection Center"
+        />
+        <img
+          src="/logo-menu.svg"
+          className="hidden group-data-[collapsible=icon]:block h-8 w-8 object-contain mx-auto"
+          style={{ filter: 'brightness(0) saturate(100%) invert(85%) sepia(28%) saturate(541%) hue-rotate(2deg) brightness(96%) contrast(89%)' }}
+          alt=""
+          aria-hidden
+        />
       </SidebarHeader>
 
       <SidebarContent>
@@ -419,8 +436,11 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* ADVANCED SETTINGS — collapsible folder containing every other group */}
-        <SidebarGroup className="mt-3">
+        {/* ADVANCED SETTINGS — collapsible folder containing every other group.
+           Hidden entirely when the rail is in icon-only mode (the underlying
+           groups still render below when advancedOpen is true, and their items
+           show as icons in the rail). */}
+        <SidebarGroup className="mt-3 group-data-[collapsible=icon]:hidden">
           <button
             type="button"
             onClick={() => setAdvancedOpen(o => !o)}
@@ -434,7 +454,7 @@ export function AppSidebar() {
           </button>
         </SidebarGroup>
 
-        {advancedOpen && <>
+        {showAdvanced && <>
         {/* TOOLS */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
