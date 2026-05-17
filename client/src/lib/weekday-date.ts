@@ -23,6 +23,33 @@ export function toWeekdayDate(dateStr: string): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+// Drop any rows whose date field falls on Sat/Sun. Use this instead of
+// aggregateByWeekday when weekends should be EXCLUDED from a chart entirely
+// (rather than rolled onto Monday).
+export function dropWeekendRows<T extends Record<string, any>>(
+  rows: T[],
+  dateKey: keyof T = "date" as keyof T,
+): T[] {
+  if (!Array.isArray(rows)) return rows;
+  return rows.filter((row) => {
+    const raw = row?.[dateKey];
+    return typeof raw === "string" ? isWeekday(raw) : true;
+  });
+}
+
+// Drop daily-granularity buckets (startDate === endDate) whose date falls on
+// Sat/Sun. Non-daily buckets (week/month aggregates) pass through unchanged.
+export function dropWeekendBuckets<T extends { startDate?: string; endDate?: string } & Record<string, any>>(
+  buckets: T[],
+): T[] {
+  if (!Array.isArray(buckets)) return buckets;
+  return buckets.filter((b) => {
+    const isDaily = !!b?.startDate && b.startDate === b.endDate;
+    if (!isDaily) return true;
+    return isWeekday(b.startDate!);
+  });
+}
+
 // True if `YYYY-MM-DD` falls on Mon–Fri.
 export function isWeekday(dateStr: string): boolean {
   if (!dateStr) return false;

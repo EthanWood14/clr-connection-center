@@ -20,7 +20,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
-import { aggregateByWeekday } from "@/lib/weekday-date";
+import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -375,13 +375,13 @@ export default function ManagerDashboard() {
   });
 
   // Trend chart data with formatted labels — depends on range.
-  // Weekend buckets are shifted onto the following Monday so charts only
-  // show Mon–Fri x-axis ticks.
+  // Weekends are excluded entirely from the daily trend chart so the x-axis
+  // only shows business days (Mon–Fri).
   const trendData = useMemo(() => {
     const block = data?.byRange?.[rangeTrend];
     if (!block) return [];
-    const merged = aggregateByWeekday(block.trend as any[], "date");
-    return merged.map((d: any) => ({ ...d, label: format(parseISO(d.date), "MMM d") }));
+    const weekdaysOnly = dropWeekendRows(block.trend as any[], "date");
+    return weekdaysOnly.map((d: any) => ({ ...d, label: format(parseISO(d.date), "MMM d") }));
   }, [data?.byRange, rangeTrend]);
 
   const outcomePieData = useMemo(() => {
@@ -482,7 +482,9 @@ export default function ManagerDashboard() {
   const autoSelectedIds = clrTrendTotals.filter(t => t.total > 0).slice(0, 5).map(t => t.userId);
   const effectiveSelected = clrTrendSelected ?? autoSelectedIds;
   // Build chart rows: one row per date, one column per selected CLR.
-  const clrTrendChartData = clrTrendDates.map((d: string, i: number) => {
+  // Skip weekend dates so the per-CLR comparison only shows business days.
+  const clrTrendChartData = clrTrendDates.flatMap((d: string, i: number) => {
+    if (!isWeekday(d)) return [];
     const row: any = { date: d, label: format(parseISO(d), "MMM d") };
     for (const s of clrTrendSeries) {
       if (!effectiveSelected.includes(s.userId)) continue;
