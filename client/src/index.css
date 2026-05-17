@@ -112,20 +112,26 @@
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     min-height: 100dvh;
-    /* Ambient aurora behind the glass layers — two soft radials in the brand
-       hues. Subtle in Pearl, more pronounced in Obsidian. */
+    /* Ambient aurora behind the glass. Painted on the html root via a fixed
+       pseudo-element below so we don't pay the cost of background-attachment:
+       fixed (which forces full-document repaints on every scroll). */
+  }
+  html::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       radial-gradient(1100px 700px at 8% -10%, rgba(201,162,74,0.10), transparent 60%),
       radial-gradient(900px 600px at 108% 12%, rgba(15,24,45,0.10), transparent 65%),
       radial-gradient(1200px 800px at 50% 110%, rgba(196,154,60,0.07), transparent 60%);
-    background-attachment: fixed;
   }
-  .dark body {
+  .dark html::before {
     background-image:
       radial-gradient(1100px 700px at 8% -10%, rgba(201,162,74,0.10), transparent 55%),
       radial-gradient(1000px 700px at 110% 8%, rgba(31,58,116,0.50), transparent 55%),
       radial-gradient(1200px 800px at 50% 115%, rgba(15,24,45,0.85), transparent 55%);
-    background-attachment: fixed;
   }
   h1, h2, h3, h4, h5, h6 {
     text-wrap: balance;
@@ -151,8 +157,10 @@
     background:
       linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.10), rgba(var(--hairline-rgb) / 0.02) 40%, rgba(var(--surface-rgb) / 0.55)),
       rgba(var(--surface-rgb) / 0.62) !important;
-    backdrop-filter: blur(22px) saturate(135%);
-    -webkit-backdrop-filter: blur(22px) saturate(135%);
+    /* Reduced from 22px to 10px: stacking many 22px-blur layers tanks GPU
+       performance on mid-range machines. 10px still reads as glass. */
+    backdrop-filter: blur(10px) saturate(125%);
+    -webkit-backdrop-filter: blur(10px) saturate(125%);
     border: 1px solid rgba(var(--hairline-rgb) / var(--hairline-alpha)) !important;
     box-shadow:
       0 1px 0 0 rgba(var(--hairline-rgb) / 0.30) inset,
@@ -173,28 +181,35 @@
       0 8px 24px -10px rgba(0,0,0,0.45) !important;
   }
 
+  /* glass-card and glass-strong skip the backdrop blur to keep dashboards
+     responsive; the outer glass-panel/header/rail blur the body once for the
+     whole shell. They keep their translucent fill, hairline, and shadow. */
   .glass-card {
     @apply glass;
     background:
-      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.14), rgba(var(--hairline-rgb) / 0.03) 35%, rgba(var(--surface-rgb) / 0.78)),
-      rgba(var(--surface-rgb) / 0.78) !important;
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.14), rgba(var(--hairline-rgb) / 0.03) 35%, rgba(var(--surface-rgb) / 0.88)),
+      rgba(var(--surface-rgb) / 0.88) !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .dark .glass-card {
     background:
-      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.78)),
-      rgba(var(--surface-rgb) / 0.78) !important;
+      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.88)),
+      rgba(var(--surface-rgb) / 0.88) !important;
   }
 
   .glass-strong {
     @apply glass;
     background:
-      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.18), rgba(var(--hairline-rgb) / 0.04) 35%, rgba(var(--surface-rgb) / 0.90)),
-      rgba(var(--surface-rgb) / 0.90) !important;
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.18), rgba(var(--hairline-rgb) / 0.04) 35%, rgba(var(--surface-rgb) / 0.94)),
+      rgba(var(--surface-rgb) / 0.94) !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   .dark .glass-strong {
     background:
-      linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.92)),
-      rgba(var(--surface-rgb) / 0.92) !important;
+      linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.94)),
+      rgba(var(--surface-rgb) / 0.94) !important;
   }
 
   .glass-panel {
@@ -250,69 +265,51 @@
   }
 
   .glass-hover {
-    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
-                box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1),
-                border-color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: border-color 180ms ease-out;
   }
   .glass-hover:hover {
-    transform: translateY(-2px);
     border-color: rgba(var(--hairline-rgb) / 0.55) !important;
-    box-shadow:
-      0 1px 0 0 rgba(var(--hairline-rgb) / 0.35) inset,
-      0 0 0 1px rgba(var(--surface-ink-rgb) / 0.05),
-      0 28px 70px -20px rgba(var(--surface-ink-rgb) / 0.35),
-      0 10px 24px -12px rgba(var(--surface-ink-rgb) / 0.25) !important;
   }
 
-  /* Premium accent ring for "hero" KPIs */
-  .glass-accent-ring { position: relative; }
-  .glass-accent-ring::before {
-    content: "";
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    padding: 1px;
-    background: linear-gradient(135deg,
-                  hsl(var(--brand-gold) / 0.55) 0%,
-                  transparent 35%,
-                  transparent 65%,
-                  hsl(var(--brand-gold) / 0.35) 100%);
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-            mask-composite: exclude;
-    pointer-events: none;
+  /* Premium accent ring for "hero" KPIs. Originally used a mask-composite
+     gradient ring on a ::before pseudo, but that adds an extra paint layer
+     per card and is slow when there are many cards. A simple gold left-border
+     reads as the same premium accent at zero perf cost. */
+  .glass-accent-ring {
+    border-left: 2px solid hsl(var(--brand-gold) / 0.55) !important;
   }
 
   /* ---- Global glass treatment for every shadcn <Card /> ----
      Each Card has class "shadcn-card". We upgrade it in-place so dashboards,
      outcomes, and any other page automatically inherit the new look without
-     per-page edits. We restate background/border/box-shadow with !important
-     here because @apply strips importance and we need to win over the bg-card
-     / border-card-border utilities the Card root applies directly. */
-  .shadcn-card { @apply glass-card; }
+     per-page edits.
+
+     IMPORTANT perf note: we deliberately do NOT apply backdrop-filter to
+     individual cards. A dashboard page can have 20+ cards on screen at once,
+     and stacking 20 GPU blur layers is the #1 reason this app felt sluggish.
+     The outer glass-panel/glass-header/glass-rail already blur the body
+     behind them, so cards just need a translucent fill, border, and shadow
+     to read as glass. */
   .shadcn-card {
     background:
-      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.14), rgba(var(--hairline-rgb) / 0.03) 35%, rgba(var(--surface-rgb) / 0.78)),
-      rgba(var(--surface-rgb) / 0.78) !important;
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.14), rgba(var(--hairline-rgb) / 0.03) 35%, rgba(var(--surface-rgb) / 0.92)),
+      rgba(var(--surface-rgb) / 0.92) !important;
     border: 1px solid rgba(var(--hairline-rgb) / var(--hairline-alpha)) !important;
+    border-radius: calc(var(--radius) + 4px);
     box-shadow:
       0 1px 0 0 rgba(var(--hairline-rgb) / 0.30) inset,
-      0 0 0 1px rgba(var(--surface-ink-rgb) / 0.04),
-      0 20px 60px -20px rgba(var(--surface-ink-rgb) / 0.30),
-      0 8px 20px -10px rgba(var(--surface-ink-rgb) / 0.20) !important;
+      0 4px 16px -8px rgba(var(--surface-ink-rgb) / 0.20) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
   .dark .shadcn-card {
     background:
-      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.78)),
-      rgba(var(--surface-rgb) / 0.78) !important;
+      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.92)),
+      rgba(var(--surface-rgb) / 0.92) !important;
     border: 1px solid rgba(255,255,255,0.06) !important;
     box-shadow:
       0 1px 0 0 rgba(255,255,255,0.06) inset,
-      0 0 0 1px rgba(0,0,0,0.40),
-      0 30px 80px -20px rgba(0,0,0,0.55),
-      0 8px 24px -10px rgba(0,0,0,0.45) !important;
+      0 8px 24px -12px rgba(0,0,0,0.55) !important;
   }
 
   .pill-gold {
