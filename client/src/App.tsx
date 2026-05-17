@@ -207,33 +207,36 @@ function AuthenticatedApp() {
   };
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
       <CookieNotice />
       <PushNudge />
       <DailyReportGate>
+        {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
         <div className="flex h-screen w-full overflow-hidden flex-col">
           <ImpersonationBanner />
-          <div className="flex flex-1 min-h-0 overflow-hidden">
-          <AppSidebar />
-          <div className="flex flex-col flex-1 min-w-0">
-            <header className="sticky top-0 z-40 flex items-center justify-between h-12 px-4 border-b bg-background/95 backdrop-blur-sm flex-shrink-0">
-              <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
-              <div className="flex items-center gap-1">
-                <NotificationBell />
-                <ThemeToggle />
-              </div>
-            </header>
-            <main className="flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
-              <div className="flex-1">
-                <EodLockGate>
-                  <AppRouter />
-                </EodLockGate>
-              </div>
-              <AppFooter />
-            </main>
-            <MobileBottomNav />
-          </div>
+          <div className="flex flex-1 min-h-0 overflow-hidden gap-3 p-2 md:p-3">
+            <AppSidebar />
+            <div className="flex flex-col flex-1 min-w-0 gap-3">
+              {/* Floating glass header bar */}
+              <header className="glass-header sticky top-0 z-40 flex items-center justify-between h-12 px-3 flex-shrink-0">
+                <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
+                <div className="flex items-center gap-1">
+                  <NotificationBell />
+                  <ThemeToggle />
+                </div>
+              </header>
+              {/* Floating glass main panel */}
+              <main className="glass-panel flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
+                <div className="flex-1">
+                  <EodLockGate>
+                    <AppRouter />
+                  </EodLockGate>
+                </div>
+                <AppFooter />
+              </main>
+              <MobileBottomNav />
+            </div>
           </div>
         </div>
       </DailyReportGate>

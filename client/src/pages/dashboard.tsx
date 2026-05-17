@@ -254,7 +254,7 @@ function StatCard({ title, value, icon: Icon, sub, color = "primary", accent, hr
     accent === "teal" ? "border-l-4 border-l-teal-500" :
     accent === "navy" ? "border-l-4 border-l-[#1A2B4A]" : "";
   const inner = (
-    <Card className={`h-full ${accentClass} ${href ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}>
+    <Card className={`h-full glass-accent-ring glass-hover ${accentClass} ${href ? "cursor-pointer" : ""}`}>
       <CardContent className="pt-5 pb-5 h-full">
         <div className="flex items-start justify-between h-full">
           <div className="flex flex-col justify-between h-full flex-1 min-w-0">

@@ -148,7 +148,7 @@ function KpiTile({
   label, value, sub, icon: Icon, color = NAVY, href, delta,
 }: { label: string; value: string | number; sub?: React.ReactNode; icon: any; color?: string; href?: string; delta?: React.ReactNode }) {
   const inner = (
-    <Card className="overflow-hidden transition-all hover:shadow-lg hover:border-[#C9A24A]/40 h-full">
+    <Card className="overflow-hidden h-full glass-accent-ring glass-hover">
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div className="space-y-1 min-w-0">

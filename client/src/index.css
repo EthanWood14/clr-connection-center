@@ -4,64 +4,101 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   CLR Connection Center — “Antigravity” Design System
+   ----------------------------------------------------------------------------
+   Two palettes share the same brand spine (navy #0F182D / gold #C9A24A):
+     • PEARL    — light mode. Warm off-white paper, soft champagne accents.
+     • OBSIDIAN — dark mode. Deep ink navy, cool steel glass, gold highlights.
+   Glass utilities (.glass, .glass-card, .glass-panel, .glass-strong, .glass-rail)
+   layer translucency, deep backdrop blur, subtle inner highlight, and a soft
+   gradient hairline. They look correct over either palette because every
+   alpha is expressed against the same channel set.
+   ========================================================================== */
+
 @layer base {
   :root {
-    /* Nexus teal palette adapted for shadcn */
-    --background: 45 24% 96%;
-    --foreground: 44 23% 14%;
-    --card: 45 25% 97%;
-    --card-foreground: 44 23% 14%;
-    --popover: 45 25% 97%;
-    --popover-foreground: 44 23% 14%;
-    --primary: 183 98% 22%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 36 18% 94%;
-    --secondary-foreground: 44 23% 14%;
-    --muted: 36 18% 94%;
-    --muted-foreground: 50 3% 47%;
-    --accent: 183 40% 90%;
-    --accent-foreground: 183 98% 18%;
-    --destructive: 320 57% 40%;
+    /* ---- PEARL palette (light) ---- */
+    --background: 40 22% 95%;          /* warm pearl */
+    --foreground: 220 35% 12%;         /* near-navy ink */
+    --card: 42 38% 98%;                /* paper white */
+    --card-foreground: 220 35% 12%;
+    --popover: 42 38% 98%;
+    --popover-foreground: 220 35% 12%;
+    --primary: 220 52% 12%;            /* brand navy */
+    --primary-foreground: 40 38% 96%;
+    --secondary: 40 22% 92%;
+    --secondary-foreground: 220 35% 12%;
+    --muted: 40 18% 90%;
+    --muted-foreground: 220 12% 38%;
+    --accent: 42 55% 80%;              /* soft champagne */
+    --accent-foreground: 220 52% 12%;
+    --destructive: 0 65% 48%;
     --destructive-foreground: 0 0% 100%;
-    --border: 36 8% 81%;
-    --input: 36 8% 81%;
-    --ring: 183 98% 22%;
-    --radius: 0.5rem;
+    --border: 40 14% 82%;
+    --input: 40 14% 82%;
+    --ring: 42 65% 50%;                /* gold */
+    --radius: 0.85rem;                 /* slightly more generous radius */
+
+    /* Brand spine */
+    --brand-navy: 220 52% 12%;         /* #0F182D-ish */
+    --brand-navy-2: 220 48% 20%;       /* #1A2B4A-ish */
+    --brand-gold: 42 56% 54%;          /* #C9A24A */
+    --brand-gold-2: 40 55% 50%;        /* #C49A3C */
+
+    /* Surface tokens for glass (rgb so we can compose alpha) */
+    --surface-rgb: 251 248 242;        /* pearl paper */
+    --surface-bg-rgb: 245 241 234;     /* base background */
+    --surface-ink-rgb: 15 24 45;       /* deep navy ink, for shadows */
+    --hairline-rgb: 255 255 255;       /* highlight color */
+    --hairline-alpha: 0.65;
 
     /* Chart colors */
-    --chart-1: 183 98% 22%;
-    --chart-2: 97 43% 47%;
-    --chart-3: 20 73% 34%;
-    --chart-4: 320 57% 40%;
-    --chart-5: 185 75% 35%;
+    --chart-1: 220 52% 30%;
+    --chart-2: 42 56% 50%;
+    --chart-3: 188 60% 38%;
+    --chart-4: 320 55% 45%;
+    --chart-5: 12 70% 50%;
   }
 
   .dark {
-    --background: 40 10% 8%;
-    --foreground: 40 3% 80%;
-    --card: 40 9% 10%;
-    --card-foreground: 40 3% 80%;
-    --popover: 40 9% 10%;
-    --popover-foreground: 40 3% 80%;
-    --primary: 188 35% 47%;
-    --primary-foreground: 40 10% 8%;
-    --secondary: 40 8% 12%;
-    --secondary-foreground: 40 3% 80%;
-    --muted: 40 8% 12%;
-    --muted-foreground: 40 2% 47%;
-    --accent: 40 8% 15%;
-    --accent-foreground: 188 35% 60%;
-    --destructive: 320 47% 60%;
-    --destructive-foreground: 40 10% 8%;
-    --border: 40 3% 22%;
-    --input: 40 3% 22%;
-    --ring: 188 35% 47%;
+    /* ---- OBSIDIAN palette (dark) ---- */
+    --background: 220 45% 6%;          /* near-black ink */
+    --foreground: 40 28% 88%;          /* cream */
+    --card: 220 42% 10%;               /* obsidian panel */
+    --card-foreground: 40 28% 88%;
+    --popover: 220 42% 10%;
+    --popover-foreground: 40 28% 88%;
+    --primary: 42 56% 58%;             /* gold becomes primary in dark */
+    --primary-foreground: 220 52% 8%;
+    --secondary: 220 35% 14%;
+    --secondary-foreground: 40 28% 88%;
+    --muted: 220 30% 14%;
+    --muted-foreground: 220 12% 65%;
+    --accent: 220 40% 18%;             /* cool steel */
+    --accent-foreground: 42 56% 65%;
+    --destructive: 0 72% 56%;
+    --destructive-foreground: 40 28% 95%;
+    --border: 220 30% 18%;
+    --input: 220 30% 18%;
+    --ring: 42 56% 55%;
 
-    --chart-1: 188 35% 47%;
-    --chart-2: 97 43% 47%;
-    --chart-3: 20 53% 48%;
-    --chart-4: 320 47% 60%;
-    --chart-5: 185 45% 55%;
+    --brand-navy: 220 52% 12%;
+    --brand-navy-2: 220 48% 20%;
+    --brand-gold: 42 56% 58%;
+    --brand-gold-2: 40 55% 52%;
+
+    --surface-rgb: 17 30 58;           /* obsidian panel */
+    --surface-bg-rgb: 11 20 38;        /* page bg */
+    --surface-ink-rgb: 0 0 0;
+    --hairline-rgb: 255 255 255;
+    --hairline-alpha: 0.10;
+
+    --chart-1: 42 56% 60%;
+    --chart-2: 188 60% 55%;
+    --chart-3: 12 70% 58%;
+    --chart-4: 320 55% 62%;
+    --chart-5: 145 50% 55%;
   }
 }
 
@@ -75,9 +112,194 @@
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     min-height: 100dvh;
+    /* Ambient aurora behind the glass layers — two soft radials in the brand
+       hues. Subtle in Pearl, more pronounced in Obsidian. */
+    background-image:
+      radial-gradient(1100px 700px at 8% -10%, rgba(201,162,74,0.10), transparent 60%),
+      radial-gradient(900px 600px at 108% 12%, rgba(15,24,45,0.10), transparent 65%),
+      radial-gradient(1200px 800px at 50% 110%, rgba(196,154,60,0.07), transparent 60%);
+    background-attachment: fixed;
+  }
+  .dark body {
+    background-image:
+      radial-gradient(1100px 700px at 8% -10%, rgba(201,162,74,0.10), transparent 55%),
+      radial-gradient(1000px 700px at 110% 8%, rgba(31,58,116,0.50), transparent 55%),
+      radial-gradient(1200px 800px at 50% 115%, rgba(15,24,45,0.85), transparent 55%);
+    background-attachment: fixed;
   }
   h1, h2, h3, h4, h5, h6 {
     text-wrap: balance;
+  }
+}
+
+/* ============================================================================
+   Glassmorphic utility classes
+   ----------------------------------------------------------------------------
+   .glass          — translucent surface with deep blur, gradient hairline, soft shadow
+   .glass-card     — same, tuned for content cards (slightly stronger fill)
+   .glass-strong   — higher opacity for areas behind dense content (tables)
+   .glass-panel    — the outer floating shell of the layout
+   .glass-rail     — the sidebar/icon rail
+   .glass-header   — sticky top bar variant
+   .glass-hover    — lifts on hover (use on interactive cards)
+   ========================================================================== */
+@layer components {
+  .glass {
+    background:
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.10), rgba(var(--hairline-rgb) / 0.02) 40%, rgba(var(--surface-rgb) / 0.55)),
+      rgba(var(--surface-rgb) / 0.62);
+    backdrop-filter: blur(22px) saturate(135%);
+    -webkit-backdrop-filter: blur(22px) saturate(135%);
+    border: 1px solid rgba(var(--hairline-rgb) / var(--hairline-alpha));
+    box-shadow:
+      0 1px 0 0 rgba(var(--hairline-rgb) / 0.30) inset,
+      0 0 0 1px rgba(var(--surface-ink-rgb) / 0.04),
+      0 20px 60px -20px rgba(var(--surface-ink-rgb) / 0.30),
+      0 8px 20px -10px rgba(var(--surface-ink-rgb) / 0.20);
+    border-radius: calc(var(--radius) + 4px);
+  }
+  .dark .glass {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01) 40%, rgba(var(--surface-rgb) / 0.55)),
+      rgba(var(--surface-rgb) / 0.55);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.06) inset,
+      0 0 0 1px rgba(0,0,0,0.40),
+      0 30px 80px -20px rgba(0,0,0,0.55),
+      0 8px 24px -10px rgba(0,0,0,0.45);
+  }
+
+  .glass-card {
+    @apply glass;
+    /* Cards get a bit more body so text contrast is solid. */
+    background:
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.14), rgba(var(--hairline-rgb) / 0.03) 35%, rgba(var(--surface-rgb) / 0.78)),
+      rgba(var(--surface-rgb) / 0.78);
+  }
+  .dark .glass-card {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.78)),
+      rgba(var(--surface-rgb) / 0.78);
+  }
+
+  .glass-strong {
+    @apply glass;
+    background:
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.18), rgba(var(--hairline-rgb) / 0.04) 35%, rgba(var(--surface-rgb) / 0.90)),
+      rgba(var(--surface-rgb) / 0.90);
+  }
+  .dark .glass-strong {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 35%, rgba(var(--surface-rgb) / 0.92)),
+      rgba(var(--surface-rgb) / 0.92);
+  }
+
+  .glass-panel {
+    @apply glass;
+    border-radius: calc(var(--radius) + 8px);
+  }
+
+  .glass-rail {
+    @apply glass;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01) 30%, rgba(15,24,45,0.85)),
+      rgba(15,24,45,0.82);
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.06) inset,
+      0 0 0 1px rgba(0,0,0,0.40),
+      0 30px 80px -20px rgba(0,0,0,0.55);
+    color: rgb(229 223 200);
+  }
+  .glass-rail .text-sidebar-foreground\/50 { color: rgba(229,223,200,0.55) !important; }
+
+  .glass-header {
+    @apply glass;
+    border-radius: calc(var(--radius) + 4px);
+    background:
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.20), rgba(var(--hairline-rgb) / 0.04) 60%, rgba(var(--surface-rgb) / 0.55)),
+      rgba(var(--surface-rgb) / 0.55);
+  }
+  .dark .glass-header {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02) 60%, rgba(var(--surface-rgb) / 0.55)),
+      rgba(var(--surface-rgb) / 0.55);
+  }
+
+  .glass-hover {
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .glass-hover:hover {
+    transform: translateY(-2px);
+    border-color: rgba(var(--hairline-rgb) / 0.55);
+    box-shadow:
+      0 1px 0 0 rgba(var(--hairline-rgb) / 0.35) inset,
+      0 0 0 1px rgba(var(--surface-ink-rgb) / 0.05),
+      0 28px 70px -20px rgba(var(--surface-ink-rgb) / 0.35),
+      0 10px 24px -12px rgba(var(--surface-ink-rgb) / 0.25);
+  }
+
+  /* A premium accent ring for the “hero” KPIs */
+  .glass-accent-ring {
+    position: relative;
+  }
+  .glass-accent-ring::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg,
+                  hsl(var(--brand-gold) / 0.55) 0%,
+                  transparent 35%,
+                  transparent 65%,
+                  hsl(var(--brand-gold) / 0.35) 100%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* ---- Global glass treatment for every shadcn <Card /> ----
+     Each Card already gets class "shadcn-card". We upgrade it in-place so the
+     dashboards, outcomes, and any other page automatically inherit the new
+     look without per-page edits. Pages that want the “hero” ring can add
+     `.glass-accent-ring` themselves. */
+  .shadcn-card {
+    @apply glass-card;
+    /* Reset the shadcn defaults that fight glass */
+    background-color: transparent;
+  }
+  .shadcn-card { box-shadow: var(--tw-shadow, 0 1px 0 0 rgba(var(--hairline-rgb) / 0.30) inset,
+      0 0 0 1px rgba(var(--surface-ink-rgb) / 0.04),
+      0 20px 60px -20px rgba(var(--surface-ink-rgb) / 0.30),
+      0 8px 20px -10px rgba(var(--surface-ink-rgb) / 0.20)); }
+  /* Subtle hover lift on every card */
+  .shadcn-card:hover {
+    border-color: rgba(var(--hairline-rgb) / 0.55);
+  }
+
+  /* Subtle premium tag */
+  .pill-gold {
+    background: linear-gradient(180deg, hsl(var(--brand-gold) / 0.18), hsl(var(--brand-gold) / 0.08));
+    border: 1px solid hsl(var(--brand-gold) / 0.45);
+    color: hsl(var(--brand-gold));
+  }
+  .dark .pill-gold { color: hsl(var(--brand-gold)); }
+}
+
+/* Disable backdrop-filter when print/reduced-motion is on */
+@media print {
+  .glass, .glass-card, .glass-strong, .glass-panel, .glass-rail, .glass-header {
+    background: #fff !important;
+    border-color: #ddd !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
   }
 }
 
@@ -87,26 +309,26 @@
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 
-/* Sidebar — deep navy (#0F182D) in light and dark */
+/* Sidebar — obsidian-glass in both palettes */
 [data-sidebar="sidebar"] {
   --sidebar-background: hsl(220, 52%, 12%);
-  --sidebar-foreground: hsl(220, 15%, 80%);
-  --sidebar-primary: hsl(0, 0%, 100%);
-  --sidebar-primary-foreground: hsl(220, 52%, 12%);
-  --sidebar-accent: hsl(218, 48%, 20%);
-  --sidebar-accent-foreground: hsl(0, 0%, 100%);
+  --sidebar-foreground: hsl(40, 28%, 84%);
+  --sidebar-primary: hsl(42, 56%, 60%);              /* gold accent in nav */
+  --sidebar-primary-foreground: hsl(220, 52%, 10%);
+  --sidebar-accent: hsl(220, 48%, 22%);
+  --sidebar-accent-foreground: hsl(42, 56%, 70%);
   --sidebar-border: hsl(220, 40%, 18%);
-  --sidebar-ring: hsl(220, 40%, 50%);
+  --sidebar-ring: hsl(42, 56%, 55%);
 }
 .dark [data-sidebar="sidebar"] {
-  --sidebar-background: hsl(220, 52%, 10%);
-  --sidebar-foreground: hsl(220, 15%, 78%);
-  --sidebar-primary: hsl(0, 0%, 100%);
-  --sidebar-primary-foreground: hsl(220, 52%, 10%);
-  --sidebar-accent: hsl(218, 48%, 18%);
-  --sidebar-accent-foreground: hsl(0, 0%, 100%);
-  --sidebar-border: hsl(220, 40%, 16%);
-  --sidebar-ring: hsl(220, 40%, 50%);
+  --sidebar-background: hsl(220, 52%, 9%);
+  --sidebar-foreground: hsl(40, 28%, 80%);
+  --sidebar-primary: hsl(42, 56%, 62%);
+  --sidebar-primary-foreground: hsl(220, 52%, 8%);
+  --sidebar-accent: hsl(220, 48%, 18%);
+  --sidebar-accent-foreground: hsl(42, 56%, 72%);
+  --sidebar-border: hsl(220, 40%, 14%);
+  --sidebar-ring: hsl(42, 56%, 55%);
 }
 
 /* Brand text colors — navy in light, soft gold/cream in dark for readability */

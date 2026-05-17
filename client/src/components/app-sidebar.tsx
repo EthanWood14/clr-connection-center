@@ -375,10 +375,17 @@ export function AppSidebar() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  // Hover-expand behavior (desktop): icon-rail by default; opens on hover.
+  const { setOpen, isMobile } = useSidebar();
+  function handleEnter() { if (!isMobile) setOpen(true); }
+  function handleLeave() { if (!isMobile) setOpen(false); }
+
   return (
-    <Sidebar>
+    <div onMouseEnter={handleEnter} onMouseLeave={handleLeave} className="contents">
+    <Sidebar collapsible="icon" className="glass-rail [&_[data-sidebar=sidebar]]:bg-transparent [&_[data-sidebar=sidebar]]:border-0">
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        <img src="/logo-menu.svg" className="h-9 w-auto self-start pl-1" alt="CLR Connection Center" />
+        <img src="/logo-menu.svg" className="h-9 w-auto self-start pl-1 group-data-[collapsible=icon]:hidden" alt="CLR Connection Center" />
+        <img src="/logo-menu.svg" className="hidden group-data-[collapsible=icon]:block h-8 w-8 object-contain mx-auto" alt="" aria-hidden />
       </SidebarHeader>
 
       <SidebarContent>
@@ -527,5 +534,6 @@ export function AppSidebar() {
         </div>
       </SidebarFooter>
     </Sidebar>
+    </div>
   );
 }

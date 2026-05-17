@@ -1161,7 +1161,7 @@ export default function Outcomes() {
       )}
 
       {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
+      <div className="glass-card flex gap-3 flex-wrap items-center p-3">
         <div className="relative flex-1 min-w-[180px]">
           <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
@@ -1229,10 +1229,10 @@ export default function Outcomes() {
           </p>
         </div>
       ) : (
-        <Card>
+        <Card className="glass-strong overflow-hidden">
           <CardContent className="p-0">
             {/* Table header */}
-            <div className="hidden md:grid grid-cols-[80px_1fr_1fr_1fr_120px_120px_80px] gap-3 px-4 py-2 border-b bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            <div className="hidden md:grid grid-cols-[80px_1fr_1fr_1fr_120px_120px_80px] gap-3 px-4 py-2 border-b border-white/10 bg-gradient-to-b from-white/20 to-transparent dark:from-white/[0.04] text-xs font-medium text-muted-foreground uppercase tracking-wider">
               <span>Date</span><span>Outcome</span><span>LO</span><span>Assistant</span><span>Borrower</span><span>Phone</span><span></span>
             </div>
             {filtered.map((o: any) => (
