@@ -215,9 +215,9 @@ function AuthenticatedApp() {
         {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
         <div className="flex h-screen w-full overflow-hidden flex-col">
           <ImpersonationBanner />
-          <div className="flex flex-1 min-h-0 overflow-hidden gap-3 p-2 md:p-3">
+          <div className="flex flex-1 min-h-0 overflow-hidden md:gap-3 p-0 md:p-3">
             <AppSidebar />
-            <div className="flex flex-col flex-1 min-w-0 gap-3">
+            <div className="flex flex-col flex-1 min-w-0 gap-2 md:gap-3">
               {/* Floating glass header bar */}
               <header className="glass-header sticky top-0 z-40 flex items-center justify-between h-12 px-3 flex-shrink-0">
                 <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />

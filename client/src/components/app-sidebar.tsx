@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
@@ -376,9 +376,28 @@ export function AppSidebar() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   // Hover-expand behavior (desktop): icon-rail by default; opens on hover.
-  const { setOpen, isMobile, state } = useSidebar();
-  function handleEnter() { if (!isMobile) setOpen(true); }
-  function handleLeave() { if (!isMobile) setOpen(false); }
+  // We debounce open/close by 120ms so that accidental mouse brushes don't
+  // trigger a re-render of the entire sidebar tree (50+ menu items).
+  // We also short-circuit when the state already matches the desired value.
+  const { setOpen, open, isMobile, state } = useSidebar();
+  const hoverTimer = useRef<number | null>(null);
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimer.current !== null) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  }, []);
+  const handleEnter = useCallback(() => {
+    if (isMobile || open) return;
+    clearHoverTimer();
+    hoverTimer.current = window.setTimeout(() => setOpen(true), 120);
+  }, [isMobile, open, setOpen, clearHoverTimer]);
+  const handleLeave = useCallback(() => {
+    if (isMobile || !open) return;
+    clearHoverTimer();
+    hoverTimer.current = window.setTimeout(() => setOpen(false), 200);
+  }, [isMobile, open, setOpen, clearHoverTimer]);
+  useEffect(() => clearHoverTimer, [clearHoverTimer]);
   // When the rail is collapsed (icon-only), always show the advanced groups as
   // icons so the user can reach them. The Advanced Settings toggle is hidden
   // in collapsed mode (no room for the label and chevron).

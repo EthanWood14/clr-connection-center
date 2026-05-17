@@ -330,6 +330,36 @@
   }
 }
 
+/* Mobile and touch-only devices: drop all backdrop blurs. Mobile GPUs handle
+   backdrop-filter much worse than desktop, and the visual effect is barely
+   noticeable on a small screen anyway. The fill alphas are already high
+   enough that the panels read as solid frosted surfaces without the blur. */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .glass, .glass-card, .glass-strong, .glass-panel, .glass-rail, .glass-header {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  /* Also bump the fill opacity a bit on mobile so panels feel solid. */
+  .glass-panel, .glass-header, .glass-rail {
+    background:
+      linear-gradient(180deg, rgba(var(--hairline-rgb) / 0.10), rgba(var(--surface-rgb) / 0.96)),
+      rgba(var(--surface-rgb) / 0.96) !important;
+  }
+  .dark .glass-panel, .dark .glass-header {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.04), rgba(var(--surface-rgb) / 0.96)),
+      rgba(var(--surface-rgb) / 0.96) !important;
+  }
+  /* Lighter shell padding on mobile to maximize content width */
+  .glass-panel { border-radius: calc(var(--radius) + 2px) !important; }
+}
+
+/* Respect reduced-motion preference: skip all transitions */
+@media (prefers-reduced-motion: reduce) {
+  .glass-hover { transition: none !important; }
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
