@@ -642,6 +642,10 @@ export default function Appointments() {
   const { toast } = useToast();
   const { user } = useAuth();
   const myUserId = (user as any)?.id ?? null;
+  const myRole = (user as any)?.role ?? null;
+  // Admins and managers see every appointment across the team. CLRs see only
+  // their own + anything overdue (so handoffs are picked up).
+  const seesAll = myRole === "admin" || myRole === "manager";
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
@@ -681,9 +685,10 @@ export default function Appointments() {
 
   // Visibility rule: each CLR sees their own appointments by default. Another
   // CLR's appointment only shows up once it's overdue (follow-up date in the
-  // past) AND still in an active appointment status. ACTIVE_APPT_TYPES is
-  // already enforced below, so the only extra check needed is mine-or-overdue.
+  // past) AND still in an active appointment status. Admins/managers see all.
+  // ACTIVE_APPT_TYPES is enforced below.
   const isMineOrOverdue = (o: Outcome) => {
+    if (seesAll) return true;
     if (myUserId != null && o.assistantId === myUserId) return true;
     const fd = o.followUpDate;
     if (!fd) return false; // undated deferrals from another CLR stay private
