@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight } from "lucide-react";
 import { copyToClipboard } from "@/lib/utils";
 import { businessTodayClient } from "@/lib/business-day";
+import { UsStateTileMap } from "@/components/us-state-tile-map";
 
 const ALL_STATES: { abbr: string; name: string }[] = [
   { abbr: "AL", name: "Alabama" }, { abbr: "AK", name: "Alaska" },
@@ -140,8 +141,30 @@ export default function StateLookup() {
         </p>
       </div>
 
+      {/* ── US map: click a state to filter LOs ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-muted-foreground" />
+            Coverage map
+            {selectedState && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                — viewing <span className="font-mono font-semibold text-foreground">{selectedState.abbr}</span> {selectedState.name}
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <UsStateTileMap
+            coverage={coverageMap}
+            selectedAbbr={selectedState?.abbr ?? null}
+            onSelect={setSelectedState}
+          />
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 items-start">
-        {/* ── Left panel: state list ── */}
+        {/* ── Left panel: state list (still here for search-by-name) ── */}
         <Card className="sticky top-6">
           <CardHeader className="pb-3">
             <div className="relative">
