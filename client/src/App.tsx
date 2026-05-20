@@ -65,11 +65,15 @@ import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(() =>
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  );
+  const [dark, setDark] = useState(() => {
+    const stored = localStorage.getItem("theme");
+    if (stored === "dark") return true;
+    if (stored === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
   return (
     <Button variant="ghost" size="icon" onClick={() => setDark(d => !d)} data-testid="button-theme-toggle">
