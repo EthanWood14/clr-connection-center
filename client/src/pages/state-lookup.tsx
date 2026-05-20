@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,14 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 export default function StateLookup() {
   const [stateSearch, setStateSearch] = useState("");
   const [selectedState, setSelectedState] = useState<{ abbr: string; name: string } | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  const handleStateSelect = useCallback((state: { abbr: string; name: string }) => {
+    setSelectedState(state);
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }, []);
 
   const { data: allLOs = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/loan-officers"],
@@ -125,6 +133,14 @@ export default function StateLookup() {
     return map;
   }, [allLOs]);
 
+  const coverageStats = useMemo(() => {
+    const counts = Object.values(coverageMap);
+    return {
+      statesWithCoverage: counts.filter((c) => c > 0).length,
+      totalLicenses: counts.reduce((sum, c) => sum + c, 0),
+    };
+  }, [coverageMap]);
+
   function coverageColor(count: number) {
     if (count === 0) return "bg-muted text-muted-foreground border border-border";
     if (count === 1) return "bg-primary/10 text-primary border border-primary/20";
@@ -144,21 +160,33 @@ export default function StateLookup() {
       {/* ── US map: click a state to filter LOs ── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-muted-foreground" />
-            Coverage map
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-muted-foreground" />
+              Coverage map
+              {selectedState && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  — viewing <span className="font-mono font-semibold text-foreground">{selectedState.abbr}</span> {selectedState.name}
+                </span>
+              )}
+            </CardTitle>
             {selectedState && (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                — viewing <span className="font-mono font-semibold text-foreground">{selectedState.abbr}</span> {selectedState.name}
-              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                onClick={() => setSelectedState(null)}
+              >
+                ✕ Clear
+              </Button>
             )}
-          </CardTitle>
+          </div>
         </CardHeader>
         <CardContent className="pt-0">
           <UsStateTileMap
             coverage={coverageMap}
             selectedAbbr={selectedState?.abbr ?? null}
-            onSelect={setSelectedState}
+            onSelect={handleStateSelect}
           />
         </CardContent>
       </Card>
@@ -188,7 +216,7 @@ export default function StateLookup() {
                 return (
                   <button
                     key={state.abbr}
-                    onClick={() => setSelectedState(state)}
+                    onClick={() => handleStateSelect(state)}
                     className={`w-full flex items-center justify-between px-4 py-2.5 text-left text-sm transition-colors hover:bg-muted/60 border-b last:border-0 ${
                       isSelected ? "bg-primary/8 font-semibold" : ""
                     }`}
@@ -213,12 +241,26 @@ export default function StateLookup() {
         </Card>
 
         {/* ── Right panel: LO results ── */}
-        <div className="space-y-4">
+        <div className="space-y-4" ref={resultsRef}>
           {!selectedState ? (
             <Card>
-              <CardContent className="py-16 text-center">
-                <MapPin className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
-                <p className="text-muted-foreground text-sm">Select a state to see licensed LOs</p>
+              <CardContent className="py-8 space-y-5">
+                <div className="text-center">
+                  <MapPin className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                  <p className="text-muted-foreground text-sm">Click a state on the map or list to view licensed LOs</p>
+                </div>
+                {!isLoading && coverageStats.statesWithCoverage > 0 && (
+                  <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-primary">{coverageStats.statesWithCoverage}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">states covered</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-primary">{coverageStats.totalLicenses}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">total LO licenses</div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ) : (

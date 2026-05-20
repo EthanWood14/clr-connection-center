@@ -547,17 +547,23 @@ function OutcomeFormDialog({
                 </FormItem>
               )} />
             )}
-            <FormField control={form.control} name="followUpDate" render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  Follow-up Date &amp; Time (optional){" "}
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
-                  </span>
-                </FormLabel>
-                <FormControl><Input type="datetime-local" {...field} data-testid="input-appointment-date" /></FormControl>
-              </FormItem>
-            )} />
+            {/* Only show the followUpDate field when appointmentDatetime is NOT already shown.
+                For appointment/callback types, the appointmentDatetime IS the follow-up date.
+                For other types, this one field feeds the Upcoming Appointments tab. */}
+            {!(watchedType === "appointment" || watchedType === "callback_requested") && (
+              <FormField control={form.control} name="followUpDate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Schedule for Upcoming Appointments{" "}
+                    <span className="text-[11px] font-normal text-muted-foreground">
+                      (optional — {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    </span>
+                  </FormLabel>
+                  <FormControl><Input type="datetime-local" {...field} data-testid="input-appointment-date" /></FormControl>
+                  <p className="text-[11px] text-muted-foreground">Sets a follow-up reminder visible on the Upcoming Appointments tab.</p>
+                </FormItem>
+              )} />
+            )}
             {!isTransfer && (
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
@@ -1331,7 +1337,15 @@ export default function Outcomes() {
       <OutcomeFormDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        onSubmit={values => createMutation.mutate(values)}
+        onSubmit={values => {
+          // For appointment/callback types, appointmentDatetime IS the follow-up date.
+          // Copy it into followUpDate so the record appears in Upcoming Appointments.
+          const normalized = {
+            ...values,
+            followUpDate: values.followUpDate || values.appointmentDatetime || "",
+          };
+          createMutation.mutate(normalized);
+        }}
         isPending={createMutation.isPending}
         users={users}
         los={los}

@@ -1756,6 +1756,93 @@ cron.schedule("0 9 * * 1-5", async () => {
   }
 });
 
+// ── EOD Manager Digest ────────────────────────────────────────────────────────
+// Cron: daily at 10:30 PM UTC (≈ 2:30 PM PT / 5:30 PM ET) on weekdays.
+// Sends ONE digest email to managers covering all EOD submissions that day.
+// Individual CLRs already get their own copy immediately on submission.
+cron.schedule("30 22 * * 1-5", async () => {
+  try {
+    console.log("[eod-digest] daily manager digest running...");
+    const db = storageExtra.getRawSqlite();
+    const settings = storageExtra.getEmailSettings() as any;
+    const managers: string[] = (() => {
+      try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; }
+    })();
+    if (managers.length === 0) {
+      console.log("[eod-digest] no manager emails configured, skipping");
+      return;
+    }
+
+    // Today's date in PT (matches report_date stored by CLRs)
+    const todayPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD
+
+    const rows = db.prepare(`
+      SELECT e.report_date, e.calls_made, e.transfers, e.appointments, e.notes,
+             u.name AS clr_name, u.email AS clr_email
+      FROM eod_reports e
+      JOIN users u ON u.id = e.assistant_id
+      WHERE e.report_date = ?
+      ORDER BY u.name ASC
+    `).all(todayPT) as any[];
+
+    if (rows.length === 0) {
+      console.log("[eod-digest] no submissions today, skipping manager digest");
+      return;
+    }
+
+    const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const totalCalls = rows.reduce((s: number, r: any) => s + Number(r.calls_made ?? 0), 0);
+    const totalXfers = rows.reduce((s: number, r: any) => s + Number(r.transfers ?? 0), 0);
+    const totalAppts = rows.reduce((s: number, r: any) => s + Number(r.appointments ?? 0), 0);
+
+    const rowsHtml = rows.map((r: any) => `
+      <tr style="border-top:1px solid #e2e8f0">
+        <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#1A2B4A">${esc(r.clr_name)}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#3B82F6">${r.calls_made ?? 0}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#16a34a">${r.transfers ?? 0}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#A855F7">${r.appointments ?? 0}</td>
+        <td style="padding:10px 12px;font-size:12px;color:#64748b;max-width:200px">${r.notes ? esc(String(r.notes).slice(0, 120)) + (r.notes.length > 120 ? "…" : "") : ""}</td>
+      </tr>`).join("");
+
+    const body = `
+      <p style="margin:0 0 20px;font-size:15px;font-weight:600;color:#1A2B4A">Daily EOD Summary — ${todayPT}</p>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:24px">
+        <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#3B82F6">${totalCalls}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Total Calls</div></div>
+        <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#16a34a">${totalXfers}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Transfers</div></div>
+        <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#A855F7">${totalAppts}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Appointments</div></div>
+        <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#0F182D">${rows.length}</div><div style="font-size:11px;color:#64748b;margin-top:2px">CLRs submitted</div></div>
+      </div>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+        <thead>
+          <tr style="background:#f8fafc">
+            <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">CLR</th>
+            <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Calls</th>
+            <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Xfers</th>
+            <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Appts</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Notes</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center">
+        This digest is sent once daily. Each CLR also receives their own full report immediately on submission.
+      </p>`;
+
+    const subject = `EOD Team Digest — ${todayPT} (${rows.length} CLR${rows.length !== 1 ? "s" : ""})`;
+    const html = buildEmail({ subject, preheader: `${totalCalls} calls · ${totalXfers} transfers · ${totalAppts} appointments — ${rows.length} CLRs submitted`, body });
+    await sendEmail({ to: managers, subject, html });
+    console.log(`[eod-digest] sent to ${managers.length} managers covering ${rows.length} submissions`);
+  } catch (e: any) {
+    console.error("[eod-digest] cron error:", e?.message ?? e);
+  }
+});
+
+// Chat email throttle — suppress flood of per-message emails during active chat sessions.
+// We send at most one email per CHAT_EMAIL_THROTTLE_MS window.
+let lastChatEmailAt = 0;
+const CHAT_EMAIL_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── One-time cleanup: scrub LO credentials accidentally saved as the
   // masked bullet placeholder. Earlier versions of the edit form could
@@ -5356,6 +5443,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         });
       }
       sendPushToUsers(allUsers.map((u: any) => u.id), pushPayload).catch(() => {});
+
+      // Email notification — throttled to one per 15-minute window to avoid flooding
+      // CLRs during an active chat session. Uses the module-level lastChatEmailAt guard.
+      const nowMs = Date.now();
+      if (nowMs - lastChatEmailAt > CHAT_EMAIL_THROTTLE_MS) {
+        lastChatEmailAt = nowMs;
+        const emailTargets = allUsers.filter((u: any) => u.email && String(u.email).includes("@"));
+        if (emailTargets.length > 0) {
+          const toAddrs: string[] = emailTargets.map((u: any) => u.email);
+          const htmlEsc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const snippet = trimmed.length > 500 ? trimmed.slice(0, 500) + "…" : trimmed;
+          const body = `
+            <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
+              <strong>${htmlEsc(senderName)}</strong> sent a message in Team Chat:
+            </p>
+            <div style="background:#f8fafc;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
+              <p style="margin:0;font-size:14px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(snippet)}</p>
+            </div>
+            <p style="margin:0;font-size:13px;color:#64748b">
+              <a href="https://www.westcapitallending.center/#/chat" style="color:#1A2B4A;font-weight:600;text-decoration:none">Open Team Chat →</a>
+            </p>`;
+          const subject = `💬 ${senderName} in Team Chat`;
+          const html = buildEmail({ subject, preheader: preview, body });
+          sendEmail({ to: toAddrs, subject, html }).catch((err: any) =>
+            console.error("[chat-email] send failed:", err?.message ?? err)
+          );
+        }
+      }
     } catch (e) { console.error("chat notify failed:", e); }
 
     res.json({ message: msg });
@@ -6882,8 +6997,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const clrName = clrUser?.name ?? `User #${userId}`;
       const clrEmail = clrUser?.email ?? null;
 
-      // Build recipient list: managers + CLR themselves
-      const allRecipients = [...new Set([...managers, ...(clrEmail ? [clrEmail] : [])])];
+      // Immediate email goes only to the CLR themselves.
+      // Managers receive one consolidated digest at end of day via the daily cron.
+      const allRecipients = clrEmail ? [clrEmail] : [];
 
       if (allRecipients.length > 0) {
         const calls = Number(callsMade ?? 0);
@@ -8531,6 +8647,30 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         u.isActive && u.id !== userId && (u.orgId ?? 1) === orgId
       );
       sendPushToUsers(pushTargets.map((u: any) => u.id), pushPayload).catch(() => {});
+
+      // Email all active CLRs when a new forum question is posted
+      const emailTargetsForum = pushTargets.filter((u: any) => u.email && String(u.email).includes("@"));
+      if (emailTargetsForum.length > 0) {
+        const toAddrsForum: string[] = emailTargetsForum.map((u: any) => u.email);
+        const htmlEsc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const bodySnippet = post.body ? (post.body.length > 300 ? post.body.slice(0, 297) + "…" : post.body) : "";
+        const forumBody = `
+          <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
+            <strong>${htmlEsc(authorName)}</strong> posted a new question in the Forum:
+          </p>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0 0 8px;font-size:15px;font-weight:700;color:#1A2B4A">${htmlEsc(post.title)}</p>
+            ${bodySnippet ? `<p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(bodySnippet)}</p>` : ""}
+          </div>
+          <p style="margin:0;font-size:13px;color:#64748b">
+            <a href="https://www.westcapitallending.center/#/forum" style="color:#1A2B4A;font-weight:600;text-decoration:none">View and answer in the Forum →</a>
+          </p>`;
+        const forumSubject = `❓ ${authorName} asked: ${post.title}`;
+        const forumHtml = buildEmail({ subject: forumSubject, preheader: bodySnippet, body: forumBody });
+        sendEmail({ to: toAddrsForum, subject: forumSubject, html: forumHtml }).catch((err: any) =>
+          console.error("[forum-email] send failed:", err?.message ?? err)
+        );
+      }
     } catch (e) { console.error("forum notify failed:", e); }
     res.json({ post });
   });
@@ -8607,6 +8747,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         });
       }
       sendPushToUsers(subscriberIds, pushPayload).catch(() => {});
+
+      // Email subscribers who have a valid email address
+      if (subscriberIds.length > 0) {
+        const allUsersForAnswerEmail = storage.getUsers() as any[];
+        const subscriberEmails = allUsersForAnswerEmail
+          .filter((u: any) => subscriberIds.includes(u.id) && u.email && String(u.email).includes("@"))
+          .map((u: any) => u.email);
+        if (subscriberEmails.length > 0) {
+          const htmlEsc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const bodySnippet = body.length > 300 ? body.slice(0, 297) + "…" : body;
+          const answerBody = `
+            <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
+              <strong>${htmlEsc(authorName)}</strong> answered a question you're following:
+            </p>
+            <p style="margin:0 0 12px;font-size:14px;font-weight:700;color:#1A2B4A">${htmlEsc(post.title)}</p>
+            <div style="background:#f8fafc;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
+              <p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(bodySnippet)}</p>
+            </div>
+            <p style="margin:0;font-size:13px;color:#64748b">
+              <a href="https://www.westcapitallending.center/#/forum" style="color:#1A2B4A;font-weight:600;text-decoration:none">View the full answer →</a>
+            </p>`;
+          const answerSubject = `✅ New answer on: ${post.title}`;
+          const answerHtml = buildEmail({ subject: answerSubject, preheader: `${authorName} answered your question`, body: answerBody });
+          sendEmail({ to: subscriberEmails, subject: answerSubject, html: answerHtml }).catch((err: any) =>
+            console.error("[forum-answer-email] send failed:", err?.message ?? err)
+          );
+        }
+      }
     } catch (e) { console.error("forum subscriber notify failed:", e); }
     res.json({ answer });
   });
