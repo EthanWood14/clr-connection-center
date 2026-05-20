@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
@@ -375,52 +375,17 @@ export function AppSidebar() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  // Hover-expand behavior (desktop): icon-rail by default; opens on hover.
-  // We debounce open/close by 120ms so that accidental mouse brushes don't
-  // trigger a re-render of the entire sidebar tree (50+ menu items).
-  // We also short-circuit when the state already matches the desired value.
-  const { setOpen, open, isMobile, state } = useSidebar();
-  const hoverTimer = useRef<number | null>(null);
-  const clearHoverTimer = useCallback(() => {
-    if (hoverTimer.current !== null) {
-      window.clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-  }, []);
-  const handleEnter = useCallback(() => {
-    if (isMobile || open) return;
-    clearHoverTimer();
-    hoverTimer.current = window.setTimeout(() => setOpen(true), 120);
-  }, [isMobile, open, setOpen, clearHoverTimer]);
-  const handleLeave = useCallback(() => {
-    if (isMobile || !open) return;
-    clearHoverTimer();
-    hoverTimer.current = window.setTimeout(() => setOpen(false), 200);
-  }, [isMobile, open, setOpen, clearHoverTimer]);
-  useEffect(() => clearHoverTimer, [clearHoverTimer]);
-  // When the rail is collapsed (icon-only), always show the advanced groups as
-  // icons so the user can reach them. The Advanced Settings toggle is hidden
-  // in collapsed mode (no room for the label and chevron).
-  const showAdvanced = advancedOpen || state === "collapsed";
+  const { isMobile, state } = useSidebar();
+  const showAdvanced = advancedOpen;
 
   return (
-    <div onMouseEnter={handleEnter} onMouseLeave={handleLeave} className="contents">
-    <Sidebar collapsible="icon" className="glass-rail [&_[data-sidebar=sidebar]]:bg-transparent [&_[data-sidebar=sidebar]]:border-0">
+    <Sidebar collapsible="offcanvas" className="glass-rail [&_[data-sidebar=sidebar]]:bg-transparent [&_[data-sidebar=sidebar]]:border-0">
       <SidebarHeader className="px-3 py-4 border-b border-sidebar-border">
-        {/* Logo SVG is dark navy on dark navy bg; brighten it to cream/gold via CSS filter
-           so it reads as a single-tone glyph on the obsidian sidebar. */}
         <img
           src="/logo-menu.svg"
-          className="h-9 w-auto self-start pl-1 group-data-[collapsible=icon]:hidden"
+          className="h-9 w-auto self-start pl-1"
           style={{ filter: 'brightness(0) saturate(100%) invert(85%) sepia(28%) saturate(541%) hue-rotate(2deg) brightness(96%) contrast(89%)' }}
           alt="CLR Connection Center"
-        />
-        <img
-          src="/logo-menu.svg"
-          className="hidden group-data-[collapsible=icon]:block h-8 w-8 object-contain mx-auto"
-          style={{ filter: 'brightness(0) saturate(100%) invert(85%) sepia(28%) saturate(541%) hue-rotate(2deg) brightness(96%) contrast(89%)' }}
-          alt=""
-          aria-hidden
         />
       </SidebarHeader>
 
@@ -459,7 +424,7 @@ export function AppSidebar() {
            Hidden entirely when the rail is in icon-only mode (the underlying
            groups still render below when advancedOpen is true, and their items
            show as icons in the rail). */}
-        <SidebarGroup className="mt-3 group-data-[collapsible=icon]:hidden">
+        <SidebarGroup className="mt-3">
           <button
             type="button"
             onClick={() => setAdvancedOpen(o => !o)}
@@ -573,6 +538,5 @@ export function AppSidebar() {
         </div>
       </SidebarFooter>
     </Sidebar>
-    </div>
   );
 }

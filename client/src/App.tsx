@@ -207,7 +207,6 @@ function AuthenticatedApp() {
 
   const style = {
     "--sidebar-width": "15rem",
-    "--sidebar-width-icon": "3.5rem",
   };
 
   return (
