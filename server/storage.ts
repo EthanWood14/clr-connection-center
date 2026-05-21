@@ -2561,11 +2561,22 @@ try {
 // Seed Ethan's real WCL script — runs once via migrations_applied table
 function seedEthanScript() {
   sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
-  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v3'`).get();
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v4'`).get();
   if (done) return;
 
-  // Wipe any previous version of this script
-  sqlite.exec(`DELETE FROM script_responses; DELETE FROM script_nodes; DELETE FROM call_scripts;`);
+  // Wipe only the default (shared) script — owner_id IS NULL. Personal CLR copies
+  // have owner_id set and are deliberately preserved across upgrades.
+  sqlite.exec(`
+    DELETE FROM script_responses WHERE node_id IN (
+      SELECT sn.id FROM script_nodes sn
+      JOIN call_scripts cs ON cs.id = sn.script_id
+      WHERE cs.owner_id IS NULL
+    );
+    DELETE FROM script_nodes WHERE script_id IN (
+      SELECT id FROM call_scripts WHERE owner_id IS NULL
+    );
+    DELETE FROM call_scripts WHERE owner_id IS NULL;
+  `);
 
   const node = (scriptId: number, parentId: number | null, text: string, hint: string, order: number) =>
     sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`)
@@ -2577,7 +2588,7 @@ function seedEthanScript() {
 
   // ── Script ────────────────────────────────────────────────────────────────
   const sid = sqlite.prepare(`INSERT INTO call_scripts (name, description, created_by) VALUES (?,?,?)`)
-    .run("WCL Cold Call Script v2", "West Capital Lending official CLR script — comprehensive refi/HELOC/cash-out lead handling.", 1)
+    .run("WCL Cold Call Script v4", "West Capital Lending official CLR script — comprehensive refi/HELOC/cash-out lead handling with gatekeeper, denial history, and intent-to-move paths.", 1)
     .lastInsertRowid as number;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -2892,8 +2903,47 @@ function seedEthanScript() {
   resp(nBusy, "Set callback", "blue", nAppointment, 1);
   resp(nBusy, "Remove", "gray", null, 2);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // GATEKEEPER — someone other than the borrower picks up
+  // ══════════════════════════════════════════════════════════════════════════
+  const nGatekeeper = node(sid, nOpen,
+    `Hi there — I was hoping to reach [Borrower Name]. Is [he/she/they] available by chance?\n\n[IF AVAILABLE IN A MOMENT]: "Absolutely — I'll hold for just a second."\n\n[IF NOT AVAILABLE]: "No problem! This is [Your Name] calling from West Capital Lending — we had a request come in under [Borrower Name]'s name regarding their home, and I just wanted to make sure someone followed up. Do you know the best time to reach [him/her/them], or would it be alright if I tried back a little later today?"`,
+    `Stay warm, brief, and respectful. Never try to explain the loan to a gatekeeper — your only goal is to find out when to reach the borrower, or get a callback number if different. If the gatekeeper seems like a spouse who's involved in financial decisions, you can gently say: "If it's something you're both involved in, I'm happy to call when you're both available."`,
+    14);
+
+  resp(nOpen, "Gatekeeper / wrong person", "yellow", nGatekeeper, 14);
+  resp(nGatekeeper, "Transferring borrower now", "green", nGoalDisc, 1);
+  resp(nGatekeeper, "Scheduled callback", "blue", nAppointment, 2);
+  resp(nGatekeeper, "Try again later", "gray", null, 3);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // OBJECTION: PREVIOUSLY DENIED / TRIED BEFORE AND IT DIDN'T WORK
+  // ══════════════════════════════════════════════════════════════════════════
+  const nDenied = node(sid, nOpen,
+    `I'm really sorry to hear that — that's a frustrating experience, and it's unfortunately more common than it should be.\n\nCan I ask — do you know what the reason for the denial was? Was it:\nA) Credit score — lender required higher than you had?\nB) Equity — they said the LTV was too high?\nC) Income or debt-to-income — your monthly obligations were too high?\nD) Property type or condition?\n\nThe reason I ask is — we work with 150+ lenders including many that specialize in exactly those scenarios. A denial from one lender doesn't mean all lenders will say the same thing. Our LOs run this every day, and they often find a path where someone else couldn't.\n\nEven if we can't help you today, the least we can do is tell you exactly why and what would need to change. Would that be worth a quick conversation?`,
+    `"Was denied" = warm lead who has high intent but low confidence. Your job: restore confidence by explaining the broker difference (access to many lenders, not one). Key: identify the denial reason first — then the LO can address it directly. Don't promise miracles but do promise clarity. A soft pull costs nothing and tells you exactly where you stand.`,
+    15);
+
+  resp(nOpen, "Was denied before", "yellow", nDenied, 15);
+  resp(nDenied, "Wants to try again", "green", nGoalDisc, 1);
+  resp(nDenied, "Doubtful but open", "yellow", nAppointment, 2);
+  resp(nDenied, "Gave up / not interested", "gray", null, 3);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // OBJECTION: PLANNING TO SELL / MOVE SOON
+  // ══════════════════════════════════════════════════════════════════════════
+  const nMovingSoon = node(sid, nOpen,
+    `Oh interesting — when are you thinking of listing, roughly?\n\n[IF 0–3 MONTHS]: "Got it — honestly, with that short a timeline, a new mortgage product probably doesn't make sense for you. But I do want to make sure you're set up to maximize what you walk away with. Our LOs work with buyers in your area constantly and they know which markets are moving fast right now. Would it be helpful to get a quick market pulse from someone who's in these transactions every day?"\n\n[IF 4–12 MONTHS]: "That's actually a sweet spot where a cash-out refi or HELOC could make a lot of sense — using your equity to fund repairs, staging, or even a down payment on the new place before you sell. It's more common than people think. Would you be open to hearing how that works?"`,
+    `Timeline is everything here. Under 3 months = no mortgage product makes sense — pivot to relationship building and referral to real estate contacts. 4–12 months = cash-out or HELOC can fund pre-sale improvements or a bridge strategy. Ask about their target home to understand if there's a purchase-side opportunity. Never push a product that won't close before they sell.`,
+    16);
+
+  resp(nOpen, "Planning to sell / move", "yellow", nMovingSoon, 16);
+  resp(nMovingSoon, "Open to cash-out before selling", "green", nQualHeloc, 1);
+  resp(nMovingSoon, "Just selling — no product needed", "gray", null, 2);
+  resp(nMovingSoon, "Interested in purchase loan", "blue", nAppointment, 3);
+
   sqlite.prepare(`INSERT INTO migrations_applied (name, applied_at) VALUES (?, datetime('now'))`)
-    .run('ethan_wcl_script_v3');
+    .run('ethan_wcl_script_v4');
 }
 seedEthanScript();
 

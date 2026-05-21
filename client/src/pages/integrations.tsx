@@ -389,8 +389,8 @@ export default function IntegrationsPage() {
       <p className="text-sm text-muted-foreground">
         Connect external software to the CLR Connection Center. CLRs are matched by phone number (primary) then name (fallback). Make sure each CLR has their phone number set in their profile.
       </p>
-      <InfoBanner storageKey="integrations_status" variant="info" title="Integration Status">
-        Webhooks for Bonzo and Mojo are live and ready to receive real-time events. To activate full data sync, configure your credentials below. Zapier support is built in for Mojo — paste your Zapier webhook URL to enable outbound triggers.
+      <InfoBanner storageKey="integrations_legacy_notice_v2" variant="warning" title="Setup required before these integrations will work">
+        These integrations use older infrastructure that must be manually configured. Webhooks will silently drop all events until credentials are entered and saved below. If you haven't already: (1) paste the webhook URL into Bonzo or Mojo, (2) enter the matching secret/API key here, and (3) click Save. Nothing is active out of the box.
       </InfoBanner>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
