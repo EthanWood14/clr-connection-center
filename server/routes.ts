@@ -1610,7 +1610,7 @@ function buildEodReminderHtml({
               </td>
             </tr>
           </table>
-          <a href="${appUrl}/#/eod-report" style="display:inline-block;background:#1A2B4A;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px">
+          <a href="${appUrl}/#/eod-report?date=${reportDate}" style="display:inline-block;background:#1A2B4A;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px">
             Submit EOD Report →
           </a>
           <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;line-height:1.5">

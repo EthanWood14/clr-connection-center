@@ -38,6 +38,8 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
   // Always allow the EOD Report tab through so the user can unlock themselves.
   if (location === "/eod-report") return <>{children}</>;
 
+  const oldestMissing = data.missingDates[0];
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/95 backdrop-blur-sm">
       <div className="max-w-md w-full rounded-xl border-2 border-amber-500/60 bg-card shadow-2xl">
@@ -50,27 +52,36 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
           </div>
 
           <p className="text-sm text-muted-foreground">
-            You haven't submitted your EOD report for the following day{data.missingDates.length === 1 ? "" : "s"}:
+            You haven&apos;t submitted your EOD report for the following day{data.missingDates.length === 1 ? "" : "s"}:
           </p>
 
-          <ul className="rounded-lg border bg-muted/40 divide-y">
+          <ul className="rounded-lg border bg-muted/40 divide-y overflow-hidden">
             {data.missingDates.map((d) => (
-              <li key={d} className="px-3 py-2 text-sm font-medium tabular-nums">
-                {formatDate(d)}
+              <li key={d}>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/eod-report?date=${d}`)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium tabular-nums hover:bg-muted/70 transition-colors"
+                >
+                  <span>{formatDate(d)}</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
               </li>
             ))}
           </ul>
 
           <p className="text-sm text-muted-foreground">
-            Please submit your missing report{data.missingDates.length === 1 ? "" : "s"} to restore access to the rest of the app.
+            {data.missingDates.length === 1
+              ? "Click the date above to fill out that day's report."
+              : "Click any date above to jump to that day. Start with the oldest."}
           </p>
 
           <Button
-            onClick={() => navigate("/eod-report")}
+            onClick={() => navigate(`/eod-report?date=${oldestMissing}`)}
             className="w-full gap-2"
             size="lg"
           >
-            Go to EOD Report
+            Go to {data.missingDates.length === 1 ? "EOD Report" : "Oldest Missing Report"}
             <ArrowRight className="w-4 h-4" />
           </Button>
         </div>
