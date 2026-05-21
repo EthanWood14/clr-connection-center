@@ -2566,17 +2566,20 @@ function seedEthanScript() {
 
   // Wipe only the default (shared) script — owner_id IS NULL. Personal CLR copies
   // have owner_id set and are deliberately preserved across upgrades.
-  sqlite.exec(`
+  // Use individual prepare/run rather than exec() to ensure subquery support.
+  sqlite.prepare(`
     DELETE FROM script_responses WHERE node_id IN (
       SELECT sn.id FROM script_nodes sn
       JOIN call_scripts cs ON cs.id = sn.script_id
       WHERE cs.owner_id IS NULL
-    );
+    )
+  `).run();
+  sqlite.prepare(`
     DELETE FROM script_nodes WHERE script_id IN (
       SELECT id FROM call_scripts WHERE owner_id IS NULL
-    );
-    DELETE FROM call_scripts WHERE owner_id IS NULL;
-  `);
+    )
+  `).run();
+  sqlite.prepare(`DELETE FROM call_scripts WHERE owner_id IS NULL`).run();
 
   const node = (scriptId: number, parentId: number | null, text: string, hint: string, order: number) =>
     sqlite.prepare(`INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`)
@@ -2945,7 +2948,7 @@ function seedEthanScript() {
   sqlite.prepare(`INSERT INTO migrations_applied (name, applied_at) VALUES (?, datetime('now'))`)
     .run('ethan_wcl_script_v4');
 }
-seedEthanScript();
+try { seedEthanScript(); } catch (e: any) { console.error("[seed] seedEthanScript v4 failed:", e?.message ?? e); }
 
 
 // Add owner_id column to existing DBs that don't have it
