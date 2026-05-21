@@ -62,7 +62,21 @@ export default function EodReport() {
   const { toast } = useToast();
   const isAdmin = (user as any)?.isAdmin || (user as any)?.role === 'admin';
   const todayStr = businessTodayClient();
-  const [selectedDate, setSelectedDate] = useState(todayStr);
+  // Honor a ?date=YYYY-MM-DD query param so prompts / reminder emails can
+  // deep-link to a specific missed day instead of dumping the user on today.
+  const initialDate = (() => {
+    try {
+      const hash = typeof window !== "undefined" ? (window.location.hash || "") : "";
+      const qIdx = hash.indexOf("?");
+      if (qIdx >= 0) {
+        const params = new URLSearchParams(hash.slice(qIdx + 1));
+        const d = params.get("date");
+        if (d && d.length === 10 && d[4] === "-" && d[7] === "-") return d;
+      }
+    } catch {}
+    return todayStr;
+  })();
+  const [selectedDate, setSelectedDate] = useState(initialDate);
 
   // Form state — calls + notes + LO coverage
   const [callsMade, setCallsMade] = useState("");
