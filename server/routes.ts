@@ -1757,10 +1757,10 @@ cron.schedule("0 9 * * 1-5", async () => {
 });
 
 // ── EOD Manager Digest ────────────────────────────────────────────────────────
-// Cron: daily at 10:30 PM UTC (≈ 2:30 PM PT / 5:30 PM ET) on weekdays.
+// Cron: daily at 6:30 PM Pacific time (DST-aware via timezone option) on weekdays.
 // Sends ONE digest email to managers covering all EOD submissions that day.
 // Individual CLRs already get their own copy immediately on submission.
-cron.schedule("30 22 * * 1-5", async () => {
+cron.schedule("30 18 * * 1-5", async () => {
   try {
     console.log("[eod-digest] daily manager digest running...");
     const db = storageExtra.getRawSqlite();
@@ -1836,7 +1836,7 @@ cron.schedule("30 22 * * 1-5", async () => {
   } catch (e: any) {
     console.error("[eod-digest] cron error:", e?.message ?? e);
   }
-});
+}, { timezone: "America/Los_Angeles" });
 
 // Chat email throttle — suppress flood of per-message emails during active chat sessions.
 // We send at most one email per CHAT_EMAIL_THROTTLE_MS window.
