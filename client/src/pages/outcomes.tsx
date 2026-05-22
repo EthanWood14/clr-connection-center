@@ -19,11 +19,28 @@ import {
   Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck,
   ChevronLeft, ChevronRight, Check,
   ArrowRightLeft, CalendarPlus, PhoneCall, Hourglass, AlertTriangle,
-  PhoneOff, ThumbsDown, PhoneMissed, HelpCircle, ArrowLeft,
+  PhoneOff, ThumbsDown, PhoneMissed, HelpCircle, ArrowLeft, Info,
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+
+// Compliance reminder displayed above every CLR-facing notes textarea.
+// CLRs should describe the conversation (rapport, objections, lead's vibe),
+// NOT loan-level facts (rates, balances, income, SSN, etc.). Loan data
+// belongs in the LO's system once the lead is handed off.
+function NotesPolicyNote() {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+      <Info className="h-4 w-4 mt-0.5 shrink-0" />
+      <span>
+        <strong>Summarize the conversation only.</strong>{" "}
+        Do not enter loan details (rate, balance, income, SSN, property value, etc.) —
+        just capture what the lead said, their vibe, and any objections.
+      </span>
+    </div>
+  );
+}
 
 const OUTCOME_TYPES = [
   "transfer", "appointment", "callback_requested", "deferral", "fell_through",
@@ -568,7 +585,8 @@ function OutcomeFormDialog({
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Notes</FormLabel>
-                  <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-outcome-notes" /></FormControl>
+                  <NotesPolicyNote />
+                  <FormControl><Textarea {...field} rows={2} placeholder="Summary of the conversation — not loan details…" data-testid="textarea-outcome-notes" /></FormControl>
                 </FormItem>
               )} />
             )}
@@ -579,6 +597,7 @@ function OutcomeFormDialog({
           {isTransfer && step === 2 && (
             <>
               <p className="text-sm font-semibold text-foreground">Conversation Notes</p>
+              <NotesPolicyNote />
               <FormField control={form.control} name="conversationNotes" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Summary of conversation with lead</FormLabel>
@@ -997,7 +1016,8 @@ function EditOutcomeDialog({
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem>
                 <FormLabel>Notes</FormLabel>
-                <FormControl><Textarea {...field} rows={2} placeholder="Any notes…" data-testid="textarea-edit-notes" /></FormControl>
+                <NotesPolicyNote />
+                <FormControl><Textarea {...field} rows={2} placeholder="Summary of the conversation — not loan details…" data-testid="textarea-edit-notes" /></FormControl>
               </FormItem>
             )} />
             {isTransfer && (
