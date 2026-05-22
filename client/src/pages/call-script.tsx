@@ -2171,7 +2171,7 @@ export default function CallScriptPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reset to Default Script?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete your personal script and restore the default WCL script. You can always customize it again later.
+              This will permanently delete your personal script and restore the default team script. You can always customize it again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

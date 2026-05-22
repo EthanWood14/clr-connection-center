@@ -40,7 +40,7 @@ export function AppFooter() {
               className="h-7 object-contain object-left opacity-80 dark:brightness-0 dark:invert"
             />
             <p className="leading-relaxed text-[11px]">
-              CLR Connection Center is a proprietary internal platform built for WCL Team members.
+              CLR Connection Center is a proprietary internal platform built for WCL Team: Team Members Only.
             </p>
             <div className="flex flex-col gap-1">
               <a
@@ -109,7 +109,7 @@ export function AppFooter() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
               >
-                WCL Team <ExternalLink className="w-3 h-3" />
+                WCL Team: Team Members Only <ExternalLink className="w-3 h-3" />
               </a>
             </div>
           </div>
@@ -118,7 +118,7 @@ export function AppFooter() {
         {/* Bottom bar */}
         <div className="border-t pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-muted-foreground/70">
           <p>
-            © 2026 WCL Team · Team Members Only. CLR Connection Center is proprietary software developed by{" "}
+            © 2026 WCL Team: Team Members Only. CLR Connection Center is proprietary software developed by{" "}
             <span className="text-muted-foreground">Chris Redoble &amp; Ethan Wood</span>.
             Unauthorized use, reproduction, or distribution is strictly prohibited.
           </p>

@@ -98,7 +98,7 @@ export function SplashScreen() {
           position: "relative", zIndex: 1,
         }}
       >
-        WCL Team
+        WCL Team: Team Members Only
       </div>
 
       {/* Bottom progress bar */}

@@ -802,7 +802,7 @@ export default function EodReport() {
 
       {/* Print-only footer */}
       <div className="print-only print-footer">
-        WCL Team · CLR Connection Center · Generated {new Date().toLocaleString()}
+        WCL Team: Team Members Only · CLR Connection Center · Generated {new Date().toLocaleString()}
       </div>
     </div>
   );

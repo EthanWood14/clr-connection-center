@@ -83,7 +83,7 @@ export default function Login() {
               style={{ filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.35))" }}
             />
             <div className="text-blue-100/90 text-[10px] uppercase tracking-[0.32em] font-semibold mb-2">
-              WCL Team
+              WCL Team: Team Members Only
             </div>
             <div className="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-full px-3 py-1 mb-3">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -236,7 +236,7 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-4">
-          © {new Date().getFullYear()} WCL Team · Team Members Only
+          © {new Date().getFullYear()} WCL Team: Team Members Only
         </p>
       </div>
 
