@@ -102,7 +102,7 @@ export default function InstallPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">CLR Connection Center</h1>
-            <p className="text-white/60 text-sm mt-0.5">West Capital Lending</p>
+            <p className="text-white/60 text-sm mt-0.5">WCL Team</p>
           </div>
         </div>
         <p className="text-white/80 text-sm leading-relaxed mb-6">
@@ -271,8 +271,8 @@ export default function InstallPage() {
 
       {/* Footer note */}
       <p className="text-xs text-muted-foreground text-center pb-2">
-        The CLR Connection Center PWA was developed for the West Capital Lending branch office use only.
-        © 2026 West Capital Lending · Built by Chris Redoble & Ethan Wood
+        The CLR Connection Center PWA was developed for the WCL Team members only.
+        © 2026 WCL Team · Built by Chris Redoble & Ethan Wood
       </p>
     </div>
   );

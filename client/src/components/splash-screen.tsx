@@ -98,7 +98,7 @@ export function SplashScreen() {
           position: "relative", zIndex: 1,
         }}
       >
-        West Capital Lending
+        WCL Team
       </div>
 
       {/* Bottom progress bar */}

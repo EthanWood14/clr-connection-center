@@ -802,7 +802,7 @@ export default function EodReport() {
 
       {/* Print-only footer */}
       <div className="print-only print-footer">
-        West Capital Lending · CLR Connection Center · Generated {new Date().toLocaleString()}
+        WCL Team · CLR Connection Center · Generated {new Date().toLocaleString()}
       </div>
     </div>
   );

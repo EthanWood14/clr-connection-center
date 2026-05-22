@@ -60,7 +60,7 @@ const documents: DocCard[] = [
     title: "Why CLR Connection Center?",
     pages: "10 pages",
     description:
-      "Understand the problems this platform solves, the business case, and the ROI for West Capital Lending.",
+      "Understand the problems this platform solves, the business case, and the ROI for the WCL Team.",
     href: "/docs/value-prop.pdf",
   },
   {
@@ -333,7 +333,7 @@ export default function Support() {
 
         {/* Footer note */}
         <p className="text-center text-xs text-muted-foreground pt-4">
-          CLR Connection Center · Built by Chris Redoble &amp; Ethan Wood · © 2026 West Capital Lending
+          CLR Connection Center · Built by Chris Redoble &amp; Ethan Wood · © 2026 WCL Team
         </p>
       </div>
     </div>

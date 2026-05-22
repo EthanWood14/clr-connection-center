@@ -179,7 +179,7 @@ export default function ResetPassword() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-4">
-          © {new Date().getFullYear()} West Capital Lending, Inc. · Internal use only
+          © {new Date().getFullYear()} WCL Team · Team Members Only
         </p>
       </div>
     </div>
