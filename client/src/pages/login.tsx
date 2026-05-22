@@ -82,8 +82,12 @@ export default function Login() {
               className="w-[200px] max-w-full h-auto mb-3"
               style={{ filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.35))" }}
             />
-            <div className="text-blue-100/90 text-[10px] uppercase tracking-[0.32em] font-semibold mb-3">
+            <div className="text-blue-100/90 text-[10px] uppercase tracking-[0.32em] font-semibold mb-2">
               West Capital Lending
+            </div>
+            <div className="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-full px-3 py-1 mb-3">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-white/90">Team Members Only</span>
             </div>
             <p className="text-blue-100 text-sm leading-relaxed">
               Your daily command center for CLR assignments, LO management, and transfer tracking.
@@ -97,7 +101,7 @@ export default function Login() {
           style={shake ? { animation: "shake 0.5s ease-in-out" } : {}}
         >
           <h2 className="text-xl font-bold text-[#1A2B4A] mb-1">Welcome back</h2>
-          <p className="text-slate-500 text-sm mb-6">Sign in to access your dashboard.</p>
+          <p className="text-slate-500 text-sm mb-6">This platform is for authorized team members only. Sign in to access your dashboard.</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email */}
