@@ -1849,6 +1849,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // round-trip the "••••••••" mask back into storage; the password reveal
   // would then appear broken because the "plaintext" was just bullets.
   try {
+    const sqlite = storageExtra.getRawSqlite();
     const result = sqlite.prepare(`
       UPDATE loan_officers
       SET bonzo_password = CASE WHEN bonzo_password GLOB '•*' AND TRIM(bonzo_password, '•') = '' THEN NULL ELSE bonzo_password END,
