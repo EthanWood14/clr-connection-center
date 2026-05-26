@@ -2130,6 +2130,113 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json({ total: total.c, byType, byDate, placeholder_count: placeholderRows.length });
   });
 
+  // ── LO diagnostic + cleanup (admin / bootstrap-token) ────────────────────
+  // Used to figure out why a given LO is missing from a UI list (state-lookup,
+  // directory, etc.) and to clean up archived/inactive rows that don't have
+  // historical outcomes/assignments tied to them.
+  function isBootstrapOrAdmin(req: any): boolean {
+    const bootstrap = req.headers["x-bootstrap-token"];
+    if (typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917") return true;
+    try {
+      const raw = (req as any).signedCookies?.[COOKIE_NAME];
+      if (!raw) return false;
+      const session = JSON.parse(raw);
+      const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
+      return !!(me && (me.role === "admin" || me.superAdmin));
+    } catch { return false; }
+  }
+
+  app.get("/api/admin/lo-diagnostic", (req: any, res: any) => {
+    if (!isBootstrapOrAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    const sqlite = (storageExtra as any).getRawSqlite();
+    const rows = sqlite.prepare(`
+      SELECT id, full_name, email, internal_status, snooze_until, snooze_reason,
+             licensed_states, priority_tier, nmls_id, created_at, updated_at
+      FROM loan_officers
+      ORDER BY id ASC
+    `).all() as any[];
+    const outcomeCounts = sqlite.prepare(`SELECT lo_id, COUNT(*) AS c FROM lead_outcomes GROUP BY lo_id`).all() as { lo_id: number; c: number }[];
+    const outcomeMap = new Map(outcomeCounts.map(r => [r.lo_id, r.c]));
+    const assignCounts = sqlite.prepare(`SELECT lo_id, COUNT(*) AS c FROM daily_assignments GROUP BY lo_id`).all() as { lo_id: number; c: number }[];
+    const assignMap = new Map(assignCounts.map(r => [r.lo_id, r.c]));
+    const today = new Date().toISOString().split("T")[0];
+    const enriched = rows.map(r => {
+      let states: string[] = [];
+      try { states = JSON.parse(r.licensed_states || "[]"); } catch {}
+      const status = r.internal_status ?? "active";
+      const snoozedActive = !!(r.snooze_until && r.snooze_until >= today);
+      const reasonsHidden: string[] = [];
+      if (status === "archived") reasonsHidden.push("status=archived");
+      if (status === "inactive") reasonsHidden.push("status=inactive");
+      if (snoozedActive) reasonsHidden.push(`snoozed until ${r.snooze_until}`);
+      if (states.length === 0) reasonsHidden.push("no licensed states");
+      return {
+        id: r.id,
+        fullName: r.full_name,
+        email: r.email,
+        status,
+        snoozeUntil: r.snooze_until,
+        snoozeReason: r.snooze_reason,
+        licensedStates: states,
+        stateCount: states.length,
+        priorityTier: r.priority_tier,
+        nmlsId: r.nmls_id,
+        outcomeCount: outcomeMap.get(r.id) ?? 0,
+        assignmentCount: assignMap.get(r.id) ?? 0,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        whyHidden: reasonsHidden,
+        visibleOnStateLookup: reasonsHidden.length === 0,
+      };
+    });
+    return res.json({ total: enriched.length, today, los: enriched });
+  });
+
+  app.post("/api/admin/purge-inactive-los", (req: any, res: any) => {
+    if (!isBootstrapOrAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    const dryRun = req.query.dryRun === "1" || req.body?.dryRun === true;
+    const sqlite = (storageExtra as any).getRawSqlite();
+    try { createBackup('pre-lo-purge'); } catch (e) { console.error('backup failed', e); }
+    const targets = sqlite.prepare(`
+      SELECT id, full_name, internal_status FROM loan_officers
+      WHERE internal_status IN ('archived', 'inactive')
+    `).all() as { id: number; full_name: string; internal_status: string }[];
+    const deleted: { id: number; name: string; status: string }[] = [];
+    const kept: { id: number; name: string; status: string; reason: string; outcomes: number; assignments: number }[] = [];
+    const outcomesStmt = sqlite.prepare(`SELECT COUNT(*) AS c FROM lead_outcomes WHERE lo_id = ?`);
+    const assignStmt = sqlite.prepare(`SELECT COUNT(*) AS c FROM daily_assignments WHERE lo_id = ?`);
+    const availStmt = sqlite.prepare(`DELETE FROM lo_availability WHERE lo_id = ?`);
+    const delStmt = sqlite.prepare(`DELETE FROM loan_officers WHERE id = ?`);
+    const trx = sqlite.transaction(() => {
+      for (const t of targets) {
+        const outcomes = (outcomesStmt.get(t.id) as { c: number }).c;
+        const assignments = (assignStmt.get(t.id) as { c: number }).c;
+        if (outcomes > 0 || assignments > 0) {
+          kept.push({
+            id: t.id, name: t.full_name, status: t.internal_status,
+            reason: "has historical data",
+            outcomes, assignments,
+          });
+          continue;
+        }
+        if (!dryRun) {
+          availStmt.run(t.id);
+          delStmt.run(t.id);
+        }
+        deleted.push({ id: t.id, name: t.full_name, status: t.internal_status });
+      }
+    });
+    trx();
+    return res.json({
+      dryRun,
+      considered: targets.length,
+      deleted_count: deleted.length,
+      kept_count: kept.length,
+      deleted,
+      kept,
+    });
+  });
+
   // ── One-time import v2: Ryan + Randy outcomes ────────────────────────────
   app.post("/api/admin/run-import-v2", async (req: any, res: any) => {
     const bootstrap = req.headers["x-bootstrap-token"];
