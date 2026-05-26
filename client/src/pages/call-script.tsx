@@ -134,14 +134,42 @@ function resolvePlaceholdersPlain(text: string, values: PlaceholderValues): stri
 }
 
 // ─── Color maps ───────────────────────────────────────────────────────────────
+// Tuned for the dark Obsidian shell: stronger borders, deeper backgrounds on
+// the warm/neutral tones so the chips read cleanly without glare. Yellow/amber
+// gets a darker base + ink-dark text so it doesn't shout from a dark panel.
 const BUBBLE_COLORS: Record<string, string> = {
-  green:   "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600",
-  red:     "bg-rose-500 hover:bg-rose-600 text-white border-rose-600",
-  yellow:  "bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500",
-  blue:    "bg-blue-500 hover:bg-blue-600 text-white border-blue-600",
-  gray:    "bg-zinc-400 hover:bg-zinc-500 text-white border-zinc-500",
-  default: "bg-primary hover:bg-primary/90 text-primary-foreground border-primary",
+  green:   "bg-emerald-600/90 hover:bg-emerald-500 text-white border-emerald-400/60 shadow-emerald-900/30",
+  red:     "bg-rose-600/90 hover:bg-rose-500 text-white border-rose-400/60 shadow-rose-900/30",
+  yellow:  "bg-amber-500/90 hover:bg-amber-400 text-amber-950 border-amber-300/70 shadow-amber-900/30",
+  blue:    "bg-sky-600/90 hover:bg-sky-500 text-white border-sky-400/60 shadow-sky-900/30",
+  gray:    "bg-zinc-600/90 hover:bg-zinc-500 text-white border-zinc-400/50 shadow-zinc-900/30",
+  default: "bg-primary hover:bg-primary/90 text-primary-foreground border-primary/70",
 };
+
+// Order chips by intent so positive choices read first on the left and dead-ends
+// fall to the end. Color is the proxy for sentiment (green > blue > default >
+// yellow > gray > red).
+const SENTIMENT_RANK: Record<string, number> = {
+  green: 0,
+  blue: 1,
+  default: 2,
+  yellow: 3,
+  gray: 4,
+  red: 5,
+};
+
+// Map a keyboard event to a 1-based chip index. 1-9 are direct number keys,
+// 10-18 are Shift+1..9 so CLRs with large response sets can still drive the
+// script from the keyboard.
+function keyToChipIndex(e: KeyboardEvent): number | null {
+  // Ignore when typing in inputs/textareas.
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || (t as any).isContentEditable)) return null;
+  if (e.metaKey || e.ctrlKey || e.altKey) return null;
+  const n = parseInt(e.key);
+  if (!Number.isFinite(n) || n < 1 || n > 9) return null;
+  return e.shiftKey ? n + 9 : n;
+}
 
 // ─── Transfer Win State ───────────────────────────────────────────────────────
 function TransferWin({ onReset }: { onReset: () => void }) {
@@ -297,15 +325,32 @@ function ScriptRunner({
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
+  // Sort the response chips by sentiment so positive options are first and
+  // dead-ends last. Memoized so keyboard shortcuts and visual order stay in
+  // sync.
+  const orderedResponses = useMemo(() => {
+    if (!currentNode) return [] as ScriptResponse[];
+    return [...currentNode.responses].sort((a, b) => {
+      const ra = SENTIMENT_RANK[a.color] ?? SENTIMENT_RANK.default;
+      const rb = SENTIMENT_RANK[b.color] ?? SENTIMENT_RANK.default;
+      if (ra !== rb) return ra - rb;
+      return (a.response_order ?? 0) - (b.response_order ?? 0);
+    });
+  }, [currentNode]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (ended || !currentNode || selectedLabel) return;
-      const n = parseInt(e.key);
-      if (n >= 1 && n <= currentNode.responses.length) handleResponse(currentNode.responses[n - 1]);
+      const idx = keyToChipIndex(e);
+      if (idx === null) return;
+      if (idx >= 1 && idx <= orderedResponses.length) {
+        e.preventDefault();
+        handleResponse(orderedResponses[idx - 1]);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentNode, ended, selectedLabel]);
+  }, [currentNode, ended, selectedLabel, orderedResponses]);
 
   if (isLoading || !currentNode) return (
     <div className="space-y-4">
@@ -354,19 +399,59 @@ function ScriptRunner({
         </Card>
       </div>
       <div className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">
-          They say… <span className="font-normal normal-case">(press 1–{currentNode.responses.length} to select)</span>
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {currentNode.responses.map((resp, idx) => {
+        <div className="flex items-center justify-between gap-3 px-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            They say…
+            <span className="font-normal normal-case ml-1">
+              (press 1–{Math.min(9, orderedResponses.length)}
+              {orderedResponses.length > 9 && <>, Shift+1–{Math.min(9, orderedResponses.length - 9)} for the rest</>})
+            </span>
+          </p>
+          {orderedResponses.length > 0 && (
+            <div className="hidden md:flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Positive</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" /> Warm</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" /> Hostile</span>
+            </div>
+          )}
+        </div>
+        <div
+          className={`grid gap-2 ${
+            orderedResponses.length <= 2
+              ? "grid-cols-1 sm:grid-cols-2"
+              : orderedResponses.length <= 6
+                ? "grid-cols-2 sm:grid-cols-3"
+                : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
+          }`}
+        >
+          {orderedResponses.map((resp, idx) => {
             const colorClass = BUBBLE_COLORS[resp.color] ?? BUBBLE_COLORS.default;
             const isSelected = selectedLabel === resp.label;
+            const dimmed = selectedLabel && !isSelected;
+            // Keyboard hint: 1-9 are bare digits, 10-18 show ⇧N
+            const keyHint = idx < 9 ? String(idx + 1) : idx < 18 ? `⇧${idx - 8}` : "";
+            const isYellow = resp.color === "yellow";
             return (
-              <button key={resp.id} onClick={() => !selectedLabel && handleResponse(resp)} disabled={!!selectedLabel}
-                className={`relative flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold border transition-all duration-200 shadow-sm ${colorClass} ${isSelected ? "scale-95 opacity-70 ring-2 ring-white/50" : "hover:scale-105 hover:shadow-md active:scale-95"} ${selectedLabel && !isSelected ? "opacity-30" : ""}`}>
-                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold bg-black/20 text-white shrink-0">{idx + 1}</span>
-                {resp.label}
-                {isSelected && <span className="ml-1 text-xs opacity-80">✓</span>}
+              <button
+                key={resp.id}
+                onClick={() => !selectedLabel && handleResponse(resp)}
+                disabled={!!selectedLabel}
+                title={resp.label}
+                className={`relative flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-colors duration-150 shadow-sm text-left ${colorClass} ${
+                  isSelected ? "ring-2 ring-white/60 ring-offset-1 ring-offset-background" : "hover:shadow-md"
+                } ${dimmed ? "opacity-40" : ""}`}
+              >
+                {keyHint && (
+                  <span
+                    className={`inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-md text-[10px] font-bold shrink-0 ${
+                      isYellow ? "bg-amber-950/30 text-amber-950" : "bg-black/30 text-white"
+                    }`}
+                  >
+                    {keyHint}
+                  </span>
+                )}
+                <span className="truncate flex-1">{resp.label}</span>
+                {isSelected && <span className="ml-1 text-xs opacity-80 shrink-0">✓</span>}
               </button>
             );
           })}
