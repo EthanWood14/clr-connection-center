@@ -88,17 +88,18 @@ export default function StateLookup() {
 
   // Treat missing/null internalStatus as "active" so newly-added LOs aren't
   // silently dropped just because the column wasn't filled in. We only
-  // exclude rows explicitly marked archived or inactive.
+  // exclude rows explicitly marked archived or inactive. Snoozed LOs are
+  // still listed here — the State Lookup is about who is *licensed* in a
+  // state, not who is currently in the call rotation; snooze state is
+  // surfaced on the card itself.
   const today = businessTodayClient();
   const activeLOs = useMemo(
     () => allLOs.filter((lo) => {
       const status = lo.internalStatus ?? lo.internal_status ?? "active";
       if (status === "archived" || status === "inactive") return false;
-      const snooze = lo.snoozeUntil ?? lo.snooze_until;
-      if (snooze && snooze >= today) return false;
       return true;
     }),
-    [allLOs, today]
+    [allLOs]
   );
 
   // LOs that pass the active filter but have no licensed states yet. These
@@ -126,7 +127,8 @@ export default function StateLookup() {
     );
   }, [stateSearch]);
 
-  // LOs licensed in selected state (active + not snoozed only)
+  // LOs licensed in selected state (active, archived/inactive excluded).
+  // Snoozed LOs are included but rendered with a Snoozed badge so admins know.
   const licensedLOs = useMemo(() => {
     if (!selectedState) return [];
     return activeLOs.filter((lo) => {
@@ -373,6 +375,11 @@ export default function StateLookup() {
                                   {lo.internalStatus !== "active" && (
                                     <Badge variant="outline" className="text-xs capitalize text-muted-foreground">
                                       {lo.internalStatus}
+                                    </Badge>
+                                  )}
+                                  {(lo.snoozeUntil ?? lo.snooze_until) && ((lo.snoozeUntil ?? lo.snooze_until) >= today) && (
+                                    <Badge variant="outline" className="text-xs border-amber-500/60 text-amber-600 dark:text-amber-400">
+                                      Snoozed until {lo.snoozeUntil ?? lo.snooze_until}
                                     </Badge>
                                   )}
                                 </div>
