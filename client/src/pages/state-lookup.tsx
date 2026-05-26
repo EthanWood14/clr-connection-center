@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight } from "lucide-react";
+import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight, AlertTriangle } from "lucide-react";
+import { Link } from "wouter";
 import { copyToClipboard } from "@/lib/utils";
 import { businessTodayClient } from "@/lib/business-day";
+import { useAuth } from "@/lib/auth";
 import { UsStateTileMap } from "@/components/us-state-tile-map";
 
 const ALL_STATES: { abbr: string; name: string }[] = [
@@ -84,14 +86,37 @@ export default function StateLookup() {
     queryKey: ["/api/loan-officers"],
   });
 
-  // Only active, non-snoozed LOs for lookup
+  // Treat missing/null internalStatus as "active" so newly-added LOs aren't
+  // silently dropped just because the column wasn't filled in. We only
+  // exclude rows explicitly marked archived or inactive.
   const today = businessTodayClient();
   const activeLOs = useMemo(
-    () => allLOs.filter(
-      (lo) => lo.internalStatus === "active" && (!lo.snoozeUntil || lo.snoozeUntil < today)
-    ),
+    () => allLOs.filter((lo) => {
+      const status = lo.internalStatus ?? lo.internal_status ?? "active";
+      if (status === "archived" || status === "inactive") return false;
+      const snooze = lo.snoozeUntil ?? lo.snooze_until;
+      if (snooze && snooze >= today) return false;
+      return true;
+    }),
     [allLOs, today]
   );
+
+  // LOs that pass the active filter but have no licensed states yet. These
+  // would silently fail to match any state click, so we surface them in a
+  // dedicated section instead of hiding them entirely.
+  const unmappedLOs = useMemo(
+    () => activeLOs.filter((lo) => {
+      try {
+        const states: string[] = JSON.parse(lo.licensedStates || "[]");
+        return states.length === 0;
+      } catch { return true; }
+    }),
+    [activeLOs]
+  );
+
+  const { user } = useAuth();
+  const myRole = (user as any)?.role ?? null;
+  const isAdminOrManager = myRole === "admin" || myRole === "manager";
 
   // Filter state list by search
   const filteredStates = useMemo(() => {
@@ -131,7 +156,7 @@ export default function StateLookup() {
       } catch {}
     });
     return map;
-  }, [allLOs]);
+  }, [activeLOs]);
 
   const coverageStats = useMemo(() => {
     const counts = Object.values(coverageMap);
@@ -156,6 +181,29 @@ export default function StateLookup() {
           Find which Loan Officers are licensed in any state.
         </p>
       </div>
+
+      {/* Data-hygiene banner: surface any active LOs that have no licensed
+         states. Admins/managers see a Fix link; CLRs just see a notice. */}
+      {!isLoading && unmappedLOs.length > 0 && (
+        <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-900 dark:text-amber-200">
+              {unmappedLOs.length} loan officer{unmappedLOs.length === 1 ? "" : "s"} {unmappedLOs.length === 1 ? "is" : "are"} missing licensed states
+            </p>
+            <p className="text-amber-900/80 dark:text-amber-200/80 text-xs mt-0.5">
+              They’re listed below under “Needs state licensing”. Until their states are filled in, they won’t appear when you click a state on the map.
+            </p>
+          </div>
+          {isAdminOrManager && (
+            <Link href="/directory">
+              <Button variant="outline" size="sm" className="shrink-0">
+                Open Directory
+              </Button>
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* ── US map: click a state to filter LOs ── */}
       <Card>
@@ -385,6 +433,43 @@ export default function StateLookup() {
           )}
         </div>
       </div>
+
+      {/* Needs state licensing — always visible (when non-empty) so unmapped
+         LOs don’t silently disappear from the Directory → State Lookup link. */}
+      {!isLoading && unmappedLOs.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-300" />
+              Needs state licensing ({unmappedLOs.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-3">
+              These loan officers are active in the directory but have no states selected,
+              so they won’t show up when CLRs click a state on the map. {isAdminOrManager && (
+                <Link href="/directory">
+                  <span className="text-primary underline cursor-pointer">Open Directory</span>
+                </Link>
+              )} to fill in their licenses.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {unmappedLOs.map((lo) => (
+                <div
+                  key={lo.id}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-muted/40 text-xs"
+                >
+                  <User className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="font-medium">{lo.fullName}</span>
+                  {lo.nmlsId && (
+                    <span className="font-mono text-muted-foreground">#{lo.nmlsId}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
