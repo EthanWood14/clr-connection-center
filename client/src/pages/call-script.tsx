@@ -416,13 +416,7 @@ function ScriptRunner({
           )}
         </div>
         <div
-          className={`grid gap-2 ${
-            orderedResponses.length <= 2
-              ? "grid-cols-1 sm:grid-cols-2"
-              : orderedResponses.length <= 6
-                ? "grid-cols-2 sm:grid-cols-3"
-                : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
-          }`}
+          className="grid gap-2 grid-cols-1 sm:grid-cols-2"
         >
           {orderedResponses.map((resp, idx) => {
             const colorClass = BUBBLE_COLORS[resp.color] ?? BUBBLE_COLORS.default;
@@ -437,7 +431,7 @@ function ScriptRunner({
                 onClick={() => !selectedLabel && handleResponse(resp)}
                 disabled={!!selectedLabel}
                 title={resp.label}
-                className={`relative flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-colors duration-150 shadow-sm text-left ${colorClass} ${
+                className={`relative flex items-start gap-2 px-3.5 py-3 min-h-[2.75rem] rounded-xl text-sm font-semibold border transition-colors duration-150 shadow-sm text-left ${colorClass} ${
                   isSelected ? "ring-2 ring-white/60 ring-offset-1 ring-offset-background" : "hover:shadow-md"
                 } ${dimmed ? "opacity-40" : ""}`}
               >
@@ -450,7 +444,7 @@ function ScriptRunner({
                     {keyHint}
                   </span>
                 )}
-                <span className="truncate flex-1">{resp.label}</span>
+                <span className="flex-1 leading-snug break-words">{resp.label}</span>
                 {isSelected && <span className="ml-1 text-xs opacity-80 shrink-0">✓</span>}
               </button>
             );
