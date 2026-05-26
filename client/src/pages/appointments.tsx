@@ -40,6 +40,7 @@ import { format, parseISO } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import {
   CheckCircle2,
+  Phone,
   CalendarClock,
   Clock,
   AlertCircle,
@@ -109,6 +110,7 @@ interface Outcome {
   assistantId: number;
   loId: number;
   borrowerName?: string;
+  phoneNumber?: string | null;
   outcomeType: string;
   journeyId?: string;
   notes?: string;
@@ -464,6 +466,16 @@ function AppointmentCard({
               </span>
               <span><span className="font-medium text-foreground/70">LO:</span> {loName}</span>
               <span><span className="font-medium text-foreground/70">Logged:</span> {outcome.date ? format(parseISO(outcome.date), "MMM d, yyyy") : "—"}</span>
+              {outcome.phoneNumber && (
+                <a
+                  href={`tel:${outcome.phoneNumber}`}
+                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Phone className="w-3 h-3" />
+                  {outcome.phoneNumber}
+                </a>
+              )}
               {outcome.followUpDate && (
                 <span>
                   <span className="font-medium text-foreground/70">Scheduled:</span>{" "}
