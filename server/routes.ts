@@ -934,30 +934,83 @@ async function sendReport(
   interface NoteEntry {
     date: string;
     outcomeType: string;
+    borrowerName: string | null;
     loName: string | null;
     note: string;
+    conversationSummary: string | null;
+    loPlan: string | null;
+    timeframe: string | null;
+    followup: string | null;
   }
+  // Pull notes from every outcome where ANY note-bearing field is filled in
+  // (legacy notes, conversation summary, LO action plan, timeframe, or follow-up
+  // reason). This way the daily EOD report shows the full CLR-side picture, not
+  // just the legacy free-text notes field.
   const clrNotes: Array<{ clrId: number; clrName: string; entries: NoteEntry[] }> = clrs.map((u: any) => {
     const uid = u.id;
     const entries: NoteEntry[] = outcomes
       .filter((o: any) => {
         const aid = o.assistantId ?? o.assistant_id;
-        const n = o.notes;
-        return aid === uid && typeof n === "string" && n.trim().length > 0;
+        if (aid !== uid) return false;
+        const fields = [
+          o.notes,
+          o.conversationNotes ?? o.conversation_notes,
+          o.loActionPlan ?? o.lo_action_plan,
+          o.leadTimeframe ?? o.lead_timeframe,
+          o.followupReason ?? o.followup_reason,
+        ];
+        return fields.some((f) => typeof f === "string" && f.trim().length > 0);
       })
       .map((o: any) => {
         const loId = o.loId ?? o.lo_id;
         const lo = los.find((l: any) => l.id === loId);
         const loName = lo ? ((lo as any).fullName ?? (lo as any).full_name ?? null) : null;
+        const outcomeType = (o.outcomeType ?? o.outcome_type) as string;
+        const showLo = outcomeType === "transfer" || outcomeType === "appointment";
+        const grab = (v: any) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : null);
         return {
           date: (o.date ?? o.report_date) as string,
-          outcomeType: (o.outcomeType ?? o.outcome_type) as string,
-          loName: (o.outcomeType ?? o.outcome_type) === "transfer" || (o.outcomeType ?? o.outcome_type) === "appointment" ? loName : null,
-          note: String(o.notes).trim(),
+          outcomeType,
+          borrowerName: grab(o.borrowerName ?? o.borrower_name),
+          loName: showLo ? loName : null,
+          note: grab(o.notes) ?? "",
+          conversationSummary: grab(o.conversationNotes ?? o.conversation_notes),
+          loPlan: grab(o.loActionPlan ?? o.lo_action_plan),
+          timeframe: grab(o.leadTimeframe ?? o.lead_timeframe),
+          followup: grab(o.followupReason ?? o.followup_reason),
         };
       });
     return { clrId: uid, clrName: u.name, entries };
   }).filter(c => c.entries.length > 0);
+
+  // Render one outcome's notes as a structured block: header line + any
+  // sub-fields the CLR filled in. Single source of truth so daily and weekly
+  // branches stay in sync.
+  const renderNoteEntry = (e: NoteEntry): string => {
+    const headerBits: string[] = [`<strong style="color:#1A2B4A">${formatOutcomeType(e.outcomeType)}</strong>`];
+    if (e.borrowerName) headerBits.push(`<span style="color:#0F182D">${escNote(e.borrowerName)}</span>`);
+    if (e.loName) headerBits.push(`<span style="color:#334155">→ ${escNote(e.loName)}</span>`);
+    const header = headerBits.join(" &middot; ");
+    const subBits: string[] = [];
+    const addSub = (label: string, value: string | null) => {
+      if (!value) return;
+      subBits.push(
+        `<div style="margin:3px 0 0;font-size:12px;color:#475569;line-height:1.5">` +
+        `<span style="font-weight:600;color:#1A2B4A">${label}:</span> ` +
+        `<span style="color:#475569">${escNote(value)}</span>` +
+        `</div>`
+      );
+    };
+    addSub("Summary", e.conversationSummary);
+    addSub("LO plan", e.loPlan);
+    addSub("Timeframe", e.timeframe);
+    addSub("Follow-up", e.followup);
+    if (e.note) addSub("Notes", e.note);
+    return `<li style="margin:0 0 10px;padding:0;list-style:disc;font-size:13px;color:#334155;line-height:1.5">
+      <div>${header}</div>
+      ${subBits.join("")}
+    </li>`;
+  };
 
   let callNotesHtml = "";
   if (clrNotes.length > 0) {
@@ -974,20 +1027,14 @@ async function sendReport(
           const heading = new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-US", {
             weekday: "long", month: "short", day: "numeric", timeZone: "UTC",
           });
-          const items = byDate.get(dateStr)!.map(e => {
-            const loPart = e.loName ? ` &mdash; <span style="color:#334155">${escNote(e.loName)}</span>` : "";
-            return `<li style="margin:0 0 6px;font-size:13px;color:#334155;line-height:1.5">
-              <strong style="color:#1A2B4A">${formatOutcomeType(e.outcomeType)}</strong>${loPart}
-              <span style="color:#64748b;font-style:italic"> &mdash; ${escNote(e.note)}</span>
-            </li>`;
-          }).join("");
+          const items = byDate.get(dateStr)!.map(renderNoteEntry).join("");
           return `<div style="margin:8px 0 4px">
             <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:#475569">${heading}</p>
-            <ul style="margin:0 0 0 16px;padding:0;list-style:disc">${items}</ul>
+            <ul style="margin:0 0 0 18px;padding:0;list-style:disc">${items}</ul>
           </div>`;
         }).join("");
         return `<div style="margin-bottom:${idx < clrNotes.length - 1 ? '18px' : '0'};padding-bottom:${idx < clrNotes.length - 1 ? '14px' : '0'};${idx < clrNotes.length - 1 ? 'border-bottom:1px solid #e2e8f0;' : ''}">
-          <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)}</p>
+          <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)} <span style="font-weight:400;color:#64748b;font-size:12px">— ${c.entries.length} note${c.entries.length !== 1 ? "s" : ""}</span></p>
           ${daysHtml}
         </div>`;
       }).join("");
@@ -1000,21 +1047,15 @@ async function sendReport(
       </div>`;
     } else {
       const clrBlocks = clrNotes.map((c, idx) => {
-        const items = c.entries.map(e => {
-          const loPart = e.loName ? ` &mdash; <span style="color:#334155">${escNote(e.loName)}</span>` : "";
-          return `<li style="margin:0 0 6px;font-size:13px;color:#334155;line-height:1.5">
-            <strong style="color:#1A2B4A">${formatOutcomeType(e.outcomeType)}</strong>${loPart}
-            <span style="color:#64748b;font-style:italic"> &mdash; ${escNote(e.note)}</span>
-          </li>`;
-        }).join("");
+        const items = c.entries.map(renderNoteEntry).join("");
         return `<div style="margin-bottom:${idx < clrNotes.length - 1 ? '14px' : '0'};padding-bottom:${idx < clrNotes.length - 1 ? '12px' : '0'};${idx < clrNotes.length - 1 ? 'border-bottom:1px solid #e2e8f0;' : ''}">
-          <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)}</p>
-          <ul style="margin:0 0 0 16px;padding:0;list-style:disc">${items}</ul>
+          <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#0F182D">${escNote(c.clrName)} <span style="font-weight:400;color:#64748b;font-size:12px">— ${c.entries.length} note${c.entries.length !== 1 ? "s" : ""}</span></p>
+          <ul style="margin:0 0 0 18px;padding:0;list-style:disc">${items}</ul>
         </div>`;
       }).join("");
       callNotesHtml = `
       <div style="margin-top:28px">
-        <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Call Notes</h2>
+        <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Call Notes by CLR</h2>
         <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px">
           ${clrBlocks}
         </div>
