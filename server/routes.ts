@@ -2278,6 +2278,35 @@ export function registerRoutes(httpServer: Server, app: Express) {
     });
   });
 
+  // ── Send a sample report email (bootstrap- or admin-authorized) ──────────
+  app.post("/api/admin/send-report-sample", async (req: any, res: any) => {
+    if (!isBootstrapOrAdmin(req)) return res.status(403).json({ error: "Admin only" });
+    const rawType = req.body?.type;
+    const type: "daily" | "weekly" | "monthly" =
+      rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    const recipients: string[] = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+    const cleaned = recipients
+      .map((r: any) => String(r || "").trim())
+      .filter((r: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r));
+    if (!cleaned.length) return res.status(400).json({ error: "No valid recipients" });
+    try {
+      const startDate = req.body?.startDate;
+      const endDate = req.body?.endDate;
+      const customRange = (startDate && endDate) ? { startDate, endDate } : undefined;
+      const result: any = await sendReport(type, { customRange, recipientsOverride: cleaned });
+      return res.json({
+        ok: true,
+        id: result?.id,
+        recipients: result?.recipients,
+        startDate: result?.startDate,
+        endDate: result?.endDate,
+        type,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message ?? "Unknown error" });
+    }
+  });
+
   // ── One-time import v2: Ryan + Randy outcomes ────────────────────────────
   app.post("/api/admin/run-import-v2", async (req: any, res: any) => {
     const bootstrap = req.headers["x-bootstrap-token"];
