@@ -7175,9 +7175,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const clrName = clrUser?.name ?? `User #${userId}`;
       const clrEmail = clrUser?.email ?? null;
 
-      // Immediate email goes only to the CLR themselves.
-      // Managers receive one consolidated digest at end of day via the daily cron.
-      const allRecipients = clrEmail ? [clrEmail] : [];
+      // Immediate email goes to the CLR themselves.
+      // For late (backdated) submissions the 6:30 PM manager digest already
+      // fired without this data, so also CC managers on late reports.
+      const todayInPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+      const isLateSubmission = reportDate < todayInPT;
+      const managerRecipients: string[] = isLateSubmission
+        ? managers.filter((m: string) => String(m).includes("@"))
+        : [];
+
+      const allRecipients = [
+        ...(clrEmail ? [clrEmail] : []),
+        ...managerRecipients.filter((m: string) => m !== clrEmail),
+      ];
 
       if (allRecipients.length > 0) {
         const calls = Number(callsMade ?? 0);
