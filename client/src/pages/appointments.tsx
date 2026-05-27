@@ -36,7 +36,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, isValid } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import {
   CheckCircle2,
@@ -465,7 +465,7 @@ function AppointmentCard({
                 )}
               </span>
               <span><span className="font-medium text-foreground/70">LO:</span> {loName}</span>
-              <span><span className="font-medium text-foreground/70">Logged:</span> {outcome.date ? format(parseISO(outcome.date), "MMM d, yyyy") : "—"}</span>
+              <span><span className="font-medium text-foreground/70">Logged:</span> {outcome.date && isValid(parseISO(outcome.date)) ? format(parseISO(outcome.date), "MMM d, yyyy") : outcome.date ?? "—"}</span>
               {outcome.phoneNumber && (
                 <a
                   href={`tel:${outcome.phoneNumber}`}
@@ -476,15 +476,15 @@ function AppointmentCard({
                   {outcome.phoneNumber}
                 </a>
               )}
-              {outcome.followUpDate && (
-                <span>
-                  <span className="font-medium text-foreground/70">Scheduled:</span>{" "}
-                  {format(
-                    parseISO(outcome.followUpDate),
-                    outcome.followUpDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy",
-                  )}
-                </span>
-              )}
+              {outcome.followUpDate && (() => {
+                const _d = parseISO(outcome.followUpDate);
+                return isValid(_d) ? (
+                  <span>
+                    <span className="font-medium text-foreground/70">Scheduled:</span>{" "}
+                    {format(_d, outcome.followUpDate.includes("T") ? "MMM d · h:mm a" : "MMM d, yyyy")}
+                  </span>
+                ) : null;
+              })()}
             </div>
 
             {outcome.notes && !expanded && (
