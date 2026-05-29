@@ -1438,6 +1438,20 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'monthly_time')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN monthly_time TEXT NOT NULL DEFAULT '07:00'`);
   }
+  // 2026-05-29: Month-to-date + All-time reports. MTD defaults to fire daily
+  // (no day-of-month constraint); All-time fires once per month on the 1st.
+  if (!emailCols.find(c => c.name === 'mtd_enabled')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN mtd_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!emailCols.find(c => c.name === 'mtd_time')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN mtd_time TEXT NOT NULL DEFAULT '08:00'`);
+  }
+  if (!emailCols.find(c => c.name === 'alltime_enabled')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN alltime_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!emailCols.find(c => c.name === 'alltime_time')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN alltime_time TEXT NOT NULL DEFAULT '07:10'`);
+  }
   // Seed default SMTP credentials (always set if not already a Gmail address)
   const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.smtp_user || !emailKeyRow.smtp_user.includes('@gmail.com')) {
@@ -2240,7 +2254,7 @@ export function updateEmailSettings(data: any) {
 }
 
 // ── Report schedule recipients (per report_type) ─────────────────────────────
-export type ReportType = "daily" | "weekly" | "monthly";
+export type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
 
 function dedupeRecipientList(list: unknown): string[] {
   if (!Array.isArray(list)) return [];

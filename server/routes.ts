@@ -334,10 +334,16 @@ type ReportOptions = {
   clrId?: number;
 };
 
+type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
+
 async function sendReport(
-  type: "daily" | "weekly" | "monthly",
+  type: ReportType,
   opts: ReportOptions = {},
 ) {
+  // Multi-day reports (weekly, MTD, all-time) use a richer layout with
+  // per-day breakdowns and team totals rows. Daily and monthly use the
+  // single-period layout.
+  const isMultiDay = type === "weekly" || type === "mtd" || type === "alltime";
   // Resolve recipients. By default uses email_settings.manager_emails (the
   // "Report Recipients" card on Settings). For ad-hoc historical exports the
   // caller can pass recipientsOverride to send to a specific list (e.g. just
@@ -386,6 +392,20 @@ async function sendReport(
         const startDt = new Date(endDt); startDt.setUTCDate(endDt.getUTCDate() - 6);
         const fmt = (dt: Date) => dt.toISOString().split("T")[0];
         return { startDate: fmt(startDt), endDate: fmt(endDt) };
+      })()
+    : type === "mtd"
+    ? (() => {
+        // Month-to-date: 1st of the current month through business-today
+        const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+        const [y, m] = t.split("-").map(n => parseInt(n, 10));
+        const start = `${y}-${String(m).padStart(2, "0")}-01`;
+        return { startDate: start, endDate: t };
+      })()
+    : type === "alltime"
+    ? (() => {
+        // All-time: from inception through business-today.
+        const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+        return { startDate: "2000-01-01", endDate: t };
       })()
     : getDefaultPeriod();
   const { startDate, endDate } = period;
@@ -569,7 +589,10 @@ async function sendReport(
       r.callbacks > 0 || r.futureContacts > 0 || r.noAnswers > 0,
     );
     if (visibleRows.length === 0) return "";
-    const title = type === "weekly" ? "Weekly Outcome Breakdown" : "Outcome Breakdown";
+    const title = type === "weekly" ? "Weekly Outcome Breakdown"
+      : type === "mtd" ? "Month-to-Date Outcome Breakdown"
+      : type === "alltime" ? "All-Time Outcome Breakdown"
+      : "Outcome Breakdown";
     const cellHead = (label: string) =>
       `<th style="padding:9px 10px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;white-space:nowrap">${label}</th>`;
     const cell = (v: number | string, color = "#334155", bold = false) =>
@@ -589,7 +612,7 @@ async function sendReport(
       </tr>`;
     }).join("");
 
-    const totalsRow = type === "weekly" ? `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
+    const totalsRow = isMultiDay ? `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
       <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Totals</td>
       ${cell(teamCalls, "#0369a1", true)}
       ${cell(teamTransfers, "#1A2B4A", true)}
@@ -624,6 +647,7 @@ async function sendReport(
     </div>`;
   })();
 
+  const todayLabel = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ });
   const subject = type === "weekly"
     ? (() => {
         // "Last Week's Summary — May 4–10" (or May 30–Jun 5 if month rolls over)
@@ -642,7 +666,11 @@ async function sendReport(
           : `${s.month} ${s.day}\u2013${e.month} ${e.day}`;
         return `Last Week's Summary \u2014 ${range}`;
       })()
-    : `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report \u2014 ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ })}`;
+    : type === "mtd"
+    ? `CLR Month-to-Date Report \u2014 ${todayLabel}`
+    : type === "alltime"
+    ? `CLR All-Time Report \u2014 ${todayLabel}`
+    : `CLR ${type.charAt(0).toUpperCase() + type.slice(1)} Report \u2014 ${todayLabel}`;
 
   // Stat card helper — 25% wide (4 cards)
   const statCard = (value: string | number, label: string, color = "#1A2B4A") =>
@@ -793,6 +821,10 @@ async function sendReport(
     <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6">
       ${type === "weekly"
         ? "Here's how the team performed last week."
+        : type === "mtd"
+        ? "Here's how the team is tracking month-to-date."
+        : type === "alltime"
+        ? "Here's the team's all-time performance summary."
         : `Here is the ${type} performance summary for the CLR Connection Center team.`}
       Reporting period: <strong style="color:#1e293b">${startDate}</strong> &rarr; <strong style="color:#1e293b">${endDate}</strong>.
     </p>
@@ -838,7 +870,7 @@ async function sendReport(
     <!-- Divider -->
     <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
 
-    ${type === "weekly" ? `
+    ${isMultiDay ? `
     <!-- Per-day CLR breakdown -->
     <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Daily CLR Activity</h2>
     ${daySections.length > 0 ? perDayHtml : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR activity recorded for this period.</p>`}
@@ -1014,7 +1046,7 @@ async function sendReport(
 
   let callNotesHtml = "";
   if (clrNotes.length > 0) {
-    if (type === "weekly") {
+    if (isMultiDay) {
       const clrBlocks = clrNotes.map((c, idx) => {
         // Group entries by date
         const byDate = new Map<string, NoteEntry[]>();
@@ -1376,7 +1408,7 @@ cron.schedule("0 9 */3 * *", () => {
 //
 // Window guard (added 2026-05-05) — weekly and monthly emails are never sent
 // before 06:00 or after 22:00 local server time, regardless of configuration.
-let lastReportFiredAt: Record<"daily" | "weekly" | "monthly", string> = { daily: "", weekly: "", monthly: "" };
+let lastReportFiredAt: Record<"daily" | "weekly" | "monthly" | "mtd" | "alltime", string> = { daily: "", weekly: "", monthly: "", mtd: "", alltime: "" };
 
 function parseHM(s: string | undefined, fallback: string): { h: number; m: number } {
   const raw = (s || fallback).trim();
@@ -1436,6 +1468,36 @@ cron.schedule("* * * * *", async () => {
       } else if (nowMinutes >= cutoffMin) {
         lastReportFiredAt.monthly = nowDateKey;
         console.log(`[report-cron] monthly skipped — past 07:00 cutoff on day 1 (now=${hh}:${String(mm).padStart(2, "0")}); will fire next month`);
+      }
+    }
+
+    // ── Month-to-Date report (any day — covers 1st→today) ──────────────────────
+    if (s.mtd_enabled && lastReportFiredAt.mtd !== nowDateKey) {
+      const { h: mh, m: mmin } = parseHM(s.mtd_time, "08:00");
+      const targetMin = mh * 60 + mmin;
+      const cutoffMin = 19 * 60; // 7 PM lateness cutoff (same as daily)
+      if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+        lastReportFiredAt.mtd = nowDateKey;
+        try { await sendReport("mtd"); }
+        catch (e: any) { console.error("Scheduled MTD report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoffMin) {
+        lastReportFiredAt.mtd = nowDateKey;
+        console.log(`[report-cron] mtd skipped — past 19:00 cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire tomorrow at ${s.mtd_time || "08:00"}`);
+      }
+    }
+
+    // ── All-Time report (1st of month — inception through today) ────────────────
+    if (s.alltime_enabled && now.getDate() === 1 && lastReportFiredAt.alltime !== nowDateKey) {
+      const { h: ah, m: amin } = parseHM(s.alltime_time, "07:10");
+      const targetMin = ah * 60 + amin;
+      const cutoffMin = 7 * 60 + 15;
+      if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+        lastReportFiredAt.alltime = nowDateKey;
+        try { await sendReport("alltime"); }
+        catch (e: any) { console.error("Scheduled all-time report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoffMin) {
+        lastReportFiredAt.alltime = nowDateKey;
+        console.log(`[report-cron] alltime skipped — past cutoff on day 1 (now=${hh}:${String(mm).padStart(2, "0")}); will fire next month`);
       }
     }
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
@@ -2282,8 +2344,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/admin/send-report-sample", async (req: any, res: any) => {
     if (!isBootstrapOrAdmin(req)) return res.status(403).json({ error: "Admin only" });
     const rawType = req.body?.type;
-    const type: "daily" | "weekly" | "monthly" =
-      rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
+      rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     const recipients: string[] = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
     const cleaned = recipients
       .map((r: any) => String(r || "").trim())
@@ -6327,8 +6389,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post("/api/settings/email/send-now", requireAuth, async (req, res) => {
     const rawType = req.body?.type;
-    const type: "daily" | "weekly" | "monthly" =
-      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type}`);
     try {
       const result = await sendReport(type);
@@ -6343,7 +6405,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Report Archive: regenerate any historical daily/weekly/monthly report ──
   // Available to admin and viewer roles. Lets them preview the rendered email
   // for any date range and optionally send it to a list of recipients.
-  function parseRange(body: any, type: "daily" | "weekly" | "monthly"): { startDate: string; endDate: string } {
+  function parseRange(body: any, type: "daily" | "weekly" | "monthly" | "mtd" | "alltime"): { startDate: string; endDate: string } {
     const ymd = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) ? String(s) : "";
     let s = ymd(body?.startDate);
     let e = ymd(body?.endDate);
@@ -6352,6 +6414,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       s = t; e = t;
     }
     if (!e) e = s;
+    // MTD: 1st of the anchor month → anchor date. All-time: inception → anchor date.
+    if (type === "mtd") {
+      const d = new Date(e + "T00:00:00Z");
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth();
+      s = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    } else if (type === "alltime") {
+      s = "2000-01-01";
+    }
     // For a single picked date on weekly/monthly, expand to the natural window
     if (type === "weekly" && s === e) {
       const d = new Date(s + "T00:00:00");
@@ -6393,8 +6464,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const gate = requireAdminOrViewerSession(req as any, res);
     if (!gate) return;
     const rawType = req.body?.type;
-    const type: "daily" | "weekly" | "monthly" =
-      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     try {
       const range = parseRange(req.body, type);
       const clrIdRaw = req.body?.clrId;
@@ -6418,8 +6489,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const gate = requireAdminOrViewerSession(req as any, res);
     if (!gate) return;
     const rawType = req.body?.type;
-    const type: "daily" | "weekly" | "monthly" =
-      rawType === "daily" || rawType === "weekly" || rawType === "monthly" ? rawType : "daily";
+    const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
+      rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     try {
       const range = parseRange(req.body, type);
       const requested: any[] = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
@@ -6536,8 +6607,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.put("/api/report-schedules/:type", requireAuth, (req: any, res) => {
     if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
     const type = req.params.type;
-    if (type !== "daily" && type !== "weekly" && type !== "monthly") {
-      return res.status(400).json({ error: "type must be 'daily', 'weekly', or 'monthly'" });
+    if (type !== "daily" && type !== "weekly" && type !== "monthly" && type !== "mtd" && type !== "alltime") {
+      return res.status(400).json({ error: "type must be 'daily', 'weekly', 'monthly', 'mtd', or 'alltime'" });
     }
     const recipients = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
     const saved = storageExtra.updateReportScheduleRecipients(type, recipients);

@@ -418,10 +418,14 @@ function EmailReportsCard() {
   const [dailyEnabled, setDailyEnabled] = useState(false);
   const [weeklyEnabled, setWeeklyEnabled] = useState(false);
   const [monthlyEnabled, setMonthlyEnabled] = useState(false);
+  const [mtdEnabled, setMtdEnabled] = useState(false);
+  const [alltimeEnabled, setAlltimeEnabled] = useState(false);
   const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
   const [dailyTime, setDailyTime] = useState("08:00");
   const [weeklyTime, setWeeklyTime] = useState("08:00");
   const [monthlyTime, setMonthlyTime] = useState("07:00");
+  const [mtdTime, setMtdTime] = useState("08:00");
+  const [alltimeTime, setAlltimeTime] = useState("07:10");
   const [testLoading, setTestLoading] = useState(false);
   const [sendLoading, setSendLoading] = useState(false);
 
@@ -433,10 +437,14 @@ function EmailReportsCard() {
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
     setMonthlyEnabled(!!(emailSettings.monthly_enabled ?? emailSettings.monthlyEnabled));
+    setMtdEnabled(!!(emailSettings.mtd_enabled ?? emailSettings.mtdEnabled));
+    setAlltimeEnabled(!!(emailSettings.alltime_enabled ?? emailSettings.alltimeEnabled));
     setWelcomeEmailEnabled(!!(emailSettings.welcome_email_enabled ?? emailSettings.welcomeEmailEnabled));
     setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "08:00");
     setWeeklyTime(emailSettings.weekly_time ?? emailSettings.weeklyTime ?? "08:00");
     setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
+    setMtdTime(emailSettings.mtd_time ?? emailSettings.mtdTime ?? "08:00");
+    setAlltimeTime(emailSettings.alltime_time ?? emailSettings.alltimeTime ?? "07:10");
   }, [emailSettings]);
 
   const saveMutation = useMutation({
@@ -454,10 +462,14 @@ function EmailReportsCard() {
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
       monthlyEnabled: monthlyEnabled ? 1 : 0,
+      mtdEnabled: mtdEnabled ? 1 : 0,
+      alltimeEnabled: alltimeEnabled ? 1 : 0,
       welcomeEmailEnabled: welcomeEmailEnabled ? 1 : 0,
       dailyTime,
       weeklyTime,
       monthlyTime,
+      mtdTime,
+      alltimeTime,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -492,8 +504,15 @@ function EmailReportsCard() {
     }
   }
 
-  async function handleSendNow(type: "daily" | "weekly" | "monthly") {
-    const label = type.charAt(0).toUpperCase() + type.slice(1);
+  async function handleSendNow(type: "daily" | "weekly" | "monthly" | "mtd" | "alltime") {
+    const labelMap: Record<typeof type, string> = {
+      daily: "Daily",
+      weekly: "Weekly",
+      monthly: "Monthly",
+      mtd: "Month-to-Date",
+      alltime: "All-Time",
+    } as any;
+    const label = labelMap[type] ?? type;
     const persisted: string[] = (() => {
       try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]"); }
       catch { return []; }
@@ -705,6 +724,44 @@ function EmailReportsCard() {
                     <Switch checked={monthlyEnabled} onCheckedChange={setMonthlyEnabled} />
                   </div>
                 </div>
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Month-to-Date Report</p>
+                    <p className="text-xs text-muted-foreground">Sent daily at the configured time — covers the 1st of this month through today</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {mtdEnabled && (
+                      <Input
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        value={mtdTime}
+                        onChange={e => setMtdTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
+                    <Switch checked={mtdEnabled} onCheckedChange={setMtdEnabled} />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">All-Time Report</p>
+                    <p className="text-xs text-muted-foreground">Sent on the 1st of each month at the configured time — covers all activity since inception</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {alltimeEnabled && (
+                      <Input
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        value={alltimeTime}
+                        onChange={e => setAlltimeTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
+                    <Switch checked={alltimeEnabled} onCheckedChange={setAlltimeEnabled} />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -714,12 +771,17 @@ function EmailReportsCard() {
                 <Mail className="w-3.5 h-3.5" />
                 {testLoading ? "Testing…" : "Test Connection"}
               </Button>
-              {(["daily", "weekly", "monthly"] as const).map(type => {
+              {([
+                { type: "daily" as const, label: "Daily" },
+                { type: "weekly" as const, label: "Weekly" },
+                { type: "monthly" as const, label: "Monthly" },
+                { type: "mtd" as const, label: "MTD" },
+                { type: "alltime" as const, label: "All-Time" },
+              ]).map(({ type, label }) => {
                 const persistedCount: number = (() => {
                   try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]").length; }
                   catch { return 0; }
                 })();
-                const label = type.charAt(0).toUpperCase() + type.slice(1);
                 return (
                   <Button
                     key={type}
