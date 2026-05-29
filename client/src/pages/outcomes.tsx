@@ -418,13 +418,14 @@ function OutcomeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md p-4 sm:p-5 gap-3">
-        <DialogHeader className="space-y-1">
+      <DialogContent className="max-w-md p-0 gap-0 max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="space-y-1 px-4 sm:px-5 pt-4 sm:pt-5 pb-2 shrink-0">
           <DialogTitle className="text-base">{step === 0 ? "What was the result?" : "Log Outcome"}</DialogTitle>
+          {step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         </DialogHeader>
-        {step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
 
           {/* ── Step 0: Result Picker ──────────────────────────── */}
           {step === 0 && (
@@ -788,8 +789,9 @@ function OutcomeFormDialog({
             </>
           )}
 
+            </div>
           {/* Footer */}
-          <DialogFooter className="flex flex-wrap items-center gap-2 sm:justify-between">
+          <DialogFooter className="flex flex-wrap items-center gap-2 sm:justify-between px-4 sm:px-5 py-3 border-t bg-background shrink-0">
             <div className="flex gap-2">
               {isTransfer && step > 1 && (
                 <Button type="button" variant="outline" size="sm" onClick={handleBack}>
@@ -917,17 +919,18 @@ function EditOutcomeDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      <DialogContent className="max-w-lg p-0 gap-0 max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle>Edit Outcome</DialogTitle>
         </DialogHeader>
-        {outcome && currentUserId != null && outcome.assistantId !== currentUserId && (
-          <div className="text-xs px-3 py-2 rounded-md border border-amber-300 bg-amber-50 text-amber-900">
-            Editing another CLR's record ({outcome.assistant?.name ?? `Assistant #${outcome.assistantId}`}).
-          </div>
-        )}
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-2 space-y-4">
+            {outcome && currentUserId != null && outcome.assistantId !== currentUserId && (
+              <div className="text-xs px-3 py-2 rounded-md border border-amber-300 bg-amber-50 text-amber-900">
+                Editing another CLR's record ({outcome.assistant?.name ?? `Assistant #${outcome.assistantId}`}).
+              </div>
+            )}
             <FormField control={form.control} name="outcomeType" render={({ field }) => (
               <FormItem>
                 <FormLabel>Outcome</FormLabel>
@@ -1043,7 +1046,8 @@ function EditOutcomeDialog({
                 </label>
               </div>
             )}
-            <DialogFooter>
+            </div>
+            <DialogFooter className="px-6 py-3 border-t bg-background shrink-0">
               <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
               <Button
                 type="submit"
