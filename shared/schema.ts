@@ -151,11 +151,20 @@ export const OUTCOME_TYPES = [
 
 export type OutcomeType = typeof OUTCOME_TYPES[number];
 
+export const loanOfficerAssistants = sqliteTable("loan_officer_assistants", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  loId: integer("lo_id").notNull().references(() => loanOfficers.id),
+  fullName: text("full_name").notNull(),
+  active: integer("active").default(1),
+  createdAt: text("created_at"),
+});
+
 export const leadOutcomes = sqliteTable("lead_outcomes", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   date: text("date").notNull(),
   assistantId: integer("assistant_id").notNull().references(() => users.id),
   loId: integer("lo_id").notNull().references(() => loanOfficers.id),
+  loaId: integer("loa_id").references(() => loanOfficerAssistants.id),
   borrowerName: text("borrower_name"),
   outcomeType: text("outcome_type").notNull(),
   transferType: text("transfer_type"), // 'direct' | 'appointment' | null (required when outcomeType='transfer')
@@ -186,8 +195,13 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
 export const insertLeadOutcomeSchema = createInsertSchema(leadOutcomes).omit({
   id: true, createdAt: true, updatedAt: true,
 });
+export const insertLoanOfficerAssistantSchema = createInsertSchema(loanOfficerAssistants).omit({
+  id: true, createdAt: true,
+});
 export type InsertLeadOutcome = z.infer<typeof insertLeadOutcomeSchema>;
 export type LeadOutcome = typeof leadOutcomes.$inferSelect;
+export type LoanOfficerAssistant = typeof loanOfficerAssistants.$inferSelect;
+export type InsertLoanOfficerAssistant = z.infer<typeof insertLoanOfficerAssistantSchema>;
 
 export const dailyCallLogs = sqliteTable("daily_call_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

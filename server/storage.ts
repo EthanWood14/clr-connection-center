@@ -85,6 +85,15 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN archived_at TEXT`); } catch {}
 // this column was referenced in the SELECT but never existed, so it returned
 // NULL/falsy and emails were silently skipped.
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reminder_email_enabled INTEGER NOT NULL DEFAULT 1`); } catch {}
+// ── Loan Officer Assistants (LOAs): assistants that belong to a parent LO ──
+sqlite.exec(`CREATE TABLE IF NOT EXISTS loan_officer_assistants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lo_id INTEGER NOT NULL,
+  full_name TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT
+)`);
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
 
 export const db = drizzle(sqlite);
 
@@ -3736,4 +3745,37 @@ export function deleteGlossaryTerm(id: number): boolean {
   const oid = currentOrgId() ?? 1;
   const info = sqlite.prepare(`DELETE FROM glossary_terms WHERE id = ? AND org_id = ?`).run(id, oid);
   return info.changes > 0;
+}
+
+// ── Loan Officer Assistants (LOAs) ──────────────────────────────────────────
+// LOAs belong to a parent LO. Stats always roll up to the parent (lead_outcomes.lo_id);
+// loa_id is stored only for display so notes/UI can show who actually worked the lead.
+function normalizeLoa(row: any): any {
+  if (!row) return row;
+  return {
+    id: row.id,
+    loId: row.lo_id,
+    fullName: row.full_name,
+    active: row.active,
+    createdAt: row.created_at,
+  };
+}
+export function getLoanOfficerAssistants(loId?: number) {
+  if (loId != null) {
+    return (sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE lo_id = ? AND active = 1 ORDER BY full_name`).all(loId) as any[]).map(normalizeLoa);
+  }
+  return (sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE active = 1 ORDER BY full_name`).all() as any[]).map(normalizeLoa);
+}
+export function getLoanOfficerAssistant(id: number) {
+  return normalizeLoa(sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE id = ?`).get(id));
+}
+export function createLoanOfficerAssistant(data: { loId: number; fullName: string }) {
+  const info = sqlite.prepare(
+    `INSERT INTO loan_officer_assistants (lo_id, full_name, active, created_at) VALUES (?, ?, 1, ?)`
+  ).run(data.loId, data.fullName, new Date().toISOString());
+  return getLoanOfficerAssistant(Number(info.lastInsertRowid));
+}
+export function deleteLoanOfficerAssistant(id: number) {
+  // Soft-delete so historical outcomes that reference this LOA still resolve a name.
+  sqlite.prepare(`UPDATE loan_officer_assistants SET active = 0 WHERE id = ?`).run(id);
 }
