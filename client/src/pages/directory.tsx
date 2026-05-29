@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { LoaManager } from "@/components/loa-controls";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -377,6 +378,7 @@ function LOCard({
               <span className="font-semibold text-sm" data-testid={`text-lo-name-${lo.id}`}>
                 {lo.fullName ?? "(unnamed)"}
               </span>
+              <LoaManager loId={lo.id} />
               <Badge className={`text-xs px-1.5 py-0 ${TIER_COLORS[lo.priorityTier]}`}>
                 {TIER_LABELS[lo.priorityTier]}
               </Badge>

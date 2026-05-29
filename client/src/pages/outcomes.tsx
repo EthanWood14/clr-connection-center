@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { LoaPicker } from "@/components/loa-controls";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,7 @@ const LEAD_TYPE_OPTIONS = [
 ] as const;
 
 const outcomeFormSchema = z.object({
+  loaId: z.coerce.number().optional().nullable(),
   date: z.string().min(1, "Date required"),
   assistantId: z.coerce.number().min(1, "Select an assistant"),
   loId: z.coerce.number().min(1, "Select a loan officer"),
@@ -314,6 +316,7 @@ function OutcomeFormDialog({
       date: businessTodayClient(),
       assistantId: 1, // default to Ethan
       loId: 0,
+      loaId: null,
       outcomeType: "transfer",
       transferType: null,
       borrowerName: "",
@@ -535,6 +538,13 @@ function OutcomeFormDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="loaId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Loan Officer Assistant (optional)</FormLabel>
+                <LoaPicker loId={form.watch("loId")} value={field.value ?? null} onChange={field.onChange} />
                 <FormMessage />
               </FormItem>
             )} />
