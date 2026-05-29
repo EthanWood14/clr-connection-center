@@ -3647,6 +3647,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(snoozed);
   });
 
+  // ── Loan Officer Assistants (LOAs): name-only assistants under a parent LO ──
+  app.get("/api/loan-officer-assistants", (req, res) => {
+    const loId = req.query.loId ? parseInt(String(req.query.loId)) : undefined;
+    res.json(storageExtra.getLoanOfficerAssistants(loId));
+  });
+  app.post("/api/loan-officer-assistants", (req, res) => {
+    const { loId, fullName } = req.body as { loId: number; fullName: string };
+    if (!loId || !fullName || !String(fullName).trim()) {
+      return res.status(400).json({ error: "loId and fullName are required" });
+    }
+    res.json(storageExtra.createLoanOfficerAssistant({ loId: Number(loId), fullName: String(fullName).trim() }));
+  });
+  app.delete("/api/loan-officer-assistants/:id", (req, res) => {
+    storageExtra.deleteLoanOfficerAssistant(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
   app.get("/api/loan-officers", (req, res) => {
     const los = storage.getLoanOfficers();
     // Compute 90-day transfer counts for score preview
