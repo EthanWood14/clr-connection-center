@@ -710,17 +710,9 @@ function EmailReportsCard() {
                 <div className="flex items-center justify-between rounded-lg border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Daily Report</p>
-                    <p className="text-xs text-muted-foreground">Sent each morning at the configured time</p>
+                    <p className="text-xs text-muted-foreground">Sent at 7:45 AM Pacific every morning — covers the previous day</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    {dailyEnabled && (
-                      <Input
-                        type="time"
-                        value={dailyTime}
-                        onChange={e => setDailyTime(e.target.value)}
-                        className="w-28 text-xs h-8"
-                      />
-                    )}
                     <Switch checked={dailyEnabled} onCheckedChange={setDailyEnabled} />
                   </div>
                 </div>

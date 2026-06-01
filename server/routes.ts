@@ -389,7 +389,13 @@ async function sendReport(
   const period = opts.customRange
     ? opts.customRange
     : type === "daily"
-    ? (() => { const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ); return { startDate: t, endDate: t }; })()
+    ? (() => {
+        // Daily report covers the PREVIOUS day: it's sent at 7:45 AM PT each
+        // morning summarizing yesterday. addIsoDays(...,-1) on the PT business
+        // day gives yesterday's calendar date in the morning window.
+        const y = addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), -1);
+        return { startDate: y, endDate: y };
+      })()
     : type === "weekly"
     ? (() => {
         // endDate = last Sunday (yesterday if today is Monday, else most recent Sunday)
@@ -1458,24 +1464,8 @@ cron.schedule("* * * * *", async () => {
     // Hard window for weekly + monthly: never send before 06:00 or after 22:00
     const inAllowedWindow = nowMinutes >= 6 * 60 && nowMinutes <= 22 * 60;
 
-    // ── Daily report ────────────────────────────────────────────────────────
-    if (s.daily_enabled && lastReportFiredAt.daily !== nowDateKey) {
-      const { h: dh, m: dm } = parseHM(s.daily_time, "08:00");
-      const targetMin = dh * 60 + dm;
-      const cutoffMin = 19 * 60; // 7 PM lateness cutoff
-      // Fire when we're at-or-just-past the configured time AND before the cutoff.
-      // Also skip the run if cron came up late and we're already past 7 PM —
-      // tomorrow's tick at daily_time will catch it.
-      if (nowMinutes >= targetMin && nowMinutes < cutoffMin) {
-        lastReportFiredAt.daily = nowDateKey;
-        try { await sendReport("daily"); }
-        catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
-      } else if (nowMinutes >= cutoffMin) {
-        // Past 7 PM and we haven't fired today — mark as "done" so we wait for tomorrow
-        lastReportFiredAt.daily = nowDateKey;
-        console.log(`[report-cron] daily skipped — past 19:00 cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire tomorrow at ${s.daily_time || "08:00"}`);
-      }
-    }
+    // ── Daily report — handled by its own dedicated 7:45 AM PT cron below.
+    //   Sends a report for the PREVIOUS day each morning. No-op here.
 
     // ── Weekly report — handled by its own dedicated cron below
     //   ("0 15 * * 1" = 8:00 AM PT every Monday). No-op here.
@@ -1528,6 +1518,24 @@ cron.schedule("* * * * *", async () => {
     }
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
+
+// ── Daily report — fires at 7:45 AM Pacific every morning ──────────────────
+// Summarizes the PREVIOUS day (see the "daily" branch of sendReport's period
+// resolver). DST-safe via the timezone option. Gated by daily_enabled so it
+// can be turned off from Settings. The once-per-day guard prevents a duplicate
+// if the process restarts within the same minute.
+cron.schedule("45 7 * * *", async () => {
+  try {
+    const s = storageExtra.getEmailSettings() as any;
+    if (!s.daily_enabled) return;
+    const nowDateKey = new Date().toISOString().split("T")[0];
+    if (lastReportFiredAt.daily === nowDateKey) return;
+    lastReportFiredAt.daily = nowDateKey;
+    await sendReport("daily");
+  } catch (e: any) {
+    console.error("Scheduled daily report failed:", e?.message ?? e);
+  }
+}, { timezone: "America/Los_Angeles" });
 
 // ── Weekly report — fires Mondays at 8:00 AM PT (15:00 UTC) ─────────────────
 // Summarizes the previous Mon–Sun. The send is still gated by
