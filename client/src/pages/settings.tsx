@@ -429,8 +429,9 @@ function EmailReportsCard() {
   // Per-report-type section visibility ("what's in the email"). Keyed by report
   // type → { sectionKey: boolean }. Missing keys default to shown.
   const [reportSections, setReportSections] = useState<Record<string, Record<string, boolean>>>({});
-  // Per-report-type "send to all managers" toggle. Keyed by report type → boolean.
-  const [reportToAllManagers, setReportToAllManagers] = useState<Record<string, boolean>>({});
+  // "Send to all managers": when on, every active manager (is_manager) receives
+  // all scheduled reports, on top of the manual Report Recipients list.
+  const [sendToAllManagers, setSendToAllManagers] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [sendLoading, setSendLoading] = useState(false);
 
@@ -456,8 +457,8 @@ function EmailReportsCard() {
     } catch { setReportSections({}); }
     try {
       const tam = JSON.parse(emailSettings.report_to_all_managers ?? emailSettings.reportToAllManagers ?? "{}");
-      setReportToAllManagers(tam && typeof tam === "object" ? tam : {});
-    } catch { setReportToAllManagers({}); }
+      setSendToAllManagers(!!tam && typeof tam === "object" && Object.values(tam).some(v => v === true));
+    } catch { setSendToAllManagers(false); }
   }, [emailSettings]);
 
   const saveMutation = useMutation({
@@ -484,7 +485,7 @@ function EmailReportsCard() {
       mtdTime,
       alltimeTime,
       reportSections: JSON.stringify(reportSections),
-      reportToAllManagers: JSON.stringify(reportToAllManagers),
+      reportToAllManagers: JSON.stringify(sendToAllManagers ? { daily: true, weekly: true, monthly: true, mtd: true, alltime: true } : {}),
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -678,6 +679,14 @@ function EmailReportsCard() {
                   ))}
                 </div>
               )}
+              {/* Send to all managers */}
+              <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t">
+                <div>
+                  <p className="text-sm font-medium">Send to all managers</p>
+                  <p className="text-[11px] text-muted-foreground">Also send every scheduled report to all users marked as managers, in addition to the recipients above.</p>
+                </div>
+                <Switch checked={sendToAllManagers} onCheckedChange={setSendToAllManagers} />
+              </div>
             </div>
 
             {/* Schedule toggles */}
@@ -798,17 +807,9 @@ function EmailReportsCard() {
                   const cfg = reportSections[rt] ?? {};
                   const setSec = (key: string, val: boolean) =>
                     setReportSections(prev => ({ ...prev, [rt]: { ...(prev[rt] ?? {}), [key]: val } }));
-                  const toAllMgrs = reportToAllManagers[rt] === true;
                   return (
                     <div key={rt} className="rounded-lg border p-3">
                       <p className="text-sm font-medium mb-2 capitalize">{rt} Report</p>
-                      <label className="flex items-center justify-between gap-2 text-xs mb-2 pb-2 border-b">
-                        <span className="font-medium">Send to all managers</span>
-                        <Switch
-                          checked={toAllMgrs}
-                          onCheckedChange={v => setReportToAllManagers(prev => ({ ...prev, [rt]: v }))}
-                        />
-                      </label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
                         {SECTIONS.map(s => (
                           <label key={s.key} className="flex items-center justify-between gap-2 text-xs">
