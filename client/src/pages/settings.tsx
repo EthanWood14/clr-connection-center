@@ -426,6 +426,9 @@ function EmailReportsCard() {
   const [monthlyTime, setMonthlyTime] = useState("07:00");
   const [mtdTime, setMtdTime] = useState("08:00");
   const [alltimeTime, setAlltimeTime] = useState("07:10");
+  // Per-report-type section visibility ("what's in the email"). Keyed by report
+  // type → { sectionKey: boolean }. Missing keys default to shown.
+  const [reportSections, setReportSections] = useState<Record<string, Record<string, boolean>>>({});
   const [testLoading, setTestLoading] = useState(false);
   const [sendLoading, setSendLoading] = useState(false);
 
@@ -445,6 +448,10 @@ function EmailReportsCard() {
     setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
     setMtdTime(emailSettings.mtd_time ?? emailSettings.mtdTime ?? "08:00");
     setAlltimeTime(emailSettings.alltime_time ?? emailSettings.alltimeTime ?? "07:10");
+    try {
+      const rs = JSON.parse(emailSettings.report_sections ?? emailSettings.reportSections ?? "{}");
+      setReportSections(rs && typeof rs === "object" ? rs : {});
+    } catch { setReportSections({}); }
   }, [emailSettings]);
 
   const saveMutation = useMutation({
@@ -470,6 +477,7 @@ function EmailReportsCard() {
       monthlyTime,
       mtdTime,
       alltimeTime,
+      reportSections: JSON.stringify(reportSections),
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -762,6 +770,41 @@ function EmailReportsCard() {
                     <Switch checked={alltimeEnabled} onCheckedChange={setAlltimeEnabled} />
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* What's in the email — per-report-type section toggles */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">What's in the Email</p>
+              <p className="text-[11px] text-muted-foreground mb-3">Choose which sections appear in each scheduled report. Turning a section off removes it from that report's email.</p>
+              <div className="space-y-4">
+                {(["daily", "weekly", "monthly"] as const).map(rt => {
+                  const SECTIONS: { key: string; label: string }[] = [
+                    { key: "summary", label: "Team summary stat cards" },
+                    { key: "outcomeBreakdown", label: "Team outcome breakdown" },
+                    { key: "clrBreakdown", label: "CLR breakdown / daily activity" },
+                    { key: "transferDetails", label: "Transfer details" },
+                    { key: "activeLos", label: "Active LOs callout" },
+                    { key: "eodNotes", label: "CLR EOD notes & activity log" },
+                    { key: "callNotes", label: "Call notes by CLR" },
+                  ];
+                  const cfg = reportSections[rt] ?? {};
+                  const setSec = (key: string, val: boolean) =>
+                    setReportSections(prev => ({ ...prev, [rt]: { ...(prev[rt] ?? {}), [key]: val } }));
+                  return (
+                    <div key={rt} className="rounded-lg border p-3">
+                      <p className="text-sm font-medium mb-2 capitalize">{rt} Report</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                        {SECTIONS.map(s => (
+                          <label key={s.key} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-muted-foreground">{s.label}</span>
+                            <Switch checked={cfg[s.key] !== false} onCheckedChange={v => setSec(s.key, v)} />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -2078,13 +2121,20 @@ export default function Settings() {
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
   const isAdmin = authUser?.role === "admin";
+  // Managers (is_manager) may also access the Reports tab to configure
+  // report cadence, recipients, and email section visibility.
+  const isManager = !!((authUser as any)?.isManager ?? (authUser as any)?.is_manager);
+  const canReports = isAdmin || isManager;
 
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window === "undefined") return "profile";
     const saved = localStorage.getItem("settings.activeTab");
     const allowed = ["profile", "reports", "team", "algorithm", "export", "app", "audit"];
     if (saved && allowed.includes(saved)) {
-      if ((saved === "reports" || saved === "team" || saved === "algorithm" || saved === "export" || saved === "audit") && authUser && authUser.role !== "admin") {
+      if ((saved === "team" || saved === "algorithm" || saved === "export" || saved === "audit") && authUser && authUser.role !== "admin") {
+        return "profile";
+      }
+      if (saved === "reports" && authUser && authUser.role !== "admin" && !((authUser as any).isManager ?? (authUser as any).is_manager)) {
         return "profile";
       }
       return saved;
@@ -2100,10 +2150,13 @@ export default function Settings() {
 
   // If non-admin somehow lands on an admin tab (e.g. role changed), fall back.
   useEffect(() => {
-    if (!isAdmin && (activeTab === "reports" || activeTab === "team" || activeTab === "algorithm" || activeTab === "export" || activeTab === "audit")) {
+    if (!isAdmin && (activeTab === "team" || activeTab === "algorithm" || activeTab === "export" || activeTab === "audit")) {
       setActiveTab("profile");
     }
-  }, [isAdmin, activeTab]);
+    if (activeTab === "reports" && !canReports) {
+      setActiveTab("profile");
+    }
+  }, [isAdmin, canReports, activeTab]);
 
   useEffect(() => {
     document.title = "Settings · WCLCC";
@@ -2547,7 +2600,7 @@ export default function Settings() {
           <TabsTrigger value="profile" className="gap-1.5" data-testid="tab-profile">
             <User className="w-3.5 h-3.5" /> Profile
           </TabsTrigger>
-          {isAdmin && (
+          {canReports && (
             <TabsTrigger value="reports" className="gap-1.5" data-testid="tab-reports">
               <Mail className="w-3.5 h-3.5" /> Reports
             </TabsTrigger>
@@ -2581,7 +2634,7 @@ export default function Settings() {
         </TabsList>
 
         <TabsContent value="profile" className="mt-6">{profileTab}</TabsContent>
-        {isAdmin && <TabsContent value="reports" className="mt-6">{reportsTab}</TabsContent>}
+        {canReports && <TabsContent value="reports" className="mt-6">{reportsTab}</TabsContent>}
         {isAdmin && <TabsContent value="team" className="mt-6">{teamTab}</TabsContent>}
         {isAdmin && <TabsContent value="algorithm" className="mt-6">{algorithmTab}</TabsContent>}
         {isAdmin && <TabsContent value="export" className="mt-6"><ExportDataCard /></TabsContent>}
