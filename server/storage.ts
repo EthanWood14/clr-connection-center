@@ -1464,8 +1464,17 @@ function runNewMigrations() {
   // that report's recipients (on top of the manual Report Recipients list).
   // Defaults to '{}' (off) so existing behavior — manual list only — is preserved.
   if (!emailCols.find(c => c.name === 'report_to_all_managers')) {
-    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_to_all_managers TEXT NOT NULL DEFAULT '{}'`);
+    // Default ON for all report types — historically every manager received the
+    // scheduled reports, so a fresh column should preserve that behavior.
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_to_all_managers TEXT NOT NULL DEFAULT '{"daily":true,"weekly":true,"monthly":true,"mtd":true,"alltime":true}'`);
   }
+  // One-time backfill: rows created before this default existed have '{}' (off).
+  // Flip those never-configured rows ON to match historical behavior. Rows that
+  // a manager has since edited will hold explicit per-type values and are left
+  // untouched by the '{}' guard.
+  try {
+    sqlite.exec(`UPDATE email_settings SET report_to_all_managers = '{"daily":true,"weekly":true,"monthly":true,"mtd":true,"alltime":true}' WHERE report_to_all_managers IS NULL OR report_to_all_managers = '' OR report_to_all_managers = '{}'`);
+  } catch {}
   // Seed default SMTP credentials (always set if not already a Gmail address)
   const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.smtp_user || !emailKeyRow.smtp_user.includes('@gmail.com')) {

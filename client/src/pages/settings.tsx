@@ -456,9 +456,16 @@ function EmailReportsCard() {
       setReportSections(rs && typeof rs === "object" ? rs : {});
     } catch { setReportSections({}); }
     try {
-      const tam = JSON.parse(emailSettings.report_to_all_managers ?? emailSettings.reportToAllManagers ?? "{}");
-      setSendToAllManagers(!!tam && typeof tam === "object" && Object.values(tam).some(v => v === true));
-    } catch { setSendToAllManagers(false); }
+      const raw = emailSettings.report_to_all_managers ?? emailSettings.reportToAllManagers;
+      // Unset / empty → default ON (historically all managers received reports).
+      // Explicit object → ON if any report type is enabled, else OFF.
+      if (raw === undefined || raw === null || raw === "" || raw === "{}") {
+        setSendToAllManagers(true);
+      } else {
+        const tam = JSON.parse(raw);
+        setSendToAllManagers(!!tam && typeof tam === "object" && Object.values(tam).some(v => v === true));
+      }
+    } catch { setSendToAllManagers(true); }
   }, [emailSettings]);
 
   const saveMutation = useMutation({
@@ -683,7 +690,7 @@ function EmailReportsCard() {
               <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t">
                 <div>
                   <p className="text-sm font-medium">Send to all managers</p>
-                  <p className="text-[11px] text-muted-foreground">Also send every scheduled report to all users marked as managers, in addition to the recipients above.</p>
+                  <p className="text-[11px] text-muted-foreground">When on, every scheduled report also goes to all users marked as managers — in addition to the recipients listed above. The recipients above always receive reports regardless of this setting.</p>
                 </div>
                 <Switch checked={sendToAllManagers} onCheckedChange={setSendToAllManagers} />
               </div>
