@@ -357,6 +357,18 @@ async function sendReport(
     } else {
       const settings = storageExtra.getEmailSettings() as any;
       try { rawManagers = JSON.parse(settings.manager_emails || "[]"); } catch { rawManagers = []; }
+      // Per-report-type "send to all managers": when enabled for this report
+      // type, add every active manager's email to the recipient list (deduped
+      // below). Falls back silently to the manual list on any parse error.
+      try {
+        const toAll = JSON.parse(settings.report_to_all_managers || "{}");
+        if (toAll && typeof toAll === "object" && toAll[type] === true) {
+          const managerUsers = (storage.getUsers() as any[]).filter(
+            (u) => (u.isManager ?? u.is_manager) && (u.isActive ?? u.is_active) && (u.email || "").includes("@")
+          );
+          rawManagers = rawManagers.concat(managerUsers.map((u) => u.email));
+        }
+      } catch { /* keep manual list */ }
     }
     const seenManagers = new Set<string>();
     for (const e of rawManagers) {

@@ -1459,6 +1459,13 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'report_sections')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_sections TEXT NOT NULL DEFAULT '{}'`);
   }
+  // 2026-06: per-report-type "send to all managers" toggle. JSON keyed by report
+  // type -> boolean. When true, every active user with is_manager=1 is added to
+  // that report's recipients (on top of the manual Report Recipients list).
+  // Defaults to '{}' (off) so existing behavior — manual list only — is preserved.
+  if (!emailCols.find(c => c.name === 'report_to_all_managers')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_to_all_managers TEXT NOT NULL DEFAULT '{}'`);
+  }
   // Seed default SMTP credentials (always set if not already a Gmail address)
   const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.smtp_user || !emailKeyRow.smtp_user.includes('@gmail.com')) {
