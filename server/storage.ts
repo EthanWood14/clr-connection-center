@@ -66,6 +66,7 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_dismissed_sample INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN last_seen_pipeline_sop TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_calls_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_transfers_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_appointments_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}

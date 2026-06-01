@@ -2941,7 +2941,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -3063,6 +3063,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     storage.updateUser(userId, { hasSeenIntro: true } as any);
+    return res.json({ ok: true });
+  });
+
+  // Record that the CLR just saw the pipeline-stages popup. Resets the 14-day
+  // clock; the popup reappears 14 days after this timestamp.
+  app.patch("/api/users/me/seen-pipeline-sop", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    storage.updateUser(userId, { lastSeenPipelineSop: new Date().toISOString() } as any);
     return res.json({ ok: true });
   });
 

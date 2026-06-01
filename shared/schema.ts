@@ -42,6 +42,9 @@ export const users = sqliteTable("users", {
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
   isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),
   hasDismissedSample: integer("has_dismissed_sample", { mode: "boolean" }).notNull().default(false),
+  // ISO timestamp of when the CLR last dismissed the pipeline-stages popup.
+  // The popup re-appears 14 days after this; null/empty = never seen yet.
+  lastSeenPipelineSop: text("last_seen_pipeline_sop"),
   goalCallsWeekly: integer("goal_calls_weekly").notNull().default(0),
   goalTransfersWeekly: integer("goal_transfers_weekly").notNull().default(0),
   goalAppointmentsWeekly: integer("goal_appointments_weekly").notNull().default(0),
