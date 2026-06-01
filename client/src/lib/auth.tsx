@@ -10,6 +10,7 @@ export interface AuthUser {
   isManager?: boolean;
   hasSeenIntro: boolean;
   hasDismissedSample?: boolean;
+  lastSeenPipelineSop?: string | null;
   mustChangePassword: boolean;
   createdAt: string | null;
   scriptCompanyName?: string | null;
@@ -30,6 +31,7 @@ interface AuthContextValue {
   isLoading: boolean;
   logout: () => Promise<void>;
   markIntroSeen: () => Promise<void>;
+  markPipelineSopSeen: () => Promise<void>;
   markSampleDismissed: () => void;
   clearMustChangePassword: () => void;
   refetchUser: () => Promise<void>;
@@ -40,6 +42,7 @@ const AuthContext = createContext<AuthContextValue>({
   isLoading: true,
   logout: async () => {},
   markIntroSeen: async () => {},
+  markPipelineSopSeen: async () => {},
   markSampleDismissed: () => {},
   clearMustChangePassword: () => {},
   refetchUser: async () => {},
@@ -79,6 +82,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((u) => u ? { ...u, hasSeenIntro: true } : u);
   }, []);
 
+  const markPipelineSopSeen = useCallback(async () => {
+    const ts = new Date().toISOString();
+    await apiRequest("PATCH", "/api/users/me/seen-pipeline-sop").catch(() => {});
+    setUser((u) => u ? { ...u, lastSeenPipelineSop: ts } : u);
+  }, []);
+
   const markSampleDismissed = useCallback(() => {
     setUser((u) => u ? { ...u, hasDismissedSample: true } : u);
   }, []);
@@ -102,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, markSampleDismissed, clearMustChangePassword, refetchUser }}>
+    <AuthContext.Provider value={{ user, isLoading, logout, markIntroSeen, markPipelineSopSeen, markSampleDismissed, clearMustChangePassword, refetchUser }}>
       {children}
     </AuthContext.Provider>
   );

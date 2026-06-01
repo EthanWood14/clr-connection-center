@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
+import { PipelineSopModal, PIPELINE_SOP_INTERVAL_DAYS } from "@/components/pipeline-sop-modal";
 import { DailyReportGate } from "@/components/daily-report-gate";
 import { EodLockGate } from "@/components/eod-lock-gate";
 import { CookieNotice } from "@/components/cookie-notice";
@@ -173,6 +174,15 @@ function AppRouter() {
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
   const showIntro = !!user && !user.hasSeenIntro && !user.mustChangePassword;
+  // Pipeline-stages refresher: shown to CLRs every 14 days. Suppressed while the
+  // intro/welcome flow or the change-password gate is active so they don't stack.
+  const showPipelineSop = (() => {
+    if (!user || !user.isClr || user.mustChangePassword || showIntro) return false;
+    const last = user.lastSeenPipelineSop ? new Date(user.lastSeenPipelineSop).getTime() : 0;
+    if (!last) return true; // never seen → show on first eligible load
+    const daysSince = (Date.now() - last) / (1000 * 60 * 60 * 24);
+    return daysSince >= PIPELINE_SOP_INTERVAL_DAYS;
+  })();
   const [location, navigate] = useLocation();
 
   useEffect(() => {
@@ -212,6 +222,7 @@ function AuthenticatedApp() {
   return (
     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
       {showIntro && <IntroModal />}
+      {showPipelineSop && <PipelineSopModal />}
       <CookieNotice />
       <PushNudge />
       <DailyReportGate>
