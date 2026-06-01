@@ -411,6 +411,13 @@ function EmailReportsCard() {
   const { data: emailSettings, isLoading: emailLoading } = useQuery<any>({
     queryKey: ["/api/settings/email"],
   });
+  // CLR list for the All-Time "send for a single CLR" filter.
+  const { data: allUsers = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const clrOptions = (allUsers ?? []).filter(
+    (u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr))
+  );
+  // undefined / "all" → whole team; a numeric id → that CLR only (All-Time send).
+  const [alltimeClrId, setAlltimeClrId] = useState<string>("all");
 
   const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
@@ -527,7 +534,7 @@ function EmailReportsCard() {
     }
   }
 
-  async function handleSendNow(type: "daily" | "weekly" | "monthly" | "mtd" | "alltime") {
+  async function handleSendNow(type: "daily" | "weekly" | "monthly" | "mtd" | "alltime", clrId?: string) {
     const labelMap: Record<typeof type, string> = {
       daily: "Daily",
       weekly: "Weekly",
@@ -554,7 +561,7 @@ function EmailReportsCard() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type }),
+        body: JSON.stringify({ type, clrId: clrId && clrId !== "all" ? clrId : undefined }),
       });
       let data: any = {};
       try { data = await res.json(); } catch {}
@@ -848,6 +855,35 @@ function EmailReportsCard() {
                   try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]").length; }
                   catch { return 0; }
                 })();
+                if (type === "alltime") {
+                  const selected = clrOptions.find((u: any) => String(u.id) === alltimeClrId);
+                  return (
+                    <div key={type} className="inline-flex items-center gap-1.5">
+                      <select
+                        value={alltimeClrId}
+                        onChange={e => setAlltimeClrId(e.target.value)}
+                        disabled={sendLoading}
+                        title="Choose which CLR the All-Time report covers"
+                        className="h-8 rounded-md border bg-background px-2 text-xs"
+                      >
+                        <option value="all">All CLRs</option>
+                        {clrOptions.map((u: any) => (
+                          <option key={u.id} value={String(u.id)}>{u.name}</option>
+                        ))}
+                      </select>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleSendNow(type, alltimeClrId)}
+                        disabled={sendLoading || persistedCount === 0}
+                        title={persistedCount === 0 ? `Add and save recipients in Report Recipients` : `Sends ${selected ? selected.name + "'s" : "the full team's"} All-Time report to ${persistedCount} recipient${persistedCount === 1 ? "" : "s"}`}
+                        className="gap-1.5"
+                      >
+                        {sendLoading ? "Sending…" : `Send ${label} Now (${persistedCount})`}
+                      </Button>
+                    </div>
+                  );
+                }
                 return (
                   <Button
                     key={type}
