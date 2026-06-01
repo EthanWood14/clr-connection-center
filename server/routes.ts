@@ -6429,9 +6429,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const rawType = req.body?.type;
     const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
       rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
-    console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type}`);
+    // Optional CLR filter — currently surfaced in the UI for All-Time sends so a
+    // manager can email a single CLR's lifetime report. Other types accept it too.
+    const rawClrId = req.body?.clrId;
+    const clrId = (rawClrId === undefined || rawClrId === null || rawClrId === "" || rawClrId === "all")
+      ? undefined
+      : Number(rawClrId);
+    console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type} clrId=${clrId ?? "all"}`);
     try {
-      const result = await sendReport(type);
+      const result = await sendReport(type, Number.isFinite(clrId as number) ? { clrId: clrId as number } : {});
       console.log(`[send-now] OK type=${type} id=${result?.id} recipients=${JSON.stringify(result?.recipients)}`);
       res.json({ ok: true, id: result?.id ?? null, recipients: result?.recipients ?? [] });
     } catch (e: any) {
