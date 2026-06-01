@@ -817,6 +817,20 @@ async function sendReport(
     <td style="padding:10px 12px;font-size:13px;text-align:center;${teamMissedStyle}">${teamMissed}</td>
   </tr>`;
 
+  // ── Per-type report section visibility (managers configure in Settings) ─────
+  // report_sections is JSON keyed by report type → { sectionKey: boolean }.
+  // Missing keys default to true, so older configs keep the full report.
+  const reportSectionCfg: Record<string, boolean> = (() => {
+    try {
+      const s = storageExtra.getEmailSettings() as any;
+      const all = JSON.parse(s.report_sections || "{}");
+      return (all && typeof all === "object" && all[type] && typeof all[type] === "object") ? all[type] : {};
+    } catch { return {}; }
+  })();
+  const sec = (key: string): boolean => reportSectionCfg[key] !== false;
+  const stripDisabledSections = (h: string): string =>
+    h.replace(/<!--SEC:([a-zA-Z]+)-->([\s\S]*?)<!--\/SEC:\1-->/g, (_m, key, inner) => (sec(key) ? inner : ""));
+
   const body = `
     <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6">
       ${type === "weekly"
@@ -829,6 +843,7 @@ async function sendReport(
       Reporting period: <strong style="color:#1e293b">${startDate}</strong> &rarr; <strong style="color:#1e293b">${endDate}</strong>.
     </p>
 
+    <!--SEC:summary-->
     <!-- Team summary stat cards -->
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px">
       <tr>
@@ -866,10 +881,12 @@ async function sendReport(
       </table>
       <p style="margin:8px 0 0;font-size:12px;color:#475569;text-align:right"><strong>Total:</strong> ${teamTransfers + teamAppointments + teamFellThrough + teamCallbacks + teamFutureContacts + teamNoAnswers} outcomes · <strong>${teamCalls}</strong> calls</p>
     </div>
+    <!--/SEC:summary-->
 
     <!-- Divider -->
     <div style="border-top:1px solid #e2e8f0;margin-bottom:24px"></div>
 
+    <!--SEC:clrBreakdown-->
     ${isMultiDay ? `
     <!-- Per-day CLR breakdown -->
     <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Daily CLR Activity</h2>
@@ -901,20 +918,23 @@ async function sendReport(
       * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
     </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
     `}
+    <!--/SEC:clrBreakdown-->
 
-    ${outcomeBreakdownHtml}
+    <!--SEC:outcomeBreakdown-->${outcomeBreakdownHtml}<!--/SEC:outcomeBreakdown-->
 
-    ${transferDetailsHtml}
+    <!--SEC:transferDetails-->${transferDetailsHtml}<!--/SEC:transferDetails-->
 
+    <!--SEC:activeLos-->
     <!-- Active LOs callout -->
     <div style="margin-top:28px;padding:14px 18px;background:#eff6ff;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0">
       <p style="margin:0;font-size:13px;color:#1e40af">
         <strong>Active LOs this period:</strong> ${los.filter((l: any) => l.internalStatus === "active").length} loan officers available for assignment.
       </p>
     </div>
+    <!--/SEC:activeLos-->
 
     <!-- CLR EOD Notes & Activity Log -->
-    ${clrStats.some(r => r.eodNotes.length > 0 || r.activityNotes.length > 0) ? `
+    ${clrStats.some(r => r.eodNotes.length > 0 || r.activityNotes.length > 0) ? `<!--SEC:eodNotes-->
     <div style="margin-top:28px">
       <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">CLR Notes & Activity Log</h2>
       ${clrStats.filter(r => r.eodNotes.length > 0 || r.activityNotes.length > 0).map(row => `
@@ -940,7 +960,7 @@ async function sendReport(
           ` : ''}
         </div>
       </div>`).join('')}
-    </div>` : ''}
+    </div><!--/SEC:eodNotes-->` : ''}
   `;
 
   // ── Call Notes section ──────────────────────────────────────────────────────
@@ -1095,7 +1115,8 @@ async function sendReport(
     }
   }
 
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body: body + callNotesHtml });
+  const wrappedCallNotes = callNotesHtml ? `<!--SEC:callNotes-->${callNotesHtml}<!--/SEC:callNotes-->` : "";
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body: stripDisabledSections(body + wrappedCallNotes) });
   if (opts.renderOnly) {
     console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
     return { id: null, recipients: [], html, subject, startDate, endDate };
@@ -5855,6 +5876,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return true;
   }
 
+  // Managers (is_manager) and admins may configure report/email settings.
+  function requireManagerOrAdmin(req: any, res: Response): boolean {
+    const uid = req.session_user?.userId;
+    if (!uid) { res.status(401).json({ error: "Unauthorized" }); return false; }
+    const u = storage.getUserById(uid) as any;
+    const isMgr = !!(u?.isManager ?? u?.is_manager);
+    if (!u || (u.role !== "admin" && !isMgr)) { res.status(403).json({ error: "Manager or admin only" }); return false; }
+    return true;
+  }
+
   function requireAdminOrViewerSession(req: any, res: Response): { user: any } | null {
     const uid = req.session_user?.userId;
     if (!uid) { res.status(401).json({ error: "Unauthorized" }); return null; }
@@ -6321,6 +6352,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.patch("/api/settings/email", requireAuth, (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     const data = { ...req.body };
     // Don't overwrite with masked key
     if (data.resendApiKey && data.resendApiKey.includes("•")) delete data.resendApiKey;
@@ -6388,6 +6420,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.post("/api/settings/email/send-now", requireAuth, async (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     const rawType = req.body?.type;
     const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
       rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";

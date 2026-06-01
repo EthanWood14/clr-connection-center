@@ -7,6 +7,7 @@ export interface AuthUser {
   email: string;
   role: string;
   isClr: boolean;
+  isManager?: boolean;
   hasSeenIntro: boolean;
   hasDismissedSample?: boolean;
   mustChangePassword: boolean;

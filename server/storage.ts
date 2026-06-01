@@ -1452,6 +1452,13 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'alltime_time')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN alltime_time TEXT NOT NULL DEFAULT '07:10'`);
   }
+  // 2026-06: per-report-type section visibility config. JSON keyed by report
+  // type (daily/weekly/monthly) -> { sectionKey: boolean }. Missing keys default
+  // to true so existing rows keep the full report. Managers edit this in
+  // Settings → Reports → "What's in the email".
+  if (!emailCols.find(c => c.name === 'report_sections')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_sections TEXT NOT NULL DEFAULT '{}'`);
+  }
   // Seed default SMTP credentials (always set if not already a Gmail address)
   const emailKeyRow = sqlite.prepare(`SELECT smtp_user, smtp_port, manager_emails FROM email_settings WHERE id=1`).get() as any;
   if (!emailKeyRow?.smtp_user || !emailKeyRow.smtp_user.includes('@gmail.com')) {
