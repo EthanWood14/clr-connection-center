@@ -697,7 +697,6 @@ async function sendReport(
   const clrRows = clrStats.map((row, i) => {
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
     const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
-    const missedStyle = row.missed > 0 ? "color:#dc2626;font-weight:600" : "color:#64748b";
     const ratioColor  = row.ratio === "—" ? "#94a3b8" : parseFloat(row.ratio) >= 10 ? "#15803d" : parseFloat(row.ratio) >= 5 ? "#b45309" : "#dc2626";
     return `<tr style="background:${bg}">
       <td style="padding:10px 12px;font-size:13px">${medal}</td>
@@ -708,7 +707,6 @@ async function sendReport(
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0f766e">${row.appointments}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#b45309">${row.fellThrough}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center">${row.assigned}</td>
-      <td style="padding:10px 12px;font-size:13px;text-align:center;${missedStyle}">${row.missed}</td>
     </tr>`;
   }).join("");
 
@@ -816,7 +814,6 @@ async function sendReport(
 
   // Totals row
   const teamRatioColor = teamCalls > 0 ? (parseFloat(teamRatio) >= 10 ? "#15803d" : parseFloat(teamRatio) >= 5 ? "#b45309" : "#dc2626") : "#94a3b8";
-  const teamMissedStyle = teamMissed > 0 ? "color:#dc2626;font-weight:700" : "color:#64748b;font-weight:700";
   const totalsRow = `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
     <td style="padding:10px 12px;font-size:12px;color:#94a3b8"></td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Total</td>
@@ -826,7 +823,6 @@ async function sendReport(
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0f766e;text-align:center">${teamAppointments}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#b45309;text-align:center">${teamFellThrough}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;text-align:center">${teamAssigned}</td>
-    <td style="padding:10px 12px;font-size:13px;text-align:center;${teamMissedStyle}">${teamMissed}</td>
   </tr>`;
 
   // ── Per-type report section visibility (managers configure in Settings) ─────
@@ -862,7 +858,7 @@ async function sendReport(
         ${statCard(teamTransfers, "Transfers", "#1A2B4A")}
         ${statCard(teamCalls, "Total Calls", "#0369a1")}
         ${statCard(teamRatio, "Transfer / Call %", teamRatioColor)}
-        ${statCard(teamMissed > 0 ? "⚠ " + teamMissed : teamMissed, "LOs Missed", teamMissed > 0 ? "#dc2626" : "#15803d")}
+        ${statCard(teamAppointments, "Appointments", "#0f766e")}
       </tr>
     </table>
 
@@ -918,7 +914,6 @@ async function sendReport(
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Thru</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Assigned</th>
-          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Missed</th>
         </tr>
       </thead>
       <tbody>
@@ -926,9 +921,7 @@ async function sendReport(
         ${totalsRow}
       </tbody>
     </table>
-    <p style="margin:8px 0 0;font-size:11px;color:#94a3b8">
-      * <em>Missed = LOs assigned but status never updated (still &ldquo;recommended&rdquo;)</em>
-    </p>` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
+` : `<p style="color:#94a3b8;font-size:13px;font-style:italic">No CLR data for this period.</p>`}
     `}
     <!--/SEC:clrBreakdown-->
 
@@ -1128,7 +1121,7 @@ async function sendReport(
   }
 
   const wrappedCallNotes = callNotesHtml ? `<!--SEC:callNotes-->${callNotesHtml}<!--/SEC:callNotes-->` : "";
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio · ${teamMissed} LOs missed`, body: stripDisabledSections(body + wrappedCallNotes) });
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: stripDisabledSections(body + wrappedCallNotes) });
   if (opts.renderOnly) {
     console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
     return { id: null, recipients: [], html, subject, startDate, endDate };
