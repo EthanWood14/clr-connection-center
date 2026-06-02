@@ -1519,23 +1519,38 @@ cron.schedule("* * * * *", async () => {
   } catch (e: any) { console.error("Scheduled report cron error:", e?.message ?? e); }
 });
 
-// ── Daily report — fires at 7:45 AM Pacific every morning ──────────────────
+// ── Daily report — fires at the configured Pacific time every morning ──────
 // Summarizes the PREVIOUS day (see the "daily" branch of sendReport's period
-// resolver). DST-safe via the timezone option. Gated by daily_enabled so it
-// can be turned off from Settings. The once-per-day guard prevents a duplicate
-// if the process restarts within the same minute.
-cron.schedule("45 7 * * *", async () => {
+// resolver). The send time is adjustable from Settings via daily_time
+// (default 07:45). We check every minute against the Pacific wall-clock, so it
+// is DST-safe without a fixed cron expression. Gated by daily_enabled. A
+// once-per-PT-day guard plus a 19:00 lateness cutoff prevent duplicates and
+// stop a late process start from blasting yesterday's report at, say, 9 PM.
+cron.schedule("* * * * *", async () => {
   try {
     const s = storageExtra.getEmailSettings() as any;
     if (!s.daily_enabled) return;
-    const nowDateKey = new Date().toISOString().split("T")[0];
-    if (lastReportFiredAt.daily === nowDateKey) return;
-    lastReportFiredAt.daily = nowDateKey;
-    await sendReport("daily");
+    const ptDateKey = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+    if (lastReportFiredAt.daily === ptDateKey) return;
+    const ptTime = new Date().toLocaleTimeString("en-GB", { timeZone: "America/Los_Angeles", hour12: false });
+    const tm = ptTime.match(/^(\d{1,2}):(\d{2})/);
+    if (!tm) return;
+    const nowMinutes = Number(tm[1]) * 60 + Number(tm[2]);
+    const { h, m } = parseHM(s.daily_time, "07:45");
+    const targetMin = h * 60 + m;
+    const cutoffMin = 19 * 60; // 7 PM PT lateness cutoff
+    if (nowMinutes >= targetMin && nowMinutes < cutoffMin) {
+      lastReportFiredAt.daily = ptDateKey;
+      try { await sendReport("daily"); }
+      catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
+    } else if (nowMinutes >= cutoffMin) {
+      lastReportFiredAt.daily = ptDateKey;
+      console.log(`[report-cron] daily skipped — past 19:00 PT cutoff; will fire tomorrow at ${s.daily_time || "07:45"}`);
+    }
   } catch (e: any) {
-    console.error("Scheduled daily report failed:", e?.message ?? e);
+    console.error("Scheduled daily report cron error:", e?.message ?? e);
   }
-}, { timezone: "America/Los_Angeles" });
+});
 
 // ── Weekly report — fires Mondays at 8:00 AM PT (15:00 UTC) ─────────────────
 // Summarizes the previous Mon–Sun. The send is still gated by
@@ -6395,6 +6410,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       else if (minutes > hiMin) { h = 22; mm = 0; }
       return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
     }
+    if (data.dailyTime !== undefined) data.dailyTime = clampTime(data.dailyTime) ?? data.dailyTime;
+    if (data.daily_time !== undefined) data.daily_time = clampTime(data.daily_time) ?? data.daily_time;
     if (data.weeklyTime !== undefined) data.weeklyTime = clampTime(data.weeklyTime) ?? data.weeklyTime;
     if (data.weekly_time !== undefined) data.weekly_time = clampTime(data.weekly_time) ?? data.weekly_time;
     if (data.monthlyTime !== undefined) data.monthlyTime = clampTime(data.monthlyTime) ?? data.monthlyTime;

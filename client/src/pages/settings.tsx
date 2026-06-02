@@ -428,7 +428,7 @@ function EmailReportsCard() {
   const [mtdEnabled, setMtdEnabled] = useState(false);
   const [alltimeEnabled, setAlltimeEnabled] = useState(false);
   const [welcomeEmailEnabled, setWelcomeEmailEnabled] = useState(false);
-  const [dailyTime, setDailyTime] = useState("08:00");
+  const [dailyTime, setDailyTime] = useState("07:45");
   const [weeklyTime, setWeeklyTime] = useState("08:00");
   const [monthlyTime, setMonthlyTime] = useState("07:00");
   const [mtdTime, setMtdTime] = useState("08:00");
@@ -453,7 +453,7 @@ function EmailReportsCard() {
     setMtdEnabled(!!(emailSettings.mtd_enabled ?? emailSettings.mtdEnabled));
     setAlltimeEnabled(!!(emailSettings.alltime_enabled ?? emailSettings.alltimeEnabled));
     setWelcomeEmailEnabled(!!(emailSettings.welcome_email_enabled ?? emailSettings.welcomeEmailEnabled));
-    setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "08:00");
+    setDailyTime(emailSettings.daily_time ?? emailSettings.dailyTime ?? "07:45");
     setWeeklyTime(emailSettings.weekly_time ?? emailSettings.weeklyTime ?? "08:00");
     setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
     setMtdTime(emailSettings.mtd_time ?? emailSettings.mtdTime ?? "08:00");
@@ -710,9 +710,19 @@ function EmailReportsCard() {
                 <div className="flex items-center justify-between rounded-lg border px-4 py-3">
                   <div>
                     <p className="text-sm font-medium">Daily Report</p>
-                    <p className="text-xs text-muted-foreground">Sent at 7:45 AM Pacific every morning — covers the previous day</p>
+                    <p className="text-xs text-muted-foreground">Sent every morning at the configured Pacific time (06:00–22:00) — covers the previous day</p>
                   </div>
                   <div className="flex items-center gap-3">
+                    {dailyEnabled && (
+                      <Input
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        value={dailyTime}
+                        onChange={e => setDailyTime(e.target.value)}
+                        className="w-28 text-xs h-8"
+                      />
+                    )}
                     <Switch checked={dailyEnabled} onCheckedChange={setDailyEnabled} />
                   </div>
                 </div>

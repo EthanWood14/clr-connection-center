@@ -1433,6 +1433,16 @@ function runNewMigrations() {
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
   //   monthly → 7:00 on the 1st of the next month
+  // 2026-06: daily_time became user-adjustable. Previously the daily report
+  // fired at a hard-coded 7:45 AM PT and daily_time (default 08:00) was unused.
+  // One-time backfill to 07:45 so the established send time is preserved as the
+  // default. Guarded by daily_time_seeded so a later admin change to 08:00 is
+  // not flipped back on the next restart.
+  if (!emailCols.find(c => c.name === 'daily_time_seeded')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN daily_time_seeded INTEGER NOT NULL DEFAULT 0`);
+    try { sqlite.exec(`UPDATE email_settings SET daily_time='07:45' WHERE daily_time='08:00'`); } catch {}
+    try { sqlite.exec(`UPDATE email_settings SET daily_time_seeded=1`); } catch {}
+  }
   if (!emailCols.find(c => c.name === 'weekly_time')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN weekly_time TEXT NOT NULL DEFAULT '08:00'`);
   }
