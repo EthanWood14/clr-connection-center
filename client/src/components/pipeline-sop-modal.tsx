@@ -62,7 +62,7 @@ const TERMS: { term: string; def: string }[] = [
   { term: "DNC", def: "Do Not Contact - legally off-limits, never reach out" },
 ];
 
-export function PipelineSopModal() {
+export function PipelineSopModal({ onClose }: { onClose?: () => void } = {}) {
   const { markPipelineSopSeen } = useAuth();
   const [dismissed, setDismissed] = useState(false);
 
@@ -71,6 +71,7 @@ export function PipelineSopModal() {
   const handleDismiss = async () => {
     setDismissed(true);
     await markPipelineSopSeen();
+    onClose?.();
   };
 
   return (

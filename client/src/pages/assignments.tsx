@@ -17,11 +17,12 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles,
-  Star, StickyNote, Sunrise, Sun, Sunset, Clock
+  Star, StickyNote, Sunrise, Sun, Sunset, Clock, GitBranch
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { LoStatusBadge } from "@/components/lo-status-badge";
+import { PipelineSopModal } from "@/components/pipeline-sop-modal";
 
 interface LoPref {
   loId: number;
@@ -882,6 +883,7 @@ export default function Assignments() {
   const [generateLocked, setGenerateLocked] = useState(false);
   const [showOverrideDialog, setShowOverrideDialog] = useState(false);
   const [showPreConfigureDialog, setShowPreConfigureDialog] = useState(false);
+  const [showPipelineGuide, setShowPipelineGuide] = useState(false);
 
   const { data: assignments = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/assignments", currentDate],
@@ -1094,6 +1096,7 @@ export default function Assignments() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 max-w-[1400px] mx-auto">
+      {showPipelineGuide && <PipelineSopModal onClose={() => setShowPipelineGuide(false)} />}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -1108,6 +1111,18 @@ export default function Assignments() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Pipeline stage guide */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs gap-1.5"
+            onClick={() => setShowPipelineGuide(true)}
+            data-testid="button-pipeline-guide"
+            title="Pipeline stage reference"
+          >
+            <GitBranch className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Pipeline Guide</span>
+          </Button>
           {/* Select all (shown when assignments exist) */}
           {assignments.length > 0 && (
             <Button
