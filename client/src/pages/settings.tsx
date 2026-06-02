@@ -418,6 +418,7 @@ function EmailReportsCard() {
   );
   // undefined / "all" → whole team; a numeric id → that CLR only (All-Time send).
   const [alltimeClrId, setAlltimeClrId] = useState<string>("all");
+  const [dailySendDay, setDailySendDay] = useState<"yesterday" | "today">("yesterday");
 
   const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
@@ -534,7 +535,7 @@ function EmailReportsCard() {
     }
   }
 
-  async function handleSendNow(type: "daily" | "weekly" | "monthly" | "mtd" | "alltime", clrId?: string) {
+  async function handleSendNow(type: "daily" | "weekly" | "monthly" | "mtd" | "alltime", clrId?: string, day?: "today" | "yesterday") {
     const labelMap: Record<typeof type, string> = {
       daily: "Daily",
       weekly: "Weekly",
@@ -561,7 +562,7 @@ function EmailReportsCard() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, clrId: clrId && clrId !== "all" ? clrId : undefined }),
+        body: JSON.stringify({ type, clrId: clrId && clrId !== "all" ? clrId : undefined, day: type === "daily" ? (day ?? "yesterday") : undefined }),
       });
       let data: any = {};
       try { data = await res.json(); } catch {}
@@ -857,6 +858,32 @@ function EmailReportsCard() {
                   try { return JSON.parse(emailSettings?.manager_emails ?? emailSettings?.managerEmails ?? "[]").length; }
                   catch { return 0; }
                 })();
+                if (type === "daily") {
+                  return (
+                    <div key={type} className="inline-flex items-center gap-1.5">
+                      <select
+                        value={dailySendDay}
+                        onChange={e => setDailySendDay(e.target.value as "yesterday" | "today")}
+                        disabled={sendLoading}
+                        title="Choose which day the daily report covers"
+                        className="h-8 rounded-md border bg-background px-2 text-xs"
+                      >
+                        <option value="yesterday">Yesterday</option>
+                        <option value="today">Today</option>
+                      </select>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleSendNow(type, undefined, dailySendDay)}
+                        disabled={sendLoading || persistedCount === 0}
+                        title={persistedCount === 0 ? `Add and save recipients in Report Recipients` : `Sends the daily report for ${dailySendDay} to ${persistedCount} recipient${persistedCount === 1 ? "" : "s"}`}
+                        className="gap-1.5"
+                      >
+                        {sendLoading ? "Sending…" : `Send ${label} Now (${persistedCount})`}
+                      </Button>
+                    </div>
+                  );
+                }
                 if (type === "alltime") {
                   const selected = clrOptions.find((u: any) => String(u.id) === alltimeClrId);
                   return (

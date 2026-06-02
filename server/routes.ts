@@ -332,6 +332,10 @@ type ReportOptions = {
   renderOnly?: boolean;
   // When set, the report includes only this CLR's activity (instead of the full team).
   clrId?: number;
+  // Daily reports only: which day to cover relative to the PT business day.
+  //   -1 (default) = yesterday (the morning-summary behavior)
+  //    0           = today (partial day so far)
+  dailyOffset?: number;
 };
 
 type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
@@ -393,7 +397,8 @@ async function sendReport(
         // Daily report covers the PREVIOUS day: it's sent at 7:45 AM PT each
         // morning summarizing yesterday. addIsoDays(...,-1) on the PT business
         // day gives yesterday's calendar date in the morning window.
-        const y = addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), -1);
+        const off = opts.dailyOffset === 0 ? 0 : -1;
+        const y = addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), off);
         return { startDate: y, endDate: y };
       })()
     : type === "weekly"
@@ -6469,9 +6474,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const clrId = (rawClrId === undefined || rawClrId === null || rawClrId === "" || rawClrId === "all")
       ? undefined
       : Number(rawClrId);
-    console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type} clrId=${clrId ?? "all"}`);
+    // Daily-only: which day to cover. "today" sends a partial report for today;
+    // anything else (default) keeps the standard previous-day behavior.
+    const dailyOffset = type === "daily" && req.body?.day === "today" ? 0 : -1;
+    console.log(`[send-now] user=${(req as any).session_user?.userId} type=${type} clrId=${clrId ?? "all"} dailyOffset=${dailyOffset}`);
     try {
-      const result = await sendReport(type, Number.isFinite(clrId as number) ? { clrId: clrId as number } : {});
+      const opts: any = {};
+      if (Number.isFinite(clrId as number)) opts.clrId = clrId as number;
+      if (type === "daily") opts.dailyOffset = dailyOffset;
+      const result = await sendReport(type, opts);
       console.log(`[send-now] OK type=${type} id=${result?.id} recipients=${JSON.stringify(result?.recipients)}`);
       res.json({ ok: true, id: result?.id ?? null, recipients: result?.recipients ?? [] });
     } catch (e: any) {
