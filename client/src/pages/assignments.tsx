@@ -281,6 +281,13 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
   const timeBadge = pref?.preferredTime ? PREFERRED_TIME_LABEL[pref.preferredTime] : null;
   const notesText = pref?.notes?.trim() ?? "";
   const hasNotes = !!notesText;
+  // Unified "Notes & Requests" recorded on the LO (shared across all CLRs).
+  // A big chunk of text — multiple lines or a long paragraph — surfaces a loud
+  // red warning so callers do not miss important handling instructions.
+  const loNotes = (assignment.lo?.notes ?? "").trim();
+  const hasLoNotes = !!loNotes;
+  const loNotesLineCount = hasLoNotes ? loNotes.split(/\r?\n/).filter((l: string) => l.trim().length > 0).length : 0;
+  const loNotesIsBig = hasLoNotes && (loNotesLineCount > 1 || loNotes.length > 180);
   const availabilityLabel = todayAvailabilitySlot ? (AVAILABILITY_LABEL[todayAvailabilitySlot] ?? todayAvailabilitySlot) : "";
 
   return (
@@ -352,6 +359,30 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
           >
             <StickyNote className="w-3 h-3 mt-0.5 flex-shrink-0" />
             <span className="line-clamp-2">{notesText}</span>
+          </div>
+        )}
+        {/* Shared LO Notes & Requests. Short ones show inline; big chunks of
+            text get a loud red warning so callers read them before dialing. */}
+        {hasLoNotes && !loNotesIsBig && (
+          <div
+            className="text-xs text-foreground flex items-start gap-1 mt-0.5"
+            title={loNotes}
+            data-testid={`text-lo-notes-${assignment.id}`}
+          >
+            <StickyNote className="w-3 h-3 mt-0.5 flex-shrink-0 text-amber-600" />
+            <span className="whitespace-pre-wrap">{loNotes}</span>
+          </div>
+        )}
+        {hasLoNotes && loNotesIsBig && (
+          <div
+            className="mt-1 rounded-md border-2 border-red-500 bg-red-50 dark:bg-red-950/40 px-2.5 py-1.5"
+            data-testid={`warn-lo-notes-${assignment.id}`}
+          >
+            <div className="flex items-center gap-1.5 text-red-700 dark:text-red-300 font-bold text-xs uppercase tracking-wide">
+              <TriangleAlert className="w-4 h-4 flex-shrink-0" />
+              Read notes before calling
+            </div>
+            <p className="text-xs text-red-900 dark:text-red-100 whitespace-pre-wrap mt-1">{loNotes}</p>
           </div>
         )}
       </div>

@@ -417,6 +417,33 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}
 
+// 2026-06: consolidate notes + special_requests + personal_preferences into a
+// single "Notes & Requests" category, stored in the notes column. One-time
+// merge that concatenates any existing text from all three (blank-line
+// separated) and clears the two now-unused columns. Guarded by prefs_merged so
+// it runs exactly once and never double-appends. The special_requests and
+// personal_preferences columns are kept (not dropped) but no longer used.
+try {
+  const loCols = sqlite.prepare(`PRAGMA table_info(loan_officers)`).all() as any[];
+  if (!loCols.find((c: any) => c.name === "prefs_merged")) {
+    sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN prefs_merged INTEGER NOT NULL DEFAULT 0`);
+    const rows = sqlite.prepare(`SELECT id, notes, special_requests, personal_preferences FROM loan_officers`).all() as any[];
+    const upd = sqlite.prepare(`UPDATE loan_officers SET notes=?, special_requests=NULL, personal_preferences=NULL, prefs_merged=1 WHERE id=?`);
+    const tx = sqlite.transaction((list: any[]) => {
+      for (const r of list) {
+        const parts = [r.notes, r.special_requests, r.personal_preferences]
+          .map((p: any) => (typeof p === "string" ? p.trim() : ""))
+          .filter((p: string) => p.length > 0);
+        // De-dupe identical blocks (e.g. same text copied across fields)
+        const seen = new Set<string>();
+        const merged = parts.filter((p) => { const k = p.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).join("\n\n");
+        upd.run(merged || null, r.id);
+      }
+    });
+    tx(rows);
+  }
+} catch (e) { console.error("[migrate] LO prefs consolidation failed:", e); }
+
 // algorithm_settings: add 90-day transfer weight column if missing (MUST be before any SELECT from algorithmSettings)
 try { sqlite.exec(`ALTER TABLE algorithm_settings ADD COLUMN weight_recent_transfers REAL NOT NULL DEFAULT 0.10`); } catch {}
 

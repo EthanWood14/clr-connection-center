@@ -3705,8 +3705,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (row.bonzoPassword) patch.bonzoPassword = String(row.bonzoPassword);
         if (row.leadMailboxUsername) patch.leadMailboxUsername = String(row.leadMailboxUsername);
         if (row.leadMailboxPassword) patch.leadMailboxPassword = String(row.leadMailboxPassword);
-        if (row.notes) patch.notes = String(row.notes);
-        if (row.specialRequests) patch.specialRequests = String(row.specialRequests);
+        {
+          // Consolidated "Notes & Requests": merge any imported notes + special
+          // requests into the single notes column (see schema consolidation).
+          const _combined = [row.notes, row.specialRequests]
+            .map((x: any) => (x ? String(x).trim() : ""))
+            .filter((x: string) => x.length > 0)
+            .join("\n\n");
+          if (_combined) patch.notes = _combined;
+        }
         if (row.priorityTier !== undefined && row.priorityTier !== "") patch.priorityTier = Number(row.priorityTier);
         if (row.boostScore !== undefined && row.boostScore !== "") patch.boostScore = Number(row.boostScore);
 
@@ -3734,8 +3741,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             bonzoPassword: row.bonzoPassword ? String(row.bonzoPassword) : undefined,
             leadMailboxUsername: row.leadMailboxUsername ? String(row.leadMailboxUsername) : undefined,
             leadMailboxPassword: row.leadMailboxPassword ? String(row.leadMailboxPassword) : undefined,
-            notes: row.notes ? String(row.notes) : undefined,
-            specialRequests: row.specialRequests ? String(row.specialRequests) : undefined,
+            notes: ([row.notes, row.specialRequests].map((x: any) => (x ? String(x).trim() : "")).filter((x: string) => x.length > 0).join("\n\n")) || undefined,
             boostScore: row.boostScore !== undefined && row.boostScore !== "" ? Number(row.boostScore) : 0,
             priorityTier: row.priorityTier !== undefined && row.priorityTier !== "" ? Number(row.priorityTier) : 2,
             internalStatus: row.internalStatus ? String(row.internalStatus) : "active",
@@ -3873,17 +3879,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(lo);
   });
 
-  // Anyone authed can update an LO's personal preferences (collaborative field).
-  // Body shape is locked to { personalPreferences: string | null } so this route
-  // can't be used to escalate edits to other LO fields.
+  // Anyone authed can update an LO's unified "Notes & Requests" (collaborative
+  // field). Body accepts { notes } (preferred) or { personalPreferences }
+  // (legacy alias) and only ever writes the notes column, so this route can't be
+  // used to escalate edits to other LO fields.
   app.patch("/api/loan-officers/:id/preferences", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
-    const raw = req.body?.personalPreferences;
+    const raw = req.body?.notes ?? req.body?.personalPreferences;
     const value =
       raw == null || (typeof raw === "string" && raw.trim() === "")
         ? null
         : String(raw).slice(0, 4000);
-    const lo = storage.updateLoanOfficer(id, { personalPreferences: value } as any);
+    const lo = storage.updateLoanOfficer(id, { notes: value } as any);
     if (!lo) return res.status(404).json({ error: "Not found" });
     const actor = storage.getUsers().find((u: any) => u.id === req.session_user?.userId);
     audit({
@@ -3893,7 +3900,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       entityType: "loan_officer",
       entityId: lo.id,
       entityLabel: (lo as any).fullName ?? `LO #${lo.id}`,
-      details: JSON.stringify({ personalPreferences: value }),
+      details: JSON.stringify({ notes: value }),
     });
     res.json(lo);
   });

@@ -17,9 +17,9 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search, Plus, Copy, Eye, EyeOff, Edit2, Trash2, RotateCcw,
-  ChevronDown, ChevronUp, BedDouble, AlertCircle, CalendarDays,
+  ChevronDown, ChevronUp, BedDouble, CalendarDays,
   Upload, CheckCheck, BarChart2, ExternalLink, ShieldCheck, ShieldAlert, Clock,
-  Heart, Save, X as XIcon,
+  Save, X as XIcon, StickyNote, AlertTriangle,
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -231,7 +231,7 @@ function CredBlock({
 }
 
 // ── LO Card ───────────────────────────────────────────────────────────────────
-// ── Personal Preferences inline editor ────────────────────────────────────────
+// ── Notes & Requests inline editor (collaborative) ─────────────────────────────
 // Anyone authed can edit — collaborative "how this LO likes to work" notes.
 function PreferencesEditor({ loId, value }: { loId: number; value: string | null | undefined }) {
   const { toast } = useToast();
@@ -243,13 +243,13 @@ function PreferencesEditor({ loId, value }: { loId: number; value: string | null
 
   const saveMutation = useMutation({
     mutationFn: (next: string) =>
-      apiRequest("PATCH", `/api/loan-officers/${loId}/preferences`, { personalPreferences: next }),
+      apiRequest("PATCH", `/api/loan-officers/${loId}/preferences`, { notes: next }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/loan-officers"] });
       setEditing(false);
-      toast({ title: "Preferences saved" });
+      toast({ title: "Notes saved" });
     },
-    onError: () => toast({ title: "Couldn’t save preferences", variant: "destructive" }),
+    onError: () => toast({ title: "Couldn’t save notes", variant: "destructive" }),
   });
 
   const hasValue = !!(value && value.trim());
@@ -259,7 +259,7 @@ function PreferencesEditor({ loId, value }: { loId: number; value: string | null
       <div className="sm:col-span-2">
         <div className="flex items-center justify-between mb-0.5">
           <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-            <Heart className="w-3 h-3" /> Personal Preferences
+            <StickyNote className="w-3 h-3" /> Notes &amp; Requests
           </div>
           <Button
             variant="ghost"
@@ -275,7 +275,7 @@ function PreferencesEditor({ loId, value }: { loId: number; value: string | null
         {hasValue ? (
           <p className="text-foreground whitespace-pre-wrap">{value}</p>
         ) : (
-          <p className="text-muted-foreground italic">No preferences recorded yet. Click “Add” to share what you’ve learned about this LO.</p>
+          <p className="text-muted-foreground italic">No notes recorded yet. Click “Add” to share special requests, preferences, or anything else CLRs should know.</p>
         )}
       </div>
     );
@@ -284,7 +284,7 @@ function PreferencesEditor({ loId, value }: { loId: number; value: string | null
   return (
     <div className="sm:col-span-2">
       <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-        <Heart className="w-3 h-3" /> Personal Preferences
+        <StickyNote className="w-3 h-3" /> Notes &amp; Requests
       </div>
       <Textarea
         value={draft}
@@ -388,15 +388,15 @@ function LOCard({
                   <BedDouble className="w-3 h-3 mr-1" />Snoozed
                 </Badge>
               )}
-              {lo.personalPreferences && lo.personalPreferences.trim() && (
+              {lo.notes && lo.notes.trim() && (
                 <Badge
                   variant="outline"
                   className="text-xs px-1.5 py-0 text-rose-600 border-rose-300 cursor-pointer"
-                  title="Personal preferences recorded — expand for details"
+                  title="Notes & requests recorded — expand for details"
                   onClick={() => setExpanded(true)}
                   data-testid={`badge-prefs-${lo.id}`}
                 >
-                  <Heart className="w-3 h-3 mr-1" />Preferences
+                  <StickyNote className="w-3 h-3 mr-1" />Notes
                 </Badge>
               )}
             </div>
@@ -527,33 +527,18 @@ function LOCard({
           </div>
         </div>
 
-        {/* ── Expanded section: notes, special requests, preferences ────── */}
+        {/* ── Expanded section: unified Notes & Requests + snooze ────────── */}
         {expanded && (
           <div className="px-4 pb-4 pt-0 border-t bg-muted/30">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 text-xs">
-              {lo.notes && (
-                <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Notes</div>
-                  <p className="text-foreground">{lo.notes}</p>
-                </div>
-              )}
-              {lo.specialRequests && (
-                <div>
-                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Special Requests</div>
-                  <p className="text-foreground flex items-start gap-1">
-                    <AlertCircle className="w-3 h-3 text-orange-500 mt-0.5 flex-shrink-0" />
-                    {lo.specialRequests}
-                  </p>
-                </div>
-              )}
               {lo.snoozeUntil && (
                 <div>
                   <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">Snoozed Until</div>
                   <p className="text-foreground">{lo.snoozeUntil}{lo.snoozeReason ? ` — ${lo.snoozeReason}` : ""}</p>
                 </div>
               )}
-              {/* Personal preferences — always visible (anyone can add) */}
-              <PreferencesEditor loId={lo.id} value={lo.personalPreferences} />
+              {/* Unified Notes & Requests — collaborative, anyone can edit */}
+              <PreferencesEditor loId={lo.id} value={lo.notes} />
             </div>
           </div>
         )}
@@ -858,25 +843,13 @@ function LOFormDialog({
             </div>
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem>
-                <FormLabel>Notes</FormLabel>
-                <FormControl><Textarea {...field} rows={2} data-testid="textarea-notes" /></FormControl>
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="specialRequests" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Special Requests</FormLabel>
-                <FormControl><Textarea {...field} rows={2} data-testid="textarea-special-requests" /></FormControl>
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="personalPreferences" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Personal Preferences</FormLabel>
+                <FormLabel>Notes &amp; Requests</FormLabel>
                 <FormControl>
                   <Textarea
                     {...field}
-                    rows={3}
-                    placeholder="How they like to work — preferred contact times, communication style, file format preferences, lead handoff quirks, etc."
-                    data-testid="textarea-personal-preferences"
+                    rows={4}
+                    placeholder="Everything to know about this LO — special requests, personal preferences, how they like to work (contact times, communication style, lead handoff quirks), etc. Keep it concise; long notes show a warning on the calling list."
+                    data-testid="textarea-notes"
                   />
                 </FormControl>
               </FormItem>
