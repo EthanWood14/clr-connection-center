@@ -182,6 +182,7 @@ const reportingItems: NavItem[] = [
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
+  { title: "Time Off",              url: "/time-off",     icon: Plane },
   { title: "Install App",           url: "/install",      icon: Smartphone },
 ];
 

@@ -2042,6 +2042,28 @@ export function registerRoutes(httpServer: Server, app: Express) {
     `);
   } catch {}
 
+  // ── time_off_requests migration ──────────────────────────────────────────────
+  // CLRs request time off; managers/admins approve or deny. Scoped per org.
+  // Idempotent (CREATE TABLE IF NOT EXISTS) so the app boots cleanly on re-run.
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS time_off_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        reason TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','denied','cancelled')),
+        reviewed_by INTEGER,
+        reviewer_note TEXT DEFAULT '',
+        created_at TEXT,
+        updated_at TEXT,
+        reviewed_at TEXT
+      )
+    `);
+  } catch {}
+
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
     try { storage.createAuditLog(data); } catch {}
@@ -4062,6 +4084,147 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save preference" });
+    }
+  });
+
+  // ── Time Off Requests ───────────────────────────────────────────────────────
+  // CLRs submit requests; managers/admins approve or deny. Scoped per org.
+  const isYmd = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  function mapTimeOff(r: any, nameById: Map<number, string>) {
+    return {
+      id: r.id,
+      userId: r.user_id,
+      userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
+      startDate: r.start_date,
+      endDate: r.end_date,
+      reason: r.reason ?? "",
+      status: r.status,
+      reviewedBy: r.reviewed_by ?? null,
+      reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
+      reviewerNote: r.reviewer_note ?? "",
+      createdAt: r.created_at,
+      reviewedAt: r.reviewed_at ?? null,
+    };
+  }
+  function timeOffNameMap() {
+    const m = new Map<number, string>();
+    for (const u of storage.getUsers() as any[]) m.set(u.id, u.name);
+    return m;
+  }
+
+  // List requests. Managers/admins see the whole org; everyone else sees only
+  // their own. Pass ?scope=mine to force own-only even as a manager.
+  app.get("/api/time-off", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const me = storage.getUserById(userId) as any;
+    const isManager = me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
+    const mineOnly = !isManager || req.query.scope === "mine";
+    try {
+      const db = storageExtra.getRawSqlite();
+      const nameById = timeOffNameMap();
+      const rows = mineOnly
+        ? db.prepare("SELECT * FROM time_off_requests WHERE org_id=? AND user_id=? ORDER BY start_date DESC, id DESC").all(orgId, userId)
+        : db.prepare("SELECT * FROM time_off_requests WHERE org_id=? ORDER BY (status='pending') DESC, start_date DESC, id DESC").all(orgId);
+      res.json((rows as any[]).map(r => mapTimeOff(r, nameById)));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load time-off requests" });
+    }
+  });
+
+  // Create a request for yourself.
+  app.post("/api/time-off", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const body = req.body ?? {};
+    const startDate = body.startDate;
+    const endDate = body.endDate;
+    const reason = typeof body.reason === "string" ? body.reason.slice(0, 1000) : "";
+    if (!isYmd(startDate) || !isYmd(endDate)) return res.status(400).json({ error: "Start and end dates are required (YYYY-MM-DD)." });
+    if (endDate < startDate) return res.status(400).json({ error: "End date cannot be before the start date." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)").run(orgId, userId, startDate, endDate, reason, nowIso, nowIso);
+      const nameById = timeOffNameMap();
+      const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
+      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      audit({
+        userId, userName: actor?.name ?? "Unknown", action: "create",
+        entityType: "time_off", entityId: Number(info.lastInsertRowid),
+        entityLabel: (actor?.name ?? "CLR") + " " + startDate + "->" + endDate,
+        details: JSON.stringify({ startDate, endDate, reason }),
+      });
+      res.json(mapTimeOff(row, nameById));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to submit request" });
+    }
+  });
+
+  // Approve / deny a request (managers + admins only).
+  app.patch("/api/time-off/:id", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const reviewerId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    const status = req.body?.status;
+    const reviewerNote = typeof req.body?.reviewerNote === "string" ? req.body.reviewerNote.slice(0, 1000) : "";
+    if (status !== "approved" && status !== "denied") return res.status(400).json({ error: "status must be 'approved' or 'denied'." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM time_off_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Request not found" });
+      db.prepare("UPDATE time_off_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
+      const nameById = timeOffNameMap();
+      const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(id) as any;
+      const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
+      audit({
+        userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
+        entityType: "time_off", entityId: id,
+        entityLabel: (nameById.get(existing.user_id) ?? "CLR") + " " + existing.start_date + "->" + existing.end_date,
+        details: JSON.stringify({ status, reviewerNote }),
+      });
+      try {
+        (storage as any).createNotification?.({
+          userId: existing.user_id,
+          type: "time_off",
+          title: "Time off " + status,
+          message: "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : "."),
+        });
+      } catch {}
+      res.json(mapTimeOff(row, nameById));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update request" });
+    }
+  });
+
+  // Cancel a request. Requester can cancel their own pending request; managers
+  // and admins can remove any request in their org.
+  app.delete("/api/time-off/:id", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM time_off_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Request not found" });
+      const me = storage.getUserById(userId) as any;
+      const isManager = me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
+      const isOwner = existing.user_id === userId;
+      if (!isManager && !(isOwner && existing.status === "pending")) {
+        return res.status(403).json({ error: "You can only cancel your own pending requests." });
+      }
+      db.prepare("DELETE FROM time_off_requests WHERE id=? AND org_id=?").run(id, orgId);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to cancel request" });
     }
   });
 
