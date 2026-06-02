@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,21 +63,38 @@ export default function EodReport() {
   const { toast } = useToast();
   const isAdmin = (user as any)?.isAdmin || (user as any)?.role === 'admin';
   const todayStr = businessTodayClient();
-  // Honor a ?date=YYYY-MM-DD query param so prompts / reminder emails can
-  // deep-link to a specific missed day instead of dumping the user on today.
-  const initialDate = (() => {
-    try {
-      const hash = typeof window !== "undefined" ? (window.location.hash || "") : "";
-      const qIdx = hash.indexOf("?");
-      if (qIdx >= 0) {
-        const params = new URLSearchParams(hash.slice(qIdx + 1));
-        const d = params.get("date");
+  // Honor a ?date=YYYY-MM-DD query param so prompts / reminder emails and the
+  // EOD lock gate can deep-link to a specific missed day instead of dumping the
+  // user on today. Under wouter's hash routing, navigate("/eod-report?date=X")
+  // puts the query into window.location.search (URL becomes "?date=X#/eod-report"),
+  // so we must read the real query string — not the hash. We still check the
+  // hash as a fallback for any old-style "#/eod-report?date=X" links.
+  const search = useSearch();
+  const parseDateParam = (...sources: string[]): string | null => {
+    for (const src of sources) {
+      if (!src) continue;
+      try {
+        const qIdx = src.indexOf("?");
+        const qs = qIdx >= 0 ? src.slice(qIdx + 1) : src;
+        const d = new URLSearchParams(qs).get("date");
         if (d && d.length === 10 && d[4] === "-" && d[7] === "-") return d;
-      }
-    } catch {}
-    return todayStr;
+      } catch {}
+    }
+    return null;
+  };
+  const initialDate = (() => {
+    if (typeof window === "undefined") return todayStr;
+    return parseDateParam(search, window.location.search, window.location.hash) ?? todayStr;
   })();
   const [selectedDate, setSelectedDate] = useState(initialDate);
+
+  // If the ?date= param changes after mount (e.g. the user clicks a different
+  // missing day in the lock gate while the page is already mounted), follow it.
+  useEffect(() => {
+    const d = parseDateParam(search, typeof window !== "undefined" ? window.location.search : "");
+    if (d && d !== selectedDate) setSelectedDate(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // Form state — calls + notes + LO coverage
   const [callsMade, setCallsMade] = useState("");
