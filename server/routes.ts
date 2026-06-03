@@ -2090,13 +2090,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
         paid_at TEXT,
         created_at TEXT,
         updated_at TEXT,
-        received_at TEXT
+        received_at TEXT,
+        approval_token TEXT
       )
     `);
   } catch {}
   // comp_requests: add paid/received tracking columns to pre-existing tables.
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_received INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -4368,7 +4370,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  app.post("/api/comp/request", requireAuth, (req: any, res) => {
+  app.post("/api/comp/request", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
@@ -4376,11 +4378,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => parseInt(x, 10)).filter((n: number) => Number.isFinite(n)) : [];
     if (!ids.length) return res.status(400).json({ error: "Select at least one expense to request." });
     const nowIso = new Date().toISOString();
+    const token = crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
       const placeholders = ids.map(() => "?").join(",");
-      const upd = db.prepare("UPDATE comp_requests SET status='pending', requested_at=?, updated_at=? WHERE id IN (" + placeholders + ") AND org_id=? AND user_id=? AND status='draft'");
-      const result = upd.run(nowIso, nowIso, ...ids, orgId, userId);
+      const upd = db.prepare("UPDATE comp_requests SET status='pending', requested_at=?, updated_at=?, approval_token=? WHERE id IN (" + placeholders + ") AND org_id=? AND user_id=? AND status='draft'");
+      const result = upd.run(nowIso, nowIso, token, ...ids, orgId, userId);
       const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
       audit({
         userId, userName: actor?.name ?? "Unknown", action: "create",
@@ -4388,9 +4391,71 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityLabel: (actor?.name ?? "User") + " comp request (" + result.changes + " items)",
         details: JSON.stringify({ ids }),
       });
-      res.json({ ok: true, requested: result.changes });
+
+      // Email the configured comp approver with one-click approve/deny links.
+      let emailedTo: string | null = null;
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.comp_approver_id ?? settings.compApproverId ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=? AND status='pending'").all(token) as any[];
+        if (approverEmail && items.length) {
+          const APP_URL = "https://www.westcapitallending.center";
+          const totalCents = items.reduce((a, r) => a + (r.amount_cents || 0), 0);
+          const fmt = (c: number) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const rows = items.map(r => `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${(r.description || "Expense")}${r.expense_date ? ` <span style=\"color:#94a3b8\">(${r.expense_date})</span>` : ""}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`).join("");
+          const approveUrl = `${APP_URL}/api/comp/email-decision?token=${token}&action=approve`;
+          const denyUrl = `${APP_URL}/api/comp/email-decision?token=${token}&action=deny`;
+          const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${actor?.name ?? "A team member"}</strong> submitted a comp request totaling <strong>${fmt(totalCents)}</strong>. Review the items below and approve or deny.</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}
+              <tr><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D">Total</td><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D;text-align:right">${fmt(totalCents)}</td></tr>
+            </table>
+            <table cellpadding="0" cellspacing="0"><tr>
+              <td style="padding-right:10px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Approve</a></td>
+              <td><a href="${denyUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Deny</a></td>
+            </tr></table>
+            <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">This decision applies to all items in this request. You can also manage requests in the app under Comp Requests.</p>`;
+          await sendEmail({ to: approverEmail, subject: "Comp request from " + (actor?.name ?? "a team member") + " — " + fmt(totalCents), html: buildEmail({ subject: "Comp Request Approval", preheader: fmt(totalCents) + " from " + (actor?.name ?? "a team member"), body }) });
+          emailedTo = approverEmail;
+        }
+      } catch (e: any) { console.error("[comp] approver email failed:", e?.message ?? e); }
+
+      res.json({ ok: true, requested: result.changes, emailedTo });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to submit comp request" });
+    }
+  });
+
+  // Public one-click approve/deny from the approver's email (no login).
+  app.get("/api/comp/email-decision", async (req: any, res) => {
+    const token = String(req.query.token ?? "");
+    const action = String(req.query.action ?? "");
+    const status = action === "approve" ? "approved" : action === "deny" ? "denied" : null;
+    const page = (title: string, msg: string, glyph: string) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:Arial,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:36px 44px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,24,45,0.08)"><div style="font-size:44px;line-height:1;margin-bottom:12px">${glyph}</div><h1 style="margin:0 0 8px;font-size:20px;color:#0F182D">${title}</h1><p style="margin:0;color:#475569;font-size:14px;line-height:1.5">${msg}</p></div></body></html>`;
+    if (!token || !status) return res.status(400).send(page("Invalid link", "This approval link is missing or malformed.", "&#9888;&#65039;"));
+    try {
+      const db = storageExtra.getRawSqlite();
+      const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=?").all(token) as any[];
+      if (!items.length) return res.status(404).send(page("Not found", "This comp request could not be located.", "&#10067;"));
+      const pending = items.filter(i => i.status === "pending");
+      if (!pending.length) {
+        return res.send(page("Already handled", "This request was already " + (items[0].status) + ". No further action needed.", "&#8505;&#65039;"));
+      }
+      const settings = storageExtra.getEmailSettings() as any;
+      const reviewerId = Number(settings.comp_approver_id ?? 0) || null;
+      const now = new Date().toISOString();
+      db.prepare("UPDATE comp_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
+      try {
+        const total = pending.reduce((a, r) => a + (r.amount_cents || 0), 0);
+        const dollars = "$" + (total / 100).toFixed(2);
+        (storage as any).createNotification?.({ userId: pending[0].user_id, type: "comp_request", title: "Comp " + status, message: "Your comp request for " + dollars + " was " + status + " via email." });
+      } catch {}
+      const verb = status === "approved" ? "approved" : "denied";
+      const glyph = status === "approved" ? "&#9989;" : "&#10060;";
+      return res.send(page("Request " + verb, pending.length + " item(s) marked " + verb + ". You can close this tab.", glyph));
+    } catch (e: any) {
+      return res.status(500).send(page("Something went wrong", e?.message ?? "Please try again.", "&#9888;&#65039;"));
     }
   });
 

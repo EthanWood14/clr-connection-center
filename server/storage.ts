@@ -1456,6 +1456,10 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'welcome_email_enabled')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN welcome_email_enabled INTEGER NOT NULL DEFAULT 0`);
   }
+  // 2026-06: manager who receives comp/reimbursement requests for email approval.
+  if (!emailCols.find(c => c.name === 'comp_approver_id')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN comp_approver_id INTEGER`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00

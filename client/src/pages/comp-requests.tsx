@@ -142,7 +142,7 @@ export default function CompRequests() {
   const requestMutation = useMutation({
     mutationFn: (ids: number[]) => apiRequest("POST", "/api/comp/request", { ids }),
     onSuccess: (d: any) => {
-      toast({ title: "Comp requested", description: (d?.requested ?? 0) + " item(s) sent for approval." });
+      toast({ title: "Comp requested", description: (d?.requested ?? 0) + " item(s) sent for approval" + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + "." });
       setSelected(new Set());
       refresh();
     },

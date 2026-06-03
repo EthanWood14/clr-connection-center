@@ -419,6 +419,16 @@ function EmailReportsCard() {
   // undefined / "all" → whole team; a numeric id → that CLR only (All-Time send).
   const [alltimeClrId, setAlltimeClrId] = useState<string>("all");
   const [dailySendDay, setDailySendDay] = useState<"yesterday" | "today">("yesterday");
+  // Manager who receives comp/reimbursement requests for email approval.
+  const [compApproverId, setCompApproverId] = useState<string>("");
+  // Anyone active with an email can be the approver (managers/admins listed first).
+  const managerOptions = (allUsers ?? [])
+    .filter((u: any) => u.isActive && u.email && String(u.email).includes("@"))
+    .sort((a: any, b: any) => {
+      const am = a.role === "admin" || a.isManager ? 0 : 1;
+      const bm = b.role === "admin" || b.isManager ? 0 : 1;
+      return am - bm || String(a.name).localeCompare(String(b.name));
+    });
 
   const [resendApiKey, setResendApiKey] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
@@ -459,6 +469,7 @@ function EmailReportsCard() {
     setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
     setMtdTime(emailSettings.mtd_time ?? emailSettings.mtdTime ?? "08:00");
     setAlltimeTime(emailSettings.alltime_time ?? emailSettings.alltimeTime ?? "07:10");
+    setCompApproverId(emailSettings.comp_approver_id ?? emailSettings.compApproverId ? String(emailSettings.comp_approver_id ?? emailSettings.compApproverId) : "");
     try {
       const rs = JSON.parse(emailSettings.report_sections ?? emailSettings.reportSections ?? "{}");
       setReportSections(rs && typeof rs === "object" ? rs : {});
@@ -501,6 +512,7 @@ function EmailReportsCard() {
       alltimeTime,
       reportSections: JSON.stringify(reportSections),
       reportToAllManagers: JSON.stringify(sendToAllManagers ? { daily: true, weekly: true, monthly: true, mtd: true, alltime: true } : {}),
+      compApproverId: compApproverId ? Number(compApproverId) : null,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -702,6 +714,23 @@ function EmailReportsCard() {
                 </div>
                 <Switch checked={sendToAllManagers} onCheckedChange={setSendToAllManagers} />
               </div>
+            </div>
+
+            {/* Comp request approver */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Comp Request Approver</p>
+              <p className="text-[11px] text-muted-foreground mb-2">When a CLR submits a comp (reimbursement) request, this manager gets an email with one-click <strong>Approve</strong> / <strong>Deny</strong> buttons. They can still approve in-app too.</p>
+              <select
+                value={compApproverId}
+                onChange={e => setCompApproverId(e.target.value)}
+                className="h-9 rounded-md border bg-background px-2 text-sm w-full max-w-sm"
+                data-testid="select-comp-approver"
+              >
+                <option value="">— None (no approval email sent) —</option>
+                {managerOptions.map((u: any) => (
+                  <option key={u.id} value={String(u.id)}>{u.name}{u.email ? " (" + u.email + ")" : ""}</option>
+                ))}
+              </select>
             </div>
 
             {/* Schedule toggles */}
