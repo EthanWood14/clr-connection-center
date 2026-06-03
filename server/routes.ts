@@ -1249,6 +1249,48 @@ cron.schedule("0 4 * * *", () => {
   } catch (e) { console.error("[comp-attachments] purge error:", e); }
 });
 
+// Comp reminders: nudge the approver about requests still not accepted (pending)
+// or not paid (approved + unpaid). First reminder at 3 days, then every 6 days.
+// Runs daily at 5am UTC.
+cron.schedule("0 5 * * *", async () => {
+  try {
+    const settings = storageExtra.getEmailSettings() as any;
+    const approverId = Number(settings.comp_approver_id ?? 0) || 0;
+    if (!approverId) return;
+    const approver = storage.getUserById(approverId) as any;
+    const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+    if (!approverEmail) return;
+    const db = storageExtra.getRawSqlite();
+    const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token IS NOT NULL AND (status='pending' OR (status='approved' AND is_paid=0))").all() as any[];
+    if (!items.length) return;
+    const users = storage.getUsers() as any[];
+    const nameById = new Map<number, string>(users.map((u: any) => [u.id, u.name]));
+    const groups = new Map<string, any[]>();
+    for (const it of items) {
+      const k = it.approval_token;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(it);
+    }
+    const nowMs = Date.now();
+    const DAY = 86400000;
+    const nowIso = new Date().toISOString();
+    for (const [token, group] of groups) {
+      const anchorMs = Math.min(...group.map(g => new Date(g.requested_at || g.created_at || nowIso).getTime()));
+      const lastMs = group.map(g => g.last_reminder_at ? new Date(g.last_reminder_at).getTime() : 0).reduce((a, b) => Math.max(a, b), 0);
+      const due = lastMs ? (nowMs - lastMs) >= 6 * DAY : (nowMs - anchorMs) >= 3 * DAY;
+      if (!due) continue;
+      const daysWaiting = Math.max(0, Math.floor((nowMs - anchorMs) / DAY));
+      const requesterName = nameById.get(group[0].user_id) ?? "a team member";
+      try {
+        const { subject, html } = buildCompApprovalEmail(group, token, requesterName, { days: daysWaiting });
+        await sendEmail({ to: approverEmail, subject, html });
+        db.prepare("UPDATE comp_requests SET last_reminder_at=? WHERE approval_token=? AND (status='pending' OR (status='approved' AND is_paid=0))").run(nowIso, token);
+        console.log("[comp-reminder] reminded " + approverEmail + " (" + group.length + " items, " + daysWaiting + "d)");
+      } catch (e: any) { console.error("[comp-reminder] send failed:", e?.message ?? e); }
+    }
+  } catch (e: any) { console.error("[comp-reminder] cron error:", e?.message ?? e); }
+});
+
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
@@ -2010,6 +2052,41 @@ cron.schedule("30 18 * * 1-5", async () => {
 let lastChatEmailAt = 0;
 const CHAT_EMAIL_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes
 
+// ── Comp approval/reminder email builder (shared by submit + reminder cron) ───
+const COMP_APP_URL = "https://www.westcapitallending.center";
+function buildCompApprovalEmail(
+  items: any[],
+  token: string,
+  requesterName: string,
+  reminder?: { days: number },
+): { subject: string; html: string } {
+  const fmt = (c: number) => "$" + ((c || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const totalCents = items.reduce((a, r) => a + (r.amount_cents || 0), 0);
+  const rows = items.map((r) => {
+    const dateTag = r.expense_date ? ` <span style=\"color:#94a3b8\">(${r.expense_date})</span>` : "";
+    const stateTag = r.status === "approved" ? ` <span style=\"color:#0284c7;font-size:12px\">approved, awaiting payment</span>` : "";
+    return `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
+  }).join("");
+  const approveUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=approve`;
+  const denyUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=deny`;
+  const paidUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=paid`;
+  const intro = reminder
+    ? `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>Reminder:</strong> the comp request from <strong>${requesterName}</strong> for <strong>${fmt(totalCents)}</strong> has been waiting <strong>${reminder.days} day(s)</strong> without being fully approved and paid. Please take action below.</p>`
+    : `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> submitted a comp request totaling <strong>${fmt(totalCents)}</strong>. Approve, deny, or mark it paid below.</p>`;
+  const body = `${intro}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}
+      <tr><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D">Total</td><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D;text-align:right">${fmt(totalCents)}</td></tr>
+    </table>
+    <table cellpadding="0" cellspacing="0"><tr>
+      <td style="padding-right:8px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 22px;border-radius:8px">Approve</a></td>
+      <td style="padding-right:8px"><a href="${denyUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 22px;border-radius:8px">Deny</a></td>
+      <td><a href="${paidUrl}" style="display:inline-block;background:#0284c7;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 22px;border-radius:8px">Mark Paid</a></td>
+    </tr></table>
+    <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">These actions apply to all items in this request. "Mark Paid" approves it (if needed) and records it as reimbursed. You can also manage requests in the app under Comp Requests.</p>`;
+  const subject = (reminder ? "Reminder: " : "") + "Comp request from " + requesterName + " — " + fmt(totalCents);
+  return { subject, html: buildEmail({ subject: reminder ? "Comp Request Reminder" : "Comp Request Approval", preheader: fmt(totalCents) + " from " + requesterName, body }) };
+}
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── One-time cleanup: scrub LO credentials accidentally saved as the
   // masked bullet placeholder. Earlier versions of the edit form could
@@ -2109,6 +2186,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_received INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN last_reminder_at TEXT`); } catch {}
 
   // ── comp_attachments migration ───────────────────────────────────────────────
   // Receipts / files attached to a comp request. Stored as base64 in SQLite (the
@@ -4435,22 +4513,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=? AND status='pending'").all(token) as any[];
         if (approverEmail && items.length) {
-          const APP_URL = "https://www.westcapitallending.center";
-          const totalCents = items.reduce((a, r) => a + (r.amount_cents || 0), 0);
-          const fmt = (c: number) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const rows = items.map(r => `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${(r.description || "Expense")}${r.expense_date ? ` <span style=\"color:#94a3b8\">(${r.expense_date})</span>` : ""}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`).join("");
-          const approveUrl = `${APP_URL}/api/comp/email-decision?token=${token}&action=approve`;
-          const denyUrl = `${APP_URL}/api/comp/email-decision?token=${token}&action=deny`;
-          const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${actor?.name ?? "A team member"}</strong> submitted a comp request totaling <strong>${fmt(totalCents)}</strong>. Review the items below and approve or deny.</p>
-            <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}
-              <tr><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D">Total</td><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D;text-align:right">${fmt(totalCents)}</td></tr>
-            </table>
-            <table cellpadding="0" cellspacing="0"><tr>
-              <td style="padding-right:10px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Approve</a></td>
-              <td><a href="${denyUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Deny</a></td>
-            </tr></table>
-            <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">This decision applies to all items in this request. You can also manage requests in the app under Comp Requests.</p>`;
-          await sendEmail({ to: approverEmail, subject: "Comp request from " + (actor?.name ?? "a team member") + " — " + fmt(totalCents), html: buildEmail({ subject: "Comp Request Approval", preheader: fmt(totalCents) + " from " + (actor?.name ?? "a team member"), body }) });
+          const { subject, html } = buildCompApprovalEmail(items, token, actor?.name ?? "a team member");
+          await sendEmail({ to: approverEmail, subject, html });
           emailedTo = approverEmail;
         }
       } catch (e: any) { console.error("[comp] approver email failed:", e?.message ?? e); }
@@ -4465,29 +4529,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/comp/email-decision", async (req: any, res) => {
     const token = String(req.query.token ?? "");
     const action = String(req.query.action ?? "");
-    const status = action === "approve" ? "approved" : action === "deny" ? "denied" : null;
+    const valid = action === "approve" || action === "deny" || action === "paid";
     const page = (title: string, msg: string, glyph: string) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:Arial,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:36px 44px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,24,45,0.08)"><div style="font-size:44px;line-height:1;margin-bottom:12px">${glyph}</div><h1 style="margin:0 0 8px;font-size:20px;color:#0F182D">${title}</h1><p style="margin:0;color:#475569;font-size:14px;line-height:1.5">${msg}</p></div></body></html>`;
-    if (!token || !status) return res.status(400).send(page("Invalid link", "This approval link is missing or malformed.", "&#9888;&#65039;"));
+    if (!token || !valid) return res.status(400).send(page("Invalid link", "This approval link is missing or malformed.", "&#9888;&#65039;"));
     try {
       const db = storageExtra.getRawSqlite();
       const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=?").all(token) as any[];
       if (!items.length) return res.status(404).send(page("Not found", "This comp request could not be located.", "&#10067;"));
-      const pending = items.filter(i => i.status === "pending");
-      if (!pending.length) {
-        return res.send(page("Already handled", "This request was already " + (items[0].status) + ". No further action needed.", "&#8505;&#65039;"));
-      }
       const settings = storageExtra.getEmailSettings() as any;
       const reviewerId = Number(settings.comp_approver_id ?? 0) || null;
       const now = new Date().toISOString();
+      const total = items.reduce((a, r) => a + (r.amount_cents || 0), 0);
+      const dollars = "$" + (total / 100).toFixed(2);
+
+      if (action === "paid") {
+        const targets = items.filter(i => i.status !== "denied" && !i.is_paid);
+        if (!targets.length) return res.send(page("Already handled", "These items were already paid or denied. No further action needed.", "&#8505;&#65039;"));
+        db.prepare("UPDATE comp_requests SET status='approved', reviewed_by=COALESCE(reviewed_by, ?), reviewed_at=COALESCE(reviewed_at, ?), is_paid=1, paid_at=?, updated_at=? WHERE approval_token=? AND status!='denied' AND is_paid=0").run(reviewerId, now, now, now, token);
+        try { (storage as any).createNotification?.({ userId: items[0].user_id, type: "comp_request", title: "Comp paid", message: "Your comp request for " + dollars + " was approved and marked paid." }); } catch {}
+        return res.send(page("Marked paid", targets.length + " item(s) approved and marked reimbursed. You can close this tab.", "&#9989;"));
+      }
+
+      const status = action === "approve" ? "approved" : "denied";
+      const pending = items.filter(i => i.status === "pending");
+      if (!pending.length) return res.send(page("Already handled", "This request was already " + (items[0].status) + ". No further action needed.", "&#8505;&#65039;"));
       db.prepare("UPDATE comp_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
-      try {
-        const total = pending.reduce((a, r) => a + (r.amount_cents || 0), 0);
-        const dollars = "$" + (total / 100).toFixed(2);
-        (storage as any).createNotification?.({ userId: pending[0].user_id, type: "comp_request", title: "Comp " + status, message: "Your comp request for " + dollars + " was " + status + " via email." });
-      } catch {}
-      const verb = status === "approved" ? "approved" : "denied";
+      try { (storage as any).createNotification?.({ userId: pending[0].user_id, type: "comp_request", title: "Comp " + status, message: "Your comp request for " + dollars + " was " + status + " via email." }); } catch {}
       const glyph = status === "approved" ? "&#9989;" : "&#10060;";
-      return res.send(page("Request " + verb, pending.length + " item(s) marked " + verb + ". You can close this tab.", glyph));
+      return res.send(page("Request " + status, pending.length + " item(s) marked " + status + ". You can close this tab.", glyph));
     } catch (e: any) {
       return res.status(500).send(page("Something went wrong", e?.message ?? "Please try again.", "&#9888;&#65039;"));
     }
