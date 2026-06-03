@@ -2087,6 +2087,40 @@ function buildCompApprovalEmail(
   return { subject, html: buildEmail({ subject: reminder ? "Comp Request Reminder" : "Comp Request Approval", preheader: fmt(totalCents) + " from " + requesterName, body }) };
 }
 
+// ── Time-off approval email builder ───────────────────────────────────────────
+function buildTimeOffApprovalEmail(
+  reqRow: any,
+  requesterName: string,
+): { subject: string; html: string } {
+  const prettyDate = (s: string) => {
+    try { return new Date(s + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }); }
+    catch { return s; }
+  };
+  let days = 1;
+  try {
+    const a = new Date(reqRow.start_date + "T12:00:00").getTime();
+    const b = new Date(reqRow.end_date + "T12:00:00").getTime();
+    days = Math.max(1, Math.round((b - a) / 86400000) + 1);
+  } catch {}
+  const range = reqRow.start_date === reqRow.end_date ? prettyDate(reqRow.start_date) : (prettyDate(reqRow.start_date) + " &rarr; " + prettyDate(reqRow.end_date));
+  const approveUrl = `${COMP_APP_URL}/api/time-off/email-decision?token=${reqRow.approval_token}&action=approve`;
+  const denyUrl = `${COMP_APP_URL}/api/time-off/email-decision?token=${reqRow.approval_token}&action=deny`;
+  const reasonRow = reqRow.reason ? `<tr><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Reason</td><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right">${reqRow.reason}</td></tr>` : "";
+  const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> requested time off. Approve or deny it below.</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">
+      <tr><td style="padding:8px 10px;font-size:13px;color:#64748b">Dates</td><td style="padding:8px 10px;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${range}</td></tr>
+      <tr><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Length</td><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right">${days} day${days === 1 ? "" : "s"}</td></tr>
+      ${reasonRow}
+    </table>
+    <table cellpadding="0" cellspacing="0"><tr>
+      <td style="padding-right:8px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Approve</a></td>
+      <td><a href="${denyUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Deny</a></td>
+    </tr></table>
+    <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">You can also manage time-off requests in the app under Time Off.</p>`;
+  const subject = "Time off request from " + requesterName + " — " + range.replace(" &rarr; ", " to ");
+  return { subject, html: buildEmail({ subject: "Time Off Approval", preheader: requesterName + " requested " + days + " day(s) off", body }) };
+}
+
 export function registerRoutes(httpServer: Server, app: Express) {
   // ── One-time cleanup: scrub LO credentials accidentally saved as the
   // masked bullet placeholder. Earlier versions of the edit form could
@@ -2146,10 +2180,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
         reviewer_note TEXT DEFAULT '',
         created_at TEXT,
         updated_at TEXT,
-        reviewed_at TEXT
+        reviewed_at TEXT,
+        approval_token TEXT
       )
     `);
+    storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_time_off_token ON time_off_requests(approval_token)`);
   } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE time_off_requests ADD COLUMN approval_token TEXT`); } catch {}
 
   // ── comp_requests migration ──────────────────────────────────────────────────
   // Reimbursement/comp tracking. Each row is one expense the user logged. It
@@ -3539,6 +3576,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (req.path.startsWith("/invite")) return next();
     // Public, token-secured comp approve/deny from the approver email (no session).
     if (req.path === "/comp/email-decision") return next();
+    if (req.path === "/time-off/email-decision") return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -4281,7 +4319,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Create a request for yourself.
-  app.post("/api/time-off", requireAuth, (req: any, res) => {
+  app.post("/api/time-off", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
@@ -4293,9 +4331,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isYmd(startDate) || !isYmd(endDate)) return res.status(400).json({ error: "Start and end dates are required (YYYY-MM-DD)." });
     if (endDate < startDate) return res.status(400).json({ error: "End date cannot be before the start date." });
     const nowIso = new Date().toISOString();
+    const token = crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
-      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)").run(orgId, userId, startDate, endDate, reason, nowIso, nowIso);
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)").run(orgId, userId, startDate, endDate, reason, token, nowIso, nowIso);
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
@@ -4305,13 +4344,54 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityLabel: (actor?.name ?? "CLR") + " " + startDate + "->" + endDate,
         details: JSON.stringify({ startDate, endDate, reason }),
       });
-      res.json(mapTimeOff(row, nameById));
+
+      // Email the configured time-off approver with one-click approve/deny links.
+      let emailedTo: string | null = null;
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.timeoff_approver_id ?? settings.timeoffApproverId ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        if (approverEmail) {
+          const { subject, html } = buildTimeOffApprovalEmail(row, actor?.name ?? "A team member");
+          await sendEmail({ to: approverEmail, subject, html });
+          emailedTo = approverEmail;
+        }
+      } catch (e: any) { console.error("[time-off] approver email failed:", e?.message ?? e); }
+
+      res.json({ ...mapTimeOff(row, nameById), emailedTo });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to submit request" });
     }
   });
 
   // Approve / deny a request (managers + admins only).
+  // Public one-click approve/deny from the approver email (no login; token-secured).
+  app.get("/api/time-off/email-decision", async (req: any, res) => {
+    const token = String(req.query.token ?? "");
+    const action = String(req.query.action ?? "");
+    const status = action === "approve" ? "approved" : action === "deny" ? "denied" : null;
+    const page = (title: string, msg: string, glyph: string) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:Arial,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:36px 44px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,24,45,0.08)"><div style="font-size:44px;line-height:1;margin-bottom:12px">${glyph}</div><h1 style="margin:0 0 8px;font-size:20px;color:#0F182D">${title}</h1><p style="margin:0;color:#475569;font-size:14px;line-height:1.5">${msg}</p></div></body></html>`;
+    if (!token || !status) return res.status(400).send(page("Invalid link", "This approval link is missing or malformed.", "&#9888;&#65039;"));
+    try {
+      const db = storageExtra.getRawSqlite();
+      const row = db.prepare("SELECT * FROM time_off_requests WHERE approval_token=?").get(token) as any;
+      if (!row) return res.status(404).send(page("Not found", "This time-off request could not be located.", "&#10067;"));
+      if (row.status !== "pending") return res.send(page("Already handled", "This request was already " + row.status + ". No further action needed.", "&#8505;&#65039;"));
+      const settings = storageExtra.getEmailSettings() as any;
+      const reviewerId = Number(settings.timeoff_approver_id ?? 0) || null;
+      const now = new Date().toISOString();
+      db.prepare("UPDATE time_off_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
+      try {
+        (storage as any).createNotification?.({ userId: row.user_id, type: "time_off", title: "Time off " + status, message: "Your time-off request for " + row.start_date + " to " + row.end_date + " was " + status + " via email." });
+      } catch {}
+      const glyph = status === "approved" ? "&#9989;" : "&#10060;";
+      return res.send(page("Request " + status, "The time-off request was marked " + status + ". You can close this tab.", glyph));
+    } catch (e: any) {
+      return res.status(500).send(page("Something went wrong", e?.message ?? "Please try again.", "&#9888;&#65039;"));
+    }
+  });
+
   app.patch("/api/time-off/:id", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const sess = req.session_user;

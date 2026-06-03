@@ -141,10 +141,10 @@ export default function TimeOff() {
 
   const createMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason }),
-    onSuccess: () => {
+    onSuccess: (d: any) => {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3500);
-      toast({ title: "Request sent! 🎉", description: "Sit tight — your manager will review it shortly." });
+      toast({ title: "Request sent! 🎉", description: d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly." });
       setStartDate(""); setEndDate(""); setReason("");
       refresh();
     },

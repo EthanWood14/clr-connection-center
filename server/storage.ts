@@ -1460,6 +1460,10 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'comp_approver_id')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN comp_approver_id INTEGER`);
   }
+  // 2026-06: manager who receives time-off requests for email approval.
+  if (!emailCols.find(c => c.name === 'timeoff_approver_id')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN timeoff_approver_id INTEGER`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
