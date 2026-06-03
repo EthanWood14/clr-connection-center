@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Construction,
 } from "lucide-react";
 
 interface CompItem {
@@ -272,6 +272,15 @@ export default function CompRequests() {
             <h1 className="text-2xl font-bold text-white">Comp Requests</h1>
             <p className="text-sm text-white/60">Log expenses as you go, request reimbursement, and track every payout.</p>
           </div>
+        </div>
+      </div>
+
+      {/* Beta / under construction banner */}
+      <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex items-center gap-2.5">
+        <Construction className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Under construction — Beta</p>
+          <p className="text-xs text-amber-700/80 dark:text-amber-400/80">This feature is still being built. Things may change and may not work perfectly yet.</p>
         </div>
       </div>
 
