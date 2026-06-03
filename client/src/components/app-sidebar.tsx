@@ -331,7 +331,7 @@ export function AppSidebar() {
           className="flex items-center justify-between w-full"
         >
           <span className="flex items-center gap-2">
-            <item.icon className="w-4 h-4 shrink-0" />
+            <item.icon className="w-3.5 h-3.5 shrink-0" />
             <span className={active ? "font-bold" : ""}>{item.title}</span>
           </span>
           {count > 0 && (
@@ -347,7 +347,7 @@ export function AppSidebar() {
           {item.help ? (
             <HoverCard openDelay={250} closeDelay={100}>
               <HoverCardTrigger asChild>
-                <SidebarMenuButton asChild isActive={active}>
+                <SidebarMenuButton asChild isActive={active} className="h-7 text-[13px]">
                   {link}
                 </SidebarMenuButton>
               </HoverCardTrigger>
@@ -367,7 +367,7 @@ export function AppSidebar() {
               </HoverCardContent>
             </HoverCard>
           ) : (
-            <SidebarMenuButton asChild isActive={active}>
+            <SidebarMenuButton asChild isActive={active} className="h-7 text-[13px]">
               {link}
             </SidebarMenuButton>
           )}

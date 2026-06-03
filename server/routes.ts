@@ -2082,16 +2082,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
         note TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','pending','approved','denied')),
         is_paid INTEGER NOT NULL DEFAULT 0,
+        is_received INTEGER NOT NULL DEFAULT 0,
         reviewed_by INTEGER,
         reviewer_note TEXT DEFAULT '',
         requested_at TEXT,
         reviewed_at TEXT,
         paid_at TEXT,
         created_at TEXT,
-        updated_at TEXT
+        updated_at TEXT,
+        received_at TEXT
       )
     `);
   } catch {}
+  // comp_requests: add paid/received tracking columns to pre-existing tables.
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_received INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -4273,6 +4278,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       note: r.note ?? "",
       status: r.status,
       isPaid: !!r.is_paid,
+      isReceived: !!r.is_received,
+      receivedAt: r.received_at ?? null,
       reviewedBy: r.reviewed_by ?? null,
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
       reviewerNote: r.reviewer_note ?? "",
@@ -4431,15 +4438,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
     const id = parseInt(req.params.id, 10);
-    const paid = req.body?.paid ? 1 : 0;
+    const hasPaid = req.body?.paid !== undefined;
+    const hasReceived = req.body?.received !== undefined;
     try {
       const db = storageExtra.getRawSqlite();
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
       if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
-      if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked reimbursed." });
-      db.prepare("UPDATE comp_requests SET is_paid=?, paid_at=?, updated_at=? WHERE id=?").run(paid, paid ? new Date().toISOString() : null, new Date().toISOString(), id);
+      if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked paid or received." });
+      const now = new Date().toISOString();
+      if (hasPaid) {
+        const p = req.body.paid ? 1 : 0;
+        db.prepare("UPDATE comp_requests SET is_paid=?, paid_at=?, updated_at=? WHERE id=?").run(p, p ? now : null, now, id);
+      }
+      if (hasReceived) {
+        const rc = req.body.received ? 1 : 0;
+        db.prepare("UPDATE comp_requests SET is_received=?, received_at=?, updated_at=? WHERE id=?").run(rc, rc ? now : null, now, id);
+      }
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
       res.json(mapComp(row, compNameMap()));
     } catch (e: any) {

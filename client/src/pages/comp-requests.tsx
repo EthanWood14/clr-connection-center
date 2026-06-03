@@ -28,6 +28,8 @@ interface CompItem {
   note: string;
   status: "draft" | "pending" | "approved" | "denied";
   isPaid: boolean;
+  isReceived: boolean;
+  receivedAt: string | null;
   reviewedBy: number | null;
   reviewerName: string | null;
   reviewerNote: string;
@@ -67,8 +69,9 @@ function CatChip({ category }: { category: string }) {
   );
 }
 
-function StatusBadge({ status, isPaid }: { status: CompItem["status"]; isPaid?: boolean }) {
-  if (status === "approved" && isPaid) return <Badge className="text-xs px-2 py-0.5 bg-emerald-600 text-white">Reimbursed</Badge>;
+function StatusBadge({ status, isPaid, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isReceived?: boolean }) {
+  if (status === "approved" && isReceived) return <Badge className="text-xs px-2 py-0.5 bg-emerald-600 text-white">Received</Badge>;
+  if (status === "approved" && isPaid) return <Badge className="text-xs px-2 py-0.5 bg-sky-600 text-white">Paid</Badge>;
   const map: Record<CompItem["status"], { label: string; cls: string }> = {
     draft: { label: "Draft", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
     pending: { label: "Pending", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" },
@@ -114,7 +117,7 @@ export default function CompRequests() {
       draft: sum(drafts),
       pending: sum(myRequests.filter(r => r.status === "pending")),
       approved: sum(myRequests.filter(r => r.status === "approved")),
-      reimbursed: sum(myRequests.filter(r => r.status === "approved" && r.isPaid)),
+      received: sum(myRequests.filter(r => r.status === "approved" && r.isReceived)),
     };
   }, [drafts, myRequests]);
 
@@ -153,8 +156,9 @@ export default function CompRequests() {
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
-  const paidMutation = useMutation({
-    mutationFn: (v: { id: number; paid: boolean }) => apiRequest("POST", "/api/comp/" + v.id + "/paid", { paid: v.paid }),
+  const fulfillMutation = useMutation({
+    mutationFn: (v: { id: number; paid?: boolean; received?: boolean }) =>
+      apiRequest("POST", "/api/comp/" + v.id + "/paid", v.paid !== undefined ? { paid: v.paid } : { received: v.received }),
     onSuccess: () => refresh(),
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
@@ -200,7 +204,7 @@ export default function CompRequests() {
           { label: "Saved (unsent)", value: stats.draft, icon: Receipt, ring: "ring-slate-200 dark:ring-slate-700", fg: "text-slate-600 dark:text-slate-300" },
           { label: "Pending", value: stats.pending, icon: Hourglass, ring: "ring-amber-200 dark:ring-amber-800", fg: "text-amber-600 dark:text-amber-400" },
           { label: "Approved", value: stats.approved, icon: CheckCircle2, ring: "ring-emerald-200 dark:ring-emerald-800", fg: "text-emerald-600 dark:text-emerald-400" },
-          { label: "Reimbursed", value: stats.reimbursed, icon: CreditCard, ring: "ring-sky-200 dark:ring-sky-800", fg: "text-sky-600 dark:text-sky-400" },
+          { label: "Received", value: stats.received, icon: CreditCard, ring: "ring-emerald-200 dark:ring-emerald-800", fg: "text-emerald-600 dark:text-emerald-400" },
         ].map(s => (
           <div key={s.label} className={"rounded-xl border bg-card px-4 py-3 ring-1 " + s.ring}>
             <div className="flex items-center justify-between">
@@ -354,7 +358,7 @@ export default function CompRequests() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold">{r.userName}</span>
                         <CatChip category={r.category} />
-                        <StatusBadge status={r.status} isPaid={r.isPaid} />
+                        <StatusBadge status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
                       </div>
                       <p className="text-sm text-foreground mt-0.5">
                         <span className="font-semibold tabular-nums">{money(r.amountCents)}</span>
@@ -369,7 +373,7 @@ export default function CompRequests() {
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {r.status === "approved" ? "Approved" : "Denied"} by {r.reviewerName}
                           {r.reviewerNote ? " — " + r.reviewerNote : ""}
-                          {r.status === "approved" ? (r.isPaid ? " · marked reimbursed" : " · awaiting payout") : ""}
+                          {r.status === "approved" ? (r.isReceived ? " · received" : (r.isPaid ? " · paid, awaiting receipt" : " · awaiting payout")) : ""}
                         </p>
                       )}
                     </div>
@@ -426,7 +430,7 @@ export default function CompRequests() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold tabular-nums">{money(r.amountCents)}</span>
                       <CatChip category={r.category} />
-                      <StatusBadge status={r.status} isPaid={r.isPaid} />
+                      <StatusBadge status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5 truncate">{r.description}</p>
                     {r.status !== "pending" && r.reviewerName && (
@@ -436,16 +440,26 @@ export default function CompRequests() {
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-4 shrink-0">
                     {r.status === "approved" && (
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer" title="Mark when you have received the reimbursement">
-                        <span>{r.isPaid ? "Reimbursed" : "Received?"}</span>
-                        <Switch
-                          checked={r.isPaid}
-                          onCheckedChange={(v) => paidMutation.mutate({ id: r.id, paid: v })}
-                          data-testid={"switch-paid-" + r.id}
-                        />
-                      </label>
+                      <>
+                        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer" title="Mark when the reimbursement has been paid out">
+                          <span className={r.isPaid ? "text-sky-600 font-medium" : ""}>Paid</span>
+                          <Switch
+                            checked={r.isPaid}
+                            onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, paid: v })}
+                            data-testid={"switch-paid-" + r.id}
+                          />
+                        </label>
+                        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer" title="Mark when you have received the money">
+                          <span className={r.isReceived ? "text-emerald-600 font-medium" : ""}>Received</span>
+                          <Switch
+                            checked={r.isReceived}
+                            onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, received: v })}
+                            data-testid={"switch-received-" + r.id}
+                          />
+                        </label>
+                      </>
                     )}
                     {r.status === "pending" && (
                       <Button
