@@ -3459,6 +3459,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
     if (req.path.startsWith("/invite")) return next();
+    // Public, token-secured comp approve/deny from the approver email (no session).
+    if (req.path === "/comp/email-decision") return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
