@@ -2026,7 +2026,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // call list. Idempotent — wrapped in try/catch so app boots cleanly if the
   // table already exists.
   try {
-    sqlite.exec(`
+    storageExtra.getRawSqlite().exec(`
       CREATE TABLE IF NOT EXISTS lo_preferences (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         org_id INTEGER NOT NULL,
@@ -2046,7 +2046,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // CLRs request time off; managers/admins approve or deny. Scoped per org.
   // Idempotent (CREATE TABLE IF NOT EXISTS) so the app boots cleanly on re-run.
   try {
-    sqlite.exec(`
+    storageExtra.getRawSqlite().exec(`
       CREATE TABLE IF NOT EXISTS time_off_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         org_id INTEGER NOT NULL,
