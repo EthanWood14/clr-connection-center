@@ -4364,8 +4364,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const me = storage.getUserById(userId) as any;
       const isManager = me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
       const isOwner = existing.user_id === userId;
-      if (!isManager && !(isOwner && existing.status === "pending")) {
-        return res.status(403).json({ error: "You can only cancel your own pending requests." });
+      if (!isManager && !isOwner) {
+        return res.status(403).json({ error: "You can only cancel your own requests." });
       }
       db.prepare("DELETE FROM time_off_requests WHERE id=? AND org_id=?").run(id, orgId);
       res.json({ ok: true });

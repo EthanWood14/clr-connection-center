@@ -270,7 +270,7 @@ export default function TimeOff() {
                     </p>
                   )}
                 </div>
-                {r.status === "pending" && (
+                {r.status !== "cancelled" && (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -278,8 +278,9 @@ export default function TimeOff() {
                     onClick={() => cancelMutation.mutate(r.id)}
                     disabled={cancelMutation.isPending}
                     data-testid={"button-cancel-" + r.id}
+                    title={r.status === "approved" ? "Withdraw this approved time off" : undefined}
                   >
-                    <Trash2 className="w-3.5 h-3.5" /> Cancel
+                    <Trash2 className="w-3.5 h-3.5" /> {r.status === "denied" ? "Remove" : "Cancel"}
                   </Button>
                 )}
               </div>
