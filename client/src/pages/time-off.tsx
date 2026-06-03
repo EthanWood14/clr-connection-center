@@ -51,6 +51,48 @@ function StatusBadge({ status }: { status: TimeOffRequest["status"] }) {
   return <Badge className={"text-xs px-2 py-0.5 " + cfg.cls}>{cfg.label}</Badge>;
 }
 
+const REASON_CHIPS: { label: string; emoji: string }[] = [
+  { label: "Vacation", emoji: "🏖️" },
+  { label: "Appointment", emoji: "🩺" },
+  { label: "Personal day", emoji: "🌿" },
+  { label: "Family time", emoji: "👨‍👩‍👧" },
+  { label: "Feeling sick", emoji: "🤒" },
+  { label: "Travel", emoji: "✈️" },
+];
+
+function vibe(days: number): string {
+  if (days <= 0) return "";
+  if (days === 1) return "A quick breather 😎";
+  if (days <= 3) return "Nice little break! 🌿";
+  if (days <= 7) return "Now this is a real recharge 🏖️";
+  if (days <= 14) return "Big adventure incoming ✈️";
+  return "Epic escape mode — go enjoy it! 🌴🚀";
+}
+
+function Confetti({ show }: { show: boolean }) {
+  if (!show) return null;
+  const pieces = ["🎉", "🎊", "🌴", "🏖️", "✈️", "😎", "🥳", "⛱️", "🍹", "🌞"];
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[60] overflow-hidden" aria-hidden="true">
+      <style>{`@keyframes toff-fall{0%{transform:translateY(-12vh) rotate(0deg);opacity:1}100%{transform:translateY(112vh) rotate(680deg);opacity:0}}`}</style>
+      {Array.from({ length: 40 }).map((_, i) => {
+        const left = (i * 2.5) % 100;
+        const delay = (i % 12) * 0.1;
+        const dur = 2.4 + (i % 6) * 0.35;
+        const size = 16 + (i % 4) * 7;
+        return (
+          <span
+            key={i}
+            style={{ position: "absolute", left: left + "%", top: 0, fontSize: size + "px", animation: `toff-fall ${dur}s ${delay}s ease-in forwards` }}
+          >
+            {pieces[i % pieces.length]}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TimeOff() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -60,6 +102,7 @@ export default function TimeOff() {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
+  const [showConfetti, setShowConfetti] = useState(false);
 
   const { data: myRequests = [], isLoading: myLoading } = useQuery<TimeOffRequest[]>({
     queryKey: ["/api/time-off", "mine"],
@@ -79,7 +122,9 @@ export default function TimeOff() {
   const createMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason }),
     onSuccess: () => {
-      toast({ title: "Request submitted", description: "Your manager will review it shortly." });
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3500);
+      toast({ title: "Request sent! 🎉", description: "Sit tight — your manager will review it shortly." });
       setStartDate(""); setEndDate(""); setReason("");
       refresh();
     },
@@ -107,13 +152,19 @@ export default function TimeOff() {
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-[1100px] mx-auto">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-          <Plane className="w-5 h-5 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold">Time Off</h1>
-          <p className="text-sm text-muted-foreground">Request days off and track approvals.</p>
+      <Confetti show={showConfetti} />
+
+      {/* Fun gradient header */}
+      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0ea5e9] via-[#2563eb] to-[#1A2B4A] px-6 py-6 shadow-lg">
+        <div className="absolute -right-6 -top-8 opacity-15 select-none text-[120px] leading-none rotate-12">🏝️</div>
+        <div className="relative flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 bg-white/15">
+            <Plane className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Time Off</h1>
+            <p className="text-sm text-white/70">You earned it — book your break and track approvals. 🌴</p>
+          </div>
         </div>
       </div>
 
@@ -145,24 +196,40 @@ export default function TimeOff() {
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Reason (optional)</label>
+            <div className="flex flex-wrap gap-1.5 mt-1 mb-2">
+              {REASON_CHIPS.map(c => (
+                <button
+                  key={c.label}
+                  type="button"
+                  onClick={() => setReason(c.emoji + " " + c.label)}
+                  className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs hover:bg-primary/10 hover:border-primary/40 transition-colors"
+                  data-testid={"chip-reason-" + c.label.toLowerCase().replace(/ /g, "-")}
+                >
+                  <span>{c.emoji}</span><span>{c.label}</span>
+                </button>
+              ))}
+            </div>
             <Textarea
               value={reason}
               onChange={e => setReason(e.target.value)}
               rows={2}
               maxLength={1000}
-              placeholder="Vacation, appointment, personal day, etc."
+              placeholder="Tap a chip above or tell us what is up…"
               data-testid="textarea-timeoff-reason"
             />
           </div>
           {startDate && endDate && endDate < startDate && (
             <p className="text-xs text-red-600">End date cannot be before the start date.</p>
           )}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              {startDate && endDate && endDate >= startDate ? dayCount(startDate, endDate) + " day(s)" : ""}
-            </span>
-            <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} data-testid="button-submit-timeoff">
-              {createMutation.isPending ? "Submitting…" : "Submit Request"}
+          {startDate && endDate && endDate >= startDate && (
+            <div className="rounded-lg bg-gradient-to-r from-sky-50 to-emerald-50 dark:from-sky-950/30 dark:to-emerald-950/30 border border-sky-200/60 dark:border-sky-800/60 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-sm font-semibold text-sky-800 dark:text-sky-200">{dayCount(startDate, endDate)} day{dayCount(startDate, endDate) === 1 ? "" : "s"} off</span>
+              <span className="text-sm text-emerald-700 dark:text-emerald-300">{vibe(dayCount(startDate, endDate))}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-end">
+            <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white shadow-sm" data-testid="button-submit-timeoff">
+              <Plane className="w-4 h-4" /> {createMutation.isPending ? "Sending…" : "Request My Time Off"}
             </Button>
           </div>
         </CardContent>
