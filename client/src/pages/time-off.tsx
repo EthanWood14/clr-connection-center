@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarOff, Check, X, Clock, Trash2, Plane, Construction } from "lucide-react";
+import { CalendarOff, Check, X, Clock, Trash2, Plane, Construction, CalendarDays } from "lucide-react";
 
 interface TimeOffRequest {
   id: number;
@@ -39,6 +41,23 @@ function dayCount(start: string, end: string) {
     return Math.max(1, Math.round((b - a) / 86400000) + 1);
   } catch { return 1; }
 }
+
+function toYmd(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
+}
+function ymdToDate(s: string) {
+  return new Date(s + "T12:00:00");
+}
+// Quick presets that return a [start, end] YMD pair.
+const DATE_PRESETS: { label: string; range: () => [string, string] }[] = [
+  { label: "Today", range: () => { const d = new Date(); const s = toYmd(d); return [s, s]; } },
+  { label: "Tomorrow", range: () => { const d = new Date(); d.setDate(d.getDate() + 1); const s = toYmd(d); return [s, s]; } },
+  { label: "This Friday", range: () => { const d = new Date(); d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7)); const s = toYmd(d); return [s, s]; } },
+  { label: "Next Mon–Fri", range: () => { const d = new Date(); const mon = new Date(d); mon.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); const fri = new Date(mon); fri.setDate(mon.getDate() + 4); return [toYmd(mon), toYmd(fri)]; } },
+];
 
 function StatusBadge({ status }: { status: TimeOffRequest["status"] }) {
   const map: Record<TimeOffRequest["status"], { label: string; cls: string }> = {
@@ -103,6 +122,7 @@ export default function TimeOff() {
   const [reason, setReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [showConfetti, setShowConfetti] = useState(false);
+  const [dateOpen, setDateOpen] = useState(false);
 
   const { data: myRequests = [], isLoading: myLoading } = useQuery<TimeOffRequest[]>({
     queryKey: ["/api/time-off", "mine"],
@@ -184,15 +204,60 @@ export default function TimeOff() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Start date</label>
-              <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} data-testid="input-timeoff-start" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">End date</label>
-              <Input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} data-testid="input-timeoff-end" />
-            </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">When are you taking off?</label>
+            <Popover open={dateOpen} onOpenChange={setDateOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-start gap-2 mt-1 h-11 font-normal" data-testid="button-timeoff-dates">
+                  <CalendarDays className="w-4 h-4 text-primary shrink-0" />
+                  {startDate ? (
+                    <span className="font-medium">
+                      {fmtDate(startDate)}{endDate && endDate !== startDate ? "  →  " + fmtDate(endDate) : ""}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Tap to pick your dates</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <div className="flex flex-wrap gap-1.5 p-3 pb-1 border-b">
+                  {DATE_PRESETS.map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => { const [s, e] = p.range(); setStartDate(s); setEndDate(e); }}
+                      className="rounded-full border px-2.5 py-1 text-xs hover:bg-primary/10 hover:border-primary/40 transition-colors"
+                      data-testid={"preset-" + p.label.toLowerCase().replace(/[^a-z]+/g, "-")}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <Calendar
+                  mode="range"
+                  numberOfMonths={1}
+                  selected={startDate ? { from: ymdToDate(startDate), to: endDate ? ymdToDate(endDate) : undefined } : undefined}
+                  onSelect={(range: any) => {
+                    const from = range?.from ? toYmd(range.from) : "";
+                    const to = range?.to ? toYmd(range.to) : from;
+                    setStartDate(from);
+                    setEndDate(to);
+                  }}
+                  defaultMonth={startDate ? ymdToDate(startDate) : new Date()}
+                  disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
+                />
+                <div className="flex items-center justify-between p-3 pt-1 border-t">
+                  <button
+                    type="button"
+                    onClick={() => { setStartDate(""); setEndDate(""); }}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                  <Button size="sm" onClick={() => setDateOpen(false)} data-testid="button-dates-done">Done</Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Reason (optional)</label>
