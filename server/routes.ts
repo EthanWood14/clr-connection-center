@@ -1255,7 +1255,7 @@ cron.schedule("0 4 * * *", () => {
 cron.schedule("0 5 * * *", async () => {
   try {
     const settings = storageExtra.getEmailSettings() as any;
-    const approverId = Number(settings.comp_approver_id ?? 0) || 0;
+    const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
     if (!approverId) return;
     const approver = storage.getUserById(approverId) as any;
     const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
@@ -4349,7 +4349,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       let emailedTo: string | null = null;
       try {
         const settings = storageExtra.getEmailSettings() as any;
-        const approverId = Number(settings.timeoff_approver_id ?? settings.timeoffApproverId ?? 0) || 0;
+        const approverId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || 0;
         const approver = approverId ? (storage.getUserById(approverId) as any) : null;
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         if (approverEmail) {
@@ -4379,7 +4379,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (!row) return res.status(404).send(page("Not found", "This time-off request could not be located.", "&#10067;"));
       if (row.status !== "pending") return res.send(page("Already handled", "This request was already " + row.status + ". No further action needed.", "&#8505;&#65039;"));
       const settings = storageExtra.getEmailSettings() as any;
-      const reviewerId = Number(settings.timeoff_approver_id ?? 0) || null;
+      const reviewerId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || null;
       const now = new Date().toISOString();
       db.prepare("UPDATE time_off_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
       try {
@@ -4588,7 +4588,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       let emailedTo: string | null = null;
       try {
         const settings = storageExtra.getEmailSettings() as any;
-        const approverId = Number(settings.comp_approver_id ?? settings.compApproverId ?? 0) || 0;
+        const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
         const approver = approverId ? (storage.getUserById(approverId) as any) : null;
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=? AND status='pending'").all(token) as any[];
@@ -4617,7 +4617,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=?").all(token) as any[];
       if (!items.length) return res.status(404).send(page("Not found", "This comp request could not be located.", "&#10067;"));
       const settings = storageExtra.getEmailSettings() as any;
-      const reviewerId = Number(settings.comp_approver_id ?? 0) || null;
+      const reviewerId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || null;
       const now = new Date().toISOString();
       const total = items.reduce((a, r) => a + (r.amount_cents || 0), 0);
       const dollars = "$" + (total / 100).toFixed(2);

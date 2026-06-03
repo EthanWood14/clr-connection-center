@@ -1464,6 +1464,12 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'timeoff_approver_id')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN timeoff_approver_id INTEGER`);
   }
+  // 2026-06: single global approver — all comp + time-off approval emails go to
+  // this person. Backfilled once from whichever per-type approver was set.
+  if (!emailCols.find(c => c.name === 'approval_recipient_id')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN approval_recipient_id INTEGER`);
+    try { sqlite.exec(`UPDATE email_settings SET approval_recipient_id = COALESCE(approval_recipient_id, comp_approver_id, timeoff_approver_id)`); } catch {}
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00

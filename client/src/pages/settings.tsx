@@ -420,8 +420,7 @@ function EmailReportsCard() {
   const [alltimeClrId, setAlltimeClrId] = useState<string>("all");
   const [dailySendDay, setDailySendDay] = useState<"yesterday" | "today">("yesterday");
   // Manager who receives comp/reimbursement requests for email approval.
-  const [compApproverId, setCompApproverId] = useState<string>("");
-  const [timeoffApproverId, setTimeoffApproverId] = useState<string>("");
+  const [approvalRecipientId, setApprovalRecipientId] = useState<string>("");
   // Anyone active with an email can be the approver (managers/admins listed first).
   const managerOptions = (allUsers ?? [])
     .filter((u: any) => u.isActive && u.email && String(u.email).includes("@"))
@@ -470,8 +469,10 @@ function EmailReportsCard() {
     setMonthlyTime(emailSettings.monthly_time ?? emailSettings.monthlyTime ?? "07:00");
     setMtdTime(emailSettings.mtd_time ?? emailSettings.mtdTime ?? "08:00");
     setAlltimeTime(emailSettings.alltime_time ?? emailSettings.alltimeTime ?? "07:10");
-    setCompApproverId(emailSettings.comp_approver_id ?? emailSettings.compApproverId ? String(emailSettings.comp_approver_id ?? emailSettings.compApproverId) : "");
-    setTimeoffApproverId(emailSettings.timeoff_approver_id ?? emailSettings.timeoffApproverId ? String(emailSettings.timeoff_approver_id ?? emailSettings.timeoffApproverId) : "");
+    {
+      const _ap = emailSettings.approval_recipient_id ?? emailSettings.approvalRecipientId ?? emailSettings.comp_approver_id ?? emailSettings.timeoff_approver_id;
+      setApprovalRecipientId(_ap ? String(_ap) : "");
+    }
     try {
       const rs = JSON.parse(emailSettings.report_sections ?? emailSettings.reportSections ?? "{}");
       setReportSections(rs && typeof rs === "object" ? rs : {});
@@ -514,8 +515,9 @@ function EmailReportsCard() {
       alltimeTime,
       reportSections: JSON.stringify(reportSections),
       reportToAllManagers: JSON.stringify(sendToAllManagers ? { daily: true, weekly: true, monthly: true, mtd: true, alltime: true } : {}),
-      compApproverId: compApproverId ? Number(compApproverId) : null,
-      timeoffApproverId: timeoffApproverId ? Number(timeoffApproverId) : null,
+      approvalRecipientId: approvalRecipientId ? Number(approvalRecipientId) : null,
+      compApproverId: approvalRecipientId ? Number(approvalRecipientId) : null,
+      timeoffApproverId: approvalRecipientId ? Number(approvalRecipientId) : null,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     saveMutation.mutate(payload);
@@ -719,34 +721,17 @@ function EmailReportsCard() {
               </div>
             </div>
 
-            {/* Comp request approver */}
+            {/* Approval recipient — one person for everyone */}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Comp Request Approver</p>
-              <p className="text-[11px] text-muted-foreground mb-2">When a CLR submits a comp (reimbursement) request, this manager gets an email with one-click <strong>Approve</strong> / <strong>Deny</strong> buttons. They can still approve in-app too.</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Approval Emails Go To</p>
+              <p className="text-[11px] text-muted-foreground mb-2">This person receives the approval email for <strong>everyone</strong> — both comp (reimbursement) requests and time-off requests — with one-click <strong>Approve</strong> / <strong>Deny</strong> buttons. They can still approve in-app too.</p>
               <select
-                value={compApproverId}
-                onChange={e => setCompApproverId(e.target.value)}
+                value={approvalRecipientId}
+                onChange={e => setApprovalRecipientId(e.target.value)}
                 className="h-9 rounded-md border bg-background px-2 text-sm w-full max-w-sm"
-                data-testid="select-comp-approver"
+                data-testid="select-approval-recipient"
               >
-                <option value="">— None (no approval email sent) —</option>
-                {managerOptions.map((u: any) => (
-                  <option key={u.id} value={String(u.id)}>{u.name}{u.email ? " (" + u.email + ")" : ""}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Time off approver */}
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Time Off Approver</p>
-              <p className="text-[11px] text-muted-foreground mb-2">When someone submits a time-off request, this manager gets an email with one-click <strong>Approve</strong> / <strong>Deny</strong> buttons. They can still approve in-app too.</p>
-              <select
-                value={timeoffApproverId}
-                onChange={e => setTimeoffApproverId(e.target.value)}
-                className="h-9 rounded-md border bg-background px-2 text-sm w-full max-w-sm"
-                data-testid="select-timeoff-approver"
-              >
-                <option value="">— None (no approval email sent) —</option>
+                <option value="">— None (no approval emails sent) —</option>
                 {managerOptions.map((u: any) => (
                   <option key={u.id} value={String(u.id)}>{u.name}{u.email ? " (" + u.email + ")" : ""}</option>
                 ))}
