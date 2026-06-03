@@ -8673,6 +8673,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(cloned);
   });
 
+  // Promote an existing script to be the global default for everyone (admin only).
+  app.post('/api/call-scripts/:id/make-default', requireAuth, (req: any, res: any) => {
+    if (!req.session_user?.isAdmin && req.session_user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+    const id = parseInt(req.params.id, 10);
+    const promoted = storageExtra.promoteScriptToDefault(id);
+    if (!promoted) return res.status(404).json({ error: 'Script not found' });
+    const actor = (storage.getUsers() as any[]).find(u => u.id === req.session_user?.userId);
+    audit({
+      userId: req.session_user?.userId ?? 0,
+      userName: actor?.name ?? 'Unknown',
+      action: 'update',
+      entityType: 'call_script',
+      entityId: promoted.id,
+      entityLabel: 'Default script set to: ' + (promoted.name ?? ('#' + promoted.id)),
+      details: JSON.stringify({ sourceScriptId: id, newDefaultId: promoted.id }),
+    });
+    res.json(promoted);
+  });
+
   // Reset personal script back to default (delete personal copy)
   app.delete('/api/call-scripts/mine', requireAuth, (req: any, res: any) => {
     const script = storageExtra.getUserScript(req.session_user!.userId);

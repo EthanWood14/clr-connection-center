@@ -3485,6 +3485,79 @@ export function cloneScriptForUser(sourceScriptId: number, userId: number): any 
 
   return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(newScriptId);
 }
+// Promote any existing script to be THE global/default script shown to all CLRs.
+// Captures the source tree first, wipes the current default(s) (owner_id IS NULL),
+// then re-creates a fresh default from the captured copy. The source script is
+// left untouched (a personal copy stays the user's; a default is simply rebuilt).
+export function promoteScriptToDefault(sourceScriptId: number): any {
+  const source = sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(sourceScriptId) as any;
+  if (!source) return null;
+
+  // 1. Capture the source tree in memory BEFORE any deletes (the source may
+  //    itself be the current default we are about to wipe).
+  const srcNodes = sqlite.prepare(`SELECT * FROM script_nodes WHERE script_id=? ORDER BY id ASC`).all(sourceScriptId) as any[];
+  const srcResponses = sqlite.prepare(
+    `SELECT sr.* FROM script_responses sr JOIN script_nodes sn ON sr.node_id=sn.id WHERE sn.script_id=? ORDER BY sr.id ASC`
+  ).all(sourceScriptId) as any[];
+  const name = source.name;
+  const description = source.description;
+
+  const tx = sqlite.transaction(() => {
+    // 2. Wipe existing default (owner_id IS NULL) scripts + their tree.
+    sqlite.prepare(`
+      DELETE FROM script_responses WHERE node_id IN (
+        SELECT sn.id FROM script_nodes sn
+        JOIN call_scripts cs ON cs.id = sn.script_id
+        WHERE cs.owner_id IS NULL
+      )
+    `).run();
+    sqlite.prepare(`
+      DELETE FROM script_nodes WHERE script_id IN (
+        SELECT id FROM call_scripts WHERE owner_id IS NULL
+      )
+    `).run();
+    sqlite.prepare(`DELETE FROM call_scripts WHERE owner_id IS NULL`).run();
+
+    // 3. Create the new default script (owner_id NULL, active).
+    const newScriptId = sqlite.prepare(
+      `INSERT INTO call_scripts (name, description, is_active, created_by, owner_id) VALUES (?,?,1,?,NULL)`
+    ).run(name, description, source.created_by ?? null).lastInsertRowid as number;
+
+    // 4. Copy nodes (two passes to remap parent ids).
+    const nodeIdMap = new Map<number, number>();
+    for (const n of srcNodes) {
+      const r = sqlite.prepare(
+        `INSERT INTO script_nodes (script_id, text, hint, node_order) VALUES (?,?,?,?)`
+      ).run(newScriptId, n.text, n.hint, n.node_order);
+      nodeIdMap.set(n.id, r.lastInsertRowid as number);
+    }
+    for (const n of srcNodes) {
+      if (n.parent_node_id != null) {
+        const newNodeId = nodeIdMap.get(n.id);
+        const newParentId = nodeIdMap.get(n.parent_node_id);
+        if (newNodeId && newParentId) {
+          sqlite.prepare(`UPDATE script_nodes SET parent_node_id=? WHERE id=?`).run(newParentId, newNodeId);
+        }
+      }
+    }
+
+    // 5. Copy responses (remap node_id + next_node_id).
+    for (const r of srcResponses) {
+      const newNodeId = nodeIdMap.get(r.node_id);
+      const newNextId = r.next_node_id != null ? (nodeIdMap.get(r.next_node_id) ?? null) : null;
+      if (newNodeId) {
+        sqlite.prepare(
+          `INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`
+        ).run(newNodeId, r.label, r.color, newNextId, r.response_order);
+      }
+    }
+    return newScriptId;
+  });
+
+  const newId = tx();
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(newId);
+}
+
 export function getCallScript(id: number): any {
   return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(id) as any;
 }

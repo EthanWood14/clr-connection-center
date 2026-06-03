@@ -1657,6 +1657,7 @@ export default function CallScriptPage() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [adminOverrideScriptId, setAdminOverrideScriptId] = useState<number | null>(null);
   const [confirmOverride, setConfirmOverride] = useState(false);
+  const [confirmMakeDefault, setConfirmMakeDefault] = useState(false);
 
   useEffect(() => { markStep(userId, "view_script"); }, [userId]);
   useEffect(() => { document.title = "Scripts · WCLCC"; }, []);
@@ -1877,6 +1878,19 @@ export default function CallScriptPage() {
       toast({ title: "Reset to default script" });
     },
     onError: () => toast({ title: "Failed to reset", variant: "destructive" }),
+  });
+
+  // Admin: promote the selected script to be the global default for everyone.
+  const makeDefaultMut = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/call-scripts/${activeScript!.id}/make-default`, {}),
+    onSuccess: (newDefault: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/defaults"] });
+      if (newDefault?.id) setSelectedScriptId(newDefault.id);
+      setConfirmMakeDefault(false);
+      toast({ title: "Default script updated", description: `"${newDefault?.name ?? "Script"}" is now the default for all CLRs.` });
+    },
+    onError: (e: any) => toast({ title: "Failed to set default", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
   return (
@@ -2125,6 +2139,11 @@ export default function CallScriptPage() {
                 <RotateCcw className="w-3 h-3" /> Reset to Default
               </Button>
             )}
+            {isAdmin && activeScript && !isUsingDefault && (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 border-blue-300 text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400" onClick={() => setConfirmMakeDefault(true)} disabled={makeDefaultMut.isPending} data-testid="button-make-default">
+                <Globe className="w-3 h-3" /> {makeDefaultMut.isPending ? "Setting…" : "Set as Default"}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -2239,6 +2258,30 @@ export default function CallScriptPage() {
               data-testid="button-confirm-override"
             >
               Unlock & Edit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Make default confirmation */}
+      <AlertDialog open={confirmMakeDefault} onOpenChange={setConfirmMakeDefault}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Globe className="w-4 h-4 text-blue-600" /> Set as Default Script?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This makes <strong>{activeScript?.owner_name ? `${activeScript.owner_name}'s "${activeScript?.name}"` : `"${activeScript?.name}"`}</strong> the default script shown to every CLR who has not made a personal copy. It replaces the current default. Personal copies are not affected, and the original script stays where it is.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => makeDefaultMut.mutate()}
+              className="bg-blue-600 text-white hover:bg-blue-700"
+              data-testid="button-confirm-make-default"
+            >
+              Make Default
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
