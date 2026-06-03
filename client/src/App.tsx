@@ -41,6 +41,7 @@ import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
 import TimeOff from "@/pages/time-off";
+import CompRequests from "@/pages/comp-requests";
 import MyReport from "@/pages/my-report";
 import ReportsArchive from "@/pages/reports-archive";
 import InstallApp from "@/pages/install";
@@ -104,6 +105,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/call-script":    "Call Script",
   "/eod-report":     "EOD Reporting",
   "/time-off":       "Time Off",
+  "/comp-requests":  "Comp Requests",
   "/my-report":      "My Report",
   "/install":         "Install App",
   "/privacy-policy": "Privacy Policy",
@@ -151,6 +153,7 @@ function AppRouter() {
       <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
       <Route path="/time-off" component={TimeOff} />
+      <Route path="/comp-requests" component={CompRequests} />
       <Route path="/my-report" component={MyReport} />
       <Route path="/reports-archive" component={ReportsArchive} />
       <Route path="/install" component={InstallApp} />

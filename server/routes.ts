@@ -2064,6 +2064,35 @@ export function registerRoutes(httpServer: Server, app: Express) {
     `);
   } catch {}
 
+  // ── comp_requests migration ──────────────────────────────────────────────────
+  // Reimbursement/comp tracking. Each row is one expense the user logged. It
+  // moves through: draft (saved) -> pending (comp requested) -> approved/denied
+  // (manager decision) -> is_paid flag (requester marks reimbursement received).
+  // Amounts stored as integer cents to avoid float rounding. Scoped per org.
+  try {
+    storageExtra.getRawSqlite().exec(`
+      CREATE TABLE IF NOT EXISTS comp_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'other',
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        expense_date TEXT,
+        note TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','pending','approved','denied')),
+        is_paid INTEGER NOT NULL DEFAULT 0,
+        reviewed_by INTEGER,
+        reviewer_note TEXT DEFAULT '',
+        requested_at TEXT,
+        reviewed_at TEXT,
+        paid_at TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      )
+    `);
+  } catch {}
+
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
     try { storage.createAuditLog(data); } catch {}
@@ -4225,6 +4254,215 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to cancel request" });
+    }
+  });
+
+  // ── Comp / Reimbursement Requests ─────────────────────────────────────────────
+  // Users log expenses (draft), bundle them into a comp request (pending),
+  // managers approve/deny, then the requester marks each as reimbursed (paid).
+  const COMP_CATEGORIES = new Set(["leads", "software", "travel", "marketing", "equipment", "office", "other"]);
+  function mapComp(r: any, nameById: Map<number, string>) {
+    return {
+      id: r.id,
+      userId: r.user_id,
+      userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
+      description: r.description ?? "",
+      category: r.category ?? "other",
+      amountCents: r.amount_cents ?? 0,
+      expenseDate: r.expense_date ?? null,
+      note: r.note ?? "",
+      status: r.status,
+      isPaid: !!r.is_paid,
+      reviewedBy: r.reviewed_by ?? null,
+      reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
+      reviewerNote: r.reviewer_note ?? "",
+      requestedAt: r.requested_at ?? null,
+      reviewedAt: r.reviewed_at ?? null,
+      paidAt: r.paid_at ?? null,
+      createdAt: r.created_at ?? null,
+    };
+  }
+  function compNameMap() {
+    const m = new Map<number, string>();
+    for (const u of storage.getUsers() as any[]) m.set(u.id, u.name);
+    return m;
+  }
+  function isCompManager(userId: number) {
+    const me = storage.getUserById(userId) as any;
+    return me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
+  }
+
+  app.get("/api/comp", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const mineOnly = !isCompManager(userId) || req.query.scope === "mine";
+    try {
+      const db = storageExtra.getRawSqlite();
+      const nameById = compNameMap();
+      const rows = mineOnly
+        ? db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND user_id=? ORDER BY COALESCE(expense_date,'') DESC, id DESC").all(orgId, userId)
+        : db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND status!='draft' ORDER BY (status='pending') DESC, COALESCE(requested_at,'') DESC, id DESC").all(orgId);
+      res.json((rows as any[]).map(r => mapComp(r, nameById)));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load comp requests" });
+    }
+  });
+
+  app.post("/api/comp", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const body = req.body ?? {};
+    const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
+    const category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
+    const amountCents = Math.round(Number(body.amountCents));
+    const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : null;
+    const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
+    if (!description) return res.status(400).json({ error: "A description is required." });
+    if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").run(orgId, userId, description, category, amountCents, expenseDate, note, nowIso, nowIso);
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
+      res.json(mapComp(row, compNameMap()));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to save expense" });
+    }
+  });
+
+  app.patch("/api/comp/:id", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Not found" });
+      if (existing.user_id !== userId) return res.status(403).json({ error: "Not your expense." });
+      if (existing.status !== "draft") return res.status(400).json({ error: "Only draft expenses can be edited." });
+      const body = req.body ?? {};
+      const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : existing.description;
+      const category = COMP_CATEGORIES.has(body.category) ? body.category : existing.category;
+      const amountCents = body.amountCents !== undefined ? Math.round(Number(body.amountCents)) : existing.amount_cents;
+      const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : existing.expense_date;
+      const note = typeof body.note === "string" ? body.note.slice(0, 1000) : existing.note;
+      if (!description) return res.status(400).json({ error: "A description is required." });
+      if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
+      db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, new Date().toISOString(), id);
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
+      res.json(mapComp(row, compNameMap()));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update expense" });
+    }
+  });
+
+  app.post("/api/comp/request", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => parseInt(x, 10)).filter((n: number) => Number.isFinite(n)) : [];
+    if (!ids.length) return res.status(400).json({ error: "Select at least one expense to request." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const placeholders = ids.map(() => "?").join(",");
+      const upd = db.prepare("UPDATE comp_requests SET status='pending', requested_at=?, updated_at=? WHERE id IN (" + placeholders + ") AND org_id=? AND user_id=? AND status='draft'");
+      const result = upd.run(nowIso, nowIso, ...ids, orgId, userId);
+      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      audit({
+        userId, userName: actor?.name ?? "Unknown", action: "create",
+        entityType: "comp_request", entityId: ids[0],
+        entityLabel: (actor?.name ?? "User") + " comp request (" + result.changes + " items)",
+        details: JSON.stringify({ ids }),
+      });
+      res.json({ ok: true, requested: result.changes });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to submit comp request" });
+    }
+  });
+
+  app.post("/api/comp/:id/decision", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const reviewerId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    const status = req.body?.status;
+    const reviewerNote = typeof req.body?.reviewerNote === "string" ? req.body.reviewerNote.slice(0, 1000) : "";
+    if (status !== "approved" && status !== "denied") return res.status(400).json({ error: "status must be approved or denied." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Not found" });
+      db.prepare("UPDATE comp_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
+      const nameById = compNameMap();
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
+      const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
+      audit({
+        userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
+        entityType: "comp_request", entityId: id,
+        entityLabel: (nameById.get(existing.user_id) ?? "User") + " comp " + status,
+        details: JSON.stringify({ status, reviewerNote }),
+      });
+      try {
+        const dollars = "$" + ((existing.amount_cents ?? 0) / 100).toFixed(2);
+        (storage as any).createNotification?.({
+          userId: existing.user_id,
+          type: "comp_request",
+          title: "Comp " + status,
+          message: "Your comp request for " + dollars + " (" + (existing.description || "expense") + ") was " + status + (reviewerNote ? (": " + reviewerNote) : "."),
+        });
+      } catch {}
+      res.json(mapComp(row, nameById));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update comp request" });
+    }
+  });
+
+  app.post("/api/comp/:id/paid", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    const paid = req.body?.paid ? 1 : 0;
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Not found" });
+      const isOwner = existing.user_id === userId;
+      if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
+      if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked reimbursed." });
+      db.prepare("UPDATE comp_requests SET is_paid=?, paid_at=?, updated_at=? WHERE id=?").run(paid, paid ? new Date().toISOString() : null, new Date().toISOString(), id);
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
+      res.json(mapComp(row, compNameMap()));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update payment status" });
+    }
+  });
+
+  app.delete("/api/comp/:id", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Not found" });
+      const isOwner = existing.user_id === userId;
+      const canDelete = isCompManager(userId) || (isOwner && (existing.status === "draft" || existing.status === "pending"));
+      if (!canDelete) return res.status(403).json({ error: "You can only remove your own draft or pending items." });
+      db.prepare("DELETE FROM comp_requests WHERE id=? AND org_id=?").run(id, orgId);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to remove item" });
     }
   });
 
