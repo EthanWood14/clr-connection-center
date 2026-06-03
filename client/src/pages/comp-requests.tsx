@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip,
 } from "lucide-react";
 
 interface CompItem {
@@ -37,6 +37,7 @@ interface CompItem {
   reviewedAt: string | null;
   paidAt: string | null;
   createdAt: string | null;
+  attachmentCount?: number;
 }
 
 const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
@@ -80,6 +81,82 @@ function StatusBadge({ status, isPaid, isReceived }: { status: CompItem["status"
   };
   const cfg = map[status] ?? map.draft;
   return <Badge className={"text-xs px-2 py-0.5 " + cfg.cls}>{cfg.label}</Badge>;
+}
+
+function Attachments({ compId, count, canEdit }: { compId: number; count: number; canEdit: boolean }) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const enabled = canEdit || count > 0;
+  const { data } = useQuery<{ canEdit: boolean; attachments: any[] }>({
+    queryKey: ["/api/comp", compId, "attachments"],
+    queryFn: () => apiRequest("GET", "/api/comp/" + compId + "/attachments"),
+    enabled,
+  });
+  const list = data?.attachments ?? [];
+
+  const uploadMut = useMutation({
+    mutationFn: async (file: File) => {
+      const dataBase64: string = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result || ""));
+        fr.onerror = () => reject(new Error("read failed"));
+        fr.readAsDataURL(file);
+      });
+      return apiRequest("POST", "/api/comp/" + compId + "/attachments", { filename: file.name, mime: file.type, dataBase64 });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/comp", compId, "attachments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/comp"] });
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (attId: number) => apiRequest("DELETE", "/api/comp-attachments/" + attId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/comp", compId, "attachments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/comp"] });
+    },
+    onError: (e: any) => toast({ title: "Could not remove", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+
+  async function onPick(e: any) {
+    const files = Array.from((e.target.files ?? []) as FileList) as File[];
+    for (const f of files) { await uploadMut.mutateAsync(f).catch(() => {}); }
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  if (!enabled) return null;
+
+  return (
+    <div className="mt-2 pl-1">
+      {list.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1">
+          {list.map((a: any) => (
+            <span key={a.id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 pl-2 pr-1 py-0.5 text-[11px]">
+              <a href={"/api/comp-attachments/" + a.id} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:underline max-w-[170px] truncate">
+                <Paperclip className="w-3 h-3 shrink-0" />
+                <span className="truncate">{a.filename}</span>
+              </a>
+              {canEdit && (
+                <button type="button" onClick={() => removeMut.mutate(a.id)} className="rounded hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive" aria-label="Remove attachment">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {canEdit && (
+        <>
+          <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={onPick} data-testid={"attach-input-" + compId} />
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploadMut.isPending} className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline" data-testid={"attach-btn-" + compId}>
+            <Paperclip className="w-3 h-3" /> {uploadMut.isPending ? "Uploading…" : "Attach receipt"}
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
 export default function CompRequests() {
@@ -307,9 +384,10 @@ export default function CompRequests() {
             drafts.map(d => (
               <div
                 key={d.id}
-                className={"rounded-lg border px-3 py-2.5 flex items-center gap-3 transition-colors " + (selected.has(d.id) ? "bg-primary/5 border-primary/40" : "")}
+                className={"rounded-lg border px-3 py-2.5 transition-colors " + (selected.has(d.id) ? "bg-primary/5 border-primary/40" : "")}
                 data-testid={"draft-" + d.id}
               >
+                <div className="flex items-center gap-3">
                 <Checkbox checked={selected.has(d.id)} onCheckedChange={() => toggleSel(d.id)} data-testid={"check-draft-" + d.id} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -330,6 +408,8 @@ export default function CompRequests() {
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
+                </div>
+                <Attachments compId={d.id} count={d.attachmentCount ?? 0} canEdit={true} />
               </div>
             ))
           )}
@@ -403,6 +483,7 @@ export default function CompRequests() {
                       </div>
                     )}
                   </div>
+                  <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
                 </div>
               ))
             )}
@@ -472,6 +553,7 @@ export default function CompRequests() {
                     )}
                   </div>
                 </div>
+                <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
               </div>
             ))
           )}

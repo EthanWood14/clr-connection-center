@@ -1239,6 +1239,16 @@ cron.schedule("0 8 * * *", () => {
   } catch (e) { console.error("[backup] Daily backup error:", e); }
 });
 
+// Purge comp-request attachments older than ~1 year (retention policy). Runs
+// daily at 4am UTC.
+cron.schedule("0 4 * * *", () => {
+  try {
+    const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+    const r = storageExtra.getRawSqlite().prepare("DELETE FROM comp_attachments WHERE created_at IS NOT NULL AND created_at < ?").run(cutoff);
+    if (r.changes > 0) console.log("[comp-attachments] purged " + r.changes + " attachment(s) older than 1 year");
+  } catch (e) { console.error("[comp-attachments] purge error:", e); }
+});
+
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
@@ -2099,6 +2109,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_received INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
+
+  // ── comp_attachments migration ───────────────────────────────────────────────
+  // Receipts / files attached to a comp request. Stored as base64 in SQLite (the
+  // DB lives on a persistent Railway volume). Auto-purged after ~1 year by a cron.
+  try {
+    storageExtra.getRawSqlite().exec(`
+      CREATE TABLE IF NOT EXISTS comp_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        comp_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        filename TEXT NOT NULL DEFAULT 'file',
+        mime TEXT NOT NULL DEFAULT '',
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        data_base64 TEXT NOT NULL,
+        created_at TEXT
+      )
+    `);
+    storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_attachments_comp ON comp_attachments(comp_id)`);
+  } catch {}
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
@@ -4313,7 +4343,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const rows = mineOnly
         ? db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND user_id=? ORDER BY COALESCE(expense_date,'') DESC, id DESC").all(orgId, userId)
         : db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND status!='draft' ORDER BY (status='pending') DESC, COALESCE(requested_at,'') DESC, id DESC").all(orgId);
-      res.json((rows as any[]).map(r => mapComp(r, nameById)));
+      const counts = db.prepare("SELECT comp_id, COUNT(*) AS c FROM comp_attachments WHERE org_id=? GROUP BY comp_id").all(orgId) as any[];
+      const countMap = new Map<number, number>(counts.map((x: any) => [x.comp_id, x.c]));
+      res.json((rows as any[]).map(r => ({ ...mapComp(r, nameById), attachmentCount: countMap.get(r.id) ?? 0 })));
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load comp requests" });
     }
@@ -4544,6 +4576,104 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to remove item" });
+    }
+  });
+
+  // ── Comp Attachments (receipts/files) ─────────────────────────────────────────
+  const COMP_ATTACH_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/heic", "application/pdf"]);
+  const COMP_ATTACH_MAX_BYTES = 8 * 1024 * 1024; // 8 MB per file
+  function compAttachAccess(compId: number, userId: number, orgId: number) {
+    const db = storageExtra.getRawSqlite();
+    const item = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(compId, orgId) as any;
+    if (!item) return { item: null, canView: false, canEdit: false };
+    const isOwner = item.user_id === userId;
+    const mgr = isCompManager(userId);
+    const canView = isOwner || mgr;
+    const canEdit = isOwner && (item.status === "draft" || item.status === "pending");
+    return { item, canView, canEdit: canEdit || mgr };
+  }
+
+  app.post("/api/comp/:id/attachments", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const compId = parseInt(req.params.id, 10);
+    const { item, canEdit } = compAttachAccess(compId, userId, orgId);
+    if (!item) return res.status(404).json({ error: "Comp item not found" });
+    if (!canEdit) return res.status(403).json({ error: "You cannot attach files to this item." });
+    const filename = typeof req.body?.filename === "string" ? req.body.filename.slice(0, 200) : "file";
+    const mime = typeof req.body?.mime === "string" ? req.body.mime.toLowerCase() : "";
+    let data = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
+    const comma = data.indexOf(",");
+    if (data.startsWith("data:") && comma >= 0) data = data.slice(comma + 1);
+    if (!data) return res.status(400).json({ error: "No file data received." });
+    if (!COMP_ATTACH_MIMES.has(mime)) return res.status(400).json({ error: "Unsupported file type. Use an image or PDF." });
+    const sizeBytes = Math.floor(data.length * 3 / 4);
+    if (sizeBytes > COMP_ATTACH_MAX_BYTES) return res.status(400).json({ error: "File too large (max 8 MB)." });
+    try {
+      const db = storageExtra.getRawSqlite();
+      const info = db.prepare("INSERT INTO comp_attachments (org_id, comp_id, user_id, filename, mime, size_bytes, data_base64, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(orgId, compId, userId, filename, mime, sizeBytes, data, new Date().toISOString());
+      const row = db.prepare("SELECT id, comp_id, user_id, filename, mime, size_bytes, created_at FROM comp_attachments WHERE id=?").get(info.lastInsertRowid) as any;
+      res.json({ id: row.id, compId: row.comp_id, filename: row.filename, mime: row.mime, sizeBytes: row.size_bytes, createdAt: row.created_at });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to save attachment" });
+    }
+  });
+
+  app.get("/api/comp/:id/attachments", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const compId = parseInt(req.params.id, 10);
+    const { item, canView, canEdit } = compAttachAccess(compId, userId, orgId);
+    if (!item) return res.status(404).json({ error: "Comp item not found" });
+    if (!canView) return res.status(403).json({ error: "Not allowed." });
+    try {
+      const db = storageExtra.getRawSqlite();
+      const rows = db.prepare("SELECT id, comp_id, user_id, filename, mime, size_bytes, created_at FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC").all(compId, orgId) as any[];
+      res.json({ canEdit, attachments: rows.map(r => ({ id: r.id, compId: r.comp_id, filename: r.filename, mime: r.mime, sizeBytes: r.size_bytes, createdAt: r.created_at })) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load attachments" });
+    }
+  });
+
+  app.get("/api/comp-attachments/:attId", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const attId = parseInt(req.params.attId, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const att = db.prepare("SELECT * FROM comp_attachments WHERE id=? AND org_id=?").get(attId, orgId) as any;
+      if (!att) return res.status(404).json({ error: "Attachment not found" });
+      const { canView } = compAttachAccess(att.comp_id, userId, orgId);
+      if (!canView) return res.status(403).json({ error: "Not allowed." });
+      const buf = Buffer.from(att.data_base64, "base64");
+      res.setHeader("Content-Type", att.mime || "application/octet-stream");
+      const safeName = String(att.filename || "file").replace(/[^A-Za-z0-9._-]/g, "_");
+      const disp = String(att.mime || "").startsWith("image/") || att.mime === "application/pdf" ? "inline" : "attachment";
+      res.setHeader("Content-Disposition", disp + "; filename=\"" + safeName + "\"");
+      res.send(buf);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load attachment" });
+    }
+  });
+
+  app.delete("/api/comp-attachments/:attId", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const attId = parseInt(req.params.attId, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const att = db.prepare("SELECT * FROM comp_attachments WHERE id=? AND org_id=?").get(attId, orgId) as any;
+      if (!att) return res.status(404).json({ error: "Attachment not found" });
+      const { canEdit } = compAttachAccess(att.comp_id, userId, orgId);
+      if (!canEdit) return res.status(403).json({ error: "You cannot remove this attachment." });
+      db.prepare("DELETE FROM comp_attachments WHERE id=? AND org_id=?").run(attId, orgId);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to remove attachment" });
     }
   });
 
