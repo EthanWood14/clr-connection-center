@@ -9218,20 +9218,36 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return res.status(502).json({ error: "The generated script came back empty. Chat a bit more, then try again." });
       }
       const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
-      const scriptName = (typeof spec.name === "string" && spec.name.trim())
-        ? spec.name.trim().slice(0, 120)
-        : ((actor?.name ?? "My") + " Script");
-      const created = (storageExtra as any).buildPersonalScriptFromSpec(userId, scriptName, spec);
-      const actorUser = (storage.getUsers() as any[]).find(u => u.id === userId);
+      if (typeof spec.name !== "string" || !spec.name.trim()) spec.name = (actor?.name ?? "My") + " Script";
+      // Preview only — the client shows it and calls /save to persist (so reps can
+      // name it and keep multiple drafts to compare).
+      res.json({ ok: true, spec });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Build failed" });
+    }
+  });
+
+  // Persist a previewed script as a saved draft (does not delete other drafts).
+  app.post("/api/script-coach/save", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const spec = req.body?.spec;
+    if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) return res.status(400).json({ error: "Nothing to save." });
+    try {
+      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      const name = (typeof req.body?.name === "string" && req.body.name.trim())
+        ? req.body.name.trim().slice(0, 120)
+        : ((typeof spec.name === "string" && spec.name.trim()) ? spec.name.trim().slice(0, 120) : ((actor?.name ?? "My") + " Script"));
+      const created = (storageExtra as any).buildPersonalScriptFromSpec(userId, name, spec, false);
       audit({
-        userId, userName: actorUser?.name ?? "Unknown", action: "create",
+        userId, userName: actor?.name ?? "Unknown", action: "create",
         entityType: "call_script", entityId: created?.id ?? 0,
-        entityLabel: "Built personal script with AI coach: " + scriptName,
+        entityLabel: "Saved coach script draft: " + name,
         details: JSON.stringify({ nodes: spec.nodes.length }),
       });
       res.json({ ok: true, script: created });
     } catch (e: any) {
-      res.status(500).json({ error: e?.message ?? "Build failed" });
+      res.status(500).json({ error: e?.message ?? "Save failed" });
     }
   });
 

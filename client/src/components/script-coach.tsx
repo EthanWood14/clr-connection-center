@@ -30,6 +30,13 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const [speak, setSpeak] = useState(true);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [coverage, setCoverage] = useState<any>(null);
+  const [draft, setDraft] = useState<any>(null);
+  const [draftName, setDraftName] = useState("");
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  const voiceRef = useRef<any>(null);
+  const messagesRef = useRef<Msg[]>([]);
+  const thinkingRef = useRef(false);
   const recRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const voiceSupported = typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
@@ -40,6 +47,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02; u.pitch = 1;
+      if (voiceRef.current) u.voice = voiceRef.current;
       window.speechSynthesis.speak(u);
     } catch {}
   }
@@ -96,17 +104,41 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       try { recRef.current?.stop?.(); } catch {}
       try { window.speechSynthesis?.cancel?.(); } catch {}
       setListening(false);
+      setDraft(null);
     }
   }, [open]);
 
-  function handleSend() {
-    const text = input.trim();
-    if (!text || thinking) return;
-    const next: Msg[] = [...messages, { role: "user", content: text }];
+  // Keep refs in sync for callbacks fired outside React render (speech onend).
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { thinkingRef.current = thinking; }, [thinking]);
+  useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+
+  // Pick the most natural available browser voice for the coach.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const pick = () => {
+      const vs = window.speechSynthesis.getVoices() || [];
+      const pref =
+        vs.find(v => /natural|google us english|samantha|aria|jenny|libby/i.test(v.name) && /^en/i.test(v.lang)) ||
+        vs.find(v => v.lang === "en-US" && /google|samantha|female/i.test(v.name)) ||
+        vs.find(v => v.lang === "en-US") ||
+        vs.find(v => /^en/i.test(v.lang));
+      if (pref) voiceRef.current = pref;
+    };
+    pick();
+    try { window.speechSynthesis.onvoiceschanged = pick; } catch {}
+    return () => { try { window.speechSynthesis.onvoiceschanged = null as any; } catch {} };
+  }, []);
+
+  function submit(text: string) {
+    const t = (text || "").trim();
+    if (!t || thinkingRef.current) return;
+    const next: Msg[] = [...messagesRef.current, { role: "user", content: t }];
     setMessages(next);
     setInput("");
     sendToCoach(next);
   }
+  function handleSend() { submit(input); }
 
   function toggleMic() {
     if (listening) { try { recRef.current?.stop?.(); } catch {} setListening(false); return; }
@@ -122,30 +154,85 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       }
       setInput((finalText + " " + interim).trim());
     };
-    rec.onend = () => { setListening(false); };
+    rec.onend = () => {
+      setListening(false);
+      if (handsFreeRef.current && finalText.trim()) submit(finalText);
+    };
     rec.onerror = () => { setListening(false); };
     try { rec.start(); setListening(true); } catch {}
   }
 
-  const buildMut = useMutation({
+  const generateMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/script-coach/build", { messages, mode }),
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
-      toast({ title: "Your script is ready! 🎉", description: "We saved it as your personal script. Opening it now." });
+      const spec = data?.spec;
+      if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) {
+        toast({ title: "Nothing to build yet", description: "Chat a bit more, then try again.", variant: "destructive" });
+        return;
+      }
       try { window.speechSynthesis?.cancel?.(); } catch {}
-      onBuilt?.(data?.script);
-      onClose();
+      setDraft(spec);
+      setDraftName(typeof spec.name === "string" && spec.name.trim() ? spec.name : "My Script");
     },
     onError: (e: any) => toast({ title: "Could not generate", description: e?.message ?? "Try chatting a bit more, then retry.", variant: "destructive" }),
   });
 
+  const saveMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/script-coach/save", { spec: draft, name: draftName }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
+      toast({ title: "Saved! 🎉", description: "Your script is ready. Opening it now." });
+      onBuilt?.(data?.script);
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+
   if (!open) return null;
-  const canBuild = messages.filter(m => m.role === "user").length >= 1 && !buildMut.isPending;
+  const canBuild = messages.filter(m => m.role === "user").length >= 1 && !generateMut.isPending;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg h-[85vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-[#0F182D] border border-white/10">
+      <div className="relative w-full max-w-lg h-[85vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-[#0F182D] border border-white/10">
+        {/* Preview / save panel */}
+        {draft && (
+          <div className="absolute inset-0 z-10 bg-[#0F182D] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
+              <h2 className="text-white font-bold text-base">Review your script</h2>
+              <button onClick={() => setDraft(null)} title="Back" className="text-white/50 hover:text-white p-2 rounded-lg hover:bg-white/10"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-4 shrink-0">
+              <label className="text-xs text-white/50">Script name</label>
+              <input value={draftName} onChange={e => setDraftName(e.target.value)} className="w-full mt-1 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm px-3 py-2 focus:outline-none focus:border-[#C49A3C]/60" data-testid="coach-draft-name" />
+              <p className="text-[11px] text-white/40 mt-1">Saved as a draft you can switch between on the Script picker — generate more to compare.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2">
+              {Array.isArray(draft.nodes) && draft.nodes.map((n: any, i: number) => (
+                <div key={i} className="rounded-lg bg-white/[0.04] border border-white/5 px-3 py-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-bold text-[#C49A3C] bg-[#C49A3C]/15 rounded px-1.5 py-0.5">{i + 1}</span>
+                    <span className="text-white/90 text-sm font-medium">{n.key || ("Step " + (i + 1))}</span>
+                  </div>
+                  <p className="text-white/70 text-xs whitespace-pre-wrap leading-relaxed">{n.text}</p>
+                  {Array.isArray(n.responses) && n.responses.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {n.responses.map((r: any, j: number) => (
+                        <span key={j} className="text-[10px] rounded-full px-2 py-0.5 bg-white/[0.06] text-white/55">{r.label}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-white/10 p-3 shrink-0 flex gap-2">
+              <Button variant="outline" className="flex-1 text-white border-white/20 hover:bg-white/10 bg-transparent" onClick={() => setDraft(null)}>Back to chat</Button>
+              <Button className="flex-1 gap-2 font-semibold" style={{ backgroundColor: "#16a34a", color: "#fff" }} onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !draftName.trim()} data-testid="coach-save">
+                {saveMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Save this script</>}
+              </Button>
+            </div>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -158,6 +245,11 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {voiceSupported && (
+              <button onClick={() => setHandsFree(h => !h)} title="Hands-free: auto-send right after you finish speaking" className={"text-[11px] px-2 py-1 rounded-lg transition-colors " + (handsFree ? "bg-[#C49A3C] text-[#1A2B4A] font-semibold" : "text-white/50 hover:text-white hover:bg-white/10")}>
+                Hands-free
+              </button>
+            )}
             <button onClick={() => setSpeak(s => !s)} title={speak ? "Mute coach voice" : "Unmute coach voice"} className="text-white/50 hover:text-white p-2 rounded-lg hover:bg-white/10">
               {speak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
@@ -259,13 +351,13 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             </button>
           </div>
           <Button
-            onClick={() => buildMut.mutate()}
+            onClick={() => generateMut.mutate()}
             disabled={!canBuild || enabled === false}
             className="w-full gap-2 font-semibold"
             style={{ backgroundColor: "#16a34a", color: "#fff" }}
             data-testid="coach-generate"
           >
-            {buildMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : <><Sparkles className="w-4 h-4" /> Generate My Script</>}
+            {generateMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : <><Sparkles className="w-4 h-4" /> Generate My Script</>}
           </Button>
         </div>
       </div>

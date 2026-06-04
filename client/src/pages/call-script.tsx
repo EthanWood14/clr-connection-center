@@ -2069,9 +2069,9 @@ export default function CallScriptPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {(() => {
-                    const mine = myScript ? [myScript] : [];
+                    const mine = allScripts.filter(s => s.owner_id != null && s.owner_id === user?.id);
                     const defaultsGlobal = allScripts.filter(s => s.owner_id == null);
-                    const others = allScripts.filter(s => s.owner_id != null && (!myScript || s.id !== myScript.id));
+                    const others = allScripts.filter(s => s.owner_id != null && s.owner_id !== user?.id);
                     return (
                       <>
                         {mine.map(s => (

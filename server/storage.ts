@@ -3452,7 +3452,10 @@ export function getDefaultScripts(): any[] {
 
 // Get personal script for a user (copy of default, owner_id = userId)
 export function getUserScript(userId: number): any {
-  return sqlite.prepare(`SELECT * FROM call_scripts WHERE owner_id=? LIMIT 1`).get(userId) as any;
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE owner_id=? ORDER BY created_at DESC, id DESC LIMIT 1`).get(userId) as any;
+}
+export function getUserScripts(userId: number): any[] {
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE owner_id=? ORDER BY created_at DESC, id DESC`).all(userId) as any[];
 }
 
 // Deep-clone a script (all nodes + responses) for a specific user
@@ -3610,9 +3613,11 @@ export function getRootNode(scriptId: number): any {
 
 // Build a user's personal script from an AI-generated spec (see /api/script-coach/build).
 // Replaces any existing personal copy. The first node is the root (parent NULL).
-export function buildPersonalScriptFromSpec(userId: number, name: string, spec: any): any {
-  const existing = sqlite.prepare(`SELECT id FROM call_scripts WHERE owner_id=?`).get(userId) as any;
-  if (existing) sqlite.prepare(`DELETE FROM call_scripts WHERE id=?`).run(existing.id);
+export function buildPersonalScriptFromSpec(userId: number, name: string, spec: any, replace = true): any {
+  if (replace) {
+    const existing = sqlite.prepare(`SELECT id FROM call_scripts WHERE owner_id=?`).get(userId) as any;
+    if (existing) sqlite.prepare(`DELETE FROM call_scripts WHERE id=?`).run(existing.id);
+  }
   const sid = sqlite.prepare(
     `INSERT INTO call_scripts (name, description, is_active, created_by, owner_id) VALUES (?,?,1,?,?)`
   ).run(name, "Built with the AI Script Coach", userId, userId).lastInsertRowid as number;
