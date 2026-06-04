@@ -162,7 +162,7 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
 export default function CompRequests() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const isManager = !!(user && (user.role === "admin" || (user as any).isManager));
+  const isAdmin = !!(user && (user.role === "admin" || (user as any).superAdmin));
 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -180,7 +180,7 @@ export default function CompRequests() {
   const { data: team = [], isLoading: teamLoading } = useQuery<CompItem[]>({
     queryKey: ["/api/comp", "team"],
     queryFn: () => apiRequest("GET", "/api/comp"),
-    enabled: isManager,
+    enabled: isAdmin,
   });
 
   function refresh() { queryClient.invalidateQueries({ queryKey: ["/api/comp"] }); }
@@ -425,7 +425,7 @@ export default function CompRequests() {
       </Card>
 
       {/* Manager: team comp requests */}
-      {isManager && (
+      {isAdmin && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">

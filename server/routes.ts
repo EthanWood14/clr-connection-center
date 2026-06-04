@@ -4565,13 +4565,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const me = storage.getUserById(userId) as any;
     return me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
   }
+  // Only admins (or super-admins) may see OTHER team members comp requests.
+  function isCompAdmin(userId: number) {
+    const me = storage.getUserById(userId) as any;
+    return me?.role === "admin" || !!(me?.superAdmin ?? me?.super_admin);
+  }
 
   app.get("/api/comp", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const mineOnly = !isCompManager(userId) || req.query.scope === "mine";
+    const mineOnly = !isCompAdmin(userId) || req.query.scope === "mine";
     try {
       const db = storageExtra.getRawSqlite();
       const nameById = compNameMap();
@@ -4718,7 +4723,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.post("/api/comp/:id/decision", requireAuth, (req: any, res) => {
-    if (!requireManagerOrAdmin(req, res)) return;
+    if (!isCompAdmin(Number(req.session_user?.userId))) return res.status(403).json({ error: "Admin only" });
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const reviewerId = Number(sess?.userId);
@@ -4768,7 +4773,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
-      if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
+      if (!isOwner && !isCompAdmin(userId)) return res.status(403).json({ error: "Not your comp request." });
       if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked paid or received." });
       const now = new Date().toISOString();
       if (hasPaid) {
@@ -4796,7 +4801,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
-      const canDelete = isCompManager(userId) || (isOwner && (existing.status === "draft" || existing.status === "pending"));
+      const canDelete = isCompAdmin(userId) || (isOwner && (existing.status === "draft" || existing.status === "pending"));
       if (!canDelete) return res.status(403).json({ error: "You can only remove your own draft or pending items." });
       db.prepare("DELETE FROM comp_requests WHERE id=? AND org_id=?").run(id, orgId);
       res.json({ ok: true });
@@ -4813,10 +4818,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const item = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(compId, orgId) as any;
     if (!item) return { item: null, canView: false, canEdit: false };
     const isOwner = item.user_id === userId;
-    const mgr = isCompManager(userId);
-    const canView = isOwner || mgr;
+    const adm = isCompAdmin(userId);
+    const canView = isOwner || adm;
     const canEdit = isOwner && (item.status === "draft" || item.status === "pending");
-    return { item, canView, canEdit: canEdit || mgr };
+    return { item, canView, canEdit: canEdit || adm };
   }
 
   app.post("/api/comp/:id/attachments", requireAuth, (req: any, res) => {
