@@ -3,8 +3,9 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import {
-  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon, Check, Phone, PhoneOff,
+  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon, Check, Phone, PhoneOff, RotateCcw,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -23,6 +24,8 @@ function getRecognition(): any {
 
 export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open: boolean; onClose: () => void; onBuilt?: (script: any) => void; mode?: "create" | "refine" }) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const storageKey = "clr_script_coach_" + ((user as any)?.id ?? "anon");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -201,6 +204,15 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    // Restore saved conversation so it does not disappear when you leave.
+    let restored = false;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.length) { setMessages(saved); restored = true; }
+      }
+    } catch {}
     (async () => {
       try {
         const s: any = await apiRequest("GET", "/api/script-coach/status");
@@ -222,7 +234,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             } catch {}
           }
         }
-        if (!cancelled && s?.enabled && messages.length === 0) {
+        if (!cancelled && s?.enabled && !restored && messages.length === 0) {
           await sendToCoach([]);
         }
       } catch { if (!cancelled) setEnabled(false); }
@@ -235,6 +247,23 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, thinking]);
+
+  // Persist conversation so it survives leaving / refreshing.
+  useEffect(() => {
+    try {
+      if (messages.length) localStorage.setItem(storageKey, JSON.stringify(messages.slice(-40)));
+    } catch {}
+  }, [messages, storageKey]);
+
+  function startOver() {
+    try { localStorage.removeItem(storageKey); } catch {}
+    try { recRef.current?.abort?.(); } catch {}
+    stopAudio();
+    setMessages([]);
+    setCoverage(null);
+    setDraft(null);
+    if (enabled) sendToCoach([]);
+  }
 
   // Stop voices when closing
   useEffect(() => {
@@ -414,6 +443,11 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             {voiceSupported && (
               <button onClick={() => setHandsFree(h => !h)} title="Hands-free: auto-send right after you finish speaking" className={"text-[11px] px-2 py-1 rounded-lg transition-colors " + (handsFree ? "bg-[#C49A3C] text-[#1A2B4A] font-semibold" : "text-white/50 hover:text-white hover:bg-white/10")}>
                 Hands-free
+              </button>
+            )}
+            {messages.length > 0 && (
+              <button onClick={startOver} title="Start over (clears this saved conversation)" className="text-white/50 hover:text-white p-2 rounded-lg hover:bg-white/10" data-testid="coach-start-over">
+                <RotateCcw className="w-4 h-4" />
               </button>
             )}
             <button onClick={() => setSpeak(s => !s)} title={speak ? "Mute coach voice" : "Unmute coach voice"} className="text-white/50 hover:text-white p-2 rounded-lg hover:bg-white/10">
