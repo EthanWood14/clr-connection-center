@@ -27,7 +27,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [listening, setListening] = useState(false);
-  const [speak, setSpeak] = useState(true);
+  const [speak, setSpeak] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [coverage, setCoverage] = useState<any>(null);
   const [covLoading, setCovLoading] = useState(false);
@@ -192,8 +192,10 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
               const vd: any = await apiRequest("GET", "/api/script-coach/voices");
               if (!cancelled && Array.isArray(vd?.voices) && vd.voices.length) {
                 setVoices(vd.voices);
-                setSelectedVoice(prev => prev || vd.voices[0].id);
-                if (!selectedVoiceRef.current) selectedVoiceRef.current = vd.voices[0].id;
+                const george = vd.voices.find((v: any) => /george/i.test(v.name));
+                const def = (george && george.id) || vd.voices[0].id;
+                setSelectedVoice(prev => prev || def);
+                if (!selectedVoiceRef.current) selectedVoiceRef.current = def;
               }
             } catch {}
           }
