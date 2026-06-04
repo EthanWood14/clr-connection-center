@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info,
 } from "lucide-react";
 
 interface CompItem {
@@ -302,6 +302,13 @@ export default function CompRequests() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* What to use comp requests for */}
+          <div className="rounded-lg border border-sky-200 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-4 py-3 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0" />
+            <p className="text-[13px] text-sky-900 dark:text-sky-200 leading-relaxed">
+              Use this for your <strong>monthly transfer request</strong> and anything else that has been <strong>approved to be compensated</strong>.
+            </p>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Amount (USD)</label>
