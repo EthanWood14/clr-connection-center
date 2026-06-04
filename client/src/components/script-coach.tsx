@@ -4,7 +4,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon,
+  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon, Check,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -21,7 +21,7 @@ function getRecognition(): any {
   return r;
 }
 
-export function ScriptCoach({ open, onClose, onBuilt }: { open: boolean; onClose: () => void; onBuilt?: (script: any) => void }) {
+export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open: boolean; onClose: () => void; onBuilt?: (script: any) => void; mode?: "create" | "refine" }) {
   const { toast } = useToast();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -29,6 +29,7 @@ export function ScriptCoach({ open, onClose, onBuilt }: { open: boolean; onClose
   const [listening, setListening] = useState(false);
   const [speak, setSpeak] = useState(true);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [coverage, setCoverage] = useState<any>(null);
   const recRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const voiceSupported = typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
@@ -43,13 +44,22 @@ export function ScriptCoach({ open, onClose, onBuilt }: { open: boolean; onClose
     } catch {}
   }
 
+  async function refreshCoverage(msgs: Msg[]) {
+    try {
+      const cov: any = await apiRequest("POST", "/api/script-coach/coverage", { messages: msgs });
+      if (cov && Array.isArray(cov.stages)) setCoverage(cov);
+    } catch {}
+  }
+
   async function sendToCoach(history: Msg[]) {
     setThinking(true);
     try {
-      const data: any = await apiRequest("POST", "/api/script-coach/chat", { messages: history });
+      const data: any = await apiRequest("POST", "/api/script-coach/chat", { messages: history, mode });
       const reply = String(data?.reply ?? "");
-      setMessages(m => [...m, { role: "assistant", content: reply }]);
+      const updated: Msg[] = [...history, { role: "assistant", content: reply }];
+      setMessages(updated);
       say(reply);
+      refreshCoverage(updated);
     } catch (e: any) {
       const msg = e?.message ?? "The coach is unavailable right now.";
       setMessages(m => [...m, { role: "assistant", content: msg }]);
@@ -118,7 +128,7 @@ export function ScriptCoach({ open, onClose, onBuilt }: { open: boolean; onClose
   }
 
   const buildMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/script-coach/build", { messages }),
+    mutationFn: () => apiRequest("POST", "/api/script-coach/build", { messages, mode }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/call-scripts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/call-scripts/mine"] });
@@ -192,6 +202,28 @@ export function ScriptCoach({ open, onClose, onBuilt }: { open: boolean; onClose
             </div>
           )}
         </div>
+
+        {/* Coverage / readiness */}
+        {coverage && Array.isArray(coverage.stages) && (
+          <div className="border-t border-white/10 px-4 py-2.5 shrink-0 bg-white/[0.02]">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-white/50">Script readiness</span>
+              <span className="text-xs font-bold text-[#C49A3C]">{Math.round(coverage.score ?? 0)}%</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
+              <div className="h-full bg-[#C49A3C] transition-all duration-500" style={{ width: Math.max(0, Math.min(100, coverage.score ?? 0)) + "%" }} />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {coverage.stages.map((s: any) => (
+                <span key={s.key} title={s.summary || ""} className={"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] " + (s.done ? "bg-emerald-500/20 text-emerald-300" : "bg-white/[0.06] text-white/40")}>
+                  {s.done ? <Check className="w-2.5 h-2.5" /> : <span className="w-2.5 h-2.5 rounded-full border border-white/30 inline-block" />}
+                  {s.label}
+                </span>
+              ))}
+            </div>
+            {coverage.nextGap && <p className="text-[11px] text-white/55 mt-1.5">👉 {coverage.nextGap}</p>}
+          </div>
+        )}
 
         {/* Composer */}
         <div className="border-t border-white/10 p-3 shrink-0 space-y-2">

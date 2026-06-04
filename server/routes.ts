@@ -9130,6 +9130,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return text;
   }
 
+  // Text outline of a user's existing personal script (for refine mode).
+  function userScriptOutlineText(userId: number): string {
+    try {
+      const db = storageExtra.getRawSqlite();
+      const script = db.prepare("SELECT * FROM call_scripts WHERE owner_id=? LIMIT 1").get(userId) as any;
+      if (!script) return "";
+      const nodes = db.prepare("SELECT * FROM script_nodes WHERE script_id=? ORDER BY node_order ASC").all(script.id) as any[];
+      if (!nodes.length) return "";
+      const lines = nodes.slice(0, 30).map((n: any, i: number) => (i + 1) + ". " + String(n.text || "").replace(/\s+/g, " ").slice(0, 220));
+      return "CURRENT SCRIPT (the rep already has this — help them refine it, do not start over):\nName: " + (script.name || "My Script") + "\n" + lines.join("\n");
+    } catch { return ""; }
+  }
+
   const COACH_SYSTEM = [
     "You are an upbeat, expert call-script coach for CLRs (client lead reps) at West Capital Lending, a mortgage company.",
     "CLRs cold-call mortgage leads and try to transfer interested borrowers to a loan officer (LO).",
@@ -9146,13 +9159,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post("/api/script-coach/chat", requireAuth, async (req: any, res) => {
     try {
+      const userId = Number(req.session_user?.userId);
+      const refine = req.body?.mode === "refine";
       const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
       const messages = raw
         .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
         .slice(-30)
         .map((m: any) => ({ role: m.role, content: m.content.slice(0, 4000) }));
-      if (!messages.length) messages.push({ role: "user", content: "Hi, I want to build my call script." });
-      const reply = await callAnthropic(COACH_SYSTEM, messages, 700);
+      let system = COACH_SYSTEM;
+      if (refine) {
+        const outline = userId ? userScriptOutlineText(userId) : "";
+        system = COACH_SYSTEM + "\n\nREFINE MODE: The rep already has a script. Help them improve it — ask what is working, what they want to change, and suggest specific upgrades. Do not start from scratch." + (outline ? "\n\n" + outline : "");
+        if (!messages.length) messages.push({ role: "user", content: "I want to refine my existing call script." });
+      } else if (!messages.length) {
+        messages.push({ role: "user", content: "Hi, I want to build my call script." });
+      }
+      const reply = await callAnthropic(system, messages, 700);
       res.json({ reply: reply || "Sorry, I did not catch that — could you say it another way?" });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Coach unavailable" });
@@ -9182,7 +9204,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         .join("\n")
         .slice(-12000);
       if (!convo.trim()) return res.status(400).json({ error: "Chat with the coach first, then generate." });
-      const out = await callAnthropic(BUILD_SYSTEM, [{ role: "user", content: "Build the script from this conversation:\n\n" + convo }], 4000);
+      const refine = req.body?.mode === "refine";
+      const existing = refine ? userScriptOutlineText(userId) : "";
+      const buildMsg = (existing ? (existing + "\n\nApply the changes discussed below to that script (keep what was not changed).\n\n") : "") + "Build the script from this conversation:\n\n" + convo;
+      const out = await callAnthropic(BUILD_SYSTEM, [{ role: "user", content: buildMsg }], 4000);
       let spec: any = null;
       try {
         const start = out.indexOf("{");
@@ -9207,6 +9232,46 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.json({ ok: true, script: created });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Build failed" });
+    }
+  });
+
+  // Live coverage / readiness assessment of the script-so-far.
+  const COVERAGE_STAGES = [
+    { key: "opening", label: "Opening & permission" },
+    { key: "discovery", label: "Goal discovery" },
+    { key: "qualifying", label: "Qualifying questions" },
+    { key: "transfer", label: "Transfer / appointment" },
+    { key: "objections", label: "Objection handling" },
+    { key: "voicemail", label: "Voicemail" },
+  ];
+  function emptyCoverage() {
+    return { score: 0, stages: COVERAGE_STAGES.map(s => ({ ...s, done: false, summary: "" })), nextGap: "Tell the coach how you open a call." };
+  }
+  const COVERAGE_SYSTEM = [
+    "You assess how complete a CLR call script is, based on a coaching conversation. Return STRICT JSON only, no prose, no markdown.",
+    "Schema: { \"score\": number, \"stages\": [ { \"key\": string, \"label\": string, \"done\": boolean, \"summary\": string } ], \"nextGap\": string }",
+    "Return EXACTLY these 6 stages in this order with these keys and labels: opening (Opening & permission), discovery (Goal discovery), qualifying (Qualifying questions), transfer (Transfer / appointment), objections (Objection handling), voicemail (Voicemail).",
+    "done = the rep has given enough to write that part. summary = one short phrase (under 8 words) capturing what they said for that stage, or empty if not done.",
+    "score = 0 to 100, roughly the share of the 6 stages covered. nextGap = one short sentence telling the rep what to work on next, or a brief congrats if all done.",
+    "Return ONLY the JSON object.",
+  ].join("\n");
+
+  app.post("/api/script-coach/coverage", requireAuth, async (req: any, res) => {
+    try {
+      const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
+      const convo = raw
+        .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+        .map((m: any) => (m.role === "user" ? "REP: " : "COACH: ") + m.content)
+        .join("\n")
+        .slice(-10000);
+      if (!convo.trim()) return res.json(emptyCoverage());
+      const out = await callAnthropic(COVERAGE_SYSTEM, [{ role: "user", content: convo }], 700);
+      let data: any = null;
+      try { const s = out.indexOf("{"); const e = out.lastIndexOf("}"); data = JSON.parse(out.slice(s, e + 1)); } catch {}
+      if (!data || !Array.isArray(data.stages) || !data.stages.length) return res.json(emptyCoverage());
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Coverage unavailable" });
     }
   });
 

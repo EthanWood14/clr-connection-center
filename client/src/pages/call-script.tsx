@@ -1897,7 +1897,7 @@ export default function CallScriptPage() {
 
   return (
     <PlaceholderContext.Provider value={placeholders}>
-    <ScriptCoach open={coachOpen} onClose={() => setCoachOpen(false)} onBuilt={(s: any) => { if (s?.id) setSelectedScriptId(s.id); setView("run"); }} />
+    <ScriptCoach open={coachOpen} mode={hasPersonalCopy ? "refine" : "create"} onClose={() => setCoachOpen(false)} onBuilt={(s: any) => { if (s?.id) setSelectedScriptId(s.id); setView("run"); }} />
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -1918,7 +1918,7 @@ export default function CallScriptPage() {
             <GitBranch className="w-3.5 h-3.5" /> Flowchart
           </Button>
           <Button size="sm" variant="outline" className="gap-1.5 border-[#C49A3C]/50 text-[#C49A3C] hover:bg-[#C49A3C]/10" onClick={() => setCoachOpen(true)} data-testid="button-build-with-coach">
-            <Sparkles className="w-3.5 h-3.5" /> Build with Coach
+            <Sparkles className="w-3.5 h-3.5" /> {hasPersonalCopy ? "Refine with Coach" : "Build with Coach"}
           </Button>
           {/* Always-visible "my own copy" affordance for every CLR. */}
           {/* When the user has no personal copy yet, this clones the default and switches to it. */}
