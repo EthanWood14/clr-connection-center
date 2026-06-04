@@ -11,7 +11,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarOff, Check, X, Clock, Trash2, Plane, Construction, CalendarDays, Info } from "lucide-react";
+import { CalendarOff, Check, X, Clock, Trash2, Plane, CalendarDays, Info } from "lucide-react";
 
 interface TimeOffRequest {
   id: number;
@@ -188,14 +188,6 @@ export default function TimeOff() {
         </div>
       </div>
 
-      {/* Beta / under construction banner */}
-      <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex items-center gap-2.5">
-        <Construction className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Under construction — Beta</p>
-          <p className="text-xs text-amber-700/80 dark:text-amber-400/80">This feature is still being built. Things may change and may not work perfectly yet.</p>
-        </div>
-      </div>
 
       <Card>
         <CardHeader className="pb-3">
