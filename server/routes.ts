@@ -9293,9 +9293,58 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Natural text-to-speech config for the coach voice call.
+  function getTtsConfig() {
+    const s = storageExtra.getEmailSettings() as any;
+    const provider = String(s.tts_provider || "browser").trim().toLowerCase();
+    const key = String(s.tts_api_key || "").trim() || (provider === "openai" ? (process.env.OPENAI_API_KEY || "").trim() : (process.env.ELEVENLABS_API_KEY || "").trim());
+    const voice = String(s.tts_voice || "").trim();
+    return { provider, key, voice };
+  }
+
   // Whether the AI coach is available (admin configured a key).
   app.get("/api/script-coach/status", requireAuth, (_req: any, res: any) => {
-    try { res.json({ enabled: !!getAiConfig().key }); } catch { res.json({ enabled: false }); }
+    try {
+      const tts = getTtsConfig();
+      const ttsReady = (tts.provider === "elevenlabs" || tts.provider === "openai") && !!tts.key;
+      res.json({ enabled: !!getAiConfig().key, ttsProvider: ttsReady ? tts.provider : "browser" });
+    } catch { res.json({ enabled: false, ttsProvider: "browser" }); }
+  });
+
+  // Returns natural-voice audio (mp3) for a line of coach text.
+  app.post("/api/script-coach/tts", requireAuth, async (req: any, res) => {
+    const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 1200) : "";
+    if (!text.trim()) return res.status(400).json({ error: "No text" });
+    const { provider, key, voice } = getTtsConfig();
+    if ((provider !== "elevenlabs" && provider !== "openai") || !key) return res.status(409).json({ error: "Natural voice not configured" });
+    try {
+      let resp: Response;
+      if (provider === "elevenlabs") {
+        const voiceId = voice || "21m00Tcm4TlvDq8ikWAM"; // Rachel — warm female default
+        resp = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + voiceId, {
+          method: "POST",
+          headers: { "xi-api-key": key, "content-type": "application/json", "accept": "audio/mpeg" },
+          body: JSON.stringify({ text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.4, similarity_boost: 0.75, style: 0.3 } }),
+        });
+      } else {
+        resp = await fetch("https://api.openai.com/v1/audio/speech", {
+          method: "POST",
+          headers: { "authorization": "Bearer " + key, "content-type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: voice || "nova", input: text, response_format: "mp3" }),
+        });
+      }
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => "");
+        console.error("[coach-tts] " + provider + " error", resp.status, t.slice(0, 300));
+        return res.status(502).json({ error: "Voice service error (" + resp.status + ")" });
+      }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(buf);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "TTS failed" });
+    }
   });
 
   // Get default scripts (owner_id IS NULL)

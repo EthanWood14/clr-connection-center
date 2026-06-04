@@ -1483,6 +1483,16 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'ai_model')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''`);
   }
+  // 2026-06: natural text-to-speech for the Script Coach voice call.
+  if (!emailCols.find(c => c.name === 'tts_provider')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN tts_provider TEXT NOT NULL DEFAULT 'browser'`);
+  }
+  if (!emailCols.find(c => c.name === 'tts_api_key')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN tts_api_key TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!emailCols.find(c => c.name === 'tts_voice')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN tts_voice TEXT NOT NULL DEFAULT ''`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00

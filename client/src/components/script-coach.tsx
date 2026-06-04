@@ -35,6 +35,9 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const [callState, setCallState] = useState<"speaking" | "listening" | "thinking" | "idle">("idle");
   const [caption, setCaption] = useState("");
   const callActiveRef = useRef(false);
+  const [ttsProvider, setTtsProvider] = useState("browser");
+  const ttsProviderRef = useRef("browser");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [draft, setDraft] = useState<any>(null);
   const [draftName, setDraftName] = useState("");
   const [handsFree, setHandsFree] = useState(false);
@@ -46,9 +49,29 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const voiceSupported = typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 
-  function say(text: string, onDone?: () => void) {
-    const inCall = callActiveRef.current;
-    if ((!speak && !inCall) || typeof window === "undefined" || !window.speechSynthesis) { if (onDone) onDone(); return; }
+  function stopAudio() {
+    try { if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; audioRef.current = null; } } catch {}
+    try { window.speechSynthesis?.cancel?.(); } catch {}
+  }
+  async function speakServer(text: string, onDone?: () => void) {
+    try {
+      stopAudio();
+      const resp = await fetch("/api/script-coach/tts", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+      if (!resp.ok) throw new Error("tts " + resp.status);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      const finish = () => { try { URL.revokeObjectURL(url); } catch {} if (audioRef.current === audio) audioRef.current = null; if (onDone) onDone(); };
+      audio.onended = finish;
+      audio.onerror = finish;
+      await audio.play();
+    } catch {
+      browserSay(text, onDone);
+    }
+  }
+  function browserSay(text: string, onDone?: () => void) {
+    if (typeof window === "undefined" || !window.speechSynthesis) { if (onDone) onDone(); return; }
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -57,6 +80,12 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       if (onDone) { u.onend = () => onDone(); u.onerror = () => onDone(); }
       window.speechSynthesis.speak(u);
     } catch { if (onDone) onDone(); }
+  }
+  function say(text: string, onDone?: () => void) {
+    const inCall = callActiveRef.current;
+    if (!speak && !inCall) { if (onDone) onDone(); return; }
+    if (ttsProviderRef.current && ttsProviderRef.current !== "browser") { speakServer(text, onDone); return; }
+    browserSay(text, onDone);
   }
 
   // ── Phone-call mode: continuous speak <-> listen loop ──────────────────────
@@ -107,7 +136,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
     setCallActive(false);
     setCallState("idle");
     try { recRef.current?.stop?.(); } catch {}
-    try { window.speechSynthesis?.cancel?.(); } catch {}
+    stopAudio();
   }
 
   async function refreshCoverage(msgs: Msg[]) {
@@ -143,7 +172,12 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
     (async () => {
       try {
         const s: any = await apiRequest("GET", "/api/script-coach/status");
-        if (!cancelled) setEnabled(!!s?.enabled);
+        if (!cancelled) {
+          setEnabled(!!s?.enabled);
+          const tp = s?.ttsProvider || "browser";
+          setTtsProvider(tp);
+          ttsProviderRef.current = tp;
+        }
         if (!cancelled && s?.enabled && messages.length === 0) {
           await sendToCoach([]);
         }
@@ -162,7 +196,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   useEffect(() => {
     if (!open) {
       try { recRef.current?.stop?.(); } catch {}
-      try { window.speechSynthesis?.cancel?.(); } catch {}
+      stopAudio();
       setListening(false);
       setDraft(null);
       callActiveRef.current = false;

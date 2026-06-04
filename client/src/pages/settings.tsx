@@ -433,6 +433,9 @@ function EmailReportsCard() {
   const [resendApiKey, setResendApiKey] = useState("");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState("");
+  const [ttsProvider, setTtsProvider] = useState("browser");
+  const [ttsApiKey, setTtsApiKey] = useState("");
+  const [ttsVoice, setTtsVoice] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
@@ -461,6 +464,9 @@ function EmailReportsCard() {
     setResendApiKey(emailSettings.resend_api_key ?? emailSettings.resendApiKey ?? "");
     setAiApiKey(emailSettings.ai_api_key ?? emailSettings.aiApiKey ?? "");
     setAiModel(emailSettings.ai_model ?? emailSettings.aiModel ?? "");
+    setTtsProvider(emailSettings.tts_provider ?? emailSettings.ttsProvider ?? "browser");
+    setTtsApiKey(emailSettings.tts_api_key ?? emailSettings.ttsApiKey ?? "");
+    setTtsVoice(emailSettings.tts_voice ?? emailSettings.ttsVoice ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -526,6 +532,9 @@ function EmailReportsCard() {
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
     if (aiApiKey && !aiApiKey.includes("•")) payload.aiApiKey = aiApiKey;
     payload.aiModel = aiModel;
+    payload.ttsProvider = ttsProvider;
+    if (ttsApiKey && !ttsApiKey.includes("•")) payload.ttsApiKey = ttsApiKey;
+    payload.ttsVoice = ttsVoice;
     saveMutation.mutate(payload);
   }
 
@@ -684,6 +693,41 @@ function EmailReportsCard() {
                   autoComplete="off"
                   data-testid="input-ai-model"
                 />
+
+                {/* Natural voice (TTS) for the coach phone call */}
+                <label className="text-xs font-medium text-muted-foreground mt-3 block">Coach Voice</label>
+                <select
+                  value={ttsProvider}
+                  onChange={e => setTtsProvider(e.target.value)}
+                  className="h-9 rounded-md border bg-background px-2 text-sm w-full max-w-sm"
+                  data-testid="select-tts-provider"
+                >
+                  <option value="browser">Browser voice (free, robotic)</option>
+                  <option value="elevenlabs">ElevenLabs (most natural)</option>
+                  <option value="openai">OpenAI (natural)</option>
+                </select>
+                {ttsProvider !== "browser" && (
+                  <>
+                    <label className="text-xs font-medium text-muted-foreground mt-2 block">{ttsProvider === "elevenlabs" ? "ElevenLabs" : "OpenAI"} API Key</label>
+                    <Input
+                      type="password"
+                      placeholder={ttsProvider === "elevenlabs" ? "ElevenLabs API key" : "sk-..."}
+                      value={ttsApiKey}
+                      onChange={e => setTtsApiKey(e.target.value)}
+                      autoComplete="off"
+                      data-testid="input-tts-key"
+                    />
+                    <label className="text-xs font-medium text-muted-foreground mt-2 block">Voice <span className="font-normal">(optional)</span></label>
+                    <Input
+                      placeholder={ttsProvider === "elevenlabs" ? "Voice ID (default: Rachel)" : "alloy / nova / shimmer (default: nova)"}
+                      value={ttsVoice}
+                      onChange={e => setTtsVoice(e.target.value)}
+                      autoComplete="off"
+                      data-testid="input-tts-voice"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">{ttsProvider === "elevenlabs" ? "Get a key at elevenlabs.io. Paste a Voice ID from your ElevenLabs voice library to pick the voice." : "Uses your OpenAI key (gpt-4o-mini-tts). Voices: alloy, echo, fable, nova, onyx, shimmer."}</p>
+                  </>
+                )}
               </div>
             </div>
 
