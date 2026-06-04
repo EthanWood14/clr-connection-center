@@ -11,7 +11,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarOff, Check, X, Clock, Trash2, Plane, Construction, CalendarDays } from "lucide-react";
+import { CalendarOff, Check, X, Clock, Trash2, Plane, Construction, CalendarDays, Info } from "lucide-react";
 
 interface TimeOffRequest {
   id: number;
@@ -204,6 +204,13 @@ export default function TimeOff() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* Paid leave policy note */}
+          <div className="rounded-lg border border-sky-200 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-4 py-3 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0" />
+            <p className="text-[13px] text-sky-900 dark:text-sky-200 leading-relaxed">
+              You get <strong>10 days of paid leave per year</strong>. After your initial <strong>90 days</strong> of employment, paid leave must be requested through the <strong>Paycom</strong> app.
+            </p>
+          </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">When are you taking off?</label>
             <Popover open={dateOpen} onOpenChange={setDateOpen}>
