@@ -9320,7 +9320,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     try {
       let resp: Response;
       if (provider === "elevenlabs") {
-        const voiceId = voice || "21m00Tcm4TlvDq8ikWAM"; // Rachel — warm female default
+        const voiceId = voice || "EXAVITQu4vr4xnSDxMaL"; // Sarah — warm, reassuring (works on free tier)
         resp = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + voiceId, {
           method: "POST",
           headers: { "xi-api-key": key, "content-type": "application/json", "accept": "audio/mpeg" },

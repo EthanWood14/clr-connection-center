@@ -719,7 +719,7 @@ function EmailReportsCard() {
                     />
                     <label className="text-xs font-medium text-muted-foreground mt-2 block">Voice <span className="font-normal">(optional)</span></label>
                     <Input
-                      placeholder={ttsProvider === "elevenlabs" ? "Voice ID (default: Rachel)" : "alloy / nova / shimmer (default: nova)"}
+                      placeholder={ttsProvider === "elevenlabs" ? "Voice ID (default: Sarah)" : "alloy / nova / shimmer (default: nova)"}
                       value={ttsVoice}
                       onChange={e => setTtsVoice(e.target.value)}
                       autoComplete="off"
