@@ -30,6 +30,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const [speak, setSpeak] = useState(true);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [coverage, setCoverage] = useState<any>(null);
+  const [covLoading, setCovLoading] = useState(false);
   const [draft, setDraft] = useState<any>(null);
   const [draftName, setDraftName] = useState("");
   const [handsFree, setHandsFree] = useState(false);
@@ -53,10 +54,12 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   }
 
   async function refreshCoverage(msgs: Msg[]) {
+    setCovLoading(true);
     try {
       const cov: any = await apiRequest("POST", "/api/script-coach/coverage", { messages: msgs });
       if (cov && Array.isArray(cov.stages)) setCoverage(cov);
     } catch {}
+    finally { setCovLoading(false); }
   }
 
   async function sendToCoach(history: Msg[]) {
@@ -67,7 +70,6 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       const updated: Msg[] = [...history, { role: "assistant", content: reply }];
       setMessages(updated);
       say(reply);
-      refreshCoverage(updated);
     } catch (e: any) {
       const msg = e?.message ?? "The coach is unavailable right now.";
       setMessages(m => [...m, { role: "assistant", content: msg }]);
@@ -295,25 +297,37 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
           )}
         </div>
 
-        {/* Coverage / readiness */}
-        {coverage && Array.isArray(coverage.stages) && (
+        {/* Coverage / readiness (on-demand to keep AI cost low) */}
+        {messages.some(m => m.role === "user") && (
           <div className="border-t border-white/10 px-4 py-2.5 shrink-0 bg-white/[0.02]">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-white/50">Script readiness</span>
-              <span className="text-xs font-bold text-[#C49A3C]">{Math.round(coverage.score ?? 0)}%</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
-              <div className="h-full bg-[#C49A3C] transition-all duration-500" style={{ width: Math.max(0, Math.min(100, coverage.score ?? 0)) + "%" }} />
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {coverage.stages.map((s: any) => (
-                <span key={s.key} title={s.summary || ""} className={"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] " + (s.done ? "bg-emerald-500/20 text-emerald-300" : "bg-white/[0.06] text-white/40")}>
-                  {s.done ? <Check className="w-2.5 h-2.5" /> : <span className="w-2.5 h-2.5 rounded-full border border-white/30 inline-block" />}
-                  {s.label}
-                </span>
-              ))}
-            </div>
-            {coverage.nextGap && <p className="text-[11px] text-white/55 mt-1.5">👉 {coverage.nextGap}</p>}
+            {coverage && Array.isArray(coverage.stages) ? (
+              <>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-white/50">Script readiness</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#C49A3C]">{Math.round(coverage.score ?? 0)}%</span>
+                    <button onClick={() => refreshCoverage(messages)} disabled={covLoading} className="text-[10px] text-white/40 hover:text-white/80 disabled:opacity-50">{covLoading ? "…" : "Refresh"}</button>
+                  </div>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-2">
+                  <div className="h-full bg-[#C49A3C] transition-all duration-500" style={{ width: Math.max(0, Math.min(100, coverage.score ?? 0)) + "%" }} />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {coverage.stages.map((s: any) => (
+                    <span key={s.key} title={s.summary || ""} className={"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] " + (s.done ? "bg-emerald-500/20 text-emerald-300" : "bg-white/[0.06] text-white/40")}>
+                      {s.done ? <Check className="w-2.5 h-2.5" /> : <span className="w-2.5 h-2.5 rounded-full border border-white/30 inline-block" />}
+                      {s.label}
+                    </span>
+                  ))}
+                </div>
+                {coverage.nextGap && <p className="text-[11px] text-white/55 mt-1.5">👉 {coverage.nextGap}</p>}
+              </>
+            ) : (
+              <button onClick={() => refreshCoverage(messages)} disabled={covLoading} className="w-full flex items-center justify-center gap-1.5 text-xs text-white/55 hover:text-white disabled:opacity-50">
+                {covLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {covLoading ? "Checking…" : "Check script readiness"}
+              </button>
+            )}
           </div>
         )}
 

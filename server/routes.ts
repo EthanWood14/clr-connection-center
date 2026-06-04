@@ -9107,16 +9107,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const envKey = (process.env.ANTHROPIC_API_KEY || "").trim();
     const dbKey = String(s.ai_api_key || "").trim();
     const model = String(s.ai_model || "").trim() || "claude-sonnet-4-6";
-    return { key: envKey || dbKey, model };
+    const fastModel = String(s.ai_fast_model || "").trim() || "claude-haiku-4-5";
+    return { key: envKey || dbKey, model, fastModel };
   }
 
-  async function callAnthropic(system: string, messages: any[], maxTokens = 1024): Promise<string> {
+  async function callAnthropic(system: string, messages: any[], maxTokens = 1024, modelOverride?: string): Promise<string> {
     const { key, model } = getAiConfig();
     if (!key) throw new Error("AI is not set up yet. An admin needs to add an Anthropic API key in Settings.");
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages }),
+      body: JSON.stringify({ model: modelOverride || model, max_tokens: maxTokens, system, messages }),
     });
     if (!resp.ok) {
       const t = await resp.text().catch(() => "");
@@ -9281,7 +9282,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         .join("\n")
         .slice(-10000);
       if (!convo.trim()) return res.json(emptyCoverage());
-      const out = await callAnthropic(COVERAGE_SYSTEM, [{ role: "user", content: convo }], 700);
+      const out = await callAnthropic(COVERAGE_SYSTEM, [{ role: "user", content: convo }], 700, getAiConfig().fastModel);
       let data: any = null;
       try { const s = out.indexOf("{"); const e = out.lastIndexOf("}"); data = JSON.parse(out.slice(s, e + 1)); } catch {}
       if (!data || !Array.isArray(data.stages) || !data.stages.length) return res.json(emptyCoverage());
