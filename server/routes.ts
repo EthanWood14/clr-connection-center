@@ -9101,6 +9101,120 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return script.owner_id === sessionUser.userId;
   }
 
+  // ── AI Script Coach ─────────────────────────────────────────────────────────
+  function getAiConfig() {
+    const s = storageExtra.getEmailSettings() as any;
+    const envKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    const dbKey = String(s.ai_api_key || "").trim();
+    const model = String(s.ai_model || "").trim() || "claude-3-5-sonnet-latest";
+    return { key: envKey || dbKey, model };
+  }
+
+  async function callAnthropic(system: string, messages: any[], maxTokens = 1024): Promise<string> {
+    const { key, model } = getAiConfig();
+    if (!key) throw new Error("AI is not set up yet. An admin needs to add an Anthropic API key in Settings.");
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      console.error("[script-coach] anthropic error", resp.status, t.slice(0, 400));
+      throw new Error("The AI service returned an error (" + resp.status + "). Check the API key / model in Settings.");
+    }
+    const data: any = await resp.json();
+    const text = Array.isArray(data?.content)
+      ? data.content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n").trim()
+      : "";
+    return text;
+  }
+
+  const COACH_SYSTEM = [
+    "You are an upbeat, expert call-script coach for CLRs (client lead reps) at West Capital Lending, a mortgage company.",
+    "CLRs cold-call mortgage leads and try to transfer interested borrowers to a loan officer (LO).",
+    "Your job: interview the rep, coach them, and help them build their own call script in their own voice.",
+    "Cover these stages over the conversation, one or two at a time: (1) Opening and permission, (2) Goal discovery (refi vs HELOC or cash-out), (3) Quick qualifying questions, (4) Transferring to an LO or setting an appointment, (5) Common objections (waiting on rates, credit, talk to spouse, not interested), (6) Voicemail.",
+    "Rules:",
+    "- Keep replies short and conversational (2 to 5 sentences). Ask ONE thing at a time.",
+    "- When the rep gives you their wording, reflect it back, name one strength and one improvement, then offer a tightened version and ask if they want to keep theirs, use yours, or blend.",
+    "- Preserve their personality and phrasing. Suggest, never force.",
+    "- Be encouraging and specific. No long lectures.",
+    "- Once the core stages are covered, tell them they can click Generate My Script whenever they are ready.",
+    "Start by warmly introducing yourself in one or two sentences and asking how they like to open a call.",
+  ].join("\n");
+
+  app.post("/api/script-coach/chat", requireAuth, async (req: any, res) => {
+    try {
+      const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
+      const messages = raw
+        .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+        .slice(-30)
+        .map((m: any) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+      if (!messages.length) messages.push({ role: "user", content: "Hi, I want to build my call script." });
+      const reply = await callAnthropic(COACH_SYSTEM, messages, 700);
+      res.json({ reply: reply || "Sorry, I did not catch that — could you say it another way?" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Coach unavailable" });
+    }
+  });
+
+  const BUILD_SYSTEM = [
+    "You convert a coaching conversation into a structured call script as STRICT JSON only. No prose, no markdown fences.",
+    "Schema: { \"name\": string, \"nodes\": [ { \"key\": string, \"text\": string, \"hint\": string, \"responses\": [ { \"label\": string, \"color\": \"green\"|\"blue\"|\"default\"|\"red\", \"next\": string|null } ] } ] }",
+    "Rules:",
+    "- The FIRST node is the opening (it becomes the root).",
+    "- next references another node key, or null to end that path.",
+    "- Use the wording from the conversation wherever possible; keep the rep voice.",
+    "- color: green = positive/interested, blue = neutral/info, red = negative/end (DNC, not interested), default = standard.",
+    "- Practical coverage: opening, discovery, qualifying, transfer/appointment, key objections, voicemail. 8 to 16 nodes.",
+    "Return ONLY the JSON object.",
+  ].join("\n");
+
+  app.post("/api/script-coach/build", requireAuth, async (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
+      const convo = raw
+        .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+        .map((m: any) => (m.role === "user" ? "REP: " : "COACH: ") + m.content)
+        .join("\n")
+        .slice(-12000);
+      if (!convo.trim()) return res.status(400).json({ error: "Chat with the coach first, then generate." });
+      const out = await callAnthropic(BUILD_SYSTEM, [{ role: "user", content: "Build the script from this conversation:\n\n" + convo }], 4000);
+      let spec: any = null;
+      try {
+        const start = out.indexOf("{");
+        const end = out.lastIndexOf("}");
+        spec = JSON.parse(out.slice(start, end + 1));
+      } catch { return res.status(502).json({ error: "Could not parse the generated script. Please try again." }); }
+      if (!spec || !Array.isArray(spec.nodes) || !spec.nodes.length) {
+        return res.status(502).json({ error: "The generated script came back empty. Chat a bit more, then try again." });
+      }
+      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      const scriptName = (typeof spec.name === "string" && spec.name.trim())
+        ? spec.name.trim().slice(0, 120)
+        : ((actor?.name ?? "My") + " Script");
+      const created = (storageExtra as any).buildPersonalScriptFromSpec(userId, scriptName, spec);
+      const actorUser = (storage.getUsers() as any[]).find(u => u.id === userId);
+      audit({
+        userId, userName: actorUser?.name ?? "Unknown", action: "create",
+        entityType: "call_script", entityId: created?.id ?? 0,
+        entityLabel: "Built personal script with AI coach: " + scriptName,
+        details: JSON.stringify({ nodes: spec.nodes.length }),
+      });
+      res.json({ ok: true, script: created });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Build failed" });
+    }
+  });
+
+  // Whether the AI coach is available (admin configured a key).
+  app.get("/api/script-coach/status", requireAuth, (_req: any, res: any) => {
+    try { res.json({ enabled: !!getAiConfig().key }); } catch { res.json({ enabled: false }); }
+  });
+
   // Get default scripts (owner_id IS NULL)
   app.get('/api/call-scripts/defaults', requireAuth, (_req: any, res: any) => {
     res.json(storageExtra.getDefaultScripts());

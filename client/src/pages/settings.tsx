@@ -431,6 +431,8 @@ function EmailReportsCard() {
     });
 
   const [resendApiKey, setResendApiKey] = useState("");
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiModel, setAiModel] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
@@ -457,6 +459,8 @@ function EmailReportsCard() {
   useEffect(() => {
     if (!emailSettings) return;
     setResendApiKey(emailSettings.resend_api_key ?? emailSettings.resendApiKey ?? "");
+    setAiApiKey(emailSettings.ai_api_key ?? emailSettings.aiApiKey ?? "");
+    setAiModel(emailSettings.ai_model ?? emailSettings.aiModel ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
@@ -520,6 +524,8 @@ function EmailReportsCard() {
       timeoffApproverId: approvalRecipientId ? Number(approvalRecipientId) : null,
     };
     if (resendApiKey && !resendApiKey.includes("•")) payload.resendApiKey = resendApiKey;
+    if (aiApiKey && !aiApiKey.includes("•")) payload.aiApiKey = aiApiKey;
+    payload.aiModel = aiModel;
     saveMutation.mutate(payload);
   }
 
@@ -653,6 +659,31 @@ function EmailReportsCard() {
                   autoComplete="off"
                 />
                 <p className="text-[10px] text-muted-foreground">Emails send from <span className="font-mono">reports@westcapitallending.center</span>. To use a different API key, get one at <a href="https://resend.com/api-keys" target="_blank" className="underline">resend.com/api-keys</a>.</p>
+              </div>
+            </div>
+
+            {/* AI Script Coach */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">AI Script Coach</p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Anthropic API Key</label>
+                <Input
+                  type="password"
+                  placeholder="sk-ant-xxxxxxxxxxxx"
+                  value={aiApiKey}
+                  onChange={e => setAiApiKey(e.target.value)}
+                  autoComplete="off"
+                  data-testid="input-ai-key"
+                />
+                <p className="text-[10px] text-muted-foreground">Powers the voice "Build with Coach" tool on the Call Script page. Get a key at <a href="https://console.anthropic.com" target="_blank" className="underline">console.anthropic.com</a>. Can also be set via the ANTHROPIC_API_KEY env var.</p>
+                <label className="text-xs font-medium text-muted-foreground mt-2 block">Model <span className="font-normal">(optional)</span></label>
+                <Input
+                  placeholder="claude-3-5-sonnet-latest"
+                  value={aiModel}
+                  onChange={e => setAiModel(e.target.value)}
+                  autoComplete="off"
+                  data-testid="input-ai-model"
+                />
               </div>
             </div>
 

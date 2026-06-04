@@ -1475,6 +1475,14 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'report_last_sent')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_last_sent TEXT NOT NULL DEFAULT '{}'`);
   }
+  // 2026-06: AI Script Coach — Anthropic API key + model (key may also come from
+  // the ANTHROPIC_API_KEY env var, which takes precedence).
+  if (!emailCols.find(c => c.name === 'ai_api_key')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!emailCols.find(c => c.name === 'ai_model')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
@@ -3598,6 +3606,45 @@ export function getScriptNodes(scriptId: number): any[] {
 }
 export function getRootNode(scriptId: number): any {
   return sqlite.prepare(`SELECT * FROM script_nodes WHERE script_id=? AND parent_node_id IS NULL ORDER BY node_order ASC LIMIT 1`).get(scriptId) as any;
+}
+
+// Build a user's personal script from an AI-generated spec (see /api/script-coach/build).
+// Replaces any existing personal copy. The first node is the root (parent NULL).
+export function buildPersonalScriptFromSpec(userId: number, name: string, spec: any): any {
+  const existing = sqlite.prepare(`SELECT id FROM call_scripts WHERE owner_id=?`).get(userId) as any;
+  if (existing) sqlite.prepare(`DELETE FROM call_scripts WHERE id=?`).run(existing.id);
+  const sid = sqlite.prepare(
+    `INSERT INTO call_scripts (name, description, is_active, created_by, owner_id) VALUES (?,?,1,?,?)`
+  ).run(name, "Built with the AI Script Coach", userId, userId).lastInsertRowid as number;
+
+  const nodes: any[] = Array.isArray(spec?.nodes) ? spec.nodes : [];
+  const keyToId = new Map<string, number>();
+  let order = 0;
+  for (const n of nodes) {
+    const text = typeof n?.text === "string" ? n.text : "";
+    const hint = typeof n?.hint === "string" ? n.hint : "";
+    const id = sqlite.prepare(
+      `INSERT INTO script_nodes (script_id, parent_node_id, text, hint, node_order) VALUES (?,?,?,?,?)`
+    ).run(sid, null, text, hint, order++).lastInsertRowid as number;
+    if (n?.key != null) keyToId.set(String(n.key), id);
+  }
+  const allowedColors = new Set(["green", "blue", "red", "default"]);
+  for (const n of nodes) {
+    const nodeId = keyToId.get(String(n?.key));
+    if (!nodeId) continue;
+    const responses: any[] = Array.isArray(n?.responses) ? n.responses : [];
+    let ro = 0;
+    for (const r of responses) {
+      const label = typeof r?.label === "string" && r.label.trim() ? r.label.slice(0, 200) : "Continue";
+      const color = allowedColors.has(r?.color) ? r.color : "default";
+      const nextId = r?.next != null ? (keyToId.get(String(r.next)) ?? null) : null;
+      sqlite.prepare(
+        `INSERT INTO script_responses (node_id, label, color, next_node_id, response_order) VALUES (?,?,?,?,?)`
+      ).run(nodeId, label, color, nextId, ro++);
+      if (nextId) sqlite.prepare(`UPDATE script_nodes SET parent_node_id=COALESCE(parent_node_id, ?) WHERE id=?`).run(nodeId, nextId);
+    }
+  }
+  return sqlite.prepare(`SELECT * FROM call_scripts WHERE id=?`).get(sid);
 }
 export function getNodeResponses(nodeId: number): any[] {
   return sqlite.prepare(`SELECT * FROM script_responses WHERE node_id=? ORDER BY response_order ASC`).all(nodeId) as any[];

@@ -19,11 +19,12 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { ScriptCoach } from "@/components/script-coach";
 import {
   PhoneCall, ArrowLeft, RotateCcw, Copy, Check, ChevronRight, ChevronDown,
   Pencil, Construction, Copy as CopyIcon, Trash2, User, Globe, RefreshCw, Send,
   Search, Plus, ArrowUp, ArrowDown, CornerDownRight, X, GitBranch, Lock, Unlock, Users,
-  Play, Square, Clock, Radio, UserPlus, UserCheck,
+  Play, Square, Clock, Radio, UserPlus, UserCheck, Sparkles,
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
@@ -1658,6 +1659,7 @@ export default function CallScriptPage() {
   const [adminOverrideScriptId, setAdminOverrideScriptId] = useState<number | null>(null);
   const [confirmOverride, setConfirmOverride] = useState(false);
   const [confirmMakeDefault, setConfirmMakeDefault] = useState(false);
+  const [coachOpen, setCoachOpen] = useState(false);
 
   useEffect(() => { markStep(userId, "view_script"); }, [userId]);
   useEffect(() => { document.title = "Scripts · WCLCC"; }, []);
@@ -1895,6 +1897,7 @@ export default function CallScriptPage() {
 
   return (
     <PlaceholderContext.Provider value={placeholders}>
+    <ScriptCoach open={coachOpen} onClose={() => setCoachOpen(false)} onBuilt={(s: any) => { if (s?.id) setSelectedScriptId(s.id); setView("run"); }} />
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -1913,6 +1916,9 @@ export default function CallScriptPage() {
           </Button>
           <Button size="sm" variant={view === "flowchart" ? "default" : "outline"} className="gap-1.5" onClick={() => setView("flowchart")}>
             <GitBranch className="w-3.5 h-3.5" /> Flowchart
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5 border-[#C49A3C]/50 text-[#C49A3C] hover:bg-[#C49A3C]/10" onClick={() => setCoachOpen(true)} data-testid="button-build-with-coach">
+            <Sparkles className="w-3.5 h-3.5" /> Build with Coach
           </Button>
           {/* Always-visible "my own copy" affordance for every CLR. */}
           {/* When the user has no personal copy yet, this clones the default and switches to it. */}
