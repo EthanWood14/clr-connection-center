@@ -37,6 +37,9 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const callActiveRef = useRef(false);
   const [ttsProvider, setTtsProvider] = useState("browser");
   const ttsProviderRef = useRef("browser");
+  const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const selectedVoiceRef = useRef("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [draft, setDraft] = useState<any>(null);
   const [draftName, setDraftName] = useState("");
@@ -56,7 +59,7 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   async function speakServer(text: string, onDone?: () => void) {
     try {
       stopAudio();
-      const resp = await fetch("/api/script-coach/tts", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+      const resp = await fetch("/api/script-coach/tts", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, voice: selectedVoiceRef.current || undefined }) });
       if (!resp.ok) throw new Error("tts " + resp.status);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
@@ -68,6 +71,13 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       await audio.play();
     } catch {
       browserSay(text, onDone);
+    }
+  }
+  function chooseVoice(id: string) {
+    setSelectedVoice(id);
+    selectedVoiceRef.current = id;
+    if (!callActiveRef.current && ttsProviderRef.current && ttsProviderRef.current !== "browser") {
+      speakServer("Hi! I am your script coach. Ready when you are.");
     }
   }
   function browserSay(text: string, onDone?: () => void) {
@@ -177,6 +187,16 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
           const tp = s?.ttsProvider || "browser";
           setTtsProvider(tp);
           ttsProviderRef.current = tp;
+          if (tp !== "browser") {
+            try {
+              const vd: any = await apiRequest("GET", "/api/script-coach/voices");
+              if (!cancelled && Array.isArray(vd?.voices) && vd.voices.length) {
+                setVoices(vd.voices);
+                setSelectedVoice(prev => prev || vd.voices[0].id);
+                if (!selectedVoiceRef.current) selectedVoiceRef.current = vd.voices[0].id;
+              }
+            } catch {}
+          }
         }
         if (!cancelled && s?.enabled && messages.length === 0) {
           await sendToCoach([]);
@@ -383,6 +403,21 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
 
         {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          {voices.length > 0 && (
+            <div className="rounded-lg border border-[#C49A3C]/30 bg-[#C49A3C]/5 px-3 py-2 flex items-center gap-2">
+              <Volume2 className="w-4 h-4 text-[#C49A3C] shrink-0" />
+              <span className="text-xs text-white/70 shrink-0">Coach voice:</span>
+              <select
+                value={selectedVoice}
+                onChange={e => chooseVoice(e.target.value)}
+                className="flex-1 min-w-0 h-7 rounded-md bg-white/[0.06] border border-white/10 text-white text-xs px-2 focus:outline-none focus:border-[#C49A3C]/60"
+                data-testid="coach-voice-select"
+              >
+                {voices.map(v => <option key={v.id} value={v.id} className="text-black">{v.name}</option>)}
+              </select>
+              <span className="text-[10px] text-white/40 shrink-0 hidden sm:inline">pick to preview</span>
+            </div>
+          )}
           {enabled === false && (
             <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-amber-200 text-sm">
               The AI coach is not set up yet. An admin can add an Anthropic API key in Settings → Email/AI to enable it.

@@ -9311,16 +9311,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch { res.json({ enabled: false, ttsProvider: "browser" }); }
   });
 
+  // Lists the voices the current TTS provider offers, for the in-call picker.
+  app.get("/api/script-coach/voices", requireAuth, async (_req: any, res: any) => {
+    const { provider, key } = getTtsConfig();
+    try {
+      if (provider === "openai") {
+        const names = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+        return res.json({ provider, voices: names.map(v => ({ id: v, name: v.charAt(0).toUpperCase() + v.slice(1) })) });
+      }
+      if (provider === "elevenlabs" && key) {
+        const r = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": key } });
+        if (!r.ok) return res.json({ provider, voices: [] });
+        const data: any = await r.json();
+        const voices = Array.isArray(data?.voices)
+          ? data.voices.map((v: any) => ({ id: v.voice_id, name: String(v.name || "Voice").split(" - ")[0] }))
+          : [];
+        return res.json({ provider, voices });
+      }
+      return res.json({ provider: "browser", voices: [] });
+    } catch {
+      return res.json({ provider, voices: [] });
+    }
+  });
+
   // Returns natural-voice audio (mp3) for a line of coach text.
   app.post("/api/script-coach/tts", requireAuth, async (req: any, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 1200) : "";
     if (!text.trim()) return res.status(400).json({ error: "No text" });
     const { provider, key, voice } = getTtsConfig();
     if ((provider !== "elevenlabs" && provider !== "openai") || !key) return res.status(409).json({ error: "Natural voice not configured" });
+    const reqVoice = typeof req.body?.voice === "string" ? req.body.voice.trim() : "";
     try {
       let resp: Response;
       if (provider === "elevenlabs") {
-        const voiceId = voice || "EXAVITQu4vr4xnSDxMaL"; // Sarah — warm, reassuring (works on free tier)
+        const voiceId = reqVoice || voice || "EXAVITQu4vr4xnSDxMaL"; // Sarah — warm, reassuring (works on free tier)
         resp = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + voiceId, {
           method: "POST",
           headers: { "xi-api-key": key, "content-type": "application/json", "accept": "audio/mpeg" },
@@ -9330,7 +9354,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         resp = await fetch("https://api.openai.com/v1/audio/speech", {
           method: "POST",
           headers: { "authorization": "Bearer " + key, "content-type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: voice || "nova", input: text, response_format: "mp3" }),
+          body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: reqVoice || voice || "nova", input: text, response_format: "mp3" }),
         });
       }
       if (!resp.ok) {
