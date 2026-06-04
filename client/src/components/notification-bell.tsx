@@ -10,8 +10,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
 import { parseServerTimestamp } from "@/lib/dates";
+import { useAuth } from "@/lib/auth";
 
-const CURRENT_USER_ID = 1;
 
 // Map notification type → the route to navigate to when clicked
 const typeRoutes: Record<string, string> = {
@@ -37,23 +37,25 @@ const typeColors: Record<string, string> = {
 const ACTION_REQUIRED_TYPES = ["nmls_check", "nmls_escalation"];
 
 export function NotificationBell() {
+  const { user } = useAuth();
+  const uid = user?.id ?? 0;
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
 
   const { data: notifications = [] } = useQuery<any[]>({
-    queryKey: [`/api/notifications?userId=${CURRENT_USER_ID}`],
+    queryKey: [`/api/notifications?userId=${uid}`],
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
-    queryKey: [`/api/notifications/unread-count?userId=${CURRENT_USER_ID}`],
+    queryKey: [`/api/notifications/unread-count?userId=${uid}`],
     refetchInterval: 30000,
   });
 
   const markRead = useMutation({
     mutationFn: (id: number) => apiRequest("PATCH", `/api/notifications/${id}/read`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${CURRENT_USER_ID}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${CURRENT_USER_ID}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${uid}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${uid}`] });
     },
   });
 
@@ -68,10 +70,10 @@ export function NotificationBell() {
   }
 
   const markAllRead = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/notifications/mark-all-read", { userId: CURRENT_USER_ID }),
+    mutationFn: () => apiRequest("POST", "/api/notifications/mark-all-read", { userId: uid }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${CURRENT_USER_ID}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${CURRENT_USER_ID}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${uid}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${uid}`] });
     },
   });
 

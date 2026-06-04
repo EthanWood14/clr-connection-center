@@ -2073,6 +2073,39 @@ cron.schedule("30 18 * * 1-5", async () => {
 let lastChatEmailAt = 0;
 const CHAT_EMAIL_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes
 
+// ── Time-off decision email to the requester (acceptance on approval) ─────────
+function buildTimeOffDecisionEmail(
+  row: any,
+  requesterName: string,
+  status: "approved" | "denied",
+): { subject: string; html: string } {
+  const prettyDate = (s: string) => {
+    try { return new Date(s + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }); }
+    catch { return s; }
+  };
+  let days = 1;
+  try {
+    const a = new Date(row.start_date + "T12:00:00").getTime();
+    const b = new Date(row.end_date + "T12:00:00").getTime();
+    days = Math.max(1, Math.round((b - a) / 86400000) + 1);
+  } catch {}
+  const range = row.start_date === row.end_date ? prettyDate(row.start_date) : (prettyDate(row.start_date) + " &rarr; " + prettyDate(row.end_date));
+  const approved = status === "approved";
+  const headline = approved
+    ? `Good news, ${requesterName} — your time off is approved! 🌴`
+    : `${requesterName}, an update on your time-off request`;
+  const lead = approved
+    ? `Your request for <strong>${range}</strong> (${days} day${days === 1 ? "" : "s"}) has been <strong style="color:#16a34a">approved</strong>. Enjoy your time off!`
+    : `Your request for <strong>${range}</strong> (${days} day${days === 1 ? "" : "s"}) was <strong style="color:#dc2626">not approved</strong>.`;
+  const note = row.reviewer_note ? `<p style="margin:14px 0 0;font-size:13px;color:#475569">Note from your manager: ${row.reviewer_note}</p>` : "";
+  const body = `<p style="margin:0 0 12px;font-size:16px;font-weight:600;color:#0F182D">${headline}</p>
+    <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.6">${lead}</p>
+    ${note}
+    <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">You can view your requests anytime in the app under Time Off.</p>`;
+  const subject = approved ? ("Your time off is approved — " + range.replace(" &rarr; ", " to ")) : ("Update on your time-off request — " + range.replace(" &rarr; ", " to "));
+  return { subject, html: buildEmail({ subject: approved ? "Time Off Approved" : "Time Off Update", preheader: lead.replace(/<[^>]+>/g, ""), body }) };
+}
+
 // ── Comp approval/reminder email builder (shared by submit + reminder cron) ───
 const COMP_APP_URL = "https://www.westcapitallending.center";
 function buildCompApprovalEmail(
@@ -4406,6 +4439,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       try {
         (storage as any).createNotification?.({ userId: row.user_id, type: "time_off", title: "Time off " + status, message: "Your time-off request for " + row.start_date + " to " + row.end_date + " was " + status + " via email." });
       } catch {}
+      if (status === "approved") {
+        try {
+          const requester = storage.getUserById(row.user_id) as any;
+          const email = requester?.email && String(requester.email).includes("@") ? String(requester.email) : null;
+          if (email) {
+            const nm = (storage.getUsers() as any[]).find(u => u.id === row.user_id)?.name ?? "there";
+            const { subject, html } = buildTimeOffDecisionEmail(row, nm, "approved");
+            await sendEmail({ to: email, subject, html });
+          }
+        } catch (e: any) { console.error("[time-off] approval email failed:", e?.message ?? e); }
+      }
       const glyph = status === "approved" ? "&#9989;" : "&#10060;";
       return res.send(page("Request " + status, "The time-off request was marked " + status + ". You can close this tab.", glyph));
     } catch (e: any) {
@@ -4413,7 +4457,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  app.patch("/api/time-off/:id", requireAuth, (req: any, res) => {
+  app.patch("/api/time-off/:id", requireAuth, async (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
@@ -4445,6 +4489,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           message: "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : "."),
         });
       } catch {}
+      if (status === "approved") {
+        try {
+          const requester = storage.getUserById(existing.user_id) as any;
+          const email = requester?.email && String(requester.email).includes("@") ? String(requester.email) : null;
+          if (email) {
+            const { subject, html } = buildTimeOffDecisionEmail(row, nameById.get(existing.user_id) ?? "there", "approved");
+            await sendEmail({ to: email, subject, html });
+          }
+        } catch (e: any) { console.error("[time-off] approval email failed:", e?.message ?? e); }
+      }
       res.json(mapTimeOff(row, nameById));
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to update request" });
@@ -5439,13 +5493,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Notifications ────────────────────────────────────────────────────────────
-  app.get("/api/notifications", (req, res) => {
-    const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
+  app.get("/api/notifications", (req: any, res) => {
+    // Always scope to the logged-in user (personal + broadcasts). Never trust a
+    // query param — otherwise everyone could read everyone else's notifications.
+    const userId = req.session_user?.userId;
+    if (!userId) return res.json([]);
     res.json(storage.getNotifications(userId));
   });
 
-  app.get("/api/notifications/unread-count", (req, res) => {
-    const userId = req.query.userId ? parseInt(req.query.userId as string) : 1;
+  app.get("/api/notifications/unread-count", (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.json({ count: 0 });
     res.json({ count: storage.getUnreadCount(userId) });
   });
 
@@ -5470,9 +5528,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
-  app.post("/api/notifications/mark-all-read", (req, res) => {
-    const { userId } = req.body;
-    storage.markAllNotificationsRead(userId || 1);
+  app.post("/api/notifications/mark-all-read", (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.json({ ok: true });
+    storage.markAllNotificationsRead(userId);
     res.json({ ok: true });
   });
 
