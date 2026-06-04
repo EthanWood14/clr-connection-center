@@ -106,12 +106,26 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   }
   function startCallListen() {
     if (!callActiveRef.current) return;
-    const rec = getRecognition();
-    if (!rec) { setCallState("idle"); return; }
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { setCallState("idle"); return; }
+    // Tear down any previous recognizer so start() never collides.
+    try { recRef.current?.abort?.(); } catch {}
+    const rec = new SR();
+    rec.continuous = true;       // keep the mic open across pauses (no dead gaps)
+    rec.interimResults = true;
+    rec.lang = "en-US";
     recRef.current = rec;
     setCallState("listening");
     setCaption("");
     let finalText = "";
+    let submitted = false;
+    let silenceTimer: any = null;
+    const endTurn = () => { try { rec.stop(); } catch {} };
+    const armSilence = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      // End the turn ~1.6s after they stop talking.
+      silenceTimer = setTimeout(() => { if (finalText.trim()) endTurn(); }, 1600);
+    };
     rec.onresult = (ev: any) => {
       let interim = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
@@ -119,15 +133,23 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
         if (ev.results[i].isFinal) finalText += t; else interim += t;
       }
       setCaption((finalText + " " + interim).trim());
+      if ((finalText + interim).trim()) armSilence();
     };
-    rec.onerror = () => { if (callActiveRef.current) setTimeout(() => startCallListen(), 700); };
+    rec.onerror = (e: any) => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      // Transient errors (no-speech, aborted) — just keep the mic alive.
+      if (callActiveRef.current && !submitted && e?.error !== "not-allowed" && e?.error !== "service-not-allowed") {
+        setTimeout(() => startCallListen(), 400);
+      }
+    };
     rec.onend = () => {
-      if (!callActiveRef.current) return;
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (!callActiveRef.current || submitted) return;
       const said = finalText.trim();
-      if (said) { setCallState("thinking"); setCaption(said); submit(said); }
-      else { startCallListen(); }
+      if (said) { submitted = true; setCallState("thinking"); setCaption(said); submit(said); }
+      else { startCallListen(); } // ended with nothing captured — keep listening
     };
-    try { rec.start(); } catch { setTimeout(() => { if (callActiveRef.current) startCallListen(); }, 600); }
+    try { rec.start(); } catch { setTimeout(() => { if (callActiveRef.current) startCallListen(); }, 400); }
   }
   function startCall() {
     if (!voiceSupported || typeof window === "undefined" || !window.speechSynthesis) {
