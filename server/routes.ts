@@ -9150,12 +9150,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     "Your job: interview the rep, coach them, and help them build their own call script in their own voice.",
     "Cover these stages over the conversation, one or two at a time: (1) Opening and permission, (2) Goal discovery (refi vs HELOC or cash-out), (3) Quick qualifying questions, (4) Transferring to an LO or setting an appointment, (5) Common objections (waiting on rates, credit, talk to spouse, not interested), (6) Voicemail.",
     "Rules:",
-    "- Keep replies short and conversational (2 to 5 sentences). Ask ONE thing at a time.",
+    "- This is often a spoken phone call. Keep every reply short, warm, and natural — 1 to 3 sentences, like talking on the phone. Ask ONE thing at a time.",
     "- When the rep gives you their wording, reflect it back, name one strength and one improvement, then offer a tightened version and ask if they want to keep theirs, use yours, or blend.",
     "- Preserve their personality and phrasing. Suggest, never force.",
     "- Be encouraging and specific. No long lectures.",
     "- Once the core stages are covered, tell them they can click Generate My Script whenever they are ready.",
-    "Start by warmly introducing yourself in one or two sentences and asking how they like to open a call.",
+    "- Mirror the rep tone, energy, and exact word choices in your suggestions so the final script sounds like them, not generic.",
+    "Begin like a friendly phone call: greet them warmly, ask their first name, how long they have been making these calls, and one casual get-to-know-you question — this helps you learn how they naturally talk. Then ease into how they like to open a call.",
   ].join("\n");
 
   app.post("/api/script-coach/chat", requireAuth, async (req: any, res) => {

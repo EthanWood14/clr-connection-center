@@ -4,7 +4,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon, Check,
+  Mic, Send, Sparkles, X, Volume2, VolumeX, Loader2, Bot, User as UserIcon, Check, Phone, PhoneOff,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -31,6 +31,10 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [coverage, setCoverage] = useState<any>(null);
   const [covLoading, setCovLoading] = useState(false);
+  const [callActive, setCallActive] = useState(false);
+  const [callState, setCallState] = useState<"speaking" | "listening" | "thinking" | "idle">("idle");
+  const [caption, setCaption] = useState("");
+  const callActiveRef = useRef(false);
   const [draft, setDraft] = useState<any>(null);
   const [draftName, setDraftName] = useState("");
   const [handsFree, setHandsFree] = useState(false);
@@ -42,15 +46,68 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const voiceSupported = typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 
-  function say(text: string) {
-    if (!speak || typeof window === "undefined" || !window.speechSynthesis) return;
+  function say(text: string, onDone?: () => void) {
+    const inCall = callActiveRef.current;
+    if ((!speak && !inCall) || typeof window === "undefined" || !window.speechSynthesis) { if (onDone) onDone(); return; }
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02; u.pitch = 1;
       if (voiceRef.current) u.voice = voiceRef.current;
+      if (onDone) { u.onend = () => onDone(); u.onerror = () => onDone(); }
       window.speechSynthesis.speak(u);
-    } catch {}
+    } catch { if (onDone) onDone(); }
+  }
+
+  // ── Phone-call mode: continuous speak <-> listen loop ──────────────────────
+  function speakInCall(text: string) {
+    setCallState("speaking");
+    setCaption(text);
+    say(text, () => { if (callActiveRef.current) startCallListen(); });
+  }
+  function startCallListen() {
+    if (!callActiveRef.current) return;
+    const rec = getRecognition();
+    if (!rec) { setCallState("idle"); return; }
+    recRef.current = rec;
+    setCallState("listening");
+    setCaption("");
+    let finalText = "";
+    rec.onresult = (ev: any) => {
+      let interim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) finalText += t; else interim += t;
+      }
+      setCaption((finalText + " " + interim).trim());
+    };
+    rec.onerror = () => { if (callActiveRef.current) setTimeout(() => startCallListen(), 700); };
+    rec.onend = () => {
+      if (!callActiveRef.current) return;
+      const said = finalText.trim();
+      if (said) { setCallState("thinking"); setCaption(said); submit(said); }
+      else { startCallListen(); }
+    };
+    try { rec.start(); } catch { setTimeout(() => { if (callActiveRef.current) startCallListen(); }, 600); }
+  }
+  function startCall() {
+    if (!voiceSupported || typeof window === "undefined" || !window.speechSynthesis) {
+      toast({ title: "Voice calls need Chrome", description: "Open this in Chrome for the call experience, or just type.", variant: "destructive" });
+      return;
+    }
+    callActiveRef.current = true;
+    setCallActive(true);
+    setCaption("");
+    const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+    if (lastAssistant) speakInCall(lastAssistant.content);
+    else { setCallState("thinking"); sendToCoach([]); }
+  }
+  function endCall() {
+    callActiveRef.current = false;
+    setCallActive(false);
+    setCallState("idle");
+    try { recRef.current?.stop?.(); } catch {}
+    try { window.speechSynthesis?.cancel?.(); } catch {}
   }
 
   async function refreshCoverage(msgs: Msg[]) {
@@ -69,10 +126,11 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       const reply = String(data?.reply ?? "");
       const updated: Msg[] = [...history, { role: "assistant", content: reply }];
       setMessages(updated);
-      say(reply);
+      if (callActiveRef.current) speakInCall(reply); else say(reply);
     } catch (e: any) {
       const msg = e?.message ?? "The coach is unavailable right now.";
       setMessages(m => [...m, { role: "assistant", content: msg }]);
+      if (callActiveRef.current) speakInCall(msg);
     } finally {
       setThinking(false);
     }
@@ -107,6 +165,9 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
       try { window.speechSynthesis?.cancel?.(); } catch {}
       setListening(false);
       setDraft(null);
+      callActiveRef.current = false;
+      setCallActive(false);
+      setCallState("idle");
     }
   }, [open]);
 
@@ -235,6 +296,26 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             </div>
           </div>
         )}
+        {/* Phone-call overlay */}
+        {callActive && (
+          <div className="absolute inset-0 z-20 bg-gradient-to-b from-[#0F182D] to-[#1A2B4A] flex flex-col items-center justify-center px-6 text-center">
+            <button onClick={endCall} className="absolute top-3 right-3 text-white/50 hover:text-white p-2 rounded-lg hover:bg-white/10"><X className="w-5 h-5" /></button>
+            <div className={"relative w-40 h-40 rounded-full flex items-center justify-center mb-8 " + (callState === "speaking" ? "animate-pulse" : "")} style={{ background: "radial-gradient(circle, rgba(196,154,60,0.30), rgba(196,154,60,0.04))" }}>
+              {callState === "listening" && <span className="absolute inset-0 rounded-full border-2 border-[#C49A3C]/50 animate-ping" />}
+              <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ backgroundColor: "rgba(196,154,60,0.22)" }}>
+                {callState === "thinking" ? <Loader2 className="w-10 h-10 text-[#C49A3C] animate-spin" /> : callState === "listening" ? <Mic className="w-10 h-10 text-[#C49A3C]" /> : <Bot className="w-10 h-10 text-[#C49A3C]" />}
+              </div>
+            </div>
+            <p className="text-[#C49A3C] text-xs font-semibold uppercase tracking-widest mb-3">
+              {callState === "speaking" ? "Coach speaking" : callState === "listening" ? "Listening — speak now" : callState === "thinking" ? "Thinking" : "Connecting"}
+            </p>
+            <p className="text-white/85 text-base max-w-sm min-h-[3.5rem] leading-relaxed">{caption || (callState === "listening" ? "Go ahead, I am listening…" : "")}</p>
+            <button onClick={endCall} className="mt-10 flex items-center gap-2 rounded-full bg-red-500 hover:bg-red-600 text-white font-semibold px-7 py-3">
+              <PhoneOff className="w-5 h-5" /> End call
+            </button>
+            <p className="text-white/35 text-[11px] mt-4 max-w-xs">Tip: use headphones so the coach does not hear itself. End the call anytime to type or generate your script.</p>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -247,6 +328,11 @@ export function ScriptCoach({ open, onClose, onBuilt, mode = "create" }: { open:
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {voiceSupported && (
+              <button onClick={startCall} title="Start a hands-free voice call with the coach" className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 flex items-center gap-1">
+                <Phone className="w-3.5 h-3.5" /> Call
+              </button>
+            )}
             {voiceSupported && (
               <button onClick={() => setHandsFree(h => !h)} title="Hands-free: auto-send right after you finish speaking" className={"text-[11px] px-2 py-1 rounded-lg transition-colors " + (handsFree ? "bg-[#C49A3C] text-[#1A2B4A] font-semibold" : "text-white/50 hover:text-white hover:bg-white/10")}>
                 Hands-free
