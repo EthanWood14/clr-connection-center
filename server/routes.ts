@@ -9106,7 +9106,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const s = storageExtra.getEmailSettings() as any;
     const envKey = (process.env.ANTHROPIC_API_KEY || "").trim();
     const dbKey = String(s.ai_api_key || "").trim();
-    const model = String(s.ai_model || "").trim() || "claude-3-5-sonnet-latest";
+    const model = String(s.ai_model || "").trim() || "claude-sonnet-4-6";
     return { key: envKey || dbKey, model };
   }
 

@@ -678,7 +678,7 @@ function EmailReportsCard() {
                 <p className="text-[10px] text-muted-foreground">Powers the voice "Build with Coach" tool on the Call Script page. Get a key at <a href="https://console.anthropic.com" target="_blank" className="underline">console.anthropic.com</a>. Can also be set via the ANTHROPIC_API_KEY env var.</p>
                 <label className="text-xs font-medium text-muted-foreground mt-2 block">Model <span className="font-normal">(optional)</span></label>
                 <Input
-                  placeholder="claude-3-5-sonnet-latest"
+                  placeholder="claude-sonnet-4-6"
                   value={aiModel}
                   onChange={e => setAiModel(e.target.value)}
                   autoComplete="off"
