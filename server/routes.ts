@@ -9117,7 +9117,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: modelOverride || model, max_tokens: maxTokens, system, messages }),
+      body: JSON.stringify({ model: modelOverride || model, max_tokens: maxTokens, system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }], messages }),
     });
     if (!resp.ok) {
       const t = await resp.text().catch(() => "");
@@ -9129,6 +9129,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       ? data.content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n").trim()
       : "";
     return text;
+  }
+
+  // Text outline of the company's proven default script — the backbone the coach
+  // personalizes. Includes each step's text + the response branches.
+  function defaultScriptOutlineText(): string {
+    try {
+      const db = storageExtra.getRawSqlite();
+      const script = db.prepare("SELECT * FROM call_scripts WHERE owner_id IS NULL AND is_active=1 ORDER BY created_at ASC LIMIT 1").get() as any;
+      if (!script) return "";
+      const nodes = db.prepare("SELECT * FROM script_nodes WHERE script_id=? ORDER BY node_order ASC").all(script.id) as any[];
+      if (!nodes.length) return "";
+      const allResp = db.prepare("SELECT sr.* FROM script_responses sr JOIN script_nodes sn ON sr.node_id=sn.id WHERE sn.script_id=? ORDER BY sr.response_order ASC").all(script.id) as any[];
+      const byNode = new Map<number, any[]>();
+      for (const r of allResp) { if (!byNode.has(r.node_id)) byNode.set(r.node_id, []); byNode.get(r.node_id)!.push(r); }
+      const lines = nodes.slice(0, 40).map((n: any, i: number) => {
+        const txt = String(n.text || "").replace(/\s+/g, " ").slice(0, 320);
+        const labels = (byNode.get(n.id) || []).map((r: any) => r.label).filter(Boolean).slice(0, 6);
+        return (i + 1) + ". " + txt + (labels.length ? ("\n   Branches: " + labels.join(" | ")) : "");
+      });
+      return "Name: " + (script.name || "Default Script") + "\n" + lines.join("\n");
+    } catch { return ""; }
   }
 
   // Text outline of a user's existing personal script (for refine mode).
@@ -9145,18 +9166,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   const COACH_SYSTEM = [
-    "You are an upbeat, expert call-script coach for CLRs (client lead reps) at West Capital Lending, a mortgage company.",
-    "CLRs cold-call mortgage leads and try to transfer interested borrowers to a loan officer (LO).",
-    "Your job: interview the rep, coach them, and help them build their own call script in their own voice.",
-    "Cover these stages over the conversation, one or two at a time: (1) Opening and permission, (2) Goal discovery (refi vs HELOC or cash-out), (3) Quick qualifying questions, (4) Transferring to an LO or setting an appointment, (5) Common objections (waiting on rates, credit, talk to spouse, not interested), (6) Voicemail.",
+    "You are a warm, expert call-script coach for CLRs (client lead reps) at West Capital Lending, a mortgage company. CLRs cold-call mortgage leads and try to transfer interested borrowers to a loan officer (LO).",
+    "Your job: help the rep create THEIR OWN version of the company's proven default script (provided to you below). You are NOT starting from a blank page — you start from the default and personalize it with them.",
+    "How to coach:",
+    "- Walk through the default script ONE section at a time, in order (opening, goal discovery, qualifying, transfer/appointment, objections, voicemail).",
+    "- For each section: briefly say how the default handles it, then ask whether they want to keep it as-is or say it their own way. Your goal each turn is to find where they want to DIFFER from the default.",
+    "- Listen closely to HOW they talk — their vocabulary, rhythm, formality, filler words, and signature phrases. You are learning their manner of speech so the finished script reads exactly like them.",
+    "- When they give you their wording, reflect it back, note one genuine strength and at most one small tweak, then confirm and move to the next section.",
     "Rules:",
-    "- This is often a spoken phone call. Keep every reply short, warm, and natural — 1 to 3 sentences, like talking on the phone. Ask ONE thing at a time.",
-    "- When the rep gives you their wording, reflect it back, name one strength and one improvement, then offer a tightened version and ask if they want to keep theirs, use yours, or blend.",
-    "- Preserve their personality and phrasing. Suggest, never force.",
-    "- Be encouraging and specific. No long lectures.",
-    "- Once the core stages are covered, tell them they can click Generate My Script whenever they are ready.",
-    "- Mirror the rep tone, energy, and exact word choices in your suggestions so the final script sounds like them, not generic.",
-    "Begin like a friendly phone call: greet them warmly, ask their first name, how long they have been making these calls, and one casual get-to-know-you question — this helps you learn how they naturally talk. Then ease into how they like to open a call.",
+    "- This is often a spoken phone call. Keep every reply short and natural — 1 to 3 sentences. Ask ONE thing at a time. Do not use emojis (it may be read aloud).",
+    "- Never lecture. Be encouraging and specific. Suggest, never force.",
+    "- Once you have been through the sections (keeping or customizing each), tell them they can click Generate My Script whenever they are ready.",
+    "Begin like a friendly phone call: greet them, ask their first name and how long they have been making these calls, and tell them you will walk through the company script together and tweak it to sound like them. Then start on the opening section.",
   ].join("\n");
 
   app.post("/api/script-coach/chat", requireAuth, async (req: any, res) => {
@@ -9168,10 +9189,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
         .slice(-30)
         .map((m: any) => ({ role: m.role, content: m.content.slice(0, 4000) }));
-      let system = COACH_SYSTEM;
+      const def = defaultScriptOutlineText();
+      let system = COACH_SYSTEM + (def ? "\n\n=== DEFAULT SCRIPT (the proven backbone to personalize with the rep) ===\n" + def : "");
       if (refine) {
         const outline = userId ? userScriptOutlineText(userId) : "";
-        system = COACH_SYSTEM + "\n\nREFINE MODE: The rep already has a script. Help them improve it — ask what is working, what they want to change, and suggest specific upgrades. Do not start from scratch." + (outline ? "\n\n" + outline : "");
+        system += "\n\nREFINE MODE: The rep already has a personal script (below). Help them improve that one rather than start over." + (outline ? "\n\n" + outline : "");
         if (!messages.length) messages.push({ role: "user", content: "I want to refine my existing call script." });
       } else if (!messages.length) {
         messages.push({ role: "user", content: "Hi, I want to build my call script." });
@@ -9184,14 +9206,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   const BUILD_SYSTEM = [
-    "You convert a coaching conversation into a structured call script as STRICT JSON only. No prose, no markdown fences.",
+    "You produce a CLR's personalized call script as STRICT JSON only. No prose, no markdown fences.",
     "Schema: { \"name\": string, \"nodes\": [ { \"key\": string, \"text\": string, \"hint\": string, \"responses\": [ { \"label\": string, \"color\": \"green\"|\"blue\"|\"default\"|\"red\", \"next\": string|null } ] } ] }",
-    "Rules:",
-    "- The FIRST node is the opening (it becomes the root).",
-    "- next references another node key, or null to end that path.",
-    "- Use the wording from the conversation wherever possible; keep the rep voice.",
-    "- color: green = positive/interested, blue = neutral/info, red = negative/end (DNC, not interested), default = standard.",
-    "- Practical coverage: opening, discovery, qualifying, transfer/appointment, key objections, voicemail. 8 to 16 nodes.",
+    "How to build:",
+    "- START from the DEFAULT SCRIPT structure provided below: keep the same sections and branching (opening, discovery, qualifying, transfer/appointment, objections, voicemail). Do not drop sections the default has.",
+    "- Apply the specific changes the rep asked for in the conversation.",
+    "- Rewrite ALL of the wording in the rep's OWN manner of speech — match their vocabulary, rhythm, level of formality, and signature phrases as shown in the conversation. It must sound like THEM, not generic and not a copy of the default.",
+    "- The FIRST node is the opening (it becomes the root). next references another node key, or null to end that path.",
+    "- color: green = positive/interested, blue = neutral/info, red = negative/end (DNC, not interested), default = standard. 8 to 16 nodes.",
     "Return ONLY the JSON object.",
   ].join("\n");
 
@@ -9208,7 +9230,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (!convo.trim()) return res.status(400).json({ error: "Chat with the coach first, then generate." });
       const refine = req.body?.mode === "refine";
       const existing = refine ? userScriptOutlineText(userId) : "";
-      const buildMsg = (existing ? (existing + "\n\nApply the changes discussed below to that script (keep what was not changed).\n\n") : "") + "Build the script from this conversation:\n\n" + convo;
+      const def = defaultScriptOutlineText();
+      const buildMsg =
+        (def ? "=== DEFAULT SCRIPT (start from this structure and branching) ===\n" + def + "\n\n" : "") +
+        (existing ? (existing + "\n\nApply the changes discussed below to that script (keep what was not changed).\n\n") : "") +
+        "Conversation with the rep — rewrite every line in THEIR manner of speech shown here:\n\n" + convo;
       const out = await callAnthropic(BUILD_SYSTEM, [{ role: "user", content: buildMsg }], 4000);
       let spec: any = null;
       try {
