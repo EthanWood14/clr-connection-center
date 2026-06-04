@@ -116,6 +116,7 @@ export default function TimeOff() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isManager = !!(user && (user.role === "admin" || (user as any).isManager));
+  const isAdmin = !!(user && (user.role === "admin" || (user as any).superAdmin));
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -327,11 +328,13 @@ export default function TimeOff() {
                         {fmtDate(r.startDate)} &rarr; {fmtDate(r.endDate)}
                         <span className="text-muted-foreground"> &middot; {dayCount(r.startDate, r.endDate)} day(s)</span>
                       </p>
-                      {r.reason && <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap">{r.reason}</p>}
+                      {r.reason && (isAdmin
+                        ? <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap">{r.reason}</p>
+                        : <p className="text-xs text-muted-foreground/60 italic mt-0.5">🔒 Reason hidden</p>)}
                       {r.status !== "pending" && r.reviewerName && (
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {r.status === "approved" ? "Approved" : "Denied"} by {r.reviewerName}
-                          {r.reviewerNote ? " — " + r.reviewerNote : ""}
+                          {isAdmin && r.reviewerNote ? " — " + r.reviewerNote : ""}
                         </p>
                       )}
                     </div>
