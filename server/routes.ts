@@ -1499,6 +1499,23 @@ cron.schedule("0 9 */3 * *", () => {
 // before 06:00 or after 22:00 local server time, regardless of configuration.
 let lastReportFiredAt: Record<"daily" | "weekly" | "monthly" | "mtd" | "alltime", string> = { daily: "", weekly: "", monthly: "", mtd: "", alltime: "" };
 
+// Persisted per-type "last sent" guard (survives process restarts/redeploys).
+// Without this, the wide morning send-windows re-fire a report every time the
+// app restarts during the window (which is why the daily report went out ~10x
+// on heavy-deploy days). Backed by email_settings.report_last_sent (JSON).
+function reportSentOn(settings: any, type: string, dateKey: string): boolean {
+  try { return JSON.parse(settings?.report_last_sent || "{}")[type] === dateKey; } catch { return false; }
+}
+function markReportSent(type: string, dateKey: string) {
+  try {
+    const s = storageExtra.getEmailSettings() as any;
+    let obj: any = {};
+    try { obj = JSON.parse(s?.report_last_sent || "{}"); } catch {}
+    obj[type] = dateKey;
+    storageExtra.updateEmailSettings({ reportLastSent: JSON.stringify(obj) });
+  } catch (e: any) { console.error("[report-cron] markReportSent failed:", e?.message ?? e); }
+}
+
 function parseHM(s: string | undefined, fallback: string): { h: number; m: number } {
   const raw = (s || fallback).trim();
   const m = raw.match(/^(\d{1,2}):(\d{2})$/);
@@ -1528,48 +1545,48 @@ cron.schedule("* * * * *", async () => {
     //   ("0 15 * * 1" = 8:00 AM PT every Monday). No-op here.
 
     // ── Monthly report (1st of month only — covers previous full month) ────
-    if (s.monthly_enabled && now.getDate() === 1 && lastReportFiredAt.monthly !== nowDateKey) {
+    if (s.monthly_enabled && now.getDate() === 1 && lastReportFiredAt.monthly !== nowDateKey && !reportSentOn(s, "monthly", nowDateKey)) {
       const { h: mh, m: mmin } = parseHM(s.monthly_time, "07:00");
       const targetMin = mh * 60 + mmin;
       // 5-minute grace window after 07:00 so the cron can land on the
       // configured time even though the cutoff is also 07:00
       const cutoffMin = 7 * 60 + 5;
       if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
-        lastReportFiredAt.monthly = nowDateKey;
+        lastReportFiredAt.monthly = nowDateKey; markReportSent("monthly", nowDateKey);
         try { await sendReport("monthly"); }
         catch (e: any) { console.error("Scheduled monthly report failed:", e?.message ?? e); }
       } else if (nowMinutes >= cutoffMin) {
-        lastReportFiredAt.monthly = nowDateKey;
+        lastReportFiredAt.monthly = nowDateKey; markReportSent("monthly", nowDateKey);
         console.log(`[report-cron] monthly skipped — past 07:00 cutoff on day 1 (now=${hh}:${String(mm).padStart(2, "0")}); will fire next month`);
       }
     }
 
     // ── Month-to-Date report (any day — covers 1st→today) ──────────────────────
-    if (s.mtd_enabled && lastReportFiredAt.mtd !== nowDateKey) {
+    if (s.mtd_enabled && lastReportFiredAt.mtd !== nowDateKey && !reportSentOn(s, "mtd", nowDateKey)) {
       const { h: mh, m: mmin } = parseHM(s.mtd_time, "08:00");
       const targetMin = mh * 60 + mmin;
       const cutoffMin = 19 * 60; // 7 PM lateness cutoff (same as daily)
       if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
-        lastReportFiredAt.mtd = nowDateKey;
+        lastReportFiredAt.mtd = nowDateKey; markReportSent("mtd", nowDateKey);
         try { await sendReport("mtd"); }
         catch (e: any) { console.error("Scheduled MTD report failed:", e?.message ?? e); }
       } else if (nowMinutes >= cutoffMin) {
-        lastReportFiredAt.mtd = nowDateKey;
+        lastReportFiredAt.mtd = nowDateKey; markReportSent("mtd", nowDateKey);
         console.log(`[report-cron] mtd skipped — past 19:00 cutoff (now=${hh}:${String(mm).padStart(2, "0")}); will fire tomorrow at ${s.mtd_time || "08:00"}`);
       }
     }
 
     // ── All-Time report (1st of month — inception through today) ────────────────
-    if (s.alltime_enabled && now.getDate() === 1 && lastReportFiredAt.alltime !== nowDateKey) {
+    if (s.alltime_enabled && now.getDate() === 1 && lastReportFiredAt.alltime !== nowDateKey && !reportSentOn(s, "alltime", nowDateKey)) {
       const { h: ah, m: amin } = parseHM(s.alltime_time, "07:10");
       const targetMin = ah * 60 + amin;
       const cutoffMin = 7 * 60 + 15;
       if (inAllowedWindow && nowMinutes >= targetMin && nowMinutes < cutoffMin) {
-        lastReportFiredAt.alltime = nowDateKey;
+        lastReportFiredAt.alltime = nowDateKey; markReportSent("alltime", nowDateKey);
         try { await sendReport("alltime"); }
         catch (e: any) { console.error("Scheduled all-time report failed:", e?.message ?? e); }
       } else if (nowMinutes >= cutoffMin) {
-        lastReportFiredAt.alltime = nowDateKey;
+        lastReportFiredAt.alltime = nowDateKey; markReportSent("alltime", nowDateKey);
         console.log(`[report-cron] alltime skipped — past cutoff on day 1 (now=${hh}:${String(mm).padStart(2, "0")}); will fire next month`);
       }
     }
@@ -1588,7 +1605,8 @@ cron.schedule("* * * * *", async () => {
     const s = storageExtra.getEmailSettings() as any;
     if (!s.daily_enabled) return;
     const ptDateKey = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
-    if (lastReportFiredAt.daily === ptDateKey) return;
+    // Persisted guard first so a restart mid-window never re-sends.
+    if (lastReportFiredAt.daily === ptDateKey || reportSentOn(s, "daily", ptDateKey)) return;
     const ptTime = new Date().toLocaleTimeString("en-GB", { timeZone: "America/Los_Angeles", hour12: false });
     const tm = ptTime.match(/^(\d{1,2}):(\d{2})/);
     if (!tm) return;
@@ -1598,10 +1616,12 @@ cron.schedule("* * * * *", async () => {
     const cutoffMin = 19 * 60; // 7 PM PT lateness cutoff
     if (nowMinutes >= targetMin && nowMinutes < cutoffMin) {
       lastReportFiredAt.daily = ptDateKey;
+      markReportSent("daily", ptDateKey);
       try { await sendReport("daily"); }
       catch (e: any) { console.error("Scheduled daily report failed:", e?.message ?? e); }
     } else if (nowMinutes >= cutoffMin) {
       lastReportFiredAt.daily = ptDateKey;
+      markReportSent("daily", ptDateKey);
       console.log(`[report-cron] daily skipped — past 19:00 PT cutoff; will fire tomorrow at ${s.daily_time || "07:45"}`);
     }
   } catch (e: any) {
@@ -1617,8 +1637,9 @@ cron.schedule("0 15 * * 1", async () => {
     const s = storageExtra.getEmailSettings() as any;
     if (!s.weekly_enabled) return;
     const nowDateKey = new Date().toISOString().split("T")[0];
-    if (lastReportFiredAt.weekly === nowDateKey) return;
+    if (lastReportFiredAt.weekly === nowDateKey || reportSentOn(s, "weekly", nowDateKey)) return;
     lastReportFiredAt.weekly = nowDateKey;
+    markReportSent("weekly", nowDateKey);
     await sendReport("weekly");
   } catch (e: any) {
     console.error("Scheduled weekly report failed:", e?.message ?? e);

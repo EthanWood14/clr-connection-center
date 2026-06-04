@@ -1470,6 +1470,11 @@ function runNewMigrations() {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN approval_recipient_id INTEGER`);
     try { sqlite.exec(`UPDATE email_settings SET approval_recipient_id = COALESCE(approval_recipient_id, comp_approver_id, timeoff_approver_id)`); } catch {}
   }
+  // 2026-06: persisted per-type 'last sent' date (JSON: { daily: 'YYYY-MM-DD', ... })
+  // so scheduled reports are NOT re-sent when the process restarts mid-window.
+  if (!emailCols.find(c => c.name === 'report_last_sent')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN report_last_sent TEXT NOT NULL DEFAULT '{}'`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
