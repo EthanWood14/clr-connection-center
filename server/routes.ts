@@ -5299,9 +5299,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
-  app.post("/api/outcomes", (req, res) => {
+  app.post("/api/outcomes", (req: any, res) => {
     try {
       const body = { ...req.body };
+      // Attribution guard: a CLR can only log their OWN transfers. Force the
+      // assistant to the logged-in user unless they are an admin/manager (who may
+      // log or correct on behalf of others). Fixes transfers wrongly attributed
+      // to Ethan Wood (user #1).
+      const sessUserId = Number(req.session_user?.userId) || 0;
+      const me = sessUserId ? (storage.getUserById(sessUserId) as any) : null;
+      const privileged = !!(me && (me.role === "admin" || (me.superAdmin ?? me.super_admin) || (me.isManager ?? me.is_manager)));
+      if (sessUserId) {
+        if (!privileged) body.assistantId = sessUserId;
+        else if (body.assistantId == null || Number(body.assistantId) <= 0) body.assistantId = sessUserId;
+      }
       if (body.outcomeType === "transfer") {
         if (body.transferType !== "direct" && body.transferType !== "appointment") {
           return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
@@ -5334,7 +5345,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       } catch {}
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
-      audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null }) });
+      audit({ userId: sessUserId || 0, userName: me?.name ?? "Unknown", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null, assistantId: outcome.assistantId }) });
       // Update unified_contact + fire-and-forget Bonzo push
       try {
         storageExtra.updateUnifiedContactFromOutcome({

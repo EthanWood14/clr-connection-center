@@ -310,11 +310,14 @@ function OutcomeFormDialog({
   users: any[];
   los: any[];
 }) {
+  const { user: meUser } = useAuth();
+  const meId = Number((meUser as any)?.id) || 0;
+  const meIsAdmin = !!(meUser && ((meUser as any).role === "admin" || (meUser as any).superAdmin || (meUser as any).isManager));
   const form = useForm<OutcomeFormValues>({
     resolver: zodResolver(outcomeFormSchema),
     defaultValues: {
       date: businessTodayClient(),
-      assistantId: 1, // default to Ethan
+      assistantId: meId || 1, // default to the logged-in CLR (not hardcoded)
       loId: 0,
       loaId: null,
       outcomeType: "transfer",
@@ -363,7 +366,7 @@ function OutcomeFormDialog({
   }, [watchedType, form, step]);
 
   useEffect(() => {
-    if (open) { setBonzoLogged(false); setStep(0); }
+    if (open) { setBonzoLogged(false); setStep(0); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
   }, [open]);
 
   const canAdvanceFromStep1 = !isTransfer || (
@@ -513,16 +516,22 @@ function OutcomeFormDialog({
             <FormField control={form.control} name="assistantId" render={({ field }) => (
               <FormItem>
                 <FormLabel>CLR Assistant</FormLabel>
-                <Select value={String(field.value)} onValueChange={v => field.onChange(Number(v))}>
+                {meIsAdmin ? (
+                  <Select value={String(field.value)} onValueChange={v => field.onChange(Number(v))}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-assistant"><SelectValue placeholder="Select assistant" /></SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {users.map((u: any) => (
+                        <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
                   <FormControl>
-                    <SelectTrigger data-testid="select-assistant"><SelectValue placeholder="Select assistant" /></SelectTrigger>
+                    <Input value={(meUser as any)?.name ?? "You"} readOnly disabled data-testid="select-assistant" />
                   </FormControl>
-                  <SelectContent>
-                    {users.map((u: any) => (
-                      <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                )}
                 <FormMessage />
               </FormItem>
             )} />
