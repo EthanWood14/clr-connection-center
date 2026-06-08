@@ -4376,27 +4376,38 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/time-off", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
-    const userId = Number(sess?.userId);
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const sessUserId = Number(sess?.userId);
+    if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
     const body = req.body ?? {};
     const startDate = body.startDate;
     const endDate = body.endDate;
     const reason = typeof body.reason === "string" ? body.reason.slice(0, 1000) : "";
     if (!isYmd(startDate) || !isYmd(endDate)) return res.status(400).json({ error: "Start and end dates are required (YYYY-MM-DD)." });
     if (endDate < startDate) return res.status(400).json({ error: "End date cannot be before the start date." });
+    // Managers/admins may submit on behalf of another CLR; everyone else only for themselves.
+    let requesterId = sessUserId;
+    const meRow = storage.getUserById(sessUserId) as any;
+    const isMgr = !!(meRow && (meRow.role === "admin" || (meRow.isManager ?? meRow.is_manager) || (meRow.superAdmin ?? meRow.super_admin)));
+    const onBehalf = Number(body.onBehalfOf ?? body.forUserId) || 0;
+    if (isMgr && onBehalf && onBehalf !== sessUserId) {
+      const target = storage.getUserById(onBehalf) as any;
+      if (target) requesterId = onBehalf;
+    }
     const nowIso = new Date().toISOString();
     const token = crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
-      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)").run(orgId, userId, startDate, endDate, reason, token, nowIso, nowIso);
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)").run(orgId, requesterId, startDate, endDate, reason, token, nowIso, nowIso);
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
-      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      const requester = (storage.getUsers() as any[]).find(u => u.id === requesterId);
+      const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
+      const onBehalfNote = requesterId !== sessUserId ? (" (submitted by " + (submitter?.name ?? "manager") + ")") : "";
       audit({
-        userId, userName: actor?.name ?? "Unknown", action: "create",
+        userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
         entityType: "time_off", entityId: Number(info.lastInsertRowid),
-        entityLabel: (actor?.name ?? "CLR") + " " + startDate + "->" + endDate,
-        details: JSON.stringify({ startDate, endDate, reason }),
+        entityLabel: (requester?.name ?? "CLR") + " " + startDate + "->" + endDate + onBehalfNote,
+        details: JSON.stringify({ startDate, endDate, reason, requesterId, submittedBy: sessUserId }),
       });
 
       // Email the configured time-off approver with one-click approve/deny links.
@@ -4407,7 +4418,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const approver = approverId ? (storage.getUserById(approverId) as any) : null;
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         if (approverEmail) {
-          const { subject, html } = buildTimeOffApprovalEmail(row, actor?.name ?? "A team member");
+          const { subject, html } = buildTimeOffApprovalEmail(row, requester?.name ?? "A team member");
           await sendEmail({ to: approverEmail, subject, html });
           emailedTo = approverEmail;
         }

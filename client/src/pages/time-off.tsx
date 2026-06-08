@@ -124,6 +124,15 @@ export default function TimeOff() {
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [showConfetti, setShowConfetti] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
+  const [forUserId, setForUserId] = useState("");
+
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: isManager,
+  });
+  const clrOptions = (allUsers ?? []).filter(
+    (u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr))
+  );
 
   const { data: myRequests = [], isLoading: myLoading } = useQuery<TimeOffRequest[]>({
     queryKey: ["/api/time-off", "mine"],
@@ -141,12 +150,13 @@ export default function TimeOff() {
   }
 
   const createMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason }),
+    mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason, onBehalfOf: forUserId ? Number(forUserId) : undefined }),
     onSuccess: (d: any) => {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3500);
-      toast({ title: "Request sent! 🎉", description: d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly." });
-      setStartDate(""); setEndDate(""); setReason("");
+      const who = forUserId ? (clrOptions.find((u: any) => String(u.id) === forUserId)?.name ?? "the CLR") : null;
+      toast({ title: "Request sent! 🎉", description: who ? ("Submitted for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".") : (d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly.") });
+      setStartDate(""); setEndDate(""); setReason(""); setForUserId("");
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not submit", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -201,9 +211,26 @@ export default function TimeOff() {
           <div className="rounded-lg border border-sky-200 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-4 py-3 flex items-start gap-2.5">
             <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0" />
             <p className="text-[13px] text-sky-900 dark:text-sky-200 leading-relaxed">
-              You get <strong>10 days of paid leave per year</strong>. After your initial <strong>90 days</strong> of employment, paid leave must be requested through the <strong>Paycom</strong> app.
+              If you are requesting paid leave (only eligible after the first <strong>90 days</strong> of employment), be sure to do that in the <strong>PayCom</strong> app as well.
             </p>
           </div>
+          {isManager && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Requesting for</label>
+              <select
+                value={forUserId}
+                onChange={e => setForUserId(e.target.value)}
+                className="h-9 mt-1 rounded-md border bg-background px-2 text-sm w-full"
+                data-testid="select-timeoff-for"
+              >
+                <option value="">Myself ({user?.name ?? "me"})</option>
+                {clrOptions.filter((u: any) => u.id !== user?.id).map((u: any) => (
+                  <option key={u.id} value={String(u.id)}>{u.name}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">As a manager you can submit this on behalf of a CLR.</p>
+            </div>
+          )}
           <div>
             <label className="text-xs font-medium text-muted-foreground">When are you taking off?</label>
             <Popover open={dateOpen} onOpenChange={setDateOpen}>
