@@ -4602,11 +4602,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  app.post("/api/comp", requireAuth, (req: any, res) => {
+  app.post("/api/comp", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
-    const userId = Number(sess?.userId);
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const sessUserId = Number(sess?.userId);
+    if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
     const body = req.body ?? {};
     const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
     const category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
@@ -4615,10 +4615,43 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
     if (!description) return res.status(400).json({ error: "A description is required." });
     if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
+    // Managers/admins can file a comp request ON BEHALF of a CLR. When they do, it
+    // is created as a pending request (not a draft) under that CLR and emailed to
+    // the approver. Everyone else just saves a draft for themselves.
+    const meRow = storage.getUserById(sessUserId) as any;
+    const isMgr = !!(meRow && (meRow.role === "admin" || (meRow.isManager ?? meRow.is_manager) || (meRow.superAdmin ?? meRow.super_admin)));
+    const onBehalf = Number(body.onBehalfOf) || 0;
+    const forClr = (isMgr && onBehalf && onBehalf !== sessUserId && storage.getUserById(onBehalf)) ? onBehalf : 0;
     const nowIso = new Date().toISOString();
     try {
       const db = storageExtra.getRawSqlite();
-      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").run(orgId, userId, description, category, amountCents, expenseDate, note, nowIso, nowIso);
+      if (forClr) {
+        const token = crypto.randomBytes(24).toString("hex");
+        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, forClr, description, category, amountCents, expenseDate, note, token, nowIso, nowIso, nowIso);
+        const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
+        const requester = (storage.getUsers() as any[]).find(u => u.id === forClr);
+        const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
+        audit({
+          userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
+          entityType: "comp_request", entityId: row.id,
+          entityLabel: (requester?.name ?? "CLR") + " comp request (submitted by " + (submitter?.name ?? "manager") + ")",
+          details: JSON.stringify({ amountCents, onBehalfOf: forClr }),
+        });
+        let emailedTo: string | null = null;
+        try {
+          const settings = storageExtra.getEmailSettings() as any;
+          const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
+          const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+          const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+          if (approverEmail) {
+            const { subject, html } = buildCompApprovalEmail([row], token, requester?.name ?? "A team member");
+            await sendEmail({ to: approverEmail, subject, html });
+            emailedTo = approverEmail;
+          }
+        } catch (e: any) { console.error("[comp] on-behalf email failed:", e?.message ?? e); }
+        return res.json({ ...mapComp(row, compNameMap()), emailedTo, requested: 1 });
+      }
+      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").run(orgId, sessUserId, description, category, amountCents, expenseDate, note, nowIso, nowIso);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
       res.json(mapComp(row, compNameMap()));
     } catch (e: any) {

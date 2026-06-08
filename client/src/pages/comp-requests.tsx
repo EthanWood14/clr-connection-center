@@ -163,6 +163,7 @@ export default function CompRequests() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = !!(user && (user.role === "admin" || (user as any).superAdmin));
+  const isManager = !!(user && (user.role === "admin" || (user as any).isManager || (user as any).superAdmin));
 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -171,6 +172,9 @@ export default function CompRequests() {
   const [note, setNote] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
+  const [compForUserId, setCompForUserId] = useState("");
+  const { data: allUsers = [] } = useQuery<any[]>({ queryKey: ["/api/users"], enabled: isManager });
+  const clrOptions = (allUsers ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
   const { data: mine = [], isLoading: mineLoading } = useQuery<CompItem[]>({
     queryKey: ["/api/comp", "mine"],
@@ -207,10 +211,16 @@ export default function CompRequests() {
     mutationFn: () => apiRequest("POST", "/api/comp", {
       description, category, expenseDate: expenseDate || undefined, note,
       amountCents: Math.round(parseFloat(amount || "0") * 100),
+      onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
     }),
-    onSuccess: () => {
-      toast({ title: "Expense saved", description: "Added to your saved expenses." });
-      setDescription(""); setAmount(""); setNote(""); setExpenseDate("");
+    onSuccess: (d: any) => {
+      const who = compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "the CLR") : null;
+      if (who) {
+        toast({ title: "Comp request submitted", description: "Filed for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + "." });
+      } else {
+        toast({ title: "Expense saved", description: "Added to your saved expenses." });
+      }
+      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId("");
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -309,6 +319,23 @@ export default function CompRequests() {
               Use this for your <strong>monthly transfer request</strong> and anything else that has been <strong>approved to be compensated</strong>.
             </p>
           </div>
+          {isManager && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Submit for</label>
+              <select
+                value={compForUserId}
+                onChange={e => setCompForUserId(e.target.value)}
+                className="h-9 mt-1 rounded-md border bg-background px-2 text-sm w-full"
+                data-testid="select-comp-for"
+              >
+                <option value="">Myself ({user?.name ?? "me"}) — saves a draft</option>
+                {clrOptions.filter((u: any) => u.id !== user?.id).map((u: any) => (
+                  <option key={u.id} value={String(u.id)}>{u.name} — submit a request</option>
+                ))}
+              </select>
+              {compForUserId && <p className="text-[11px] text-muted-foreground mt-1">Files a comp request directly for that CLR and emails the approver.</p>}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Amount (USD)</label>
@@ -353,7 +380,7 @@ export default function CompRequests() {
           </div>
           <div className="flex justify-end">
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5" data-testid="button-save-expense">
-              <Plus className="w-4 h-4" /> {createMutation.isPending ? "Saving…" : "Save Expense"}
+              <Plus className="w-4 h-4" /> {createMutation.isPending ? (compForUserId ? "Submitting…" : "Saving…") : (compForUserId ? ("Submit for " + (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "CLR")) : "Save Expense")}
             </Button>
           </div>
         </CardContent>
