@@ -6681,11 +6681,41 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Audit Logs ───────────────────────────────────────────────────────────────
 
   // ── Team Chat ──────────────────────────────────────────────────────────────────
-  app.get("/api/chat", requireAuth, (req, res) => {
+  app.get("/api/chat", requireAuth, (req: any, res) => {
     const limit = parseInt((req.query.limit as string) || "80");
     const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
     const messages = storageExtra.getChatMessages(limit, beforeId).reverse();
-    res.json({ messages });
+    const myId = req.session_user?.userId;
+    const ids = messages.map((m: any) => m.id);
+    const reactions = storageExtra.getChatReactionsForMessages(ids);
+    const byMsg = new Map<number, Map<string, { count: number; mine: boolean }>>();
+    for (const r of reactions) {
+      if (!byMsg.has(r.message_id)) byMsg.set(r.message_id, new Map());
+      const em = byMsg.get(r.message_id)!;
+      const cur = em.get(r.emoji) ?? { count: 0, mine: false };
+      cur.count++;
+      if (r.user_id === myId) cur.mine = true;
+      em.set(r.emoji, cur);
+    }
+    const withReactions = messages.map((m: any) => ({
+      ...m,
+      reactions: Array.from((byMsg.get(m.id) ?? new Map()).entries()).map((e: any) => ({ emoji: e[0], count: e[1].count, mine: e[1].mine })),
+    }));
+    res.json({ messages: withReactions });
+  });
+
+  // Toggle an emoji reaction on a chat message.
+  const CHAT_EMOJIS = new Set(["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"]);
+  app.post("/api/chat/:id/react", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const emoji = String(req.body?.emoji ?? "");
+    if (!CHAT_EMOJIS.has(emoji)) return res.status(400).json({ error: "Unsupported reaction" });
+    try {
+      const result = storageExtra.toggleChatReaction(id, userId, emoji);
+      res.json({ ok: true, ...result });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to react" }); }
   });
 
   app.post("/api/chat", requireAuth, (req, res) => {

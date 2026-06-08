@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
+
+const REACT_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"];
 import { Link } from "wouter";
 
 function formatTime(iso: string) {
@@ -77,6 +79,14 @@ export default function Chat() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/chat"] }),
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
+  const reactMsg = useMutation({
+    mutationFn: (v: { id: number; emoji: string }) => apiRequest("POST", `/api/chat/${v.id}/react`, { emoji: v.emoji }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/chat"] }),
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  function react(id: number, emoji: string) { setPickerFor(null); reactMsg.mutate({ id, emoji }); }
 
   function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
@@ -208,6 +218,24 @@ export default function Chat() {
                         }`}>
                           {m.message}
                         </div>
+                        {/* React button + picker */}
+                        <div className="relative">
+                          <button
+                            onClick={() => setPickerFor(pickerFor === m.id ? null : m.id)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                            data-testid={`chat-react-${m.id}`}
+                            aria-label="React"
+                          >
+                            <SmilePlus className="w-3.5 h-3.5" />
+                          </button>
+                          {pickerFor === m.id && (
+                            <div className={`absolute z-20 -top-9 ${isMe ? "right-0" : "left-0"} flex items-center gap-0.5 rounded-full border bg-popover px-1.5 py-1 shadow-md`}>
+                              {REACT_EMOJIS.map(em => (
+                                <button key={em} onClick={() => react(m.id, em)} className="text-base leading-none px-1 hover:scale-125 transition-transform" data-testid={`chat-emoji-${m.id}-${em}`}>{em}</button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         {/* Delete button */}
                         {(isMe || user?.role === "admin") && (
                           <button
@@ -218,6 +246,20 @@ export default function Chat() {
                           </button>
                         )}
                       </div>
+                      {Array.isArray(m.reactions) && m.reactions.length > 0 && (
+                        <div className={`flex flex-wrap gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
+                          {m.reactions.map((r: any) => (
+                            <button
+                              key={r.emoji}
+                              onClick={() => react(m.id, r.emoji)}
+                              className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] leading-none transition-colors ${r.mine ? "bg-primary/15 border-primary/40 text-foreground" : "bg-muted/50 border-transparent text-muted-foreground hover:bg-muted"}`}
+                              data-testid={`chat-reaction-${m.id}-${r.emoji}`}
+                            >
+                              <span>{r.emoji}</span><span>{r.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {sameAuthor && (
                         <span className={`text-[10px] text-muted-foreground px-1 ${isMe ? "text-right" : ""}`}>
                           {formatTime(m.created_at)}

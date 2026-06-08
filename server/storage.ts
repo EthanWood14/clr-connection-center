@@ -1794,6 +1794,16 @@ function runNewMigrations() {
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  // Emoji reactions on chat messages (one row per user+emoji+message).
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_reactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(message_id, user_id, emoji)
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_chat_reactions_msg ON chat_reactions(message_id)`); } catch {}
 
   // EOD reports table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_reports (
@@ -2545,6 +2555,18 @@ export function postChatMessage(userId: number, userName: string, message: strin
 }
 export function deleteChatMessage(id: number): void {
   sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);
+  try { sqlite.prepare(`DELETE FROM chat_reactions WHERE message_id=?`).run(id); } catch {}
+}
+export function toggleChatReaction(messageId: number, userId: number, emoji: string): { added: boolean } {
+  const existing = sqlite.prepare(`SELECT id FROM chat_reactions WHERE message_id=? AND user_id=? AND emoji=?`).get(messageId, userId, emoji) as any;
+  if (existing) { sqlite.prepare(`DELETE FROM chat_reactions WHERE id=?`).run(existing.id); return { added: false }; }
+  sqlite.prepare(`INSERT INTO chat_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)`).run(messageId, userId, emoji);
+  return { added: true };
+}
+export function getChatReactionsForMessages(ids: number[]): any[] {
+  if (!ids.length) return [];
+  const ph = ids.map(() => "?").join(",");
+  return sqlite.prepare(`SELECT message_id, user_id, emoji FROM chat_reactions WHERE message_id IN (${ph})`).all(...ids) as any[];
 }
 
 export function deleteUserCascade(id: number): void {
