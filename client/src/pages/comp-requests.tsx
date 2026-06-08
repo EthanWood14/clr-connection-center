@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight,
 } from "lucide-react";
 
 interface CompItem {
@@ -41,14 +41,18 @@ interface CompItem {
 }
 
 const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
-  leads: { label: "Leads", icon: Users, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
-  software: { label: "Software", icon: Laptop, cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
-  travel: { label: "Travel", icon: Plane, cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
-  marketing: { label: "Marketing", icon: Megaphone, cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
+  transfers: { label: "Transfers", icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
   equipment: { label: "Equipment", icon: CreditCard, cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300" },
+  software: { label: "Software", icon: Laptop, cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  marketing: { label: "Marketing", icon: Megaphone, cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
+  travel: { label: "Travel", icon: Plane, cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
   office: { label: "Office", icon: Building2, cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300" },
   other: { label: "Other", icon: Tag, cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+  // Legacy alias: older requests were filed under "leads" before the rename to "transfers".
+  leads: { label: "Transfers", icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
 };
+// Keys shown in the category dropdown (excludes the legacy "leads" alias).
+const CATEGORY_KEYS = ["transfers", "equipment", "software", "marketing", "travel", "office", "other"];
 
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -239,7 +243,7 @@ export default function CompRequests() {
 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("leads");
+  const [category, setCategory] = useState("transfers");
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -408,7 +412,7 @@ export default function CompRequests() {
           </div>
           <TransferStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
-            onUse={(text) => { setDescription(text); setCategory("leads"); }}
+            onUse={(text) => { setDescription(text); setCategory("transfers"); }}
           />
           {isManager && (
             <div>
@@ -444,8 +448,8 @@ export default function CompRequests() {
               <Select value={category} onValueChange={setCategory}>
                 <SelectTrigger data-testid="select-comp-category"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(CATEGORIES).map(([key, c]) => (
-                    <SelectItem key={key} value={key}>{c.label}</SelectItem>
+                  {CATEGORY_KEYS.map((key) => (
+                    <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

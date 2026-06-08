@@ -4563,7 +4563,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Comp / Reimbursement Requests ─────────────────────────────────────────────
   // Users log expenses (draft), bundle them into a comp request (pending),
   // managers approve/deny, then the requester marks each as reimbursed (paid).
-  const COMP_CATEGORIES = new Set(["leads", "software", "travel", "marketing", "equipment", "office", "other"]);
+  // "leads" is kept as a legacy alias for older requests filed before the rename to "transfers".
+  const COMP_CATEGORIES = new Set(["transfers", "equipment", "software", "marketing", "travel", "office", "other", "leads"]);
   function mapComp(r: any, nameById: Map<number, string>) {
     return {
       id: r.id,
@@ -5036,7 +5037,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const c = mapComp(item, nameById);
       const atts = db.prepare("SELECT id, filename, mime, size_bytes, data_base64 FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC").all(compId, orgId) as any[];
 
-      const CAT_LABELS: Record<string, string> = { leads: "Leads", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
+      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
       const STATUS_LABELS: Record<string, string> = { draft: "Draft (unsent)", pending: "Pending approval", approved: "Approved", denied: "Denied" };
       const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
       const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
