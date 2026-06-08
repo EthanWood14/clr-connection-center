@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info, FileText,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight,
 } from "lucide-react";
 
 interface CompItem {
@@ -163,6 +163,55 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
             <Paperclip className="w-3 h-3" /> {uploadMut.isPending ? "Uploading…" : "Attach receipt"}
           </button>
         </>
+      )}
+    </div>
+  );
+}
+
+// Shows the CLR how many transfers they logged last month (the basis for the
+// monthly transfer comp request), so they don't have to dig through reporting.
+function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (text: string) => void }) {
+  const qs = forUserId ? "?userId=" + forUserId : "";
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/comp/transfer-stats", forUserId ?? "me"],
+    queryFn: () => apiRequest("GET", "/api/comp/transfer-stats" + qs),
+  });
+  const prev = data?.previous;
+  const cur = data?.current;
+  const plural = (n: number) => (n === 1 ? "" : "s");
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-4 py-3">
+      <div className="flex items-center gap-2 mb-2">
+        <ArrowLeftRight className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+        <span className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">Your transfers — for the monthly transfer request</span>
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-12 w-full" />
+      ) : (
+        <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-3xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300" data-testid="prev-transfer-count">{prev?.transfers ?? 0}</span>
+              <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300">in {prev?.month ?? "last month"}</span>
+            </div>
+            <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+              {prev?.direct ?? 0} direct · {prev?.appointment ?? 0} appointment
+            </div>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            <span className="tabular-nums font-semibold text-foreground">{cur?.transfers ?? 0}</span> so far in {cur?.month ?? "this month"}
+          </div>
+        </div>
+      )}
+      {onUse && prev && (
+        <button
+          type="button"
+          onClick={() => onUse("Monthly transfer request — " + prev.month + " (" + prev.transfers + " transfer" + plural(prev.transfers) + ")")}
+          className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
+          data-testid="button-use-transfers"
+        >
+          <Plus className="w-3 h-3" /> Use last month for this request
+        </button>
       )}
     </div>
   );
@@ -357,6 +406,10 @@ export default function CompRequests() {
               Use this for your <strong>monthly transfer request</strong> and anything else that has been <strong>approved to be compensated</strong>.
             </p>
           </div>
+          <TransferStatsHint
+            forUserId={compForUserId ? Number(compForUserId) : undefined}
+            onUse={(text) => { setDescription(text); setCategory("leads"); }}
+          />
           {isManager && (
             <div>
               <label className="text-xs font-medium text-muted-foreground">Submit for</label>

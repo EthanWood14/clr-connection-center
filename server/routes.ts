@@ -4622,6 +4622,51 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Transfer counts for the current + previous calendar month for the logged-in CLR
+  // (or, for managers/admins, an optional ?userId= to look up a CLR they're filing for).
+  // Lets a CLR quickly see "how many transfers did I make last month" while requesting comp.
+  app.get("/api/comp/transfer-stats", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const sessUserId = Number(sess?.userId);
+    if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
+    // Managers/admins may look up another CLR (e.g. when filing on their behalf).
+    let targetId = sessUserId;
+    const wanted = Number(req.query.userId) || 0;
+    if (wanted && wanted !== sessUserId) {
+      const me = storage.getUserById(sessUserId) as any;
+      const isMgr = !!(me && (me.role === "admin" || (me.isManager ?? me.is_manager) || (me.superAdmin ?? me.super_admin)));
+      if (isMgr && storage.getUserById(wanted)) targetId = wanted;
+    }
+    try {
+      const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+      const [ty, tm] = todayStr.split("-").map((x: string) => parseInt(x, 10));
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const monthName = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const monthRange = (y: number, m: number) => {
+        const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        return { startDate: `${y}-${pad(m)}-01`, endDate: `${y}-${pad(m)}-${pad(lastDay)}` };
+      };
+      const py = tm === 1 ? ty - 1 : ty;
+      const pm = tm === 1 ? 12 : tm - 1;
+      const build = (y: number, m: number) => {
+        const { startDate, endDate } = monthRange(y, m);
+        const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: targetId }) as any[]);
+        const transfersList = outcomes.filter(o => (o.outcomeType ?? o.outcome_type) === "transfer");
+        const tt = (o: any) => o.transferType ?? o.transfer_type;
+        return {
+          month: monthName(y, m),
+          startDate, endDate,
+          transfers: transfersList.length,
+          direct: transfersList.filter(o => tt(o) === "direct").length,
+          appointment: transfersList.filter(o => tt(o) === "appointment").length,
+        };
+      };
+      res.json({ userId: targetId, previous: build(py, pm), current: build(ty, tm) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load transfer stats" });
+    }
+  });
+
   app.post("/api/comp", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
