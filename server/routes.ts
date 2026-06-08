@@ -4972,6 +4972,135 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Full printable comp-request "sheet" a manager can hand to whoever pays it out —
+  // all the request details plus every receipt embedded inline. Image receipts render
+  // directly in the page (and print straight into a Save-as-PDF); PDF receipts are
+  // embedded for on-screen review and listed with download links. Open with ?print=1
+  // to auto-launch the browser's print/Save-as-PDF dialog.
+  app.get("/api/comp/:id/sheet", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    const compId = parseInt(req.params.id, 10);
+    const { item, canView } = compAttachAccess(compId, userId, orgId);
+    if (!item) return res.status(404).send("Comp request not found");
+    if (!canView) return res.status(403).send("You are not allowed to view this comp request.");
+    try {
+      const db = storageExtra.getRawSqlite();
+      const nameById = compNameMap();
+      const c = mapComp(item, nameById);
+      const atts = db.prepare("SELECT id, filename, mime, size_bytes, data_base64 FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC").all(compId, orgId) as any[];
+
+      const CAT_LABELS: Record<string, string> = { leads: "Leads", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
+      const STATUS_LABELS: Record<string, string> = { draft: "Draft (unsent)", pending: "Pending approval", approved: "Approved", denied: "Denied" };
+      const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
+      const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fmtDate = (d: any) => {
+        if (!d) return "—";
+        try { const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? String(d) + "T12:00:00" : String(d)); return dt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }); } catch { return String(d); }
+      };
+      const fmtBytes = (n: number) => n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+      const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
+      const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
+
+      let payout = "Awaiting payout";
+      if (c.status === "approved") payout = c.isReceived ? "Received by team member" : (c.isPaid ? "Paid — awaiting receipt confirmation" : "Approved — awaiting payout");
+      else if (c.status === "denied") payout = "Denied";
+      else if (c.status === "pending") payout = "Pending approval";
+
+      const rows: Array<[string, string]> = [
+        ["Team member", esc(c.userName)],
+        ["Category", esc(CAT_LABELS[c.category] || c.category)],
+        ["Amount", "<strong>" + money(c.amountCents) + "</strong>"],
+        ["Date of expense", esc(fmtDate(c.expenseDate))],
+        ["Status", esc(STATUS_LABELS[c.status] || c.status)],
+        ["Payout status", esc(payout)],
+        ["Submitted", esc(fmtDate(c.requestedAt || c.createdAt))],
+      ];
+      if (c.reviewerName) rows.push([(c.status === "denied" ? "Denied by" : "Approved by"), esc(c.reviewerName) + (c.reviewedAt ? " · " + esc(fmtDate(c.reviewedAt)) : "")]);
+      if (c.reviewerNote) rows.push(["Reviewer note", esc(c.reviewerNote)]);
+
+      const detailRows = rows.map(([k, v]) => "<tr><th>" + k + "</th><td>" + v + "</td></tr>").join("");
+
+      const imgAtts = atts.filter(a => String(a.mime || "").startsWith("image/"));
+      const pdfAtts = atts.filter(a => a.mime === "application/pdf");
+      const otherAtts = atts.filter(a => !String(a.mime || "").startsWith("image/") && a.mime !== "application/pdf");
+
+      const imgHtml = imgAtts.map(a =>
+        '<figure class="receipt"><img alt="' + esc(a.filename) + '" src="data:' + esc(a.mime) + ';base64,' + a.data_base64 + '"/>' +
+        '<figcaption>' + esc(a.filename) + ' · ' + fmtBytes(a.size_bytes) + '</figcaption></figure>'
+      ).join("");
+
+      const pdfHtml = pdfAtts.map(a =>
+        '<div class="pdf-receipt"><div class="pdf-name">📄 ' + esc(a.filename) + ' · ' + fmtBytes(a.size_bytes) +
+        ' <a href="/api/comp-attachments/' + a.id + '" target="_blank" rel="noreferrer">open</a></div>' +
+        '<embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,' + a.data_base64 + '"/></div>'
+      ).join("");
+
+      const otherHtml = otherAtts.map(a =>
+        '<div class="pdf-receipt"><div class="pdf-name">📎 <a href="/api/comp-attachments/' + a.id + '" target="_blank" rel="noreferrer">' + esc(a.filename) + '</a> · ' + fmtBytes(a.size_bytes) + '</div></div>'
+      ).join("");
+
+      const noteBlock = c.note ? '<div class="note"><div class="note-label">Note from team member</div><div>' + esc(c.note).replace(/\n/g, "<br>") + '</div></div>' : "";
+      const pdfNotice = pdfAtts.length
+        ? '<p class="hint">Note: PDF receipts below are embedded for on-screen review. If you are saving this page as a single PDF, the PDF receipts may need to be attached separately (use their “open” links) — image receipts print inline automatically.</p>'
+        : "";
+
+      const autoPrint = String(req.query.print || "") === "1";
+      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"/>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
+        '<title>Comp Request #' + compId + ' — ' + esc(c.userName) + '</title><style>' +
+        ':root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#1d4ed8}' +
+        '*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:#f1f5f9;line-height:1.5}' +
+        '.sheet{max-width:780px;margin:24px auto;background:#fff;padding:40px 44px;border-radius:14px;box-shadow:0 6px 30px rgba(15,23,42,.08)}' +
+        '.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}' +
+        '.org{font-weight:700;color:var(--brand);font-size:15px;letter-spacing:.2px}' +
+        'h1{font-size:22px;margin:2px 0 2px}.sub{color:var(--muted);font-size:13px;margin:0 0 20px}' +
+        '.desc{font-size:16px;font-weight:600;margin:0 0 16px;padding:12px 14px;background:#f8fafc;border:1px solid var(--line);border-radius:10px}' +
+        'table.details{width:100%;border-collapse:collapse;margin-bottom:18px}' +
+        'table.details th{text-align:left;width:170px;color:var(--muted);font-weight:600;font-size:13px;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--line)}' +
+        'table.details td{font-size:14px;padding:7px 10px;border-bottom:1px solid var(--line)}' +
+        '.note{margin:0 0 18px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:14px}' +
+        '.note-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#92400e;font-weight:700;margin-bottom:4px}' +
+        'h2{font-size:15px;margin:24px 0 10px;border-top:1px solid var(--line);padding-top:18px}' +
+        '.hint{font-size:12px;color:var(--muted);margin:-4px 0 14px}' +
+        '.receipts{display:flex;flex-direction:column;gap:18px}' +
+        '.receipt{margin:0}.receipt img{max-width:100%;border:1px solid var(--line);border-radius:10px;display:block}' +
+        '.receipt figcaption{font-size:12px;color:var(--muted);margin-top:5px}' +
+        '.pdf-receipt{margin:0 0 18px}.pdf-name{font-size:13px;margin-bottom:6px}.pdf-name a{color:var(--brand)}' +
+        '.pdf-embed{width:100%;height:560px;border:1px solid var(--line);border-radius:10px}' +
+        '.empty{color:var(--muted);font-size:14px}' +
+        '.toolbar{max-width:780px;margin:16px auto 0;text-align:right}' +
+        '.btn{display:inline-block;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}' +
+        '.foot{margin-top:26px;border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:11px}' +
+        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{height:420px}.receipt,.pdf-receipt{break-inside:avoid;page-break-inside:avoid}}' +
+        '</style></head><body>' +
+        '<div class="toolbar"><button class="btn" onclick="window.print()">Save as PDF / Print</button></div>' +
+        '<div class="sheet">' +
+        '<div class="topbar"><div class="org">' + orgName + '</div><div class="sub">Comp Request #' + compId + '</div></div>' +
+        '<h1>Compensation Request</h1>' +
+        '<p class="sub">Reimbursement request submitted by ' + esc(c.userName) + '.</p>' +
+        '<div class="desc">' + esc(c.description) + '</div>' +
+        '<table class="details">' + detailRows + '</table>' +
+        noteBlock +
+        '<h2>Receipts &amp; attachments (' + atts.length + ')</h2>' +
+        (atts.length ? "" : '<p class="empty">No receipts were attached to this request.</p>') +
+        pdfNotice +
+        (imgHtml ? '<div class="receipts">' + imgHtml + '</div>' : "") +
+        (pdfHtml || otherHtml ? '<div style="margin-top:18px">' + pdfHtml + otherHtml + '</div>' : "") +
+        '<div class="foot">Generated by ' + orgName + ' on ' + esc(fmtDate(new Date().toISOString())) + '.</div>' +
+        '</div>' +
+        (autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},350);});</script>' : "") +
+        '</body></html>';
+
+      audit({ userId, userName: (storage.getUserById(userId) as any)?.name ?? "Unknown", action: "view", entityType: "comp_request", entityId: compId, entityLabel: "Comp sheet (" + c.userName + ")", details: JSON.stringify({ attachments: atts.length }) });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(html);
+    } catch (e: any) {
+      res.status(500).send("Failed to build comp sheet: " + (e?.message ?? "error"));
+    }
+  });
+
   // ── Daily Assignments ────────────────────────────────────────────────────────
   // getDailyAssignments/getLoanOfficers/getUsers may return camelCase (Drizzle)
   // or snake_case (raw SQL, multi-org). Normalize reads across both shapes.

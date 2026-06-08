@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Users, Tag, BadgeDollarSign, Paperclip, Info, FileText,
 } from "lucide-react";
 
 interface CompItem {
@@ -165,6 +165,20 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
         </>
       )}
     </div>
+  );
+}
+
+function CompSheetButton({ compId, label = "Comp PDF" }: { compId: number; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => window.open("/api/comp/" + compId + "/sheet?print=1", "_blank", "noopener")}
+      className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+      data-testid={"comp-pdf-" + compId}
+      title="Open a full printable comp request (with receipts) to save as PDF"
+    >
+      <FileText className="w-3 h-3" /> {label}
+    </button>
   );
 }
 
@@ -578,7 +592,10 @@ export default function CompRequests() {
                       </div>
                     )}
                   </div>
-                  <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
+                  <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
+                    <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
+                    <CompSheetButton compId={r.id} label="Full PDF for payout" />
+                  </div>
                 </div>
               ))
             )}
@@ -648,7 +665,10 @@ export default function CompRequests() {
                     )}
                   </div>
                 </div>
-                <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
+                <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
+                  <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
+                  <CompSheetButton compId={r.id} />
+                </div>
               </div>
             ))
           )}
