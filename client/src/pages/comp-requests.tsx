@@ -83,6 +83,15 @@ function StatusBadge({ status, isPaid, isReceived }: { status: CompItem["status"
   return <Badge className={"text-xs px-2 py-0.5 " + cfg.cls}>{cfg.label}</Badge>;
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(new Error("read failed"));
+    fr.readAsDataURL(file);
+  });
+}
+
 function Attachments({ compId, count, canEdit }: { compId: number; count: number; canEdit: boolean }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -173,6 +182,8 @@ export default function CompRequests() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [compForUserId, setCompForUserId] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const newFileRef = useRef<HTMLInputElement | null>(null);
   const { data: allUsers = [] } = useQuery<any[]>({ queryKey: ["/api/users"], enabled: isManager });
   const clrOptions = (allUsers ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
@@ -208,19 +219,32 @@ export default function CompRequests() {
   );
 
   const createMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/comp", {
-      description, category, expenseDate: expenseDate || undefined, note,
-      amountCents: Math.round(parseFloat(amount || "0") * 100),
-      onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
-    }),
+    mutationFn: async () => {
+      const created: any = await apiRequest("POST", "/api/comp", {
+        description, category, expenseDate: expenseDate || undefined, note,
+        amountCents: Math.round(parseFloat(amount || "0") * 100),
+        onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
+      });
+      // Upload any receipts attached on the form to the new item.
+      const newId = created?.id;
+      if (newId && pendingFiles.length) {
+        for (const f of pendingFiles) {
+          try {
+            const dataBase64 = await fileToDataUrl(f);
+            await apiRequest("POST", "/api/comp/" + newId + "/attachments", { filename: f.name, mime: f.type, dataBase64 });
+          } catch {}
+        }
+      }
+      return created;
+    },
     onSuccess: (d: any) => {
       const who = compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "the CLR") : null;
       if (who) {
         toast({ title: "Comp request submitted", description: "Filed for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + "." });
       } else {
-        toast({ title: "Expense saved", description: "Added to your saved expenses." });
+        toast({ title: "Expense saved", description: pendingFiles.length ? (pendingFiles.length + " receipt(s) attached. Added to your saved expenses.") : "Added to your saved expenses." });
       }
-      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId("");
+      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]);
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -377,6 +401,42 @@ export default function CompRequests() {
               value={note} onChange={e => setNote(e.target.value)}
               rows={2} maxLength={1000} placeholder="Receipt link, context, etc." data-testid="textarea-comp-note"
             />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Receipts (optional)</label>
+            <input
+              ref={newFileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              multiple
+              className="hidden"
+              onChange={e => {
+                const fs = Array.from(e.target.files ?? []) as File[];
+                if (fs.length) setPendingFiles(prev => [...prev, ...fs]);
+                if (newFileRef.current) newFileRef.current.value = "";
+              }}
+              data-testid="input-comp-new-files"
+            />
+            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+              <button
+                type="button"
+                onClick={() => newFileRef.current?.click()}
+                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-primary/5 transition-colors"
+                data-testid="button-attach-new"
+              >
+                <Paperclip className="w-3.5 h-3.5" /> Attach receipt
+              </button>
+              {pendingFiles.map((f, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 pl-2 pr-1 py-0.5 text-[11px]">
+                  <Paperclip className="w-3 h-3 shrink-0" />
+                  <span className="max-w-[160px] truncate">{f.name}</span>
+                  <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} className="rounded hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive" aria-label="Remove file">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Images or PDF, up to 8 MB each. Kept for ~1 year.</p>
           </div>
           <div className="flex justify-end">
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5" data-testid="button-save-expense">
