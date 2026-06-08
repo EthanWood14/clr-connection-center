@@ -4944,7 +4944,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assistant: assistantIdVal != null ? userById.get(assistantIdVal) : undefined,
       };
     });
-    res.json(enriched);
+    // Show only ACTIVE LOs in the call list. Inactive / vacation / archived /
+    // currently-snoozed LOs are hidden — except ones the CLR already worked or
+    // attempted, so their progress and counts are preserved.
+    const loIsActive = (lo: any) => {
+      if (!lo) return false;
+      const status = String(lo.internalStatus ?? lo.internal_status ?? "active").toLowerCase();
+      if (status !== "active") return false;
+      const sn = lo.snoozeUntil ?? lo.snooze_until;
+      if (sn && new Date(sn).getTime() > Date.now()) return false;
+      return true;
+    };
+    const visible = enriched.filter((a: any) => a.status === "worked" || a.status === "attempted" || loIsActive(a.lo));
+    res.json(visible);
   });
 
   // Today's assignments for the current CLR (used by call script for [lo name])
@@ -4971,7 +4983,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         lo: loIdVal != null ? loById.get(loIdVal) : undefined,
       };
     });
-    res.json(enriched);
+    const visible = enriched.filter((a: any) => {
+      if (a.status === "worked" || a.status === "attempted") return true;
+      const lo = a.lo;
+      if (!lo) return false;
+      if (String(lo.internalStatus ?? lo.internal_status ?? "active").toLowerCase() !== "active") return false;
+      const sn = lo.snoozeUntil ?? lo.snooze_until;
+      if (sn && new Date(sn).getTime() > Date.now()) return false;
+      return true;
+    });
+    res.json(visible);
   });
 
   app.post("/api/assignments/generate", requireAuth, (req: any, res: any) => {
@@ -5053,7 +5074,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     // Check what's already worked today (existing is already fetched above; at this point it's empty)
     const workedToday = existing.filter(a => a.status === "worked").map(a => a.loId);
-    const eligibleLOs = los.filter(lo => !workedToday.includes(lo.id));
+    // Only ACTIVE LOs are eligible for assignment — exclude inactive / vacation /
+    // archived, and any LO currently snoozed.
+    const isLoActive = (lo: any) => {
+      const status = String(lo.internalStatus ?? lo.internal_status ?? "active").toLowerCase();
+      if (status !== "active") return false;
+      const sn = lo.snoozeUntil ?? lo.snooze_until;
+      if (sn && new Date(sn).getTime() > Date.now()) return false;
+      return true;
+    };
+    const eligibleLOs = los.filter(lo => isLoActive(lo) && !workedToday.includes(lo.id));
 
 
     // Compute 90-day transfer counts per LO for algorithm weighting
