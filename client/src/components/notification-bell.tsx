@@ -20,6 +20,8 @@ const typeRoutes: Record<string, string> = {
   eod_reminder: "/assignments",
   appointment: "/outcomes",
   announcement: "/",
+  chat: "/chat",
+  forum: "/forum",
   nmls_check: "/nmls-checks",
   nmls_escalation: "/nmls-checks",
 };
@@ -30,6 +32,8 @@ const typeColors: Record<string, string> = {
   eod_reminder: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
   appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   announcement: "bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400",
+  chat: "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
+  forum: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400",
   nmls_check: "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
   nmls_escalation: "bg-destructive/10 text-destructive",
 };

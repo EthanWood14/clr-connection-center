@@ -6871,12 +6871,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const pushPayload = {
         title: `💬 ${senderName}`,
         body: preview,
-        url: `/chat`,
+        url: `/#/chat`,
       };
       for (const u of allUsers) {
         storage.createNotification({
           userId: u.id,
-          type: "announcement",
+          type: "chat",
           title: pushPayload.title,
           message: pushPayload.body,
           isRead: false,
@@ -10432,14 +10432,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const pushPayload = {
         title: `New Forum Question: ${post.title}`,
         body: `${authorName} asked: ${post.title}`,
-        url: `/forum`,
+        url: `/#/forum`,
       };
       const allUsers = storage.getUsers();
       const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId && !(u.muteForumNotifications ?? u.mute_forum_notifications));
       for (const admin of admins) {
         storage.createNotification({
           userId: admin.id,
-          type: "announcement",
+          type: "forum",
           title: pushPayload.title,
           message: pushPayload.body,
           isRead: false,
@@ -10539,12 +10539,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const pushPayload = {
         title: `New answer on: ${post.title}`,
         body: `${authorName} answered your question`,
-        url: `/forum`,
+        url: `/#/forum`,
       };
       for (const subId of subscriberIds) {
         storage.createNotification({
           userId: subId,
-          type: "announcement",
+          type: "forum",
           title: pushPayload.title,
           message: pushPayload.body,
           isRead: false,
