@@ -3103,6 +3103,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Per-user mute toggles for chat and forum notifications (in-app + push + email).
+  app.patch("/api/users/me/mute-chat", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const muted = !!req.body?.muted;
+    try {
+      (require("./storage").getRawSqlite() as any).prepare(`UPDATE users SET mute_chat_notifications = ? WHERE id = ?`).run(muted ? 1 : 0, userId);
+      res.json({ ok: true, muted });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
+  });
+  app.patch("/api/users/me/mute-forum", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const muted = !!req.body?.muted;
+    try {
+      (require("./storage").getRawSqlite() as any).prepare(`UPDATE users SET mute_forum_notifications = ? WHERE id = ?`).run(muted ? 1 : 0, userId);
+      res.json({ ok: true, muted });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
+  });
+
   // ── Public marketing landing page ──────────────────────────────────────────
   app.get("/landing", (_req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -3218,7 +3238,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -6685,6 +6705,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const senderName = user?.name ?? "Someone";
       const allUsers = storage.getUsers().filter((u: any) =>
         u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
+        && !(u.muteChatNotifications ?? u.mute_chat_notifications)
       );
       const trimmed = message.trim();
       const preview = trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
@@ -10255,7 +10276,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         url: `/forum`,
       };
       const allUsers = storage.getUsers();
-      const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId);
+      const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId && !(u.muteForumNotifications ?? u.mute_forum_notifications));
       for (const admin of admins) {
         storage.createNotification({
           userId: admin.id,
@@ -10267,6 +10288,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       const pushTargets = allUsers.filter((u: any) =>
         u.isActive && u.id !== userId && (u.orgId ?? 1) === orgId
+        && !(u.muteForumNotifications ?? u.mute_forum_notifications)
       );
       sendPushToUsers(pushTargets.map((u: any) => u.id), pushPayload).catch(() => {});
 
@@ -10353,7 +10375,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
     // Notify all subscribers except the answerer
     try {
-      const subscriberIds = storageExtra.getForumSubscribers(postId).filter((uid) => uid !== userId);
+      const mutedForum = new Set((storage.getUsers() as any[]).filter((u: any) => (u.muteForumNotifications ?? u.mute_forum_notifications)).map((u: any) => u.id));
+      const subscriberIds = storageExtra.getForumSubscribers(postId).filter((uid) => uid !== userId && !mutedForum.has(uid));
       const pushPayload = {
         title: `New answer on: ${post.title}`,
         body: `${authorName} answered your question`,

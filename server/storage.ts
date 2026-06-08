@@ -77,6 +77,8 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN script_lo_override TEXT`); } cat
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_chat_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_forum_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}

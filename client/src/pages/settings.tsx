@@ -1337,13 +1337,17 @@ function NotificationsCard() {
   const [smsConfigured, setSmsConfigured] = useState<boolean>(false);
   const [orgEnabled, setOrgEnabled] = useState<boolean>(true);
   const [runningNow, setRunningNow] = useState(false);
+  const [chatOn, setChatOn] = useState<boolean>(true);
+  const [forumOn, setForumOn] = useState<boolean>(true);
 
   useEffect(() => {
     if (authUser) {
       setUserEnabled(authUser.reminderEmailEnabled ?? true);
       setSmsEnabled(!!authUser.smsRemindersEnabled);
+      setChatOn(!authUser.muteChatNotifications);
+      setForumOn(!authUser.muteForumNotifications);
     }
-  }, [authUser?.reminderEmailEnabled, authUser?.smsRemindersEnabled]);
+  }, [authUser?.reminderEmailEnabled, authUser?.smsRemindersEnabled, authUser?.muteChatNotifications, authUser?.muteForumNotifications]);
 
   useEffect(() => {
     fetch("/api/settings/reminders", { credentials: "include" })
@@ -1388,6 +1392,23 @@ function NotificationsCard() {
       await refetchUser();
     } catch (e: any) {
       setUserEnabled(!enabled);
+      toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
+    }
+  }
+
+  async function saveMute(kind: "chat" | "forum", on: boolean) {
+    const setter = kind === "chat" ? setChatOn : setForumOn;
+    setter(on);
+    try {
+      const r = await fetch("/api/users/me/mute-" + kind, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ muted: !on }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      toast({ title: (kind === "chat" ? "Chat" : "Forum") + (on ? " notifications on" : " notifications muted") });
+      await refetchUser();
+    } catch (e: any) {
+      setter(!on);
       toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
     }
   }
@@ -1460,6 +1481,24 @@ function NotificationsCard() {
             </div>
           </>
         )}
+
+        <Separator />
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Chat Notifications</p>
+            <p className="text-xs text-muted-foreground">Alerts for new team chat messages. Turn off to mute chat notifications.</p>
+          </div>
+          <Switch checked={chatOn} onCheckedChange={(v) => saveMute("chat", v)} data-testid="toggle-chat-notifications" />
+        </div>
+
+        <Separator />
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Forum Notifications</p>
+            <p className="text-xs text-muted-foreground">Alerts for new forum questions and answers. Turn off to mute forum notifications.</p>
+          </div>
+          <Switch checked={forumOn} onCheckedChange={(v) => saveMute("forum", v)} data-testid="toggle-forum-notifications" />
+        </div>
 
         {isAdmin && (
           <>

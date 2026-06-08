@@ -22,6 +22,8 @@ export interface AuthUser {
   impersonatingOrgName?: string | null;
   reminderEmailEnabled?: boolean;
   smsRemindersEnabled?: boolean;
+  muteChatNotifications?: boolean;
+  muteForumNotifications?: boolean;
   phone?: string | null;
   timezone?: string;
 }
