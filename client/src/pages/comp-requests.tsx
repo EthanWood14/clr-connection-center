@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog,
 } from "lucide-react";
 
 interface CompItem {
@@ -253,6 +253,78 @@ function CompStageTracker({ status, isPaid, isReceived }: { status: CompItem["st
         );
       })}
     </div>
+  );
+}
+
+// Admin-only panel to see who can approve comp requests and mark people as
+// managers inline (managers are the approvers in the comp pipeline).
+function ManagersPanel() {
+  const { toast } = useToast();
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const staff = useMemo(
+    () =>
+      (users ?? [])
+        .filter((u: any) => u.isActive && (u.role === "assistant" || u.role === "admin"))
+        .sort((a: any, b: any) => {
+          const am = a.role === "admin" || (a.isManager ?? a.is_manager) ? 0 : 1;
+          const bm = b.role === "admin" || (b.isManager ?? b.is_manager) ? 0 : 1;
+          if (am !== bm) return am - bm;
+          return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+        }),
+    [users]
+  );
+  const toggle = useMutation({
+    mutationFn: ({ id, is_manager }: { id: number; is_manager: boolean }) =>
+      apiRequest("PATCH", `/api/users/${id}/manager`, { is_manager }),
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: vars.is_manager ? "Marked as manager" : "Removed as manager" });
+    },
+    onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+  const approverCount = staff.filter((u: any) => u.role === "admin" || (u.isManager ?? u.is_manager)).length;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <UserCog className="w-4 h-4" /> Managers / Approvers
+          <Badge variant="outline" className="ml-1 text-[10px]">{approverCount} can approve</Badge>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Tap a name to mark them as a manager. Managers can approve, deny, mark comp as paid, and file requests on behalf of CLRs. Admins can always approve.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap gap-2">
+          {staff.map((u: any) => {
+            const isAdminUser = u.role === "admin";
+            const isMgr = !!(u.isManager ?? u.is_manager);
+            const canApprove = isAdminUser || isMgr;
+            return (
+              <button
+                key={u.id}
+                type="button"
+                disabled={isAdminUser || toggle.isPending}
+                title={isAdminUser ? "Admins can always approve" : isMgr ? "Click to remove manager" : "Click to make manager"}
+                onClick={() => { if (!isAdminUser) toggle.mutate({ id: u.id, is_manager: !isMgr }); }}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+                  canApprove
+                    ? "bg-amber-500 text-white border-amber-500 hover:bg-amber-600"
+                    : "bg-background text-foreground border-border hover:bg-muted"
+                } ${isAdminUser ? "cursor-default opacity-90" : ""}`}
+                data-testid={`manager-toggle-${u.id}`}
+              >
+                {isAdminUser ? <Shield className="w-3.5 h-3.5" /> : <Star className={`w-3.5 h-3.5 ${isMgr ? "fill-current" : ""}`} />}
+                {u.name}
+                {isAdminUser && <span className="text-[10px] opacity-80">admin</span>}
+              </button>
+            );
+          })}
+          {staff.length === 0 && <p className="text-sm text-muted-foreground">No active team members.</p>}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -619,6 +691,9 @@ export default function CompRequests() {
           )}
         </CardContent>
       </Card>
+
+      {/* Manager management — see + mark who can approve */}
+      {isAdmin && <ManagersPanel />}
 
       {/* Manager: team comp requests */}
       {isAdmin && (
