@@ -804,6 +804,31 @@ try {
   sqlite.prepare(`UPDATE users SET org_id = 1 WHERE super_admin = 1 AND (org_id IS NULL OR org_id = 0)`).run();
 } catch {}
 
+// ── One-time data fix: set Mark Gomez's licensed states ──────────────────────
+// Requested update to his licensing footprint. Guarded so it applies exactly
+// once (won't revert future edits made in the Directory UI). The "applied" flag
+// is only recorded after a row is actually updated, so it still applies if the
+// LO record is added after this deploy.
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'mark_gomez_licensed_states_v1'`).get();
+  if (!done) {
+    const markGomezStates = ["AL","AR","AZ","CA","CO","FL","GA","IN","IA","KS","LA","MA","MI","MN","MS","NE","NJ","NV","NC","OH","OK","OR","PA","SC","TN","VA","WA","WI"];
+    const info = sqlite.prepare(
+      `UPDATE loan_officers SET licensed_states = ? WHERE LOWER(TRIM(full_name)) = 'mark gomez'`
+    ).run(JSON.stringify(markGomezStates));
+    if ((info.changes as number) > 0) {
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("mark_gomez_licensed_states_v1", new Date().toISOString());
+      console.log(`[migration] updated Mark Gomez licensed_states (${markGomezStates.length} states, ${info.changes} row(s))`);
+    } else {
+      console.warn("[migration] mark_gomez_licensed_states_v1: no 'Mark Gomez' LO found yet — will retry next startup");
+    }
+  }
+} catch (e) {
+  console.error("mark_gomez_licensed_states_v1 migration failed:", (e as Error).message);
+}
+
 // ── One-time cleanup: purge fake sample data from West Capital (org_id=1) ─────
 // Old seeds inserted demo-looking LOs, assistants, outcomes, and call logs into
 // the live West Capital org. Remove them permanently. Demo org (org_id=2) is
