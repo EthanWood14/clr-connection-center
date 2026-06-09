@@ -16,7 +16,7 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
-  History, ChevronDown, ChevronUp, User, Users, X, Save, Printer,
+  History, ChevronDown, ChevronUp, User, Users, X, Save, Printer, MessageSquare,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -96,8 +96,9 @@ export default function EodReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  // Form state — calls + notes + LO coverage
+  // Form state — calls + messages + notes + LO coverage
   const [callsMade, setCallsMade] = useState("");
+  const [messagesSent, setMessagesSent] = useState("");
   const [notes, setNotes]         = useState("");
   const [dirty, setDirty]         = useState(false);
   const [assignedCalled, setAssignedCalled] = useState<number[]>([]);
@@ -190,6 +191,7 @@ export default function EodReport() {
   useMemo(() => {
     if (report) {
       setCallsMade(String(report.calls_made ?? report.callsMade ?? ""));
+      setMessagesSent(String(report.messages_sent ?? report.messagesSent ?? ""));
       setNotes(report.notes ?? "");
       setAssignedCalled(Array.isArray(report.assignedLosCalled) ? report.assignedLosCalled : []);
       setAdditionalCalled(Array.isArray(report.additionalLosCalled) ? report.additionalLosCalled : []);
@@ -198,6 +200,7 @@ export default function EodReport() {
       setShowOtherInput(!!savedOther);
     } else {
       setCallsMade("");
+      setMessagesSent("");
       setNotes("");
       setAssignedCalled([]);
       setAdditionalCalled([]);
@@ -226,6 +229,7 @@ export default function EodReport() {
         const d = body.data;
         skipAutoSaveRef.current = true;
         if (typeof d.callsMade === "string") setCallsMade(d.callsMade);
+        if (typeof d.messagesSent === "string") setMessagesSent(d.messagesSent);
         if (typeof d.notes === "string") setNotes(d.notes);
         if (Array.isArray(d.assignedCalled)) setAssignedCalled(d.assignedCalled);
         if (Array.isArray(d.additionalCalled)) setAdditionalCalled(d.additionalCalled);
@@ -251,6 +255,7 @@ export default function EodReport() {
           data: {
             selectedDate,
             callsMade,
+            messagesSent,
             notes,
             assignedCalled,
             additionalCalled,
@@ -279,7 +284,7 @@ export default function EodReport() {
     autoSaveTimer.current = setTimeout(() => { void saveDraft(true); }, 500);
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callsMade, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, todayStr, dirty]);
+  }, [callsMade, messagesSent, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, todayStr, dirty]);
 
   async function clearDraft(resetForm: boolean) {
     try {
@@ -306,6 +311,7 @@ export default function EodReport() {
       apiRequest("POST", "/api/eod-reports", {
         reportDate:   selectedDate,
         callsMade:    parseInt(callsMade) || 0,
+        messagesSent: parseInt(messagesSent) || 0,
         transfers:    autoTransfers,
         appointments: autoAppointments,
         notes:        notes.trim() || null,
@@ -388,6 +394,7 @@ export default function EodReport() {
           activities={activities}
           displayDate={displayDate}
           callsMade={Number((report as any).calls_made ?? (report as any).callsMade ?? 0)}
+          messagesSent={Number((report as any).messages_sent ?? (report as any).messagesSent ?? 0)}
           autoTransfers={autoTransfers}
           autoAppointments={autoAppointments}
           autoFellThrough={autoFellThrough}
@@ -694,6 +701,20 @@ export default function EodReport() {
                 </div>
               </div>
 
+              {/* Messages sent — texts/DMs sent instead of calls */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5" /> Messages Sent
+                </label>
+                <Input
+                  type="number" min={0} placeholder="Texts / DMs sent today"
+                  value={messagesSent}
+                  onChange={e => { setMessagesSent(e.target.value); setDirty(true); }}
+                  className="h-9 max-w-[200px]"
+                  data-testid="input-messages-sent"
+                />
+              </div>
+
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Notes / Comments</label>
                 <Textarea
@@ -830,7 +851,7 @@ export default function EodReport() {
 // Renders a complete, value-based EOD report for printing / PDF export.
 // Only visible via the @media print stylesheet (class="print-only").
 function EodPrintSheet({
-  report, activities, displayDate, callsMade,
+  report, activities, displayDate, callsMade, messagesSent,
   autoTransfers, autoAppointments, autoFellThrough,
   autoCallbacks, autoDeferrals, autoFuture, autoNoAnswer, autoTotalLogged,
   fallbackUser,
@@ -839,6 +860,7 @@ function EodPrintSheet({
   activities: any[];
   displayDate: string;
   callsMade: number;
+  messagesSent: number;
   autoTransfers: number;
   autoAppointments: number;
   autoFellThrough: number;
@@ -913,6 +935,7 @@ function EodPrintSheet({
       <table className="eod-kv">
         <tbody>
           <tr><td>Total Calls Made</td><td className="num">{callsMade}</td></tr>
+          <tr><td>Messages Sent</td><td className="num">{messagesSent}</td></tr>
           <tr><td>Total Outcomes Logged</td><td className="num">{totalLogged}</td></tr>
           <tr><td>Transfer / Call Ratio</td><td className="num">{ratio}</td></tr>
         </tbody>
@@ -1086,6 +1109,7 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const dateLabel = format(parseISO(r.report_date), "EEE, MMM d, yyyy");
           const isOpen = expanded === r.id;
           const calls = r.calls_made ?? 0;
+          const messages = r.messages_sent ?? 0;
           const breakdown = r.outcomeBreakdown ?? {};
           const xfers = breakdown.transfer ?? r.transfers ?? 0;
           const appts = breakdown.appointment ?? r.appointments ?? 0;
@@ -1097,6 +1121,7 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const noAnswer = breakdown.no_answer ?? 0;
           const summaryChips: Array<{ label: string; val: number; cls: string }> = [
             { label: "calls",                  val: calls,                cls: "text-muted-foreground" },
+            { label: "messages",               val: messages,             cls: "text-muted-foreground" },
             { label: "transfers",              val: xfers,                cls: "text-emerald-600 font-medium" },
             { label: "appts",                  val: appts,                cls: "text-blue-600" },
             { label: "fell through",           val: fellThrough,          cls: "text-rose-600" },

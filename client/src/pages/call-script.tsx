@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -1253,6 +1254,7 @@ function CallRecorder({
   const [wizardLoName, setWizardLoName] = useState<string>("");
   const [wizardScheduled, setWizardScheduled] = useState<string>("");
   const [wizardTransferType, setWizardTransferType] = useState<"direct" | "appointment" | "">("");
+  const [wizardBulkTexter, setWizardBulkTexter] = useState<boolean>(false);
   const [wizardNotes, setWizardNotes] = useState<string>("");
   const [wizardBorrower, setWizardBorrower] = useState<string>("");
   const [wizardPhone, setWizardPhone] = useState<string>("");
@@ -1260,6 +1262,8 @@ function CallRecorder({
   const [durationTick, setDurationTick] = useState(0);
 
   const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
+  const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
+  const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
 
   useEffect(() => {
     if (!isRecording) return;
@@ -1297,6 +1301,7 @@ function CallRecorder({
     setWizardLoName("");
     setWizardScheduled("");
     setWizardTransferType("");
+    setWizardBulkTexter(false);
     setWizardNotes("");
     setWizardBorrower("");
     setWizardPhone("");
@@ -1411,6 +1416,7 @@ function CallRecorder({
       }
       if (needsTransferConfirm) {
         payload.transferType = wizardTransferType;
+        if (askBulkTexter) payload.bulkTexter = wizardBulkTexter;
       }
       if (outcomeChoice.outcomeType === "appointment" && wizardScheduled) {
         payload.appointmentDatetime = wizardScheduled;
@@ -1433,6 +1439,7 @@ function CallRecorder({
       setWizardLoName("");
       setWizardScheduled("");
       setWizardTransferType("");
+      setWizardBulkTexter(false);
       setWizardNotes("");
       setWizardBorrower("");
       setWizardPhone("");
@@ -1580,6 +1587,12 @@ function CallRecorder({
                   </SelectContent>
                 </Select>
               </div>
+            )}
+            {needsTransferConfirm && askBulkTexter && (
+              <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 cursor-pointer">
+                <span className="text-sm font-medium">Was Bulk Texter part of this transfer?</span>
+                <Switch checked={wizardBulkTexter} onCheckedChange={setWizardBulkTexter} data-testid="wizard-bulk-texter" />
+              </label>
             )}
             {needsScheduled && (
               <div>

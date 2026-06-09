@@ -13,6 +13,7 @@ import {
   ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle,
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
   ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
+  MessageSquare, Zap,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { GoalCelebration, useGoalCelebration } from "@/components/goal-celebration";
@@ -976,6 +977,10 @@ function ClrDashboard() {
             <StatCard title={scope === "team" ? `Team ${callsTitle}` : callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" accent="blue" sub={scope === "team" ? `team calls ${subLabel}` : `my calls ${subLabel}`} href="/eod-report" />
             {(displayStats?.contactsReached ?? 0) > 0 && (
               <StatCard title="Contacts Reached" value={displayStats?.contactsReached ?? 0} icon={PhoneCall} color="primary" accent="teal" sub={`answered ${subLabel}`} href="/eod-report" />
+            )}
+            <StatCard title={scope === "team" ? "Team Messages Sent" : "Messages Sent"} value={displayStats?.messagesSent ?? 0} icon={MessageSquare} color="primary" accent="teal" sub={scope === "team" ? `team texts ${subLabel}` : `my texts ${subLabel}`} href="/eod-report" />
+            {(displayStats?.bulkTexterTransfers ?? 0) > 0 && (
+              <StatCard title="Bulk Texter Transfers" value={displayStats?.bulkTexterTransfers ?? 0} icon={Zap} color="success" accent="green" sub={`via Bulk Texter ${subLabel}`} href="/outcomes" />
             )}
           </div>
           <GoalStripe />

@@ -5597,6 +5597,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assistantId: assistantIdVal,
         outcomeType: o.outcomeType ?? o.outcome_type,
         transferType: o.transferType ?? o.transfer_type ?? null,
+        bulkTexter: (o.bulkTexter ?? o.bulk_texter) == null ? null : !!(o.bulkTexter ?? o.bulk_texter),
         borrowerName: o.borrowerName ?? o.borrower_name ?? null,
         followUpDate: o.followUpDate ?? o.follow_up_date ?? null,
         appointmentDatetime: o.appointmentDatetime ?? o.appointment_datetime ?? null,
@@ -5623,6 +5624,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (!privileged) body.assistantId = sessUserId;
         else if (body.assistantId == null || Number(body.assistantId) <= 0) body.assistantId = sessUserId;
       }
+      const toBulk = (v: any) => (v === true || v === 1 || v === "1" ? 1 : v === false || v === 0 || v === "0" ? 0 : null);
       if (body.outcomeType === "transfer") {
         if (body.transferType !== "direct" && body.transferType !== "appointment") {
           return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
@@ -5630,8 +5632,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         // A transfer must never schedule a calendar appointment, even an
         // appointment-type transfer. Strip any appointment datetime defensively.
         body.appointmentDatetime = null;
+        body.bulkTexter = toBulk(body.bulkTexter);
       } else {
         body.transferType = null;
+        body.bulkTexter = null;
       }
       const nullify = (v: any) => (v === undefined || v === '' ? null : v);
       const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
@@ -5722,8 +5726,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // A transfer must never schedule a calendar appointment — always clear it.
       body.appointmentDatetime = null;
     } else if (body.outcomeType !== undefined) {
-      // outcomeType is being changed away from transfer — clear transferType
+      // outcomeType is being changed away from transfer — clear transferType + bulk texter
       body.transferType = null;
+      body.bulkTexter = null;
+    }
+    if ("bulkTexter" in body) {
+      body.bulkTexter = (body.bulkTexter === true || body.bulkTexter === 1 || body.bulkTexter === "1") ? 1
+        : (body.bulkTexter === false || body.bulkTexter === 0 || body.bulkTexter === "0") ? 0 : null;
     }
     const nullify = (v: any) => (v === undefined || v === '' ? null : v);
     const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
@@ -5887,6 +5896,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let myCallsInPeriod = 0;
     let contactsReachedPeriod = 0;
     let dncHitsPeriod = 0;
+    let messagesSentPeriod = 0;
+    let bulkTexterTransfers = 0;
 
     // Sum contacts_reached + dnc_hits from raw call_logs for the period
     const rawLogsInPeriod = storageExtra.getCallLogsByRangeRaw(startDate, endDate) as any[];
@@ -5900,6 +5911,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         `SELECT COALESCE(SUM(calls_made), 0) AS total FROM daily_call_logs WHERE log_date >= ? AND log_date <= ?${extraWhere}${orgClause}`
       ).get(startDate, endDate, ...params) as any;
       return Number(row?.total ?? 0);
+    };
+    // Messages sent (texts/DMs) from EOD reports for the period.
+    const sumMessagesSql = (extraWhere: string, params: any[]): number => {
+      try {
+        const row = sqliteDb.prepare(
+          `SELECT COALESCE(SUM(messages_sent), 0) AS total FROM eod_reports WHERE report_date >= ? AND report_date <= ?${extraWhere}`
+        ).get(startDate, endDate, ...params) as any;
+        return Number(row?.total ?? 0);
+      } catch { return 0; }
+    };
+    // Transfers where Bulk Texter was part of it, for the period.
+    const countBulkTexterSql = (extraWhere: string, params: any[]): number => {
+      try {
+        const row = sqliteDb.prepare(
+          `SELECT COUNT(*) AS n FROM lead_outcomes WHERE outcome_type='transfer' AND bulk_texter=1 AND date >= ? AND date <= ?${extraWhere}${orgClause}`
+        ).get(startDate, endDate, ...params) as any;
+        return Number(row?.n ?? 0);
+      } catch { return 0; }
     };
 
     if (scope === "team") {
@@ -5916,6 +5945,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       myCallsInPeriod = sumCallsSql("", []);
       contactsReachedPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
       dncHitsPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
+      messagesSentPeriod = sumMessagesSql("", []);
+      bulkTexterTransfers = countBulkTexterSql("", []);
     } else if (userId) {
       const myLog = storage.getDailyCallLogs(todayStr).find(
         (l: any) => (l.assistantId ?? l.assistant_id) === userId,
@@ -5931,6 +5962,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const myRaw = rawLogsInPeriod.filter((l: any) => l.assistant_id === userId);
       contactsReachedPeriod = myRaw.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
       dncHitsPeriod = myRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
+      messagesSentPeriod = sumMessagesSql(` AND assistant_id = ?`, [userId]);
+      bulkTexterTransfers = countBulkTexterSql(` AND assistant_id = ?`, [userId]);
     }
 
     res.json({
@@ -5944,6 +5977,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       myCallsInPeriod,
       contactsReached: contactsReachedPeriod,
       dncHits: dncHitsPeriod,
+      messagesSent: messagesSentPeriod,
+      bulkTexterTransfers,
     });
   });
 
@@ -7636,6 +7671,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
+  // Lightweight, all-users-readable flag so the transfer form knows whether to
+  // ask "was Bulk Texter part of this transfer?" without exposing email config.
+  app.get("/api/settings/bulk-texter", requireAuth, (_req, res) => {
+    const s = storageExtra.getEmailSettings() as any;
+    res.json({ askBulkTexter: !!s.ask_bulk_texter });
+  });
+
   app.post("/api/settings/email/test", requireAuth, async (req: any, res) => {
     // Send a real test email to the logged-in user
     const userId = req.session_user?.userId;
@@ -8383,7 +8425,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
+    const { reportDate, callsMade, messagesSent, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
     const normalizeIds = (x: any): number[] =>
       Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
@@ -8394,6 +8436,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       reportDate,
       assistantId: userId,
       callsMade: Number(callsMade ?? 0),
+      messagesSent: Number(messagesSent ?? textsSent ?? 0),
       transfers: Number(transfers ?? 0),
       appointments: Number(appointments ?? 0),
       notes: notes ?? null,

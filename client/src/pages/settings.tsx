@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare } from "lucide-react";
 import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
@@ -310,6 +310,45 @@ function WeightSliderRow({
         className="w-full"
       />
     </div>
+  );
+}
+
+// ── Bulk Texter Card ──────────────────────────────────────────────────────────
+// Org toggle: when on, the transfer-logging form asks whether Bulk Texter was
+// part of the transfer.
+function BulkTexterCard() {
+  const { toast } = useToast();
+  const { data: settings } = useQuery<any>({ queryKey: ["/api/settings/email"] });
+  const askOn = !!(settings?.ask_bulk_texter);
+  const save = useMutation({
+    mutationFn: (on: boolean) => apiRequest("PATCH", "/api/settings/email", { askBulkTexter: on ? 1 : 0 }),
+    onSuccess: (_d, on) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/email"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/bulk-texter"] });
+      toast({ title: on ? "Bulk Texter question on" : "Bulk Texter question off" });
+    },
+    onError: (e: any) => toast({ title: "Failed to update", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-muted-foreground" />
+          Bulk Texter
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Ask on transfers</p>
+            <p className="text-xs text-muted-foreground">
+              When on, logging a transfer asks "Was Bulk Texter part of this transfer?" so it can be tracked in stats and dashboards.
+            </p>
+          </div>
+          <Switch checked={askOn} onCheckedChange={(v) => save.mutate(v)} disabled={save.isPending} data-testid="toggle-ask-bulk-texter" />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2803,6 +2842,7 @@ export default function Settings() {
   const appTab = (
     <div className="space-y-6">
       <PushNotificationsCard />
+      {isAdmin && <BulkTexterCard />}
       {isAdmin && <NmlsScheduleCard />}
       {isAdmin && (
         <div className="space-y-4">

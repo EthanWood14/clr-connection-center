@@ -97,6 +97,8 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS loan_officer_assistants (
   created_at TEXT
 )`);
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
+// Whether Bulk Texter was part of a transfer (1/0/null). Only set on transfers.
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bulk_texter INTEGER`); } catch {}
 
 export const db = drizzle(sqlite);
 
@@ -1520,6 +1522,11 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'tts_voice')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN tts_voice TEXT NOT NULL DEFAULT ''`);
   }
+  // 2026-06: org toggle — when on, the transfer form asks whether Bulk Texter
+  // was part of the transfer.
+  if (!emailCols.find(c => c.name === 'ask_bulk_texter')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ask_bulk_texter INTEGER NOT NULL DEFAULT 0`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
@@ -1846,6 +1853,8 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN assigned_los_called TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_called TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_other_notes TEXT`); } catch {}
+  // Messages sent (texts/DMs) for the day — tracked alongside calls.
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN messages_sent INTEGER NOT NULL DEFAULT 0`); } catch {}
 
   // EOD drafts — one per user, holds serialized form state so CLRs don't lose
   // their progress if they close the page before submitting.
@@ -2646,23 +2655,24 @@ export function getEodReport(reportDate: string, assistantId: number): any {
   return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
 }
 
-export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
   const assignedJson = JSON.stringify(Array.isArray(data.assignedLosCalled) ? data.assignedLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const additionalJson = JSON.stringify(Array.isArray(data.additionalLosCalled) ? data.additionalLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const otherNotes = typeof data.additionalLosOtherNotes === "string" && data.additionalLosOtherNotes.trim()
     ? data.additionalLosOtherNotes.trim()
     : null;
+  const messagesSent = Number.isFinite(Number(data.messagesSent)) ? Math.max(0, Math.round(Number(data.messagesSent))) : 0;
   sqlite.prepare(`
-    INSERT INTO eod_reports (report_date, assistant_id, calls_made, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(report_date, assistant_id) DO UPDATE SET
-      calls_made=excluded.calls_made, transfers=excluded.transfers,
+      calls_made=excluded.calls_made, messages_sent=excluded.messages_sent, transfers=excluded.transfers,
       appointments=excluded.appointments, notes=excluded.notes,
       assigned_los_called=excluded.assigned_los_called,
       additional_los_called=excluded.additional_los_called,
       additional_los_other_notes=excluded.additional_los_other_notes,
       submitted_at=datetime('now')
-  `).run(data.reportDate, data.assistantId, data.callsMade, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
+  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
   return getEodReport(data.reportDate, data.assistantId);
 }
 

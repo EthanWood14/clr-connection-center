@@ -173,6 +173,7 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   borrowerName: text("borrower_name"),
   outcomeType: text("outcome_type").notNull(),
   transferType: text("transfer_type"), // 'direct' | 'appointment' | null (required when outcomeType='transfer')
+  bulkTexter: integer("bulk_texter"), // 1/0/null — whether Bulk Texter was part of the transfer
   journeyId: text("journey_id"),
   phoneNumber: text("phone_number"),
   notes: text("notes"),

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -129,6 +130,7 @@ const outcomeFormSchema = z.object({
   loId: z.coerce.number().min(1, "Select a loan officer"),
   outcomeType: z.enum(OUTCOME_TYPES),
   transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
+  bulkTexter: z.boolean().optional().nullable(),
   borrowerName: z.string().optional(),
   journeyId: z.string().optional(),
   phoneNumber: z.string().optional(),
@@ -322,6 +324,7 @@ function OutcomeFormDialog({
       loaId: null,
       outcomeType: "transfer",
       transferType: null,
+      bulkTexter: null,
       borrowerName: "",
       journeyId: "",
       phoneNumber: "",
@@ -345,10 +348,14 @@ function OutcomeFormDialog({
   });
 
   const [bonzoLogged, setBonzoLogged] = useState(false);
+  // Org toggle: ask whether Bulk Texter was part of the transfer.
+  const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
+  const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
   // Step 0 = result picker (always shown first), step 1 = details, step 2/3 = transfer wizard
   const [step, setStep] = useState(0);
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
+  const watchedBulkTexter = form.watch("bulkTexter");
   const watchedRequiresFollowup = form.watch("requiresFollowup");
   const watchedLeadType = form.watch("leadType");
   const watchedRescheduled = form.watch("rescheduled");
@@ -512,6 +519,19 @@ function OutcomeFormDialog({
                   <FormMessage />
                 </FormItem>
               )} />
+            )}
+            {isTransfer && askBulkTexter && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Was Bulk Texter part of this transfer?</p>
+                  <p className="text-xs text-muted-foreground">Tracked in stats and dashboards.</p>
+                </div>
+                <Switch
+                  checked={!!watchedBulkTexter}
+                  onCheckedChange={(v) => form.setValue("bulkTexter", v, { shouldDirty: true })}
+                  data-testid="toggle-bulk-texter"
+                />
+              </div>
             )}
             <FormField control={form.control} name="assistantId" render={({ field }) => (
               <FormItem>
