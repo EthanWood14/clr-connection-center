@@ -1369,7 +1369,9 @@ function CallRecorder({
 
   const outcomeChoice = chosenOutcome ? OUTCOME_CHOICES.find(c => c.key === chosenOutcome)! : null;
   const needsLo = outcomeChoice && (outcomeChoice.outcomeType === "transfer" || outcomeChoice.outcomeType === "appointment");
-  const needsScheduled = outcomeChoice && (outcomeChoice.outcomeType === "appointment" || outcomeChoice.outcomeType === "callback_requested" || outcomeChoice.key === "transfer_appointment");
+  // Transfers (including appointment-type transfers) no longer schedule a calendar
+  // appointment — only true Appointment and Callback outcomes collect a date/time.
+  const needsScheduled = outcomeChoice && (outcomeChoice.outcomeType === "appointment" || outcomeChoice.outcomeType === "callback_requested");
   const needsTransferConfirm = outcomeChoice && outcomeChoice.outcomeType === "transfer";
 
   const resolvedLoId = useMemo(() => {
@@ -1417,9 +1419,8 @@ function CallRecorder({
         // Preserve full datetime so reminders can trigger at the requested time.
         payload.followUpDate = wizardScheduled;
       }
-      if (outcomeChoice.key === "transfer_appointment" && wizardScheduled) {
-        payload.appointmentDatetime = wizardScheduled;
-      }
+      // Transfers (direct or appointment) intentionally do NOT set an
+      // appointmentDatetime — a transfer should not schedule a calendar appointment.
       return apiRequest("POST", "/api/outcomes", payload);
     },
     onSuccess: () => {

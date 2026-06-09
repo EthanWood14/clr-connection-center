@@ -5627,6 +5627,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (body.transferType !== "direct" && body.transferType !== "appointment") {
           return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
         }
+        // A transfer must never schedule a calendar appointment, even an
+        // appointment-type transfer. Strip any appointment datetime defensively.
+        body.appointmentDatetime = null;
       } else {
         body.transferType = null;
       }
@@ -5712,12 +5715,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
       }
       // When an outcome is being converted to a transfer, drop any pending
-      // follow-up date / appointment time so it stops appearing in the
-      // upcoming appointments list and stops firing 30-min reminders. The
-      // caller can still override either by passing an explicit non-empty
-      // value in the same PATCH.
+      // follow-up date so it stops appearing in the upcoming appointments list
+      // and stops firing 30-min reminders. (followUpDate may still be set by an
+      // explicit non-empty value in the same PATCH.)
       if (!("followUpDate" in body) || body.followUpDate === undefined) body.followUpDate = null;
-      if (!("appointmentDatetime" in body) || body.appointmentDatetime === undefined) body.appointmentDatetime = null;
+      // A transfer must never schedule a calendar appointment — always clear it.
+      body.appointmentDatetime = null;
     } else if (body.outcomeType !== undefined) {
       // outcomeType is being changed away from transfer — clear transferType
       body.transferType = null;
