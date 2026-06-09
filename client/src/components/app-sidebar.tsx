@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Plug, UserCheck, PhoneIncoming, Upload, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -210,14 +210,6 @@ const adminItems: NavItem[] = [
 // Viewer accounts get only the Report Archive (read-only role)
 const viewerItems: NavItem[] = [
   { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
-];
-
-const integrationItems: NavItem[] = [
-  { title: "Integrations",    url: "/integrations", icon: Plug },
-  { title: "Contact Hub",     url: "/contacts", icon: Users },
-  { title: "Bonzo Prospects", url: "/bonzo-prospects", icon: UserCheck },
-  { title: "Mojo Sessions",   url: "/mojo-sessions", icon: PhoneIncoming },
-  { title: "Mojo Import",     url: "/mojo-import", icon: Upload },
 ];
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -475,7 +467,7 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {/* HELP — always visible, above Integrations and Super Admin */}
+        {/* HELP — always visible, above Super Admin */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Help
@@ -490,18 +482,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {/* INTEGRATIONS (admin only) */}
-        {user?.role === "admin" && (
-          <SidebarGroup>
-            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-              Integrations
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>{renderItems(integrationItems)}</SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
 
         {/* SUPER ADMIN (super-admin only) */}
         {user?.superAdmin && (

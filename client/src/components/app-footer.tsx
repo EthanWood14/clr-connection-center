@@ -16,7 +16,6 @@ const NAV_LINKS = [
 
 const RESOURCE_LINKS = [
   { label: "Settings", href: "/settings" },
-  { label: "Integrations", href: "/integrations" },
   { label: "Glossary", href: "/glossary" },
   { label: "Status", href: "/status" },
 ];
