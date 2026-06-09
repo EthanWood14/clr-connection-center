@@ -11,7 +11,17 @@ import { Link } from "wouter";
 import { copyToClipboard } from "@/lib/utils";
 import { businessTodayClient } from "@/lib/business-day";
 import { useAuth } from "@/lib/auth";
-import { UsStateTileMap } from "@/components/us-state-tile-map";
+import { UsStateGeoMap } from "@/components/us-state-geo-map";
+
+// Defensive parse of an LO's licensed_states JSON column (string[] or null).
+function parseLicensedStates(raw: unknown): string[] {
+  try {
+    const arr = JSON.parse((raw as string) || "[]");
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 const ALL_STATES: { abbr: string; name: string }[] = [
   { abbr: "AL", name: "Alabama" }, { abbr: "AK", name: "Alaska" },
@@ -106,12 +116,7 @@ export default function StateLookup() {
   // would silently fail to match any state click, so we surface them in a
   // dedicated section instead of hiding them entirely.
   const unmappedLOs = useMemo(
-    () => activeLOs.filter((lo) => {
-      try {
-        const states: string[] = JSON.parse(lo.licensedStates || "[]");
-        return states.length === 0;
-      } catch { return true; }
-    }),
+    () => activeLOs.filter((lo) => parseLicensedStates(lo.licensedStates).length === 0),
     [activeLOs]
   );
 
@@ -131,31 +136,35 @@ export default function StateLookup() {
   // Snoozed LOs are included but rendered with a Snoozed badge so admins know.
   const licensedLOs = useMemo(() => {
     if (!selectedState) return [];
-    return activeLOs.filter((lo) => {
-      try {
-        const states: string[] = JSON.parse(lo.licensedStates || "[]");
-        return states.some(
-          (s) =>
-            s.trim().toUpperCase() === selectedState.abbr ||
-            s.trim().toLowerCase() === selectedState.name.toLowerCase()
-        );
-      } catch {
-        return false;
-      }
-    });
+    return activeLOs.filter((lo) =>
+      parseLicensedStates(lo.licensedStates).some(
+        (s) =>
+          s.trim().toUpperCase() === selectedState.abbr ||
+          s.trim().toLowerCase() === selectedState.name.toLowerCase()
+      )
+    );
   }, [activeLOs, selectedState]);
 
   // Build coverage count map — active LOs only
   const coverageMap = useMemo(() => {
     const map: Record<string, number> = {};
     activeLOs.forEach((lo) => {
-      try {
-        const states: string[] = JSON.parse(lo.licensedStates || "[]");
-        states.forEach((s) => {
-          const abbr = s.trim().toUpperCase();
-          map[abbr] = (map[abbr] || 0) + 1;
-        });
-      } catch {}
+      parseLicensedStates(lo.licensedStates).forEach((s) => {
+        const abbr = s.trim().toUpperCase();
+        map[abbr] = (map[abbr] || 0) + 1;
+      });
+    });
+    return map;
+  }, [activeLOs]);
+
+  // LO names per state for the map's hover tooltip.
+  const namesByState = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    activeLOs.forEach((lo) => {
+      parseLicensedStates(lo.licensedStates).forEach((s) => {
+        const abbr = s.trim().toUpperCase();
+        (map[abbr] ??= []).push(lo.fullName);
+      });
     });
     return map;
   }, [activeLOs]);
@@ -233,11 +242,30 @@ export default function StateLookup() {
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          <UsStateTileMap
+          <UsStateGeoMap
             coverage={coverageMap}
             selectedAbbr={selectedState?.abbr ?? null}
             onSelect={handleStateSelect}
+            namesByState={namesByState}
           />
+          {/* Coverage legend */}
+          <div className="mt-3 flex items-center justify-center gap-3 flex-wrap text-xs text-muted-foreground">
+            <span>LOs licensed:</span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3.5 h-3.5 rounded-sm border border-border" style={{ background: "hsl(var(--muted))" }} /> 0
+            </span>
+            {[
+              { label: "1", op: 0.18 },
+              { label: "2", op: 0.34 },
+              { label: "3", op: 0.5 },
+              { label: "4–5", op: 0.66 },
+              { label: "6+", op: 0.82 },
+            ].map((s) => (
+              <span key={s.label} className="flex items-center gap-1.5">
+                <span className="inline-block w-3.5 h-3.5 rounded-sm border border-primary/30" style={{ background: `hsl(var(--primary) / ${s.op})` }} /> {s.label}
+              </span>
+            ))}
+          </div>
         </CardContent>
       </Card>
 
@@ -268,7 +296,7 @@ export default function StateLookup() {
                     key={state.abbr}
                     onClick={() => handleStateSelect(state)}
                     className={`w-full flex items-center justify-between px-4 py-2.5 text-left text-sm transition-colors hover:bg-muted/60 border-b last:border-0 ${
-                      isSelected ? "bg-primary/8 font-semibold" : ""
+                      isSelected ? "bg-primary/10 font-semibold" : ""
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
@@ -356,25 +384,29 @@ export default function StateLookup() {
                 </Card>
               ) : (
                 <div className="space-y-3">
-                  {licensedLOs
-                    .sort((a, b) => a.priorityTier - b.priorityTier)
+                  {[...licensedLOs]
+                    .sort((a, b) => (a.priorityTier ?? 99) - (b.priorityTier ?? 99))
                     .map((lo) => {
-                      const allStates: string[] = (() => {
-                        try { return JSON.parse(lo.licensedStates || "[]"); } catch { return []; }
-                      })();
+                      const allStates = parseLicensedStates(lo.licensedStates);
+                      // Null/missing status is treated as active everywhere else, so
+                      // don't dim those rows or show an empty status badge.
+                      const status = lo.internalStatus ?? lo.internal_status ?? "active";
+                      const tier = lo.priorityTier ?? lo.priority_tier;
                       return (
-                        <Card key={lo.id} className={lo.internalStatus !== "active" ? "opacity-60" : ""}>
+                        <Card key={lo.id} className={status !== "active" ? "opacity-60" : ""}>
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-semibold text-sm">{lo.fullName}</span>
-                                  <Badge className={`text-xs ${TIER_COLORS[lo.priorityTier]}`}>
-                                    {TIER_LABELS[lo.priorityTier]}
-                                  </Badge>
-                                  {lo.internalStatus !== "active" && (
+                                  {TIER_LABELS[tier] && (
+                                    <Badge className={`text-xs ${TIER_COLORS[tier]}`}>
+                                      {TIER_LABELS[tier]}
+                                    </Badge>
+                                  )}
+                                  {status !== "active" && (
                                     <Badge variant="outline" className="text-xs capitalize text-muted-foreground">
-                                      {lo.internalStatus}
+                                      {status}
                                     </Badge>
                                   )}
                                   {(lo.snoozeUntil ?? lo.snooze_until) && ((lo.snoozeUntil ?? lo.snooze_until) >= today) && (
