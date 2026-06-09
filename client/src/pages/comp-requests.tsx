@@ -474,7 +474,10 @@ export default function CompRequests() {
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Receipts (optional)</label>
+            <label className="text-xs font-medium text-muted-foreground">Receipts</label>
+            <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mb-1">
+              Please attach a receipt for any requests over $10.
+            </p>
             <input
               ref={newFileRef}
               type="file"
