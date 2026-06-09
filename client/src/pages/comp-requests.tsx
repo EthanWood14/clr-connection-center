@@ -221,6 +221,41 @@ function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (
   );
 }
 
+// Visual pipeline so you can see at a glance where a request sits:
+// Waiting Approval → Approved → Paid. Denied requests show a denied state.
+function CompStageTracker({ status, isPaid, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isReceived?: boolean }) {
+  if (status === "draft") return null;
+  if (status === "denied") {
+    return (
+      <div className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-semibold text-red-700 dark:text-red-400">
+        <X className="w-3.5 h-3.5" /> Denied
+      </div>
+    );
+  }
+  const stages = ["Waiting Approval", "Approved", "Paid"];
+  const current = status === "pending" ? 0 : (isPaid || isReceived) ? 2 : 1;
+  return (
+    <div className="mt-3 flex items-start" aria-label={`Status: ${stages[current]}`}>
+      {stages.map((label, i) => {
+        const done = i <= current;
+        return (
+          <div key={label} className="relative flex flex-1 flex-col items-center">
+            {i > 0 && (
+              <span className={`absolute top-2 left-[-50%] right-1/2 h-0.5 ${i <= current ? "bg-primary" : "bg-border"}`} />
+            )}
+            <div className={`relative z-10 flex h-4 w-4 items-center justify-center rounded-full border ${done ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-transparent"}`}>
+              {done && <Check className="h-2.5 w-2.5" />}
+            </div>
+            <span className={`mt-1 text-[10px] leading-tight text-center ${i === current ? "font-semibold text-foreground" : done ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
+              {label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CompSheetButton({ compId, label = "Comp PDF" }: { compId: number; label?: string }) {
   return (
     <button
@@ -652,6 +687,7 @@ export default function CompRequests() {
                       </div>
                     )}
                   </div>
+                  <CompStageTracker status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
                   <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
                     <CompSheetButton compId={r.id} label="Full PDF for payout" />
@@ -725,6 +761,7 @@ export default function CompRequests() {
                     )}
                   </div>
                 </div>
+                <CompStageTracker status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
                 <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                   <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
                   <CompSheetButton compId={r.id} />

@@ -2294,6 +2294,28 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN last_reminder_at TEXT`); } catch {}
 
+  // One-time: any comp requests that CLRs had saved as drafts are promoted to
+  // "pending" (sent for approval) so they surface in the approval queue instead
+  // of sitting invisibly as unsent drafts. Runs once via migrations_applied.
+  try {
+    const db = storageExtra.getRawSqlite();
+    db.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const done = db.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'comp_drafts_to_pending_v1'`).get();
+    if (!done) {
+      const nowIso = new Date().toISOString();
+      const info = db.prepare(`
+        UPDATE comp_requests
+        SET status = 'pending',
+            requested_at = COALESCE(requested_at, ?),
+            approval_token = COALESCE(approval_token, lower(hex(randomblob(24)))),
+            updated_at = ?
+        WHERE status = 'draft'
+      `).run(nowIso, nowIso);
+      db.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run('comp_drafts_to_pending_v1', nowIso);
+      if ((info.changes as number) > 0) console.log(`[migration] comp_drafts_to_pending_v1: promoted ${info.changes} saved comp request(s) to pending`);
+    }
+  } catch (e: any) { console.error('comp_drafts_to_pending_v1 failed:', e?.message ?? e); }
+
   // ── comp_attachments migration ───────────────────────────────────────────────
   // Receipts / files attached to a comp request. Stored as base64 in SQLite (the
   // DB lives on a persistent Railway volume). Auto-purged after ~1 year by a cron.
