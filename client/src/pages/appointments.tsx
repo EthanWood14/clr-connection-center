@@ -775,7 +775,12 @@ export default function Appointments() {
     mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
       setPendingCompleteId(id);
       const payload: Record<string, any> = { outcomeType: type, followUpDate: null };
-      if (type === "transfer") payload.transferType = "appointment";
+      if (type === "transfer") {
+        payload.transferType = "appointment";
+        // Record the transfer on the day it's actually marked complete, not the
+        // day the appointment was originally booked/scheduled.
+        payload.date = businessTodayClient();
+      }
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
@@ -794,7 +799,9 @@ export default function Appointments() {
   const quickCompleteMutation = useMutation({
     mutationFn: (id: number) => {
       setPendingCompleteId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", transferType: "appointment", followUpDate: null });
+      // Record the transfer on the day it's marked complete, not the day the
+      // appointment was originally booked/scheduled.
+      return apiRequest("PATCH", `/api/outcomes/${id}`, { outcomeType: "transfer", transferType: "appointment", followUpDate: null, date: businessTodayClient() });
     },
     onSuccess: () => {
       refreshAll();
