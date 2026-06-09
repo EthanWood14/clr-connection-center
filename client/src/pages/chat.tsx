@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -41,10 +41,32 @@ function avatarColor(name: string) {
 }
 
 export default function Chat() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const chatMuted = !!(user as any)?.muteChatNotifications;
+  const [muting, setMuting] = useState(false);
+  async function toggleChatMute() {
+    const nextMuted = !chatMuted;
+    setMuting(true);
+    try {
+      const r = await fetch("/api/users/me/mute-chat", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ muted: nextMuted }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Failed");
+      await refetchUser();
+      toast({
+        title: nextMuted ? "Chat notifications muted" : "Chat notifications on",
+        description: nextMuted ? "No in-app, push, or email alerts for new chat messages." : "You'll be alerted about new chat messages again.",
+      });
+    } catch (e: any) {
+      toast({ title: "Couldn't update", description: e?.message ?? "Try again.", variant: "destructive" });
+    } finally {
+      setMuting(false);
+    }
+  }
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -133,7 +155,17 @@ export default function Chat() {
           <span>Home</span>
         </Link>
         <h1 className="absolute left-1/2 -translate-x-1/2 text-sm font-semibold">Team Chat</h1>
-        <div className="w-16" aria-hidden />
+        <button
+          type="button"
+          onClick={toggleChatMute}
+          disabled={muting}
+          aria-label={chatMuted ? "Unmute chat notifications" : "Mute chat notifications"}
+          title={chatMuted ? "Chat notifications muted (in-app, push & email)" : "Mute chat notifications (in-app, push & email)"}
+          className="flex items-center gap-1 text-sm font-medium px-2 py-1 -mr-1 rounded hover:bg-sidebar-foreground/10 transition-colors"
+          data-testid="chat-mute-toggle-mobile"
+        >
+          {chatMuted ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+        </button>
       </div>
 
       <div className="flex flex-col flex-1 min-h-0 max-w-3xl w-full mx-auto p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -151,6 +183,18 @@ export default function Chat() {
           </h1>
           <p className="text-xs text-muted-foreground">All users · Updates every 3 seconds</p>
         </div>
+        <Button
+          variant={chatMuted ? "default" : "outline"}
+          size="sm"
+          onClick={toggleChatMute}
+          disabled={muting}
+          className="gap-1.5 shrink-0"
+          title={chatMuted ? "Chat notifications are muted (in-app, push & email). Click to unmute." : "Mute chat notifications (in-app, push & email)"}
+          data-testid="chat-mute-toggle"
+        >
+          {chatMuted ? <BellOff className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
+          {chatMuted ? "Muted" : "Mute"}
+        </Button>
       </div>
       {/* Message list */}
       <div

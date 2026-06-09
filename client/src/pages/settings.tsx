@@ -1486,7 +1486,7 @@ function NotificationsCard() {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">
             <p className="text-sm font-medium">Chat Notifications</p>
-            <p className="text-xs text-muted-foreground">Alerts for new team chat messages. Turn off to mute chat notifications.</p>
+            <p className="text-xs text-muted-foreground">Alerts for new team chat messages — in-app, push, and email. Turn off to mute all of them. (You can also mute this right from the Chat page.)</p>
           </div>
           <Switch checked={chatOn} onCheckedChange={(v) => saveMute("chat", v)} data-testid="toggle-chat-notifications" />
         </div>
