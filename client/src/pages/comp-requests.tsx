@@ -369,7 +369,7 @@ export default function CompRequests() {
   const { data: team = [], isLoading: teamLoading } = useQuery<CompItem[]>({
     queryKey: ["/api/comp", "team"],
     queryFn: () => apiRequest("GET", "/api/comp"),
-    enabled: isAdmin,
+    enabled: isManager,
   });
 
   function refresh() { queryClient.invalidateQueries({ queryKey: ["/api/comp"] }); }
@@ -692,11 +692,11 @@ export default function CompRequests() {
         </CardContent>
       </Card>
 
-      {/* Manager management — see + mark who can approve */}
+      {/* Manager management — see + mark who can approve (admins only) */}
       {isAdmin && <ManagersPanel />}
 
       {/* Manager: team comp requests */}
-      {isAdmin && (
+      {isManager && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -760,6 +760,19 @@ export default function CompRequests() {
                           </Button>
                         </div>
                       </div>
+                    )}
+                    {r.status === "approved" && (
+                      <label className="flex items-center gap-2 text-xs cursor-pointer shrink-0" title="Mark when this reimbursement has been paid out">
+                        <span className={r.isPaid ? "text-sky-600 font-medium" : "text-muted-foreground"}>
+                          {r.isPaid ? "Paid out" : "Mark paid out"}
+                        </span>
+                        <Switch
+                          checked={r.isPaid}
+                          onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, paid: v })}
+                          disabled={fulfillMutation.isPending}
+                          data-testid={"team-switch-paid-" + r.id}
+                        />
+                      </label>
                     )}
                   </div>
                   <CompStageTracker status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />

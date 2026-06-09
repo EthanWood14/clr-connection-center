@@ -4645,7 +4645,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const mineOnly = !isCompAdmin(userId) || req.query.scope === "mine";
+    const mineOnly = !isCompManager(userId) || req.query.scope === "mine";
     try {
       const db = storageExtra.getRawSqlite();
       const nameById = compNameMap();
@@ -4870,7 +4870,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.post("/api/comp/:id/decision", requireAuth, (req: any, res) => {
-    if (!isCompAdmin(Number(req.session_user?.userId))) return res.status(403).json({ error: "Admin only" });
+    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers/admins only" });
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const reviewerId = Number(sess?.userId);
@@ -4883,6 +4883,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const db = storageExtra.getRawSqlite();
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
+      // A manager can't approve/deny their own comp request (admins/super-admins can).
+      if (existing.user_id === reviewerId && !isCompAdmin(reviewerId)) {
+        return res.status(403).json({ error: "You can't approve or deny your own comp request." });
+      }
       db.prepare("UPDATE comp_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
       const nameById = compNameMap();
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
@@ -4920,7 +4924,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
-      if (!isOwner && !isCompAdmin(userId)) return res.status(403).json({ error: "Not your comp request." });
+      if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
       if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked paid or received." });
       const now = new Date().toISOString();
       if (hasPaid) {
@@ -4965,7 +4969,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const item = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(compId, orgId) as any;
     if (!item) return { item: null, canView: false, canEdit: false };
     const isOwner = item.user_id === userId;
-    const adm = isCompAdmin(userId);
+    const adm = isCompManager(userId);
     const canView = isOwner || adm;
     const canEdit = isOwner && (item.status === "draft" || item.status === "pending");
     return { item, canView, canEdit: canEdit || adm };
