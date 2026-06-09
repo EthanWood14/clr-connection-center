@@ -1156,6 +1156,21 @@ function getNmlsPeriodKey(refDate?: Date): string {
   return `${year}-${String(blockStart + 1).padStart(2, "0")}`;
 }
 
+// Next time the automatic check-reminder cron ("0 8 1 1,3,5,7,9,11 *") will
+// fire: the 1st of the next odd month (Jan/Mar/May/Jul/Sep/Nov) at 08:00 UTC.
+// Keep this in sync with the cron.schedule definition below.
+function getNextNmlsCheckDate(now: Date = new Date()): Date {
+  const months = [0, 2, 4, 6, 8, 10]; // 0-indexed Jan, Mar, May, Jul, Sep, Nov
+  const year = now.getUTCFullYear();
+  for (let addYear = 0; addYear <= 1; addYear++) {
+    for (const m of months) {
+      const d = new Date(Date.UTC(year + addYear, m, 1, 8, 0, 0));
+      if (d.getTime() > now.getTime()) return d;
+    }
+  }
+  return new Date(Date.UTC(year + 2, 0, 1, 8, 0, 0));
+}
+
 function triggerNmlsChecks() {
   const periodKey = getNmlsPeriodKey();
   const activeLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active" && lo.nmlsId);
@@ -7394,7 +7409,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const daysOverdue = Math.floor((Date.now() - assignedAt.getTime()) / 86400000);
         return { ...c, lo, daysOverdue };
       });
-    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7 });
+    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7, nextCheckAt: getNextNmlsCheckDate().toISOString() });
   });
 
   // Confirm NMLS check for an LO

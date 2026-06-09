@@ -35,6 +35,7 @@ export default function NmlsChecks() {
 
   const checks: any[] = data?.checks ?? [];
   const escalationDays: number = data?.escalationDays ?? 7;
+  const nextCheckAt: string | null = data?.nextCheckAt ?? null;
 
   return (
     <div className="p-6 space-y-6 max-w-2xl mx-auto">
@@ -67,6 +68,22 @@ export default function NmlsChecks() {
           Open NMLS Consumer Access
         </a>
       </div>
+
+      {/* Next automatic check reminder countdown */}
+      {nextCheckAt && (
+        <div className="flex items-center gap-2 rounded-lg border bg-card px-4 py-2.5 text-sm">
+          <Clock className="w-4 h-4 shrink-0 text-muted-foreground" />
+          <span className="text-muted-foreground">
+            Next check reminder goes out{" "}
+            <span className="font-semibold text-foreground">
+              {formatDistanceToNow(new Date(nextCheckAt), { addSuffix: true })}
+            </span>
+            <span className="text-muted-foreground/80">
+              {" "}— {new Date(nextCheckAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+            </span>
+          </span>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-3">
