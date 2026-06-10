@@ -4112,6 +4112,84 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
+  // ── LOA transfer queue: which LOA is next in line to accept a transfer ──────
+  // Ranked most needy → least needy, mirroring the LO assignment algorithm
+  // (recency + frequency + 90-day transfer count, fewer/longer-ago = more needy)
+  // and reusing the same configurable weights from algorithm settings.
+  app.get("/api/loan-officer-assistants/queue", requireAuth, (req: any, res) => {
+    const sqliteDb = storageExtra.getRawSqlite();
+    const today = businessTodayForRequest(req, sqliteDb);
+    const settings = storage.getAlgorithmSettings();
+
+    // Eligible LOAs: active rows under an active, non-snoozed LO.
+    const los = storage.getLoanOfficers();
+    const loById = new Map<number, any>(los.map((lo: any) => [lo.id, lo]));
+    const isParentLoActive = (lo: any) => {
+      if (!lo) return false;
+      const status = String(lo.internalStatus ?? lo.internal_status ?? "active").toLowerCase();
+      if (status !== "active") return false;
+      const sn = lo.snoozeUntil ?? lo.snooze_until;
+      if (sn && new Date(sn).getTime() > Date.now()) return false;
+      return true;
+    };
+    const loas = (storageExtra.getLoanOfficerAssistants() as any[]).filter(a =>
+      isParentLoActive(loById.get(a.loId))
+    );
+
+    // Per-LOA transfer stats from outcomes tagged with loa_id.
+    const xfer90Start = addIsoDays(today, -89);
+    const rows = sqliteDb.prepare(`
+      SELECT loa_id AS loaId,
+             COUNT(*) AS total,
+             SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS recent90,
+             MAX(date) AS lastTransferDate
+      FROM lead_outcomes
+      WHERE loa_id IS NOT NULL AND outcome_type = 'transfer'
+      GROUP BY loa_id
+    `).all(xfer90Start) as any[];
+    const statsByLoa = new Map<number, any>(rows.map(r => [r.loaId, r]));
+    const maxXfers = Math.max(1, ...rows.map(r => r.recent90 || 0));
+    const todayMs = new Date(today).getTime();
+
+    const ranked = loas
+      .map(a => {
+        const s = statsByLoa.get(a.id);
+        const lastTransferDate: string | null = s?.lastTransferDate ?? null;
+        const total = s?.total ?? 0;
+        const recent90 = s?.recent90 ?? 0;
+        const daysSince = lastTransferDate
+          ? Math.max(0, Math.floor((todayMs - new Date(lastTransferDate).getTime()) / 86400000))
+          : null;
+        // Same shape as generateRankings(): recency + frequency + recent transfers
+        // ('fewer' direction — the queue always favors whoever has had the least).
+        const daysSinceNorm = Math.min((daysSince ?? 999) / 30, 1);
+        const freqScore = 1 - Math.min(total / 100, 1);
+        const recentXferScore = 1 - recent90 / maxXfers;
+        const neverWorkedBonus = lastTransferDate ? 0 : 0.05;
+        const score =
+          settings.weightDaysSinceWorked * daysSinceNorm +
+          settings.weightFrequency * freqScore +
+          (settings.weightRecentTransfers ?? 0.10) * recentXferScore +
+          neverWorkedBonus +
+          ((a.id % 100) / 10000); // deterministic tiebreak (stable across runs same day)
+        return {
+          id: a.id,
+          fullName: a.fullName,
+          loId: a.loId,
+          loName: (loById.get(a.loId) as any)?.fullName ?? null,
+          score: Math.round(score * 1000) / 1000,
+          daysSinceLastTransfer: daysSince,
+          lastTransferDate,
+          transfers90: recent90,
+          totalTransfers: total,
+        };
+      })
+      .sort((x, y) => y.score - x.score)
+      .map((r, i) => ({ rank: i + 1, ...r }));
+
+    res.json(ranked);
+  });
+
   app.get("/api/loan-officers", (req, res) => {
     const los = storage.getLoanOfficers();
     // Compute 90-day transfer counts for score preview
@@ -11277,7 +11355,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         `SELECT 1 FROM audit_logs WHERE action = ? LIMIT 1`
       ).get(MARKER_ACTION) as any;
       if (existing) {
-        console.log("[bonzo-autorestore] marker present \u2014 skipping");
+        console.log("[bonzo-autorestore] marker present — skipping");
         return;
       }
       const RESTORE_MAP: Record<string, string> = {

@@ -14,6 +14,7 @@ import {
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
   ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
   MessageSquare, Zap,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { GoalCelebration, useGoalCelebration } from "@/components/goal-celebration";
@@ -295,6 +296,7 @@ function TabAssignments({ todayAssignments, generateAssignments, losData }: any)
   });
 
   return (
+    <div className="space-y-6">
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Today's list */}
       <Card>
@@ -368,6 +370,88 @@ function TabAssignments({ todayAssignments, generateAssignments, losData }: any)
         </CardContent>
       </Card>
     </div>
+
+      <LoaTransferQueueWidget />
+    </div>
+  );
+}
+
+// ── Dashboard widget: LOA Transfer Queue (who's next in line) ─────────────────
+type LoaQueueEntry = {
+  rank: number; id: number; fullName: string; loId: number; loName: string | null;
+  score: number; daysSinceLastTransfer: number | null; lastTransferDate: string | null;
+  transfers90: number; totalTransfers: number;
+};
+
+function LoaTransferQueueWidget() {
+  const { data: queue = [], isLoading } = useQuery<LoaQueueEntry[]>({
+    queryKey: ["/api/loan-officer-assistants/queue"],
+  });
+  const upNext = queue[0];
+  const rest = queue.slice(1);
+  const lastLabel = (e: LoaQueueEntry) =>
+    e.daysSinceLastTransfer == null ? "No transfers yet"
+    : e.daysSinceLastTransfer === 0 ? "Last transfer today"
+    : `Last transfer ${e.daysSinceLastTransfer}d ago`;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ArrowLeftRight className="w-4 h-4" /> LOA Transfer Queue
+          <HelpIcon>
+            Which Loan Officer Assistant is due up to accept a transfer. Ranked most
+            needy → least needy using the same style of algorithm as LO assignments:
+            longest since last transfer, fewest transfers overall, and fewest in the
+            last 90 days rank higher. Logging a transfer with an LOA tagged moves them
+            down the queue automatically.
+          </HelpIcon>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-10" />)}</div>
+        ) : !upNext ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">
+            No active LOAs yet — add assistants to LOs in the <Link href="/directory" className="text-primary hover:underline">Directory</Link>.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            <div
+              className="flex items-center justify-between rounded-lg border border-amber-300/60 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-900/15 px-3 py-2.5"
+              data-testid="loa-queue-up-next"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Badge className="pill-gold text-[10px] uppercase tracking-wide shrink-0">Up next</Badge>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{upNext.fullName}</p>
+                  <p className="text-xs text-muted-foreground truncate">LOA for {upNext.loName ?? "—"}</p>
+                </div>
+              </div>
+              <div className="text-right shrink-0 ml-2">
+                <p className="text-xs text-muted-foreground">{lastLabel(upNext)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">{upNext.transfers90} in last 90d</p>
+              </div>
+            </div>
+            {rest.map(e => (
+              <div key={e.id} className="flex items-center justify-between py-2 border-b last:border-0" data-testid={`loa-queue-row-${e.id}`}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-xs font-mono text-muted-foreground w-5 text-right shrink-0">#{e.rank}</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{e.fullName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{e.loName ?? "—"}</p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 ml-2">
+                  <p className="text-xs text-muted-foreground">{lastLabel(e)}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{e.transfers90} in last 90d</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
