@@ -5562,6 +5562,58 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(assignment);
   });
 
+  // ── Reassign assignments to another CLR (admins + managers) ─────────────────
+  // Body: { ids: number[], assistantId: number }. Moved rows are appended to the
+  // end of the target CLR's list for that date (assistant_rank = max + 1) so the
+  // target's existing top-to-bottom order is not disturbed. Each move is audited.
+  app.post("/api/assignments/reassign", (req, res) => {
+    const raw = (req as any).signedCookies?.[COOKIE_NAME];
+    const session = raw ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
+    const me = session?.userId ? storage.getUserById(session.userId) : null;
+    const isMgr = !!(me && (me.role === "admin" || ((me as any).isManager ?? (me as any).is_manager) || ((me as any).superAdmin ?? (me as any).super_admin)));
+    if (!isMgr) return res.status(403).json({ error: "Only admins and managers can reassign leads." });
+
+    const ids: number[] = Array.isArray(req.body?.ids)
+      ? req.body.ids.map((n: any) => parseInt(n)).filter((n: number) => Number.isFinite(n))
+      : [];
+    const assistantId = parseInt(req.body?.assistantId);
+    if (ids.length === 0 || !Number.isFinite(assistantId)) {
+      return res.status(400).json({ error: "ids (number[]) and assistantId are required" });
+    }
+    const target = storage.getUserById(assistantId);
+    const targetActive = !!(target && ((target as any).isActive ?? (target as any).is_active));
+    if (!targetActive) return res.status(400).json({ error: "Target CLR not found or inactive" });
+
+    let moved = 0;
+    const skipped: number[] = [];
+    for (const id of ids) {
+      const existing = storage.getAssignmentById(id) as any;
+      if (!existing) { skipped.push(id); continue; }
+      const fromId = existing.assistantId ?? existing.assistant_id;
+      if (fromId === assistantId) { skipped.push(id); continue; }
+      const date = existing.assignmentDate ?? existing.assignment_date;
+      // Append to the end of the target's list for that date
+      const targetRows = (storage.getDailyAssignments(date) as any[])
+        .filter(a => (a.assistantId ?? a.assistant_id) === assistantId);
+      const nextRank = targetRows.reduce((m, a) => Math.max(m, a.assistantRank ?? a.assistant_rank ?? 0), 0) + 1;
+      const row = storage.reassignAssignment(id, assistantId, nextRank);
+      if (!row) { skipped.push(id); continue; }
+      moved++;
+      const lo = storage.getLoanOfficerById(existing.loId ?? existing.lo_id);
+      const fromUser = fromId != null ? storage.getUserById(fromId) : null;
+      audit({
+        userId: me!.id,
+        userName: me!.name,
+        action: "reassign",
+        entityType: "assignment",
+        entityId: id,
+        entityLabel: lo?.fullName ?? `Assignment #${id}`,
+        details: JSON.stringify({ date, from: fromUser?.name ?? fromId ?? null, to: (target as any).name }),
+      });
+    }
+    res.json({ ok: true, moved, skipped });
+  });
+
   // ── Lead Outcomes ────────────────────────────────────────────────────────────
   app.get("/api/outcomes", (req, res) => {
     const { startDate, endDate, assistantId, loId } = req.query;

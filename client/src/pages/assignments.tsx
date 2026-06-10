@@ -17,7 +17,7 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles,
-  Star, StickyNote, Sunrise, Sun, Sunset, Clock, GitBranch
+  Star, StickyNote, Sunrise, Sun, Sunset, Clock, GitBranch, ArrowRightLeft
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -264,6 +264,11 @@ function StatusDialog({ open, assignment, onClose, onConfirm, isPending }: Statu
   );
 }
 
+interface ReassignTarget {
+  id: number;
+  name: string;
+}
+
 interface AssignmentRowProps {
   assignment: any;
   onLogStatus: (a: any) => void;
@@ -273,9 +278,11 @@ interface AssignmentRowProps {
   pref?: LoPref;
   onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
   todayAvailabilitySlot?: string;
+  reassignTargets?: ReassignTarget[];
+  onReassign?: (assignmentId: number, assistantId: number) => void;
 }
 
-function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref, todayAvailabilitySlot }: AssignmentRowProps) {
+function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref, todayAvailabilitySlot, reassignTargets, onReassign }: AssignmentRowProps) {
   const cfg = STATUS_CONFIG[assignment.status] ?? STATUS_CONFIG.recommended;
   const Icon = cfg.icon;
   const timeBadge = pref?.preferredTime ? PREFERRED_TIME_LABEL[pref.preferredTime] : null;
@@ -397,6 +404,23 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
         <Badge className={`text-xs px-2 py-0.5 ${cfg.color} flex items-center gap-1`}>
           <Icon className="w-3 h-3" />{cfg.label}
         </Badge>
+        {onReassign && reassignTargets && reassignTargets.length > 0 && (
+          <Select value="" onValueChange={v => onReassign(assignment.id, Number(v))}>
+            <SelectTrigger
+              className="h-7 w-auto gap-1 px-2 text-xs opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 transition-opacity"
+              title="Move this lead to another CLR"
+              data-testid={`select-reassign-${assignment.id}`}
+            >
+              <ArrowRightLeft className="w-3 h-3" />
+              <span className="hidden sm:inline">Move</span>
+            </SelectTrigger>
+            <SelectContent align="end">
+              {reassignTargets.map(t => (
+                <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -422,6 +446,8 @@ interface AssistantGroupProps {
   loPrefs?: LoPrefMap;
   onSavePref?: (loId: number, p: { notes: string; preferredTime: LoPref["preferredTime"]; isPinned: boolean }) => void;
   todayAvailability?: Record<number, string>;
+  reassignTargets?: ReassignTarget[];
+  onReassign?: (assignmentId: number, assistantId: number) => void;
 }
 
 function AssistantGroup({
@@ -435,6 +461,8 @@ function AssistantGroup({
   loPrefs,
   onSavePref,
   todayAvailability,
+  reassignTargets,
+  onReassign,
 }: AssistantGroupProps) {
   const worked = assignments.filter(a => a.status === "worked").length;
   const total = assignments.length;
@@ -491,6 +519,8 @@ function AssistantGroup({
                 pref={loPrefs?.[loId]}
                 onSavePref={onSavePref}
                 todayAvailabilitySlot={todayAvailability?.[loId]}
+                reassignTargets={reassignTargets?.filter(t => t.id !== (a.assistantId ?? a.assistant_id))}
+                onReassign={onReassign}
               />
             );
           });
@@ -505,9 +535,11 @@ interface BulkActionBarProps {
   onMarkStatus: (status: string) => void;
   onDeselectAll: () => void;
   isBusy: boolean;
+  reassignTargets?: ReassignTarget[];
+  onReassign?: (assistantId: number) => void;
 }
 
-function BulkActionBar({ selectedCount, onMarkStatus, onDeselectAll, isBusy }: BulkActionBarProps) {
+function BulkActionBar({ selectedCount, onMarkStatus, onDeselectAll, isBusy, reassignTargets, onReassign }: BulkActionBarProps) {
   if (selectedCount === 0) return null;
 
   return (
@@ -555,6 +587,28 @@ function BulkActionBar({ selectedCount, onMarkStatus, onDeselectAll, isBusy }: B
         <ArrowRight className="w-3.5 h-3.5" />
         <span>Skipped</span>
       </button>
+
+      {/* Reassign to another CLR (admins + managers only) */}
+      {onReassign && reassignTargets && reassignTargets.length > 0 && (
+        <>
+          <div className="w-px h-5 bg-white/20 mx-0.5" />
+          <Select value="" onValueChange={v => onReassign(Number(v))} disabled={isBusy}>
+            <SelectTrigger
+              className="h-8 w-auto rounded-full bg-white/10 hover:bg-white/20 border-white/20 text-white text-xs font-medium px-3 gap-1.5 focus:ring-0 focus:ring-offset-0 disabled:opacity-50"
+              data-testid="bulk-action-reassign"
+              title="Reassign selected leads to another CLR"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Reassign to…</span>
+            </SelectTrigger>
+            <SelectContent>
+              {reassignTargets.map(t => (
+                <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </>
+      )}
 
       <div className="w-px h-5 bg-white/20 mx-0.5" />
 
@@ -1047,6 +1101,42 @@ export default function Assignments() {
     onError: () => toast({ title: "Error updating assignment", variant: "destructive" }),
   });
 
+  // ── Reassign leads to another CLR (admins + managers) ──────────────────────
+  const canReassign = !!(user && (user.role === "admin" || (user as any).isManager || (user as any).superAdmin));
+
+  const reassignTargets: { id: number; name: string }[] = useMemo(() => {
+    if (!canReassign) return [];
+    return (users as any[])
+      .filter(u =>
+        (u.isActive ?? u.is_active) &&
+        (u.role === "assistant" || (u.role === "admin" && (u.isClr ?? u.is_clr)))
+      )
+      .map(u => ({ id: u.id, name: u.name }));
+  }, [users, canReassign]);
+
+  const reassignMutation = useMutation({
+    mutationFn: ({ ids, assistantId }: { ids: number[]; assistantId: number }) =>
+      apiRequest("POST", "/api/assignments/reassign", { ids, assistantId }),
+    onSuccess: (data: any, { ids, assistantId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assignments", currentDate] });
+      setSelectedIds(new Set());
+      const moved = data?.moved ?? ids.length;
+      const name = (users as any[]).find(u => u.id === assistantId)?.name ?? "CLR";
+      toast({ title: `${moved} lead${moved === 1 ? "" : "s"} moved to ${name}` });
+    },
+    onError: (e: any) =>
+      toast({ title: "Reassign failed", description: e?.message ?? "Unknown error", variant: "destructive" }),
+  });
+
+  const handleRowReassign = (assignmentId: number, assistantId: number) =>
+    reassignMutation.mutate({ ids: [assignmentId], assistantId });
+
+  const handleBulkReassign = (assistantId: number) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    reassignMutation.mutate({ ids, assistantId });
+  };
+
   const handleDateChange = (delta: number) => {
     const d = new Date(currentDate + "T00:00:00");
     d.setDate(d.getDate() + delta);
@@ -1341,6 +1431,8 @@ export default function Assignments() {
                 loPrefs={loPrefs}
                 onSavePref={handleSavePref}
                 todayAvailability={todayAvailability}
+                reassignTargets={canReassign ? reassignTargets : undefined}
+                onReassign={canReassign ? handleRowReassign : undefined}
               />
             );
           })}
@@ -1366,6 +1458,8 @@ export default function Assignments() {
                 loPrefs={loPrefs}
                 onSavePref={handleSavePref}
                 todayAvailability={todayAvailability}
+                reassignTargets={canReassign ? reassignTargets : undefined}
+                onReassign={canReassign ? handleRowReassign : undefined}
               />
             );
           })}
@@ -1448,7 +1542,9 @@ export default function Assignments() {
         selectedCount={selectedIds.size}
         onMarkStatus={handleBulkMarkStatus}
         onDeselectAll={handleDeselectAll}
-        isBusy={isBulkPending}
+        isBusy={isBulkPending || reassignMutation.isPending}
+        reassignTargets={canReassign ? reassignTargets : undefined}
+        onReassign={canReassign ? handleBulkReassign : undefined}
       />
 
       {/* Admin Regenerate Override Dialog */}

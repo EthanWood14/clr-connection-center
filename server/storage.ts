@@ -993,6 +993,7 @@ export interface IStorage {
   getDailyAssignments(date: string): DailyAssignment[];
   createDailyAssignments(assignments: InsertDailyAssignment[]): DailyAssignment[];
   updateAssignmentStatus(id: number, status: string, notes?: string): DailyAssignment | undefined;
+  reassignAssignment(id: number, assistantId: number, assistantRank: number): DailyAssignment | undefined;
   getAssignmentById(id: number): DailyAssignment | undefined;
   clearDailyAssignments(date: string): void;
 
@@ -1208,6 +1209,14 @@ export class Storage implements IStorage {
       if (!existing) return undefined as any;
     }
     return db.update(dailyAssignments).set({ status, notes }).where(eq(dailyAssignments.id, id)).returning().get();
+  }
+  reassignAssignment(id: number, assistantId: number, assistantRank: number) {
+    const oid = currentOrgId();
+    if (oid != null) {
+      const existing = sqlite.prepare(`SELECT a.id FROM daily_assignments a INNER JOIN loan_officers lo ON lo.id = a.lo_id WHERE a.id = ? AND lo.org_id = ?`).get(id, oid);
+      if (!existing) return undefined as any;
+    }
+    return db.update(dailyAssignments).set({ assistantId, assistantRank }).where(eq(dailyAssignments.id, id)).returning().get();
   }
   getAssignmentById(id: number) {
     const oid = currentOrgId();
