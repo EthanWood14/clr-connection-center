@@ -5399,6 +5399,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE is_active = 1
         AND org_id = ?
         AND (role = 'assistant' OR (role = 'admin' AND is_clr = 1))
+        AND in_daily_assignments = 1
         AND id != ?
     `).all(callingUser.orgId ?? 1, callingUser.userId) as any[];
 
@@ -5426,9 +5427,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    // in_daily_assignments = 0 → CLR opted out of daily assignment generation only
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
-    if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
+    if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
     // Check what's already worked today (existing is already fetched above; at this point it's empty)
     const workedToday = existing.filter(a => a.status === "worked").map(a => a.loId);
@@ -5509,9 +5511,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         storageExtra.setMonthlyAssignments(month, rows);
       }
       const monthlyMap = storageExtra.getMonthlyAssignments(month);
-      // Use monthly assignment order, filter to top-ranked LOs that are eligible today
+      // Use monthly assignment order, filter to top-ranked LOs that are eligible today.
+      // Also drop rows pointing at CLRs no longer in the daily-assignment pool
+      // (excluded via in_daily_assignments, deactivated, etc.).
       const eligibleIds = new Set(topRanked.map(r => r.lo.id));
-      const orderedRows = monthlyMap.filter((r: any) => eligibleIds.has(r.lo_id || r.loId));
+      const pooledAssistantIds = new Set(assistants.map(a => a.id));
+      const orderedRows = monthlyMap.filter((r: any) =>
+        eligibleIds.has(r.lo_id || r.loId) && pooledAssistantIds.has(r.assistant_id || r.assistantId));
       orderedRows.forEach((r: any, index: number) => {
         const assistantId = r.assistant_id || r.assistantId;
         const loId = r.lo_id || r.loId;
@@ -8103,8 +8109,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/monthly-assignments/shuffle", requireAuth, (req, res) => {
     const month = (req.body.month as string) || new Date().toISOString().slice(0, 7);
     const activeLos = storage.getLoanOfficers().filter(lo => lo.internalStatus === "active");
-    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
-    if (!assistants.length) return res.status(400).json({ error: "No active assistants" });
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    if (!assistants.length) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
     // Shuffle LOs randomly then distribute round-robin
     const shuffled = [...activeLos].sort(() => Math.random() - 0.5);
     const rows = shuffled.map((lo, i) => ({ assistantId: assistants[i % assistants.length].id, loId: lo.id }));
@@ -8145,8 +8151,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
-    if (assistants.length === 0) return res.status(400).json({ error: "No active assistants" });
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
     // Clear ALL of today's assignments (override wipes everything)
     storage.clearDailyAssignments(date);

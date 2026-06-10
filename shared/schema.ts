@@ -38,6 +38,10 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("assistant"), // admin | assistant | viewer
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   isClr: integer("is_clr", { mode: "boolean" }).notNull().default(true), // admins: true = also a CLR, included in assignments
+  // false = skip this CLR in daily assignment generation (auto-generate, regenerate,
+  // monthly shuffle). They remain a CLR everywhere else: EODs, dashboards,
+  // leaderboard, reports, manual reassign/pre-configure targets.
+  inDailyAssignments: integer("in_daily_assignments", { mode: "boolean" }).notNull().default(true),
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
   isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),

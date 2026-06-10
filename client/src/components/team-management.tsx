@@ -65,6 +65,7 @@ interface User {
   role: UserRole;
   isActive: boolean;
   isClr: boolean;
+  inDailyAssignments: boolean;
   createdAt: string;
 }
 
@@ -96,6 +97,9 @@ function UserDialog({
   const isEditing = editUser !== null;
   const [sendWelcome, setSendWelcome] = useState(true);
   const [isClr, setIsClr] = useState(editUser?.isClr ?? true);
+  // false = this CLR is skipped by daily assignment generation (still does EODs,
+  // dashboards, reports, and can receive manually reassigned leads).
+  const [inAssignments, setInAssignments] = useState(editUser?.inDailyAssignments ?? true);
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -108,7 +112,7 @@ function UserDialog({
   const watchedRole = form.watch("role");
 
   const createMutation = useMutation({
-    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, sendWelcome }),
+    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, inDailyAssignments: inAssignments, sendWelcome }),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       if (res?.emailRequested) {
@@ -128,6 +132,7 @@ function UserDialog({
       form.reset();
       setSendWelcome(true);
       setIsClr(true);
+      setInAssignments(true);
     },
     onError: (err: Error) =>
       toast({ title: "Failed to add team member", description: err.message, variant: "destructive" }),
@@ -135,7 +140,7 @@ function UserDialog({
 
   const updateMutation = useMutation({
     mutationFn: (data: UserFormValues) => {
-      const payload: any = { name: data.name, email: data.email, role: data.role, isClr };
+      const payload: any = { name: data.name, email: data.email, role: data.role, isClr, inDailyAssignments: inAssignments };
       if (data.newPassword?.trim()) payload.newPassword = data.newPassword.trim();
       return apiRequest("PATCH", `/api/users/${editUser!.id}`, payload);
     },
@@ -236,6 +241,18 @@ function UserDialog({
                   <p className="text-xs text-muted-foreground">Include this admin in daily assignment generation</p>
                 </div>
                 <Switch checked={isClr} onCheckedChange={setIsClr} />
+              </div>
+            )}
+            {/* Daily assignment opt-out — any CLR (assistant, or admin marked as CLR) */}
+            {(watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
+                <div>
+                  <p className="text-sm font-medium">Daily Assignments</p>
+                  <p className="text-xs text-muted-foreground">
+                    Include in daily assignment generation. When off, this CLR still submits EODs and appears in dashboards, reports, and leaderboards.
+                  </p>
+                </div>
+                <Switch checked={inAssignments} onCheckedChange={setInAssignments} data-testid="switch-in-daily-assignments" />
               </div>
             )}
             {!isEditing && (
@@ -414,6 +431,16 @@ export function TeamManagement() {
                         >
                           {user.role === "admin" ? (user.isClr ? "Admin (CLR)" : "Admin") : user.role}
                         </Badge>
+                        {(user.role === "assistant" || (user.role === "admin" && user.isClr)) &&
+                          user.inDailyAssignments === false && (
+                            <Badge
+                              variant="outline"
+                              className="text-xs font-medium bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700"
+                              data-testid={`badge-no-assignments-${user.id}`}
+                            >
+                              No daily assignments
+                            </Badge>
+                          )}
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
@@ -477,6 +504,7 @@ export function TeamManagement() {
       </Card>
 
       <UserDialog
+        key={editUser?.id ?? "new"}
         open={dialogOpen}
         onOpenChange={(open) => {
           setDialogOpen(open);

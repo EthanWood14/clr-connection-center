@@ -61,6 +61,7 @@ sqlite.exec(`
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN in_daily_assignments INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER`); } catch {}
