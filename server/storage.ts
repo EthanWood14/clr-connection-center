@@ -2750,7 +2750,7 @@ try {
 // Seed Ethan's real WCL script — runs once via migrations_applied table
 function seedEthanScript() {
   sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
-  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v4'`).get();
+  const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'ethan_wcl_script_v5'`).get();
   if (done) return;
 
   // Wipe only the default (shared) script — owner_id IS NULL. Personal CLR copies
@@ -2780,364 +2780,250 @@ function seedEthanScript() {
 
   // ── Script ────────────────────────────────────────────────────────────────
   const sid = sqlite.prepare(`INSERT INTO call_scripts (name, description, created_by) VALUES (?,?,?)`)
-    .run("WCL Cold Call Script v4", "West Capital Lending official CLR script — comprehensive refi/HELOC/cash-out lead handling with gatekeeper, denial history, and intent-to-move paths.", 1)
+    .run("WCL Cold Call Script v5", "West Capital Lending official CLR script — Ethan's conversational opener with cash-out qualifying, shopping/lender comparison, future, selling, wrong-person, and hostile paths.", 1)
     .lastInsertRowid as number;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OPENING
   // ══════════════════════════════════════════════════════════════════════════
   const nOpen = node(sid, null,
-    `Hi, is this [Borrower Name]? Great — [Borrower Name], good [morning/afternoon/evening]! This is [Your Name] calling from West Capital Lending. How are you doing today?\n\n[PAUSE — let them respond]\n\nThe reason I'm reaching out is we received an inquiry under your name for either a refinance or a Home Equity Line of Credit. I just wanted to take a couple of minutes to learn more about what you're hoping to accomplish and see if we can point you in the right direction. Is now an okay time?`,
-    `Warm, unhurried. Pause after their name — confidence. Always ask permission before diving in. If hesitant: "I promise I'll be quick and only stay on as long as it's worth your time."`,
+    `Hi, is this [Borrower Name]? Great — [Borrower Name], good [morning/afternoon/evening]! This is [Your Name] calling from West Capital Lending. How are you doing today?\n\n[PAUSE — let them respond]\n\nThe reason I'm reaching out is we received an inquiry under your name for either a refinance or a Home Equity Line of Credit. I just wanted to take a couple of minutes to learn more about what you're hoping to accomplish and see if we can point you in the right direction.`,
+    `Warm and unhurried. Pause after their name — confidence. Actually let them answer "how are you doing" before you give the reason for the call.`,
     1);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // GOAL DISCOVERY
+  // CASH OUT — QUALIFYING
   // ══════════════════════════════════════════════════════════════════════════
-  const nGoalDisc = node(sid, nOpen,
-    `Perfect. So first — help me understand what prompted you to fill out the inquiry. Are you looking to:\n\nA) Lower your monthly payment or interest rate (rate/term refi)\nB) Pull cash out of your home for a specific purpose — like home improvement, debt consolidation, or an investment (cash-out refi or HELOC)\nC) Both, or not sure yet?\n\n[LISTEN carefully — this determines your entire path]`,
-    `Most important question on the call. "Lower payment" → refi path. "Cash out," "debt consolidation," "renovation," "investing" → HELOC/cash-out path. "Not sure" → ask: "What problem are you trying to solve?" and use their answer to route them.`,
+  const nCashOut = node(sid, nOpen,
+    `Awesome! Can you confirm a few quick things for me:\n\n1) Your address\n2) How much you're looking to take out\n3) What it's for\n4) Ballpark credit score\n5) And your income?`,
+    `Work through it like a conversation, not a checklist. Purpose matters most — debt consolidation and renovation are the hottest hand-offs. If they hesitate on credit or income: "Even a range is fine — it doesn't impact anything at this stage."`,
     1);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PATH A: RATE/TERM REFI — QUALIFYING
+  // DIRECT TRANSFER
   // ══════════════════════════════════════════════════════════════════════════
-  const nQualRefi = node(sid, nGoalDisc,
-    `Great — so a lower rate or payment. Let me ask a few quick questions so we can see what we're working with:\n\n1. What's the property address?\n2. Roughly what do you think the home is worth today?\n3. What's your current loan balance?\n4. What's your current interest rate — do you know off the top of your head?\n5. What type of loan is it — conventional fixed, FHA, VA, or adjustable?\n6. Ballpark credit score — even a range is fine: excellent (740+), good (680–739), or fair (620–679)?\n\n[If they hesitate on credit]: Totally fine if you're not sure — it doesn't impact anything at this stage, I'm just trying to give you an accurate picture.`,
-    `Work through conversationally — not as a checklist. You need: address, home value, loan balance, current rate, loan type, credit range. Derived math: LTV = balance / value. If current rate is sub-6.5%, pivot to HELOC — don't push a refi that won't save them money. Red flag: balance > 97% of value = very limited options.`,
+  const nTransfer = node(sid, nCashOut,
+    `Perfect — that's everything I need. I'm going to connect you right now with [LO Name], our specialist for your area. I'm actually [LO Name]'s direct assistant, so I won't even put you on hold — I have them right here. It was a pleasure, [Borrower Name] — good luck!\n\n[BEFORE YOU HAND OFF — brief the LO]: "Hey [LO Name], I've got [Borrower Name] — looking to take out [amount] for [purpose], property at [address], credit around [range], income about [amount]."`,
+    `Smooth and confident — hesitation kills transfers. Pre-brief the LO every single time. If the LO isn't available, pivot straight to an appointment — never leave the borrower hanging.`,
     1);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PATH B: HELOC / CASH-OUT — QUALIFYING
+  // APPOINTMENT
   // ══════════════════════════════════════════════════════════════════════════
-  const nQualHeloc = node(sid, nGoalDisc,
-    `Got it — so you're looking to tap into some of that equity. Makes a lot of sense given how much home values have gone up. Let me ask a few things:\n\n1. What's the property address?\n2. Any idea what the home might be worth today?\n3. What's your current mortgage balance?\n4. What's your current rate and loan type (fixed, FHA, VA)?\n5. How much were you thinking of pulling out, and what's the goal — home improvement, debt consolidation, or something else?\n6. Credit score range — excellent, good, or fair?\n\n[HELOC vs. cash-out note for you]: If their current rate is below 6.5%, a HELOC almost always beats cash-out refi — it preserves their low first mortgage. If their rate is above 7%, cash-out refi might make sense depending on the amount needed. Don't explain this on the call — just gather the data and hand to the LO.`,
-    `Max cash available formula: (Home value × 80%) − current balance = available equity. Under 20% equity = limited HELOC options but FHA/VA streamline may still apply. Purpose matters: debt consolidation (high urgency, good candidate), renovation (warm), investment property (may need different product).`,
+  const nAppointment = node(sid, nCashOut,
+    `Totally understand — let me set up a quick call with [LO Name] instead, so they can give you their full attention.\n\nWhat works better for you — mornings or afternoons? And are weekdays or weekends easier?\n\n[GET SPECIFIC]: "Perfect — so let's put you down for [Day] at [Time]. The best number for you is the one I called today?"\n\nYou'll get a confirmation and a reminder before the call. Does that work?`,
+    `Get a specific day AND time — "sometime this week" is not an appointment. Confirm their number. Log it in Upcoming Appointments immediately.`,
     2);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // DIRECT TRANSFER — REFI PATH
+  // NOT SURE / NOT LOOKING ANYMORE
   // ══════════════════════════════════════════════════════════════════════════
-  const nTransferDirect = node(sid, nQualRefi,
-    `Perfect — I've got everything I need. I'm going to connect you right now with [LO Name], who is our specialist for your area and has access to all of our lender relationships to get you the sharpest pricing.\n\nI'm actually [LO Name]'s direct assistant — I won't even put you on hold. I have them right here. I'm going to hand the phone over right now. It was a pleasure, [Borrower Name] — good luck!\n\n[BEFORE YOU HAND OFF — brief the LO]: "Hey [LO Name], I've got [Borrower Name] — they're looking at a [refi/HELOC], home value approximately [value], balance [amount], current rate [rate], credit [range]."`,
-    `Be smooth and confident — any hesitation kills the transfer. Pre-brief the LO EVERY time before handoff. Log the outcome in Bonzo immediately: transfer type (direct or appointment), LO name, and brief notes. If LO isn't available, pivot immediately to appointment — never leave the borrower hanging.`,
-    1);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // DIRECT TRANSFER — HELOC PATH
-  // ══════════════════════════════════════════════════════════════════════════
-  const nTransferHeloc = node(sid, nQualHeloc,
-    `Awesome — this is exactly what [LO Name] handles every day. They specialize in equity products and will walk you through the options in detail — HELOC vs. cash-out, what your rate would look like, and how much you'd realistically qualify for.\n\nLet me get you connected right now. I'll give them a quick brief so you don't have to repeat yourself.\n\n[BRIEF THE LO]: "[LO Name], I have [Borrower Name] — wants [HELOC/cash-out], home worth [value], current balance [amount], current rate [rate], looking to pull out [amount] for [purpose], credit [range]."`,
-    `HELOCs: LO needs to know purpose (debt consolidation, renovation, investment) — it shapes the pitch significantly. If they're consolidating high-interest debt, the LO can do the math on monthly savings on the call. Always pre-brief. Log in Bonzo right after.`,
-    1);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // APPOINTMENT (when direct transfer isn't possible or borrower prefers)
-  // ══════════════════════════════════════════════════════════════════════════
-  const nAppointment = node(sid, nQualRefi,
-    `Totally understand — I can't connect you this very second, but I want to make sure [LO Name] can give you their full attention. Let me set up a quick call.\n\nWhat works better for you — mornings or afternoons? And are weekdays or weekends easier?\n\n[GET SPECIFIC]: "Perfect — so let's put you down for [Day] at [Time]. The best number to reach you is the one I called today?"\n\nYou'll get a confirmation and a reminder before the call. Does that work for you?`,
-    `Appointment is always better than no outcome. Get a specific day AND time — "sometime this week" is not an appointment. Confirm their phone number. Log it in Upcoming Appointments immediately. If they're hesitant: "I'll only have [LO Name] call that one time — if the timing doesn't work, just text us and we'll reschedule, no problem."`,
+  const nNotSure = node(sid, nOpen,
+    `Okay. What made you make the inquiry in the first place?`,
+    `Don't accept "not sure" at face value — the original reason is still in there somewhere. Stay curious, not pushy. Their answer tells you exactly where to route the call.`,
     2);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // NOT READY — ROOT BRANCH
+  // SHOPPING AROUND
   // ══════════════════════════════════════════════════════════════════════════
-  const nNotReady = node(sid, nQualRefi,
-    `I completely understand — and I appreciate you being straight with me. Can I ask what's holding you back right now? Is it:\n\nA) Waiting for rates to come down more?\nB) Concerned about your credit situation?\nC) Need to talk it over with your spouse or partner first?\nD) Just not the right time financially right now?\n\nThe reason I ask is we work with people at every stage of the process — even if now isn't the right time, I want to make sure you have someone in your corner when it is.`,
-    `Never accept "not ready" at face value. The four categories cover 90%+ of real objections. Listen carefully — their answer tells you exactly where to go. Stay warm and curious, never pushy.`,
+  const nShopping = node(sid, nOpen,
+    `That's extremely bright of you. Well, here at West Cap we're a wholesale broker, meaning that we work with over 150 lenders to get you a rate that beats one that you would get if you went into a local bank.\n\nDo you mind if I ask you a couple quick questions so we can show you a real number to compare?`,
+    `Shoppers are warm — they're already in the market. Your goal is to become the benchmark they compare everyone else against. Keep it effortless: two minutes, a real number, no pressure.`,
     3);
 
-  // ── Waiting for rates ──────────────────────────────────────────────────
-  const nWaitRates = node(sid, nNotReady,
-    `That's a very common feeling right now — and honestly, a reasonable one. Here's the thing though:\n\nWe work with 150+ lenders, including some that don't advertise publicly, and right now we're seeing rates that aren't showing up on Bankrate or Google. The only way to know what you'd actually qualify for is to have someone run your specific scenario.\n\nWhat I'd suggest is a no-obligation call with our specialist — no credit pull, no commitment — just a real number so you know exactly what you're dealing with. That way when rates hit your target, you can move the same day instead of scrambling.\n\nCan we set something up for this week?`,
-    `Rate-waiters are warm leads — they've already decided they want to do this, they're just timing it. Emphasize: no credit pull, no commitment, just clarity. If they're comparing to 2021 rates, gently reframe: those rates were a historic anomaly. The question isn't "are rates good" — it's "is there savings available right now?"`,
-    1);
-
-  // ── Credit concerns ────────────────────────────────────────────────────
-  const nCreditConcern = node(sid, nNotReady,
-    `I really appreciate you being upfront about that. Here's the honest truth:\n\nWe work with borrowers across the full credit spectrum. Some of our lenders will go as low as 580 FICO for FHA products, and the check we'd run at this stage is a soft pull — it does not impact your score at all.\n\nEven if your score isn't where you want it, our specialists can give you a concrete roadmap: here's where you are, here's what needs to move, and here's how long it'll realistically take — whether that's 3 months or 6 months. That conversation costs you nothing and could save you a lot.\n\nWould it make sense to at least get that clarity today?`,
-    `Credit-concern borrowers are closer than they think. 620+ qualifies for most refi products. 580+ for FHA. If score is very low (<580), be honest — don't over-promise — but still offer the roadmap call. A future contact today becomes a transfer in 6 months. Never shame them about their score.`,
-    2);
-
-  // ── Need spouse / decision maker ───────────────────────────────────────
-  const nSpouse = node(sid, nNotReady,
-    `Absolutely — this is a big decision and it completely makes sense to loop them in. A couple of easy options:\n\nOption 1: Is there any chance you could grab them right now? I'm happy to hold for just a minute, or I can call back in 20 minutes if that's easier.\n\nOption 2: Let's schedule a time when you're both available — that way [LO Name] can answer both of your questions at once, which is usually way more efficient than playing phone tag.\n\nWhich would work better for you?`,
-    `"Talk to spouse" can be genuine or a soft brush-off — treat it as genuine. Offer both options. If they commit to a time with the spouse, log it as an appointment immediately. If vague: "When are you two usually both home together?" — this gets you a specific window without pressuring them.`,
-    3);
-
-  // ── Not the right time financially ────────────────────────────────────
-  const nFinancialTiming = node(sid, nNotReady,
-    `I hear you — life has a way of getting in the way sometimes, and I'm not here to push anything that doesn't make sense for your situation.\n\nI'll just say: sometimes a conversation like this helps people realize the timing is actually better than they thought. And sometimes it confirms that waiting makes complete sense. Either way, you walk away knowing.\n\nWould it be alright if I checked back in with you in [30/60/90 days] — just to see where things stand? I'll put a note in our system and it'll be a quick two-minute call, nothing more.`,
-    `Respect genuine financial timing objections. Your only goal here is a specific future contact date. Be concrete: "So if I reach back out around mid-[Month], would that be a better window?" Log as future_contact with the specific follow-up date noted.`,
+  // ══════════════════════════════════════════════════════════════════════════
+  // NO THANKS, I'M GOOD
+  // ══════════════════════════════════════════════════════════════════════════
+  const nChangedMind = node(sid, nOpen,
+    `Okay, I mean I totally understand that things change. What made you change your mind?`,
+    `Their reason routes the call: rates → rates path, timing → future, selling → selling path, another lender → comparison pitch. Listen first, then pick the branch.`,
     4);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ALREADY HANDLED / WENT WITH SOMEONE ELSE
+  // RATES TOO HIGH
   // ══════════════════════════════════════════════════════════════════════════
-  const nAlready = node(sid, nOpen,
-    `Oh, perfect — I'm glad you got it handled! Out of curiosity, did you end up with a solid rate? The reason I ask is we partner with over 150 lenders and we occasionally find options that even other brokers miss — sometimes by half a point or more on fees.\n\nI'm not trying to undo anything — but if you'd like, our pricing team can do a quick comparison at zero cost. Worst case, you'll know you got the best deal. Best case, we save you some money. Sound fair?`,
-    `Don't roll over. Many people who "already took care of it" haven't actually closed yet — they just talked to one lender. Even if they have closed, plant a seed for future business. The free comparison offer is low-pressure and high-value: it reframes you as helpful rather than pushy.`,
-    2);
-
-  const nAlreadyClosed = node(sid, nAlready,
-    `That's great — congratulations on getting it done! If you ever have questions down the road, or anything comes up with the home, don't hesitate to reach back out. We'd love to be your resource for anything mortgage-related in the future.\n\nI'll make a note so we don't bother you again. Have a great [morning/afternoon/evening], [Borrower Name]!`,
-    `Exit with warmth and professionalism. Don't oversell when they're clearly done. A positive last impression matters — they may refer family or friends, or they'll come back in 2–3 years when they want to refi again.`,
-    1);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // JUST SHOPPING / COMPARING OPTIONS
-  // ══════════════════════════════════════════════════════════════════════════
-  const nJustShopping = node(sid, nOpen,
-    `That's exactly the right move — you should absolutely be shopping around. And honestly, that's where we shine.\n\nMost lenders give you one rate because they represent one bank. We work with 150+ lenders, so we're essentially doing the shopping for you — and because of the volume we do, we get access to pricing most people can't get on their own.\n\nIt takes about two minutes to give you a real number to compare. Would it be worth a quick conversation just to have us in the mix as you're evaluating your options?`,
-    `"Just shopping" is a warm response — they're already in the market. Your goal: become the benchmark they compare everyone else to. Keep it effortless and low-commitment. Two minutes, real number, no pressure.`,
-    3);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: NOT MY BUSINESS / TOO PUSHY / TOO MANY CALLS
-  // ══════════════════════════════════════════════════════════════════════════
-  const nPrivacy = node(sid, nOpen,
-    `You know what — I completely respect that, and I get it. Can I ask — did you go through something like LendingTree or Bankrate? Because those platforms sell your info to 15–20 companies at once, and that flood of calls is on them, not you.\n\nI'm not trying to pry into your personal business — I'm just here because someone in your household looked into home financing options and I want to make sure that whoever has your information is actually using it to help you. That's it.\n\nSo let me ask one simple question: are you still interested in exploring options for your home, yes or no? If no, I'll take you off our list right now — no hard feelings.`,
-    `Don't get defensive. Acknowledge the frustration, explain the lead aggregator problem (it's real and relatable), then cut to the chase with a yes/no close. This respects their time and actually re-engages more than a soft pitch does.`,
-    4);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: I'M BUSY
-  // ══════════════════════════════════════════════════════════════════════════
-  const nBusy = node(sid, nOpen,
-    `One hundred percent — I'll be two minutes, max.\n\n[PAUSE]\n\nJust two quick questions: Are you still interested in doing something with your home equity or rate? And what time works better for a proper call — mornings or afternoons?\n\nIf the answer to the first one is yes, let's find a time that actually works for you. If no, just say so and I'll remove you from our list entirely — completely your call.`,
-    `Respect their time instantly. Two-question close is highly effective because it's low-commitment. If they give a yes, you've re-engaged them — pivot immediately to scheduling. If they give a no, log as fell_through and move on. Never drag it out.`,
+  const nRatesHigh = node(sid, nOpen,
+    `Okay, I mean I understand that stuff like that happens. I will say, rates aren't expected to drop much anytime soon. However, what was your reason to look for a loan in the first place?`,
+    `Don't argue rates — redirect to their original goal. If the goal is debt consolidation, today's mortgage rates still beat 20%+ credit cards by a mile. The "what was your reason" question reopens the conversation more often than any rate pitch.`,
     5);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: ANGRY / HOSTILE
+  // LOOKING IN THE FUTURE
   // ══════════════════════════════════════════════════════════════════════════
-  const nAngry = node(sid, nOpen,
-    `Hey — I completely hear you, and I'm sorry if this is the tenth call you've gotten today. That's genuinely frustrating and you don't deserve that.\n\nI'm [Your Name] from West Capital Lending. I have one specific reason I called, and if it doesn't apply to you I'll be gone in 30 seconds flat. You submitted an inquiry about your home equity — I'm just making sure someone actually helped you rather than everyone just blowing up your phone. Did anyone give you useful information yet, or has it just been a flood of calls with nothing to show for it?`,
-    `Match their frustration briefly — acknowledge it first. Then immediately differentiate yourself from spam callers by being direct, honest, and fast. The closing question flips the script: they go from annoyed to potentially venting that no one has been helpful, which re-opens the conversation naturally.`,
+  const nFuture = node(sid, nOpen,
+    `Alright, well, I understand. What made you make the change? And when would be the best time to reach out?`,
+    `Your only goal here is a specific follow-up window — "mid-[Month]" beats "in a few months". Log it as a future contact with the date in the notes.`,
     6);
 
-  const nAngryCalmed = node(sid, nAngry,
-    `I figured as much — and that's exactly why I wanted to call. Here's the difference between us and everyone else you talked to: we're a brokerage, not a bank. We don't push one product or one rate. We look at your specific situation and give you the honest answer — even if that answer is "wait six months."\n\nCan I ask you just two quick questions about the property?`,
-    `Once they've calmed, move quickly to goal discovery. Don't give them time to re-cool. Two quick questions = low friction re-entry into the script. Stay upbeat and grateful — they chose to keep talking.`,
-    1);
-
-  const nAngryHungUp = node(sid, nAngry,
-    `[Hung up or remained hostile — do not continue]\n\nLog as fell_through. Do not call back today. Note in Bonzo: "hostile disposition, do not re-engage for 48+ hours."`,
-    `Some people will not talk today regardless. That's okay — log it accurately and move on. Never call back the same day after a hostile hang-up. Attempting follow-up too soon will get the number blocked.`,
-    2);
-
   // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: DON'T DO BUSINESS OVER THE PHONE
+  // PLANNING TO SELL / MOVE
   // ══════════════════════════════════════════════════════════════════════════
-  const nNoPhone = node(sid, nOpen,
-    `That's completely fair — and I respect it. Here's what I'll tell you: everything we do is phone and digital by design, not just for convenience. The reason we can consistently beat most local lenders on rate is because we don't carry the overhead of physical branches — those savings go directly to you, typically 0.5 to 1% lower on fees.\n\nI'm not asking you to do anything over the phone today. What I'd love to do is have our specialist email you a personalized no-obligation quote so you can review it at your own pace, on your own terms. Would that feel more comfortable?`,
-    `The email pivot works well for phone-averse borrowers. If they agree, get their email, pass to LO to send a rate sheet, and log as future_contact. Even non-immediate converts are in the pipeline. If they decline email too, wish them well and move on.`,
+  const nSelling = node(sid, nOpen,
+    `Okay. Are you looking to buy another house?`,
+    `Timeline is everything. Buying next = purchase-loan opportunity for the LO. Selling in 4–12 months = cash out can fund repairs or staging before they list. Under 3 months out = stay friendly, no product push.`,
     7);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: RATES TOO HIGH / MARKET IS BAD
-  // ══════════════════════════════════════════════════════════════════════════
-  const nHighRates = node(sid, nOpen,
-    `I hear you — rates are definitely higher than they were a couple years ago. But "higher than 2021" and "bad for your situation" aren't the same thing, and it really depends on what you're working with.\n\nA few things worth knowing:\n• We work with 150+ lenders including some that don't advertise publicly, so our pricing often beats what you see on Google\n• If your current rate is already above 7%, there may be refinance scenarios that make sense right now\n• For cash-out and HELOC products, the rate environment is actually favorable compared to personal loans (10–15%) or credit card debt (20%+)\n\nCould I ask — what's your current rate? Even if it turns out there's nothing we can do today, I'd rather tell you that honestly than waste your time with empty promises.`,
-    `Rate objections usually come from people comparing to 2020–2021 rates. Reframe: compare to credit card rates, personal loan rates, or their existing rate if it's above 7%. The honest "there might be nothing we can do" line builds instant trust. Often they then tell you their rate, which re-engages the conversation.`,
-    8);
+  const nBuying = node(sid, nSelling,
+    `Oh perfect — so you'll need financing on the new place. Our LOs do purchase loans all day, and getting pre-approved early means you're ready the second you find the right house.\n\nWant me to set up a quick call with [LO Name] to get that going?`,
+    `Pre-approval is the natural hook — it costs them nothing and makes their offers stronger. If they already have a lender for the purchase, pivot to the 150+ lender comparison pitch.`,
+    1);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: ALREADY WORKING WITH SOMEONE
+  // WITH ANOTHER LENDER
   // ══════════════════════════════════════════════════════════════════════════
   const nOtherLender = node(sid, nOpen,
-    `Totally get it — and I'm not here to step on anyone's toes. Can I just ask: are you in the middle of the process, or still in early conversations?\n\nThe reason I ask is that until you've actually locked a rate, there's no commitment anywhere. And our brokers regularly save people meaningful money at the last minute because they have access to lender programs that smaller shops don't. It happens more often than you'd think.\n\nIf your quote comes back higher than expected, would it be worth a 10-minute call to us as a second opinion — just to make sure you're getting the best deal?`,
-    `"Working with someone" is soft until they've rate-locked. Key question: locked or just in conversation? If in conversation: position as a free second opinion. If rate-locked: congratulate them and plant a seed for future business — next refi in 2–3 years, HELOC later, referrals.`,
-    9);
+    `Have you closed or completed the deal yet?\n\n[IF NOT]: Well, here at West Cap we're a wholesale broker, meaning that we work with over 150 lenders to get you a rate that beats one that you would get if you went into a local bank. Do you mind if we run a quick comparison, so you know for sure you're getting the best deal?`,
+    `"With another lender" is soft until they've actually locked or closed. Not closed = free second opinion, zero commitment. Closed = congratulate them and exit warm — they'll remember you next time.`,
+    8);
+
+  const nClosedExit = node(sid, nOtherLender,
+    `Congratulations on getting it done! If anything ever comes up with the home down the road, don't hesitate to reach back out — we'd love to be your resource for anything mortgage-related.\n\nHave a great [morning/afternoon/evening], [Borrower Name]!`,
+    `Exit warm and quick. A good last impression turns into referrals and the next refi in 2–3 years.`,
+    1);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // HELOC: LOW EQUITY SCENARIO
+  // WRONG PERSON
   // ══════════════════════════════════════════════════════════════════════════
-  const nLowEquity = node(sid, nQualHeloc,
-    `Got it — so the equity might be tighter than you'd hoped. That's more common than people think, and there are still a couple of paths depending on your situation:\n\n• FHA Streamline Refi: if it's an FHA loan, we can refi with minimal equity and no appraisal required\n• VA IRRRL: same concept for VA loans — extremely streamlined, low cost\n• Rate/Term Refi: if your rate is above 7%, even a low-equity refi can produce meaningful monthly savings\n• Personal HELOC programs: some lenders go up to 90% LTV for well-qualified borrowers\n\nLet me grab a couple more details to see which of these applies — what type of loan is it currently?`,
-    `Low equity doesn't mean dead end. FHA Streamline and VA IRRRL are your best tools here. Even conventional refis can work if the rate savings are strong. Don't give up — ask loan type and current rate to find the angle. If truly no equity and no rate savings, be honest: future contact when their home value increases.`,
-    3);
+  const nWrongPerson = node(sid, nOpen,
+    `Okay. Could [Borrower Name] be someone in the family? Does anyone else live with you or use this phone?`,
+    `Stay curious — half the time it's a spouse, a parent, or someone who used their number on the form. If the borrower is reachable, your goal is a time to call back. If truly nobody by that name, mark it bad data so the lead stops getting dialed.`,
+    9);
+
+  const nReIntro = node(sid, nWrongPerson,
+    `Hi [Borrower Name]! This is [Your Name] with West Capital Lending — we received an inquiry under your name for either a refinance or a Home Equity Line of Credit, and I just wanted to learn what you're hoping to accomplish.\n\nWere you looking to take some cash out, or more looking at your rate?`,
+    `Quick re-intro for when the right person comes to the phone — don't make them sit through the full opener again.`,
+    1);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // WRONG NUMBER / HOSTILE
+  // ══════════════════════════════════════════════════════════════════════════
+  const nHostile = node(sid, nOpen,
+    `Hey, what did I do? This [Address] is your address, right? Did you happen to put your information into one of those mortgage calculators, or click on one of those ads?`,
+    `Keep it light — "hey, what did I do?" disarms better than apologizing. The mortgage-calculator question usually jogs their memory and explains the flood of calls they've been getting. If they stay hostile, exit fast and log it — never call back the same day.`,
+    10);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUSY
+  // ══════════════════════════════════════════════════════════════════════════
+  const nBusy = node(sid, nOpen,
+    `Totally get it — I'll be two minutes, max.\n\nJust one quick question: are you still looking to do something with your home equity or your rate? And if so, what time works better for a real call — mornings or afternoons?`,
+    `Respect their time instantly. A yes = pivot straight to scheduling. A no = thank them and move on — never drag it out.`,
+    11);
 
   // ══════════════════════════════════════════════════════════════════════════
   // SILENT / NO RESPONSE
   // ══════════════════════════════════════════════════════════════════════════
   const nSilent = node(sid, nOpen,
-    `Hello? [Borrower Name]?\n\n[PAUSE 3 seconds]\n\nHey — just want to make sure I'm not talking to air here. If you're there, no pressure at all — I just wanted to follow up on the home equity inquiry and make sure you got the help you were looking for. Are you there?\n\n[PAUSE 3 seconds]\n\nNo worries — I'll try you again at a better time. Have a great day!`,
-    `Wait 3 full seconds between each attempt. After 2 tries with no response, close politely and hang up. Log as no_answer. Never talk for more than 10 seconds into silence — it sounds desperate and unprofessional.`,
-    10);
+    `Hello? [Borrower Name]?\n\n[PAUSE 3 seconds]\n\nHey — just making sure I'm not talking to air here. I'm following up on the home equity inquiry under your name. Are you there?\n\n[PAUSE 3 seconds]\n\nNo worries — I'll try you again at a better time. Have a great day!`,
+    `Wait 3 full seconds between attempts. Two tries, then close politely and hang up. Never talk more than 10 seconds into silence.`,
+    12);
 
   // ══════════════════════════════════════════════════════════════════════════
   // VOICEMAIL
   // ══════════════════════════════════════════════════════════════════════════
   const nVoicemail = node(sid, nOpen,
-    `[VOICEMAIL — keep under 25 seconds, smile while recording]:\n"Hey [Borrower Name], this is [Your Name] with West Capital Lending — I'm [LO Name]'s assistant. We received your inquiry about refinancing or a home equity option and I wanted to personally follow up. Give me a call back when you get a chance at [Phone Number] and I'll make sure [LO Name] has time set aside for you. Talk soon!"\n\n[IF THEY CALL BACK]:\n"Thanks so much for calling back — is this [Borrower Name]? Great. So I left you a message earlier — you had submitted an inquiry about your home and I wanted to make sure you got connected with the right person. Did you get a chance to think about what you were hoping to accomplish?"`,
-    `Voicemail formula: name + company + reason + callback number. Under 25 seconds or they won't finish listening. Smile — it comes through in your voice. On callbacks: re-establish context immediately, thank them genuinely, then go straight to goal discovery. Never make them explain from scratch.`,
-    11);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OLD LEADS (60+ days since inquiry)
-  // ══════════════════════════════════════════════════════════════════════════
-  const nOldLead = node(sid, nOpen,
-    `Hi [Borrower Name] — this is [Your Name] with West Capital Lending. A little while back, you had looked into options for your home — whether that was a refinance, a HELOC, or something else — and I wanted to circle back to see if you ever got what you were looking for, or if things changed.\n\n[PAUSE]\n\nAre you still exploring your options, or did you end up going a different direction?`,
-    `Old leads need a softer re-entry — don't assume they remember the inquiry. Don't apologize for the time gap. Keep it curious and low-pressure. If they say they forgot: "Life gets busy! Well, since I have you — has anything changed with your home situation that might be worth a quick look?" This re-frames it as timely rather than stale.`,
-    12);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // WRONG NUMBER / NOT THE RIGHT PERSON
-  // ══════════════════════════════════════════════════════════════════════════
-  const nWrongNumber = node(sid, nOpen,
-    `Oh — I apologize for the confusion! Is there a better number I can reach [Borrower Name] at, or a better time to try?\n\n[IF NO]: No problem at all — I'll update our records so this doesn't happen again. Have a great day!`,
-    `Don't push. If they have alternate contact info, great — note it. If not, log as no_answer with a note about the contact issue. If the person says [Borrower Name] doesn't live there or the number is wrong, mark as bad data in Bonzo so the lead doesn't get called again.`,
+    `[VOICEMAIL — keep it under 25 seconds, smile while recording]:\n"Hey [Borrower Name], this is [Your Name] with West Capital Lending — I'm [LO Name]'s assistant. We received your inquiry about a refinance or a Home Equity Line of Credit and I wanted to personally follow up. Give me a call back at [Phone Number] and I'll make sure [LO Name] has time set aside for you. Talk soon!"`,
+    `Name + company + reason + callback number, under 25 seconds. Smile — it comes through in your voice. On callbacks, thank them and go straight to "what were you hoping to accomplish?"`,
     13);
 
   // ══════════════════════════════════════════════════════════════════════════
   // RESPONSES
   // ══════════════════════════════════════════════════════════════════════════
 
-  // ── Opening → first branches ─────────────────────────────────────────────
-  resp(nOpen, "Yes, go ahead", "green", nGoalDisc, 1);
-  resp(nOpen, "Already handled", "red", nAlready, 2);
-  resp(nOpen, "Just shopping", "yellow", nJustShopping, 3);
-  resp(nOpen, "Too pushy / privacy", "yellow", nPrivacy, 4);
-  resp(nOpen, "Busy right now", "yellow", nBusy, 5);
-  resp(nOpen, "Angry / hostile", "red", nAngry, 6);
-  resp(nOpen, "No phone business", "yellow", nNoPhone, 7);
-  resp(nOpen, "Rates too high", "yellow", nHighRates, 8);
-  resp(nOpen, "With another lender", "yellow", nOtherLender, 9);
-  resp(nOpen, "No response", "gray", nSilent, 10);
-  resp(nOpen, "No answer — voicemail", "gray", nVoicemail, 11);
-  resp(nOpen, "Old lead (60+ days)", "blue", nOldLead, 12);
-  resp(nOpen, "Wrong number", "gray", nWrongNumber, 13);
+  // ── Opening → Ethan's branches ───────────────────────────────────────────
+  resp(nOpen, "Looking to take cash out", "green", nCashOut, 1);
+  resp(nOpen, "Not sure / not looking anymore", "yellow", nNotSure, 2);
+  resp(nOpen, "Shopping around", "yellow", nShopping, 3);
+  resp(nOpen, "No thanks, I'm good", "yellow", nChangedMind, 4);
+  resp(nOpen, "Rates too high", "yellow", nRatesHigh, 5);
+  resp(nOpen, "Looking in the future", "blue", nFuture, 6);
+  resp(nOpen, "Planning to sell / move", "yellow", nSelling, 7);
+  resp(nOpen, "With another lender", "yellow", nOtherLender, 8);
+  resp(nOpen, "Wrong person", "gray", nWrongPerson, 9);
+  resp(nOpen, "Wrong number / hostile", "red", nHostile, 10);
+  resp(nOpen, "Busy right now", "yellow", nBusy, 11);
+  resp(nOpen, "No response", "gray", nSilent, 12);
+  resp(nOpen, "No answer — voicemail", "gray", nVoicemail, 13);
 
-  // ── Goal discovery → paths ───────────────────────────────────────────────
-  resp(nGoalDisc, "Lower rate (refi)", "green", nQualRefi, 1);
-  resp(nGoalDisc, "Cash out / HELOC", "green", nQualHeloc, 2);
-  resp(nGoalDisc, "Not sure / both", "yellow", nQualRefi, 3);
-
-  // ── Refi qual → outcomes ─────────────────────────────────────────────────
-  resp(nQualRefi, "Ready to transfer", "green", nTransferDirect, 1);
-  resp(nQualRefi, "Set appointment", "blue", nAppointment, 2);
-  resp(nQualRefi, "Not ready", "yellow", nNotReady, 3);
-
-  // ── HELOC qual → outcomes ────────────────────────────────────────────────
-  resp(nQualHeloc, "Transfer — HELOC", "green", nTransferHeloc, 1);
-  resp(nQualHeloc, "Set appointment", "blue", nAppointment, 2);
-  resp(nQualHeloc, "Low equity", "yellow", nLowEquity, 3);
-  resp(nQualHeloc, "Not ready", "yellow", nNotReady, 4);
-
-  // ── Not ready → sub-branches ─────────────────────────────────────────────
-  resp(nNotReady, "Waiting on rates", "yellow", nWaitRates, 1);
-  resp(nNotReady, "Credit concerns", "yellow", nCreditConcern, 2);
-  resp(nNotReady, "Need spouse OK", "yellow", nSpouse, 3);
-  resp(nNotReady, "Bad timing", "yellow", nFinancialTiming, 4);
-
-  // ── Not-ready sub-outcomes ───────────────────────────────────────────────
-  resp(nWaitRates, "Agreed to call", "green", nAppointment, 1);
-  resp(nWaitRates, "Future contact", "yellow", null, 2);
-  resp(nCreditConcern, "Open to soft pull", "green", nAppointment, 1);
-  resp(nCreditConcern, "Score too low", "yellow", null, 2);
-  resp(nSpouse, "Grabbing spouse", "green", nGoalDisc, 1);
-  resp(nSpouse, "Set joint callback", "blue", nAppointment, 2);
-  resp(nFinancialTiming, "Future contact", "yellow", null, 1);
-  resp(nFinancialTiming, "Not interested", "gray", null, 2);
+  // ── Cash-out qualifying → outcomes ───────────────────────────────────────
+  resp(nCashOut, "Confirmed — ready to transfer", "green", nTransfer, 1);
+  resp(nCashOut, "Set appointment instead", "blue", nAppointment, 2);
+  resp(nCashOut, "Hesitant / second thoughts", "yellow", nNotSure, 3);
 
   // ── Transfer outcomes ────────────────────────────────────────────────────
-  resp(nTransferDirect, "Transfer complete!", "green", null, 1);
-  resp(nTransferDirect, "LO unavailable", "blue", nAppointment, 2);
-  resp(nTransferDirect, "Changed mind", "yellow", nNotReady, 3);
-  resp(nTransferHeloc, "Transfer complete!", "green", null, 1);
-  resp(nTransferHeloc, "LO unavailable", "blue", nAppointment, 2);
-  resp(nTransferHeloc, "Changed mind", "yellow", nNotReady, 3);
+  resp(nTransfer, "Transfer complete!", "green", null, 1);
+  resp(nTransfer, "LO unavailable", "blue", nAppointment, 2);
+  resp(nTransfer, "Changed mind", "yellow", nChangedMind, 3);
 
   // ── Appointment outcomes ─────────────────────────────────────────────────
-  resp(nAppointment, "Confirmed ✓", "green", null, 1);
-  resp(nAppointment, "Won't commit", "yellow", nFinancialTiming, 2);
+  resp(nAppointment, "Appointment set ✓", "green", null, 1);
+  resp(nAppointment, "Won't commit", "yellow", nFuture, 2);
 
-  // ── Already handled ──────────────────────────────────────────────────────
-  resp(nAlready, "Open to compare", "green", nGoalDisc, 1);
-  resp(nAlready, "Already closed", "gray", nAlreadyClosed, 2);
-  resp(nAlreadyClosed, "Call ended", "gray", null, 1);
+  // ── Not sure / not looking anymore ───────────────────────────────────────
+  resp(nNotSure, "Reason surfaced — still a goal", "green", nCashOut, 1);
+  resp(nNotSure, "Changed their mind", "yellow", nChangedMind, 2);
+  resp(nNotSure, "Not interested", "gray", null, 3);
 
-  // ── Angry ────────────────────────────────────────────────────────────────
-  resp(nAngry, "Calmed down", "green", nGoalDisc, 1);
-  resp(nAngry, "Still hostile", "yellow", nAngryCalmed, 2);
-  resp(nAngry, "Hung up", "gray", nAngryHungUp, 3);
-  resp(nAngryCalmed, "Re-engaged", "green", nGoalDisc, 1);
-  resp(nAngryCalmed, "Not interested", "gray", null, 2);
-  resp(nAngryHungUp, "Fell through", "gray", null, 1);
+  // ── Shopping around ──────────────────────────────────────────────────────
+  resp(nShopping, "Sure, go ahead", "green", nCashOut, 1);
+  resp(nShopping, "Maybe later", "yellow", nFuture, 2);
+  resp(nShopping, "Not interested", "gray", null, 3);
 
-  // ── No phone / high rates / other lender / shopping / privacy ────────────
-  resp(nNoPhone, "Email quote OK", "green", null, 1);
-  resp(nNoPhone, "Not interested", "gray", null, 2);
-  resp(nHighRates, "Shared rate", "green", nGoalDisc, 1);
-  resp(nHighRates, "Not interested", "gray", null, 2);
-  resp(nOtherLender, "Not locked yet", "green", nGoalDisc, 1);
-  resp(nOtherLender, "Already locked", "gray", nAlreadyClosed, 2);
-  resp(nJustShopping, "Agreed to qualify", "green", nGoalDisc, 1);
-  resp(nJustShopping, "Not ready yet", "yellow", nFinancialTiming, 2);
-  resp(nPrivacy, "Willing to continue", "green", nGoalDisc, 1);
-  resp(nPrivacy, "Remove from list", "gray", null, 2);
+  // ── No thanks, I'm good → why ────────────────────────────────────────────
+  resp(nChangedMind, "Rates too high", "yellow", nRatesHigh, 1);
+  resp(nChangedMind, "Looking in the future", "blue", nFuture, 2);
+  resp(nChangedMind, "Planning to sell / move", "yellow", nSelling, 3);
+  resp(nChangedMind, "With another lender", "yellow", nOtherLender, 4);
+  resp(nChangedMind, "Not interested", "gray", null, 5);
 
-  // ── Low equity ───────────────────────────────────────────────────────────
-  resp(nLowEquity, "FHA / VA stream", "green", nTransferHeloc, 1);
-  resp(nLowEquity, "Conventional path", "yellow", nNotReady, 2);
+  // ── Rates too high ───────────────────────────────────────────────────────
+  resp(nRatesHigh, "Opened up about their goal", "green", nCashOut, 1);
+  resp(nRatesHigh, "Waiting on rates", "yellow", nFuture, 2);
+  resp(nRatesHigh, "Not interested", "gray", null, 3);
 
-  // ── Old lead / silent / voicemail / wrong number ─────────────────────────
-  resp(nOldLead, "Still exploring", "green", nGoalDisc, 1);
-  resp(nOldLead, "Already handled", "gray", nAlreadyClosed, 2);
-  resp(nVoicemail, "Voicemail left", "gray", null, 1);
-  resp(nSilent, "Responded", "green", nGoalDisc, 1);
-  resp(nSilent, "No response", "gray", null, 2);
-  resp(nWrongNumber, "Got alt contact", "yellow", null, 1);
-  resp(nWrongNumber, "Bad data", "gray", null, 2);
+  // ── Looking in the future ────────────────────────────────────────────────
+  resp(nFuture, "Open to talking now", "green", nCashOut, 1);
+  resp(nFuture, "Future contact set", "yellow", null, 2);
+  resp(nFuture, "Do not call again", "gray", null, 3);
+
+  // ── Planning to sell / move ──────────────────────────────────────────────
+  resp(nSelling, "Yes — buying another house", "green", nBuying, 1);
+  resp(nSelling, "Open to cash out before selling", "green", nCashOut, 2);
+  resp(nSelling, "Just selling — all set", "gray", null, 3);
+  resp(nBuying, "Set appointment", "blue", nAppointment, 1);
+  resp(nBuying, "Not yet", "yellow", nFuture, 2);
+
+  // ── With another lender ──────────────────────────────────────────────────
+  resp(nOtherLender, "Not closed — open to compare", "green", nCashOut, 1);
+  resp(nOtherLender, "Already closed", "gray", nClosedExit, 2);
+  resp(nOtherLender, "Not interested", "gray", null, 3);
+  resp(nClosedExit, "Call ended", "gray", null, 1);
+
+  // ── Wrong person ─────────────────────────────────────────────────────────
+  resp(nWrongPerson, "They're grabbing them now", "green", nReIntro, 1);
+  resp(nWrongPerson, "Callback time set", "blue", null, 2);
+  resp(nWrongPerson, "Wrong person — bad data", "gray", null, 3);
+  resp(nReIntro, "Cash out", "green", nCashOut, 1);
+  resp(nReIntro, "Not sure", "yellow", nNotSure, 2);
+
+  // ── Wrong number / hostile ───────────────────────────────────────────────
+  resp(nHostile, "Calmed down — it was them", "green", nNotSure, 1);
+  resp(nHostile, "Hung up / still hostile", "gray", null, 2);
+  resp(nHostile, "Remove me — do not call", "red", null, 3);
 
   // ── Busy ─────────────────────────────────────────────────────────────────
   resp(nBusy, "Set callback", "blue", nAppointment, 1);
-  resp(nBusy, "Remove", "gray", null, 2);
+  resp(nBusy, "Not interested", "gray", null, 2);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // GATEKEEPER — someone other than the borrower picks up
-  // ══════════════════════════════════════════════════════════════════════════
-  const nGatekeeper = node(sid, nOpen,
-    `Hi there — I was hoping to reach [Borrower Name]. Is [he/she/they] available by chance?\n\n[IF AVAILABLE IN A MOMENT]: "Absolutely — I'll hold for just a second."\n\n[IF NOT AVAILABLE]: "No problem! This is [Your Name] calling from West Capital Lending — we had a request come in under [Borrower Name]'s name regarding their home, and I just wanted to make sure someone followed up. Do you know the best time to reach [him/her/them], or would it be alright if I tried back a little later today?"`,
-    `Stay warm, brief, and respectful. Never try to explain the loan to a gatekeeper — your only goal is to find out when to reach the borrower, or get a callback number if different. If the gatekeeper seems like a spouse who's involved in financial decisions, you can gently say: "If it's something you're both involved in, I'm happy to call when you're both available."`,
-    14);
-
-  resp(nOpen, "Gatekeeper / wrong person", "yellow", nGatekeeper, 14);
-  resp(nGatekeeper, "Transferring borrower now", "green", nGoalDisc, 1);
-  resp(nGatekeeper, "Scheduled callback", "blue", nAppointment, 2);
-  resp(nGatekeeper, "Try again later", "gray", null, 3);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: PREVIOUSLY DENIED / TRIED BEFORE AND IT DIDN'T WORK
-  // ══════════════════════════════════════════════════════════════════════════
-  const nDenied = node(sid, nOpen,
-    `I'm really sorry to hear that — that's a frustrating experience, and it's unfortunately more common than it should be.\n\nCan I ask — do you know what the reason for the denial was? Was it:\nA) Credit score — lender required higher than you had?\nB) Equity — they said the LTV was too high?\nC) Income or debt-to-income — your monthly obligations were too high?\nD) Property type or condition?\n\nThe reason I ask is — we work with 150+ lenders including many that specialize in exactly those scenarios. A denial from one lender doesn't mean all lenders will say the same thing. Our LOs run this every day, and they often find a path where someone else couldn't.\n\nEven if we can't help you today, the least we can do is tell you exactly why and what would need to change. Would that be worth a quick conversation?`,
-    `"Was denied" = warm lead who has high intent but low confidence. Your job: restore confidence by explaining the broker difference (access to many lenders, not one). Key: identify the denial reason first — then the LO can address it directly. Don't promise miracles but do promise clarity. A soft pull costs nothing and tells you exactly where you stand.`,
-    15);
-
-  resp(nOpen, "Was denied before", "yellow", nDenied, 15);
-  resp(nDenied, "Wants to try again", "green", nGoalDisc, 1);
-  resp(nDenied, "Doubtful but open", "yellow", nAppointment, 2);
-  resp(nDenied, "Gave up / not interested", "gray", null, 3);
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // OBJECTION: PLANNING TO SELL / MOVE SOON
-  // ══════════════════════════════════════════════════════════════════════════
-  const nMovingSoon = node(sid, nOpen,
-    `Oh interesting — when are you thinking of listing, roughly?\n\n[IF 0–3 MONTHS]: "Got it — honestly, with that short a timeline, a new mortgage product probably doesn't make sense for you. But I do want to make sure you're set up to maximize what you walk away with. Our LOs work with buyers in your area constantly and they know which markets are moving fast right now. Would it be helpful to get a quick market pulse from someone who's in these transactions every day?"\n\n[IF 4–12 MONTHS]: "That's actually a sweet spot where a cash-out refi or HELOC could make a lot of sense — using your equity to fund repairs, staging, or even a down payment on the new place before you sell. It's more common than people think. Would you be open to hearing how that works?"`,
-    `Timeline is everything here. Under 3 months = no mortgage product makes sense — pivot to relationship building and referral to real estate contacts. 4–12 months = cash-out or HELOC can fund pre-sale improvements or a bridge strategy. Ask about their target home to understand if there's a purchase-side opportunity. Never push a product that won't close before they sell.`,
-    16);
-
-  resp(nOpen, "Planning to sell / move", "yellow", nMovingSoon, 16);
-  resp(nMovingSoon, "Open to cash-out before selling", "green", nQualHeloc, 1);
-  resp(nMovingSoon, "Just selling — no product needed", "gray", null, 2);
-  resp(nMovingSoon, "Interested in purchase loan", "blue", nAppointment, 3);
+  // ── Silent / voicemail ───────────────────────────────────────────────────
+  resp(nSilent, "Responded", "green", nReIntro, 1);
+  resp(nSilent, "No answer", "gray", null, 2);
+  resp(nVoicemail, "Voicemail left", "gray", null, 1);
 
   sqlite.prepare(`INSERT INTO migrations_applied (name, applied_at) VALUES (?, datetime('now'))`)
-    .run('ethan_wcl_script_v4');
+    .run('ethan_wcl_script_v5');
 }
-try { seedEthanScript(); } catch (e: any) { console.error("[seed] seedEthanScript v4 failed:", e?.message ?? e); }
+try { seedEthanScript(); } catch (e: any) { console.error("[seed] seedEthanScript v5 failed:", e?.message ?? e); }
 
 
 // Add owner_id column to existing DBs that don't have it
