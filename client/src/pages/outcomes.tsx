@@ -19,13 +19,13 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, Filter, ClipboardList, Pencil, Zap, CalendarCheck,
-  ChevronLeft, ChevronRight, Check,
-  ArrowRightLeft, CalendarPlus, PhoneCall, Hourglass, AlertTriangle,
-  PhoneOff, ThumbsDown, PhoneMissed, HelpCircle, ArrowLeft, Info,
+  ChevronLeft, ChevronRight, Check, Copy,
+  ArrowRightLeft, CalendarPlus, PhoneCall, ArrowLeft, Info,
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+import { copyToClipboard } from "@/lib/utils";
 
 // Compliance reminder displayed above every CLR-facing notes textarea.
 // CLRs should describe the conversation (rapport, objections, lead's vibe),
@@ -64,22 +64,64 @@ const OUTCOME_HELPERS: Record<string, string> = {
 };
 
 // ── Result picker tiles — the first screen of the log-contact flow ────────────
+// Only the three results CLRs log: Transfer, Appointment, Callback.
+// Each tile leads with the ONE thing that sets it apart from the other two,
+// so picking the right result is obvious at a glance.
 const OUTCOME_TILES: Array<{
   type: typeof OUTCOME_TYPES[number];
   icon: any;
-  helper?: string;
-  tone: string; // tailwind classes for the active state
+  diff: string;   // the key differentiator — rendered bold
+  detail: string; // supporting explanation
+  tone: string;   // tailwind classes for the tile
 }> = [
-  { type: "transfer",           icon: ArrowRightLeft, helper: "Sent to LO — live or scheduled", tone: "border-green-500 bg-green-50 hover:bg-green-100 text-green-900 dark:bg-green-900/20 dark:hover:bg-green-900/30 dark:text-green-200 dark:border-green-700" },
-  { type: "appointment",        icon: CalendarPlus,   helper: "Specific date & time confirmed",  tone: "border-blue-500 bg-blue-50 hover:bg-blue-100 text-blue-900 dark:bg-blue-900/20 dark:hover:bg-blue-900/30 dark:text-blue-200 dark:border-blue-700" },
-  { type: "callback_requested", icon: PhoneCall,      helper: "Call back within days/weeks",     tone: "border-purple-500 bg-purple-50 hover:bg-purple-100 text-purple-900 dark:bg-purple-900/20 dark:hover:bg-purple-900/30 dark:text-purple-200 dark:border-purple-700" },
-  { type: "deferral",           icon: Hourglass,      helper: "Month+ away — no date set",        tone: "border-amber-500 bg-amber-50 hover:bg-amber-100 text-amber-900 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700" },
-  { type: "fell_through",       icon: AlertTriangle,  helper: "Conversation ended without progress", tone: "border-orange-500 bg-orange-50 hover:bg-orange-100 text-orange-900 dark:bg-orange-900/20 dark:hover:bg-orange-900/30 dark:text-orange-200 dark:border-orange-700" },
-  { type: "no_answer",          icon: PhoneMissed,    helper: "Didn’t reach the lead",            tone: "border-gray-400 bg-gray-50 hover:bg-gray-100 text-gray-800 dark:bg-gray-800/40 dark:hover:bg-gray-700/40 dark:text-gray-200 dark:border-gray-600" },
-  { type: "not_interested",     icon: ThumbsDown,     helper: "Lead declined — don’t pursue",      tone: "border-red-500 bg-red-50 hover:bg-red-100 text-red-900 dark:bg-red-900/20 dark:hover:bg-red-900/30 dark:text-red-200 dark:border-red-700" },
-  { type: "wrong_number",       icon: PhoneOff,       helper: "Number not associated with lead",  tone: "border-zinc-400 bg-zinc-50 hover:bg-zinc-100 text-zinc-800 dark:bg-zinc-800/40 dark:hover:bg-zinc-700/40 dark:text-zinc-200 dark:border-zinc-600" },
-  { type: "other",              icon: HelpCircle,     helper: "Anything else — add notes below",  tone: "border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-800 dark:bg-slate-800/40 dark:hover:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600" },
+  {
+    type: "transfer",
+    icon: ArrowRightLeft,
+    diff: "Lead was handed to an LO",
+    detail: "Live on the line right now, or sent over as a scheduled transfer. The LO has the lead.",
+    tone: "border-green-500 bg-green-50 hover:bg-green-100 text-green-900 dark:bg-green-900/20 dark:hover:bg-green-900/30 dark:text-green-200 dark:border-green-700",
+  },
+  {
+    type: "appointment",
+    icon: CalendarPlus,
+    diff: "Exact date & time confirmed — no handoff yet",
+    detail: "A specific slot is on the books. The lead was NOT connected to an LO on this call.",
+    tone: "border-blue-500 bg-blue-50 hover:bg-blue-100 text-blue-900 dark:bg-blue-900/20 dark:hover:bg-blue-900/30 dark:text-blue-200 dark:border-blue-700",
+  },
+  {
+    type: "callback_requested",
+    icon: PhoneCall,
+    diff: "Call back soon — no exact time set",
+    detail: "Lead wants to hear back within days or weeks, but nothing is on the calendar yet.",
+    tone: "border-purple-500 bg-purple-50 hover:bg-purple-100 text-purple-900 dark:bg-purple-900/20 dark:hover:bg-purple-900/30 dark:text-purple-200 dark:border-purple-700",
+  },
 ];
+
+// One-click copy for call notes — lives next to the notes fields and inside
+// the Bonzo confirmation step so notes can be pasted straight into Bonzo.
+function CopyNotesButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-7 px-2 text-xs shrink-0"
+      disabled={!text.trim()}
+      onClick={async () => {
+        const ok = await copyToClipboard(text.trim());
+        if (ok) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }
+      }}
+      data-testid="button-copy-notes"
+    >
+      {copied ? <Check className="w-3.5 h-3.5 mr-1 text-green-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+      {copied ? "Copied!" : label}
+    </Button>
+  );
+}
 
 const OUTCOME_COLORS: Record<string, string> = {
   transfer: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
@@ -138,7 +180,6 @@ const outcomeFormSchema = z.object({
   followUpDate: z.string().optional(),
   // Wizard fields (all optional — filled for transfers if not skipped)
   conversationNotes: z.string().optional(),
-  loActionPlan: z.string().optional(),
   leadTimeframe: z.string().optional(),
   requiresFollowup: z.boolean().optional(),
   followupReason: z.string().optional(),
@@ -331,7 +372,6 @@ function OutcomeFormDialog({
       notes: "",
       followUpDate: "",
       conversationNotes: "",
-      loActionPlan: "",
       leadTimeframe: "",
       requiresFollowup: false,
       followupReason: "",
@@ -347,7 +387,9 @@ function OutcomeFormDialog({
     },
   });
 
-  const [bonzoLogged, setBonzoLogged] = useState(false);
+  // Final gate before anything is logged: a confirmation step that asks
+  // whether the call has been put into Bonzo (with one-click notes copy).
+  const [confirmBonzo, setConfirmBonzo] = useState(false);
   // Org toggle: ask whether Bulk Texter was part of the transfer.
   const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
   const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
@@ -373,7 +415,7 @@ function OutcomeFormDialog({
   }, [watchedType, form, step]);
 
   useEffect(() => {
-    if (open) { setBonzoLogged(false); setStep(0); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
+    if (open) { setConfirmBonzo(false); setStep(0); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
   }, [open]);
 
   const canAdvanceFromStep1 = !isTransfer || (
@@ -404,10 +446,9 @@ function OutcomeFormDialog({
   };
 
   const handleSkip = () => {
-    // Clear the fields on the current step then advance (or submit from step 3)
+    // Clear the fields on the current step then advance (or confirm from step 3)
     if (step === 2) {
       form.setValue("conversationNotes", "");
-      form.setValue("loActionPlan", "");
       form.setValue("leadTimeframe", "");
       form.setValue("requiresFollowup", false);
       form.setValue("followupReason", "");
@@ -422,24 +463,40 @@ function OutcomeFormDialog({
       form.setValue("rescheduled", false);
       form.setValue("rescheduleDatetime", "");
       form.setValue("nextSteps", "");
-      form.handleSubmit(onSubmit)();
+      setConfirmBonzo(true);
     }
   };
+
+  // Validate the form, then show the Bonzo question instead of logging
+  // immediately. Actual submit only happens from the confirmation step.
+  const handleAttemptSubmit = async () => {
+    const ok = await form.trigger();
+    if (!ok) return;
+    setConfirmBonzo(true);
+  };
+
+  // The call notes a CLR pastes into Bonzo — conversation summary + notes.
+  const notesForBonzo = [form.watch("conversationNotes"), form.watch("notes")]
+    .map(s => (s || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md p-0 gap-0 max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="space-y-1 px-4 sm:px-5 pt-4 sm:pt-5 pb-2 shrink-0">
-          <DialogTitle className="text-base">{step === 0 ? "What was the result?" : "Log Outcome"}</DialogTitle>
-          {step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
+          <DialogTitle className="text-base">
+            {confirmBonzo ? "One last thing — Bonzo" : step === 0 ? "What was the result?" : "Log Outcome"}
+          </DialogTitle>
+          {!confirmBonzo && step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
             <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
 
-          {/* ── Step 0: Result Picker ──────────────────────────── */}
-          {step === 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {/* ── Step 0: Result Picker — 3 options, differences up front ── */}
+          {!confirmBonzo && step === 0 && (
+            <div className="space-y-2">
               {OUTCOME_TILES.map(tile => {
                 const Icon = tile.icon;
                 return (
@@ -448,20 +505,21 @@ function OutcomeFormDialog({
                     type="button"
                     onClick={() => pickOutcome(tile.type)}
                     data-testid={`tile-outcome-${tile.type}`}
-                    className={`flex flex-col items-center justify-start gap-1.5 rounded-lg border-2 p-3 text-center transition-colors ${tile.tone}`}
+                    className={`w-full flex items-start gap-3 rounded-lg border-2 p-3.5 text-left transition-colors ${tile.tone}`}
                   >
-                    <Icon className="w-6 h-6" />
-                    <span className="text-sm font-semibold leading-tight">{OUTCOME_LABELS[tile.type]}</span>
-                    {tile.helper && (
-                      <span className="text-[11px] opacity-80 leading-tight">{tile.helper}</span>
-                    )}
+                    <Icon className="w-6 h-6 mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-bold leading-tight">{OUTCOME_LABELS[tile.type]}</span>
+                      <span className="block text-xs font-semibold mt-1 leading-snug">{tile.diff}</span>
+                      <span className="block text-[11px] opacity-75 mt-0.5 leading-snug">{tile.detail}</span>
+                    </span>
                   </button>
                 );
               })}
             </div>
           )}
 
-          {step === 1 && (
+          {!confirmBonzo && step === 1 && (
           <>
             {/* Selected outcome chip with Change link */}
             <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
@@ -624,7 +682,10 @@ function OutcomeFormDialog({
             {!isTransfer && (
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Notes</FormLabel>
+                  <div className="flex items-center justify-between gap-2">
+                    <FormLabel>Notes</FormLabel>
+                    <CopyNotesButton text={field.value || ""} />
+                  </div>
                   <NotesPolicyNote />
                   <FormControl><Textarea {...field} rows={2} placeholder="Summary of the conversation — not loan details…" data-testid="textarea-outcome-notes" /></FormControl>
                 </FormItem>
@@ -634,22 +695,18 @@ function OutcomeFormDialog({
           )}
 
           {/* ── Step 2: Conversation Notes ───────────────────────── */}
-          {isTransfer && step === 2 && (
+          {!confirmBonzo && isTransfer && step === 2 && (
             <>
               <p className="text-sm font-semibold text-foreground">Conversation Notes</p>
               <NotesPolicyNote />
               <FormField control={form.control} name="conversationNotes" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Summary of conversation with lead</FormLabel>
+                  <div className="flex items-center justify-between gap-2">
+                    <FormLabel>Summary of conversation with lead</FormLabel>
+                    <CopyNotesButton text={field.value || ""} />
+                  </div>
                   <FormControl><Textarea {...field} rows={3} placeholder="What did the lead say? Main questions or concerns?" /></FormControl>
                   <p className="text-xs text-muted-foreground">What did the lead say? What were their main questions or concerns?</p>
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="loActionPlan" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>LO's action plan with this lead</FormLabel>
-                  <FormControl><Textarea {...field} rows={3} placeholder="e.g. send rate quote, schedule call, run credit" /></FormControl>
-                  <p className="text-xs text-muted-foreground">What will the LO do next? (e.g. send rate quote, schedule call, run credit)</p>
                 </FormItem>
               )} />
               <FormField control={form.control} name="leadTimeframe" render={({ field }) => (
@@ -711,7 +768,7 @@ function OutcomeFormDialog({
           )}
 
           {/* ── Step 3: Lead Information ────────────────────────── */}
-          {isTransfer && step === 3 && (
+          {!confirmBonzo && isTransfer && step === 3 && (
             <>
               <p className="text-sm font-semibold text-foreground">Lead Information</p>
               <FormField control={form.control} name="leadType" render={({ field }) => (
@@ -799,66 +856,96 @@ function OutcomeFormDialog({
 
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Additional notes</FormLabel>
+                  <div className="flex items-center justify-between gap-2">
+                    <FormLabel>Additional notes</FormLabel>
+                    <CopyNotesButton text={field.value || ""} />
+                  </div>
                   <FormControl><Textarea {...field} rows={2} placeholder="Any other notes…" /></FormControl>
                 </FormItem>
               )} />
-
-              <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3">
-                <Checkbox
-                  id="bonzo-logged"
-                  checked={bonzoLogged}
-                  onCheckedChange={v => setBonzoLogged(v === true)}
-                  data-testid="checkbox-bonzo-logged"
-                />
-                <label htmlFor="bonzo-logged" className="text-sm leading-snug cursor-pointer select-none">
-                  I have recorded this transfer in Bonzo using the appropriate notation.
-                </label>
-              </div>
             </>
+          )}
+
+          {/* ── Bonzo gate — questions the CLR before anything is logged ── */}
+          {confirmBonzo && (
+            <div className="space-y-3">
+              <div className="rounded-md border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  Have you put this call into Bonzo?
+                </p>
+                <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-1 leading-snug">
+                  Copy the notes below, record them in Bonzo using the appropriate notation,
+                  then confirm to log the {OUTCOME_LABELS[watchedType]?.toLowerCase() || "outcome"}.
+                </p>
+              </div>
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Call notes</p>
+                  <CopyNotesButton text={notesForBonzo} label="Copy notes" />
+                </div>
+                {notesForBonzo ? (
+                  <p className="text-sm whitespace-pre-wrap" data-testid="text-bonzo-notes-preview">{notesForBonzo}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">No notes entered for this call.</p>
+                )}
+              </div>
+            </div>
           )}
 
             </div>
           {/* Footer */}
           <DialogFooter className="flex flex-wrap items-center gap-2 sm:justify-between px-4 sm:px-5 py-3 border-t bg-background shrink-0">
-            <div className="flex gap-2">
-              {isTransfer && step > 1 && (
-                <Button type="button" variant="outline" size="sm" onClick={handleBack}>
-                  <ChevronLeft className="w-4 h-4 mr-1" /> Back
+            {confirmBonzo ? (
+              <>
+                <Button type="button" variant="outline" size="sm" onClick={() => setConfirmBonzo(false)} disabled={isPending}>
+                  <ChevronLeft className="w-4 h-4 mr-1" /> Not yet — go back
                 </Button>
-              )}
-              <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            </div>
-            <div className="flex gap-2">
-              {isTransfer && (step === 2 || step === 3) && (
-                <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
-                  Skip for now
+                <Button type="submit" disabled={isPending} data-testid="button-confirm-bonzo">
+                  {isPending ? "Saving…" : "Yes, it's in Bonzo — Log Outcome"}
                 </Button>
-              )}
-              {isTransfer && step >= 1 && step < totalSteps && (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleNext}
-                  disabled={step === 1 && !canAdvanceFromStep1}
-                >
-                  Next <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              )}
-              {step >= 1 && (!isTransfer || step === totalSteps) && (
-                <Button
-                  type="submit"
-                  disabled={
-                    isPending ||
-                    (isTransfer && !bonzoLogged) ||
-                    (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
-                  }
-                  data-testid="button-save-outcome"
-                >
-                  {isPending ? "Saving…" : "Log Outcome"}
-                </Button>
-              )}
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  {isTransfer && step > 1 && (
+                    <Button type="button" variant="outline" size="sm" onClick={handleBack}>
+                      <ChevronLeft className="w-4 h-4 mr-1" /> Back
+                    </Button>
+                  )}
+                  <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+                </div>
+                <div className="flex gap-2">
+                  {isTransfer && (step === 2 || step === 3) && (
+                    <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
+                      Skip for now
+                    </Button>
+                  )}
+                  {isTransfer && step >= 1 && step < totalSteps && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleNext}
+                      disabled={step === 1 && !canAdvanceFromStep1}
+                    >
+                      Next <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  )}
+                  {step >= 1 && (!isTransfer || step === totalSteps) && (
+                    <Button
+                      type="button"
+                      onClick={handleAttemptSubmit}
+                      disabled={
+                        isPending ||
+                        (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
+                      }
+                      data-testid="button-save-outcome"
+                    >
+                      Log Outcome
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
           </DialogFooter>
           </form>
         </Form>
@@ -1208,7 +1295,7 @@ export default function Outcomes() {
             <Plus className="w-4 h-4 mr-2" />Log Outcome
           </Button>
           <HelpIcon title="Lead Outcomes">
-            Log every call you make here. Each outcome (Transfer, Appointment, Fell Through, etc.) is recorded and feeds into your EOD report and team stats automatically.
+            Log every call result here. Each outcome (Transfer, Appointment, Callback) is recorded and feeds into your EOD report and team stats automatically.
           </HelpIcon>
         </div>
       </div>

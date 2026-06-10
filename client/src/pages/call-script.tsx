@@ -5,8 +5,8 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -213,16 +213,13 @@ function inferOutcomeFromScriptEnd(
   const n = (endingNodeText || "").toLowerCase();
   const both = `${l} ${n}`;
 
-  // Most specific patterns first.
+  // Most specific patterns first. Only the three loggable results map to an
+  // outcome — anything else (no answer, not interested, etc.) returns null so
+  // the recorder simply doesn't pre-pick one.
   if (/transfer.*appointment|appointment.*transfer|warm transfer.*appt/.test(both)) return "transfer_appointment";
   if (/transfer|warm transfer|hand off|connecting you|connect you|loan officer now/.test(both)) return "transfer_direct";
   if (/(book|schedule|set).*appointment|appointment (set|booked|scheduled)|prequal.*appt/.test(both)) return "appointment";
   if (/call.*back|callback|i'?ll call|call later|reach out (later|tomorrow)|follow.?up call/.test(both)) return "callback_requested";
-  if (/voicemail|left.*message|leave.*message|\bvm\b/.test(both)) return "no_answer";
-  if (/no answer|didn'?t pick|busy signal|ring.*no answer/.test(both)) return "no_answer";
-  if (/not interested|don'?t want|remove me|\bdnc\b|do not call|hang up|hung up/.test(both)) return "fell_through";
-  if (/wrong (number|person)|not (the )?right (number|person)/.test(both)) return "fell_through";
-  if (/future contact|reach out (in|later)|months out|not ready/.test(both)) return "future_contact";
   return null;
 }
 
@@ -1182,30 +1179,28 @@ function ScriptFlowchart({ scriptId }: { scriptId: number }) {
 }
 
 // ─── Call Recorder ────────────────────────────────────────────────────────────
-type RecorderStep = "idle" | "recording" | "outcome_selected" | "wizard" | "verify" | "done";
+type RecorderStep = "idle" | "recording" | "outcome_selected" | "wizard" | "verify" | "bonzo" | "done";
 type RecorderOutcomeKey =
   | "transfer_direct"
   | "transfer_appointment"
   | "appointment"
-  | "callback_requested"
-  | "fell_through"
-  | "no_answer"
-  | "future_contact";
+  | "callback_requested";
 
+// Only the three loggable results — Transfer (split by how it was made),
+// Appointment, Callback. Each carries a `diff` line that spells out what
+// sets it apart from the other two.
 const OUTCOME_CHOICES: {
   key: RecorderOutcomeKey;
   label: string;
+  diff: string;
   btn: string;
   outcomeType: string;
   transferType?: "direct" | "appointment";
 }[] = [
-  { key: "transfer_direct", label: "Transfer (Direct)", btn: "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600", outcomeType: "transfer", transferType: "direct" },
-  { key: "transfer_appointment", label: "Transfer (Appointment)", btn: "bg-teal-500 hover:bg-teal-600 text-white border-teal-600", outcomeType: "transfer", transferType: "appointment" },
-  { key: "appointment", label: "Appointment Scheduled", btn: "bg-blue-500 hover:bg-blue-600 text-white border-blue-600", outcomeType: "appointment" },
-  { key: "callback_requested", label: "Callback Requested", btn: "bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500", outcomeType: "callback_requested" },
-  { key: "fell_through", label: "Fell Through", btn: "bg-rose-500 hover:bg-rose-600 text-white border-rose-600", outcomeType: "fell_through" },
-  { key: "no_answer", label: "No Answer", btn: "bg-zinc-400 hover:bg-zinc-500 text-white border-zinc-500", outcomeType: "no_answer" },
-  { key: "future_contact", label: "Future Contact", btn: "bg-purple-500 hover:bg-purple-600 text-white border-purple-600", outcomeType: "future_contact" },
+  { key: "transfer_direct", label: "Transfer (Direct)", diff: "LO took the lead live on the line", btn: "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600", outcomeType: "transfer", transferType: "direct" },
+  { key: "transfer_appointment", label: "Transfer (Appointment)", diff: "Handed to the LO as a scheduled transfer", btn: "bg-teal-500 hover:bg-teal-600 text-white border-teal-600", outcomeType: "transfer", transferType: "appointment" },
+  { key: "appointment", label: "Appointment Scheduled", diff: "Exact date & time set — no LO handoff", btn: "bg-blue-500 hover:bg-blue-600 text-white border-blue-600", outcomeType: "appointment" },
+  { key: "callback_requested", label: "Callback Requested", diff: "Call back soon — no exact time set", btn: "bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500", outcomeType: "callback_requested" },
 ];
 
 function formatDuration(ms: number): string {
@@ -1260,6 +1255,7 @@ function CallRecorder({
   const [wizardPhone, setWizardPhone] = useState<string>("");
   const [notesAutoFilled, setNotesAutoFilled] = useState(false);
   const [durationTick, setDurationTick] = useState(0);
+  const [bonzoCopied, setBonzoCopied] = useState(false);
 
   const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
@@ -1495,8 +1491,59 @@ function CallRecorder({
             <Button size="sm" variant="outline" onClick={() => setStep("wizard")} disabled={submitMut.isPending}>
               <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
             </Button>
-            <Button size="sm" onClick={() => submitMut.mutate()} disabled={submitMut.isPending} data-testid="script-confirm-log">
-              <Check className="w-3.5 h-3.5 mr-1.5" /> {submitMut.isPending ? "Logging…" : "Confirm & Log"}
+            <Button size="sm" onClick={() => setStep("bonzo")} data-testid="script-confirm-log">
+              <Check className="w-3.5 h-3.5 mr-1.5" /> Confirm <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ── Bonzo gate — questions the CLR before the call is logged ──────────────
+  if (step === "bonzo") {
+    return (
+      <Card className="border-2 border-amber-400/70">
+        <CardContent className="p-5 space-y-3">
+          <div>
+            <p className="text-sm font-semibold">Have you put this call into Bonzo?</p>
+            <p className="text-xs text-muted-foreground mt-1 leading-snug">
+              Copy the notes, record them in Bonzo using the appropriate notation, then log the call.
+            </p>
+          </div>
+          <div className="rounded-md border border-border bg-muted/40 p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Call notes</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs shrink-0"
+                disabled={!wizardNotes.trim()}
+                onClick={async () => {
+                  const ok = await copyToClipboard(wizardNotes.trim());
+                  if (ok) {
+                    setBonzoCopied(true);
+                    setTimeout(() => setBonzoCopied(false), 2000);
+                  }
+                }}
+                data-testid="script-copy-bonzo-notes"
+              >
+                {bonzoCopied ? <Check className="w-3.5 h-3.5 mr-1 text-green-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                {bonzoCopied ? "Copied!" : "Copy notes"}
+              </Button>
+            </div>
+            {wizardNotes.trim() ? (
+              <p className="text-sm whitespace-pre-wrap">{wizardNotes.trim()}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No notes entered for this call.</p>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end flex-wrap">
+            <Button size="sm" variant="outline" onClick={() => setStep("verify")} disabled={submitMut.isPending}>
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Not yet — go back
+            </Button>
+            <Button size="sm" onClick={() => submitMut.mutate()} disabled={submitMut.isPending} data-testid="script-bonzo-confirm-log">
+              <Check className="w-3.5 h-3.5 mr-1.5" /> {submitMut.isPending ? "Logging…" : "Yes, it's in Bonzo — Log Call"}
             </Button>
           </div>
         </CardContent>
@@ -1518,7 +1565,7 @@ function CallRecorder({
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
                 What was the outcome?
               </p>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {OUTCOME_CHOICES.map(choice => (
                   <button
                     key={choice.key}
@@ -1526,10 +1573,11 @@ function CallRecorder({
                       setChosenOutcome(choice.key);
                       setWizardTransferType(choice.transferType ?? "");
                     }}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border shadow-sm transition-all hover:scale-105 active:scale-95 ${choice.btn}`}
+                    className={`px-3 py-2 rounded-lg text-left border shadow-sm transition-all hover:scale-[1.02] active:scale-95 ${choice.btn}`}
                     data-testid={`wizard-outcome-${choice.key}`}
                   >
-                    {choice.label}
+                    <span className="block text-xs font-semibold">{choice.label}</span>
+                    <span className="block text-[10px] opacity-85 mt-0.5">{choice.diff}</span>
                   </button>
                 ))}
               </div>
@@ -1643,15 +1691,16 @@ function CallRecorder({
         </div>
         <div>
           <p className="text-sm font-semibold mb-2">How did the call end?</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {OUTCOME_CHOICES.map(choice => (
               <button
                 key={choice.key}
                 onClick={() => handleOutcomePick(choice.key)}
-                className={`px-3 py-2 rounded-full text-xs font-semibold border shadow-sm transition-all hover:scale-105 active:scale-95 ${choice.btn}`}
+                className={`px-3 py-2 rounded-lg text-left border shadow-sm transition-all hover:scale-[1.02] active:scale-95 ${choice.btn}`}
                 data-testid={`script-outcome-${choice.key}`}
               >
-                {choice.label}
+                <span className="block text-xs font-semibold">{choice.label}</span>
+                <span className="block text-[10px] opacity-85 mt-0.5">{choice.diff}</span>
               </button>
             ))}
           </div>
