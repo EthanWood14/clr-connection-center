@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -9,9 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarDays, Clock, Users, CheckCircle2 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { parseDbTimestamp } from "@/lib/utils";
+import { CalendarDays, Clock, Users, CheckCircle2, Send } from "lucide-react";
 
 type DayPlan = { working: boolean; start: string; end: string };
 type DaysMap = Record<string, DayPlan>;
@@ -121,6 +120,7 @@ function WeekGrid({ days }: { days: DaysMap }) {
 export default function WeeklySchedule() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const isManager = !!(user && (user.role === "admin" || (user as any).isManager || (user as any).superAdmin));
 
   const [days, setDays] = useState<DaysMap>(defaultDays());
   const [notes, setNotes] = useState("");
@@ -155,24 +155,29 @@ export default function WeeklySchedule() {
 
   const saveMutation = useMutation({
     mutationFn: (payload: { days: DaysMap; notes: string }) => apiRequest("PUT", "/api/schedule", payload),
-    onSuccess: () => {
+    onSuccess: (d: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/schedule"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schedule/team"] });
       setDirty(false);
+      toast({
+        title: "Schedule submitted for approval",
+        description: d?.emailedTo ? "Sent to " + d.emailedTo + " for review." : "A manager will review it.",
+      });
     },
-    onError: (e: any) => toast({ title: "Could not save schedule", description: e?.message ?? "Check your connection and edit again.", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Could not submit", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
-  // Auto-save: changes persist on their own (~600ms after the last edit) and
-  // the schedule stays in effect permanently until it's changed again.
-  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!dirty) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => saveMutation.mutate({ days, notes }), 600);
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, notes, dirty]);
+  // Manager/admin: approve or deny a teammate's submitted schedule.
+  const decideMutation = useMutation({
+    mutationFn: (v: { id: number; status: "approved" | "denied" }) =>
+      apiRequest("POST", "/api/schedule/" + v.id + "/decision", { status: v.status }),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule/team"] });
+      toast({ title: "Schedule " + v.status });
+    },
+    onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
 
   const totalHours = useMemo(
     () => DAY_KEYS.reduce((sum, k) => sum + hoursOf(days[k]), 0),
@@ -184,10 +189,6 @@ export default function WeeklySchedule() {
     setDirty(true);
   }
 
-  const savedAgo = saved?.updatedAt
-    ? formatDistanceToNow(parseDbTimestamp(saved.updatedAt) ?? new Date(), { addSuffix: true })
-    : null;
-
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -196,19 +197,29 @@ export default function WeeklySchedule() {
             <CalendarDays className="w-6 h-6" /> Weekly Schedule
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Set your standard work week so the team knows when you're on. Update it whenever your schedule changes.
+            Set your standard work week and submit it for manager approval. It stays in effect until you change it.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {dirty || saveMutation.isPending ? (
-            <Badge variant="outline" className="text-xs text-muted-foreground">Saving…</Badge>
-          ) : saved ? (
+          {dirty ? (
+            <Badge variant="outline" className="text-xs text-orange-500 border-orange-300">Unsubmitted changes</Badge>
+          ) : saved?.status === "approved" ? (
             <Badge className="bg-green-600 text-white gap-1 text-xs">
-              <CheckCircle2 className="w-3 h-3" /> Saved{savedAgo ? ` ${savedAgo}` : ""}
+              <CheckCircle2 className="w-3 h-3" /> Approved{saved.reviewerName ? ` by ${saved.reviewerName}` : ""}
             </Badge>
+          ) : saved?.status === "denied" ? (
+            <Badge className="bg-red-600 text-white text-xs">Denied — update & resubmit</Badge>
+          ) : saved ? (
+            <Badge className="bg-amber-500 text-white text-xs">Pending approval</Badge>
           ) : null}
         </div>
       </div>
+
+      {saved?.status === "denied" && saved.reviewerNote && (
+        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-4 py-2.5 text-sm text-red-800 dark:text-red-300">
+          <strong>Reviewer note:</strong> {saved.reviewerNote}
+        </div>
+      )}
 
       {/* Day grid */}
       <Card>
@@ -271,9 +282,15 @@ export default function WeeklySchedule() {
             />
           </div>
 
-          <p className="text-[11px] text-muted-foreground text-right pt-1">
-            Changes save automatically and stay in effect until you change them.
-          </p>
+          <div className="flex items-center justify-end gap-3 pt-1">
+            <p className="text-[11px] text-muted-foreground">
+              Submissions are reviewed by a manager and stay in effect until you change them.
+            </p>
+            <Button onClick={() => saveMutation.mutate({ days, notes })} disabled={saveMutation.isPending} className="gap-1.5 shrink-0" data-testid="submit-schedule">
+              <Send className="w-4 h-4" />
+              {saveMutation.isPending ? "Submitting…" : saved ? "Resubmit for Approval" : "Submit for Approval"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -290,9 +307,34 @@ export default function WeeklySchedule() {
           ) : (
             team.map((t: any) => (
               <div key={t.userId} className="rounded-lg border px-3 py-2.5" data-testid={"team-sched-" + t.userId}>
-                <div className="flex items-center gap-2 mb-1.5">
+                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   <span className="text-sm font-semibold">{t.userName}</span>
                   {t.userId === user?.id && <Badge variant="outline" className="text-[10px]">you</Badge>}
+                  {t.status === "approved" ? (
+                    <Badge className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">Approved{t.reviewerName ? ` · ${t.reviewerName}` : ""}</Badge>
+                  ) : t.status === "denied" ? (
+                    <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">Denied</Badge>
+                  ) : (
+                    <Badge className="text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">Pending</Badge>
+                  )}
+                  {isManager && t.status === "pending" && (
+                    <span className="ml-auto flex items-center gap-1.5">
+                      <Button
+                        size="sm" className="h-7 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                        onClick={() => decideMutation.mutate({ id: t.id, status: "approved" })}
+                        disabled={decideMutation.isPending} data-testid={"approve-sched-" + t.userId}
+                      >
+                        <CheckCircle2 className="w-3 h-3" /> Approve
+                      </Button>
+                      <Button
+                        size="sm" variant="outline" className="h-7 px-2.5 text-xs border-red-300 text-red-700 hover:bg-red-50"
+                        onClick={() => decideMutation.mutate({ id: t.id, status: "denied" })}
+                        disabled={decideMutation.isPending} data-testid={"deny-sched-" + t.userId}
+                      >
+                        Deny
+                      </Button>
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {DAY_KEYS.map(k => {

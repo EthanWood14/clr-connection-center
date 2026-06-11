@@ -2275,6 +2275,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
       )
     `);
   } catch {}
+  // Approval workflow columns (schedule submissions must be accepted by a
+  // manager/admin, like comp requests and time off).
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewed_by INTEGER`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewer_note TEXT DEFAULT ''`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewed_at TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN approval_token TEXT`); } catch {}
 
   // ── comp_requests migration ──────────────────────────────────────────────────
   // Reimbursement/comp tracking. Each row is one expense the user logged. It
@@ -3707,6 +3714,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Public, token-secured comp approve/deny from the approver email (no session).
     if (req.path === "/comp/email-decision") return next();
     if (req.path === "/time-off/email-decision") return next();
+    if (req.path === "/schedule/email-decision") return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -4715,6 +4723,53 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return out;
   }
 
+  function mapSchedule(r: any, nameById: Map<number, string>) {
+    let days = {};
+    try { days = JSON.parse(r.days || "{}"); } catch {}
+    return {
+      id: r.id,
+      userId: r.user_id,
+      userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
+      days,
+      notes: r.notes ?? "",
+      status: r.status ?? "pending",
+      reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
+      reviewerNote: r.reviewer_note ?? "",
+      reviewedAt: r.reviewed_at ?? null,
+      submittedAt: r.submitted_at,
+      updatedAt: r.updated_at,
+    };
+  }
+  function schedNameMap() {
+    return new Map<number, string>((storage.getUsers() as any[]).map((u: any) => [u.id, u.name]));
+  }
+  const fmtSchedTime = (t: string) => {
+    const [h, m] = String(t || "0:0").split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    const hh = h % 12 === 0 ? 12 : h % 12;
+    return m ? `${hh}:${String(m).padStart(2, "0")} ${ampm}` : `${hh} ${ampm}`;
+  };
+  function buildScheduleApprovalEmail(days: Record<string, any>, token: string, requesterName: string) {
+    const labels: Record<string, string> = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+    const approveUrl = `${COMP_APP_URL}/api/schedule/email-decision?token=${token}&action=approve`;
+    const denyUrl = `${COMP_APP_URL}/api/schedule/email-decision?token=${token}&action=deny`;
+    const rows = SCHED_DAY_KEYS.map((k, i) => {
+      const d = days[k] ?? {};
+      const val = d.working ? `${fmtSchedTime(d.start)} &ndash; ${fmtSchedTime(d.end)}` : "Off";
+      const border = i === 0 ? "" : "border-top:1px solid #e2e8f0;";
+      return `<tr><td style="padding:7px 10px;${border}font-size:13px;color:#64748b">${labels[k]}</td><td style="padding:7px 10px;${border}font-size:13px;color:#1e293b;text-align:right;font-weight:${d.working ? 600 : 400}">${val}</td></tr>`;
+    }).join("");
+    const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> submitted their weekly schedule. Approve or deny it below.</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}</table>
+      <table cellpadding="0" cellspacing="0"><tr>
+        <td style="padding-right:8px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Approve</a></td>
+        <td><a href="${denyUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Deny</a></td>
+      </tr></table>
+      <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">You can also review schedules in the app under Weekly Schedule.</p>`;
+    const subject = "Weekly schedule from " + requesterName + " needs approval";
+    return { subject, html: buildEmail({ subject: "Schedule Approval", preheader: requesterName + " submitted their weekly schedule", body }) };
+  }
+
   app.get("/api/schedule", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
@@ -4723,15 +4778,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const db = storageExtra.getRawSqlite();
       const row = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start=?").get(orgId, userId, SCHED_STANDING_KEY) as any;
       if (!row) return res.json({ schedule: null });
-      let days = {};
-      try { days = JSON.parse(row.days || "{}"); } catch {}
-      res.json({ schedule: { id: row.id, days, notes: row.notes ?? "", submittedAt: row.submitted_at, updatedAt: row.updated_at } });
+      res.json({ schedule: mapSchedule(row, schedNameMap()) });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load schedule" });
     }
   });
 
-  app.put("/api/schedule", requireAuth, (req: any, res) => {
+  // Submit (or resubmit) your schedule — goes to 'pending' and emails the
+  // approver with Approve/Deny links, like comp requests and time off.
+  app.put("/api/schedule", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
@@ -4739,17 +4794,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const clean = sanitizeScheduleDays(days);
     const notesStr = typeof notes === "string" ? notes.slice(0, 1000) : "";
     const nowIso = new Date().toISOString();
+    const token = crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
       db.prepare(`
-        INSERT INTO weekly_schedules (org_id, user_id, week_start, days, notes, submitted_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO weekly_schedules (org_id, user_id, week_start, days, notes, status, reviewed_by, reviewer_note, reviewed_at, approval_token, submitted_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', NULL, '', NULL, ?, ?, ?)
         ON CONFLICT(org_id, user_id, week_start) DO UPDATE SET
-          days=excluded.days, notes=excluded.notes, updated_at=excluded.updated_at
-      `).run(orgId, userId, SCHED_STANDING_KEY, JSON.stringify(clean), notesStr, nowIso, nowIso);
+          days=excluded.days, notes=excluded.notes, status='pending',
+          reviewed_by=NULL, reviewer_note='', reviewed_at=NULL,
+          approval_token=excluded.approval_token,
+          submitted_at=excluded.submitted_at, updated_at=excluded.updated_at
+      `).run(orgId, userId, SCHED_STANDING_KEY, JSON.stringify(clean), notesStr, token, nowIso, nowIso);
       const me = storage.getUserById(userId) as any;
-      audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "weekly_schedule", entityId: 0, entityLabel: "Weekly schedule", details: null });
-      res.json({ ok: true });
+      audit({ userId, userName: me?.name ?? "Unknown", action: "create", entityType: "weekly_schedule", entityId: 0, entityLabel: "Weekly schedule submitted", details: null });
+      // Email the approver (best-effort)
+      let emailedTo: string | null = null;
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        if (approverEmail) {
+          const { subject, html } = buildScheduleApprovalEmail(clean, token, me?.name ?? "A team member");
+          await sendEmail({ to: approverEmail, subject, html });
+          emailedTo = approverEmail;
+        }
+      } catch (e: any) { console.error("[schedule] approval email failed:", e?.message ?? e); }
+      res.json({ ok: true, emailedTo });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save schedule" });
     }
@@ -4760,15 +4832,75 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(sess?.orgId ?? 1) || 1;
     try {
       const db = storageExtra.getRawSqlite();
-      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY user_id ASC").all(orgId, SCHED_STANDING_KEY) as any[];
-      const nameById = new Map<number, string>((storage.getUsers() as any[]).map((u: any) => [u.id, u.name]));
-      res.json(rows.map(r => {
-        let days = {};
-        try { days = JSON.parse(r.days || "{}"); } catch {}
-        return { userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id), days, notes: r.notes ?? "", submittedAt: r.submitted_at, updatedAt: r.updated_at };
-      }));
+      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY (status='pending') DESC, user_id ASC").all(orgId, SCHED_STANDING_KEY) as any[];
+      const nameById = schedNameMap();
+      res.json(rows.map(r => mapSchedule(r, nameById)));
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load team schedules" });
+    }
+  });
+
+  // Manager/admin decision from inside the app.
+  app.post("/api/schedule/:id/decision", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const reviewerId = Number(sess?.userId);
+    const id = parseInt(req.params.id, 10);
+    const status = req.body?.status;
+    const reviewerNote = typeof req.body?.reviewerNote === "string" ? req.body.reviewerNote.slice(0, 1000) : "";
+    if (status !== "approved" && status !== "denied") return res.status(400).json({ error: "status must be 'approved' or 'denied'." });
+    const nowIso = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const existing = db.prepare("SELECT * FROM weekly_schedules WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!existing) return res.status(404).json({ error: "Schedule not found" });
+      db.prepare("UPDATE weekly_schedules SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
+      const nameById = schedNameMap();
+      const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
+      audit({
+        userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
+        entityType: "weekly_schedule", entityId: id,
+        entityLabel: (nameById.get(existing.user_id) ?? "CLR") + " schedule " + status,
+        details: JSON.stringify({ status, reviewerNote }),
+      });
+      try {
+        (storage as any).createNotification?.({
+          userId: existing.user_id, type: "schedule",
+          title: "Schedule " + status,
+          message: "Your weekly schedule was " + status + (reviewerNote ? (": " + reviewerNote) : ".") + (status === "denied" ? " Update and resubmit it." : ""),
+        });
+      } catch {}
+      const row = db.prepare("SELECT * FROM weekly_schedules WHERE id=?").get(id) as any;
+      res.json(mapSchedule(row, nameById));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to update schedule" });
+    }
+  });
+
+  // Public approve/deny from the email links (token-authenticated).
+  app.get("/api/schedule/email-decision", async (req: any, res) => {
+    const token = String(req.query.token ?? "");
+    const action = String(req.query.action ?? "");
+    const status = action === "approve" ? "approved" : action === "deny" ? "denied" : null;
+    const page = (title: string, msg: string, glyph: string) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:Arial,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:36px 44px;max-width:440px;text-align:center;box-shadow:0 4px 20px rgba(15,24,45,0.08)"><div style="font-size:44px;line-height:1;margin-bottom:12px">${glyph}</div><h1 style="margin:0 0 8px;font-size:20px;color:#0F182D">${title}</h1><p style="margin:0;color:#475569;font-size:14px;line-height:1.5">${msg}</p></div></body></html>`;
+    if (!token || !status) return res.status(400).send(page("Invalid link", "This approval link is missing or malformed.", "&#9888;&#65039;"));
+    try {
+      const db = storageExtra.getRawSqlite();
+      const row = db.prepare("SELECT * FROM weekly_schedules WHERE approval_token=?").get(token) as any;
+      if (!row) return res.status(404).send(page("Not found", "This schedule submission could not be located.", "&#10067;"));
+      if (row.status !== "pending") return res.send(page("Already handled", "This schedule was already " + row.status + ". No further action needed.", "&#8505;&#65039;"));
+      const settings = storageExtra.getEmailSettings() as any;
+      const reviewerId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || null;
+      const now = new Date().toISOString();
+      db.prepare("UPDATE weekly_schedules SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
+      try {
+        (storage as any).createNotification?.({ userId: row.user_id, type: "schedule", title: "Schedule " + status, message: "Your weekly schedule was " + status + " via email." + (status === "denied" ? " Update and resubmit it." : "") });
+      } catch {}
+      const glyph = status === "approved" ? "&#9989;" : "&#10060;";
+      return res.send(page("Schedule " + status, "The weekly schedule was marked " + status + ". You can close this tab.", glyph));
+    } catch (e: any) {
+      return res.status(500).send(page("Something went wrong", e?.message ?? "Please try again.", "&#9888;&#65039;"));
     }
   });
 
