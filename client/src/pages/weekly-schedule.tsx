@@ -10,8 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Send, Users, CheckCircle2 } from "lucide-react";
-import { format, addDays, parseISO } from "date-fns";
+import { CalendarDays, Clock, Send, Users, CheckCircle2 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { parseDbTimestamp } from "@/lib/utils";
 
 type DayPlan = { working: boolean; start: string; end: string };
 type DaysMap = Record<string, DayPlan>;
@@ -28,13 +29,6 @@ function defaultDays(): DaysMap {
     out[k] = { working: k !== "sat" && k !== "sun", start: "08:00", end: "16:00" };
   }
   return out;
-}
-
-// Monday (YYYY-MM-DD) of the week containing d.
-function mondayOf(d: Date): string {
-  const day = d.getDay(); // 0=Sun..6=Sat
-  const diff = day === 0 ? -6 : 1 - day;
-  return format(addDays(d, diff), "yyyy-MM-dd");
 }
 
 function hoursOf(p: DayPlan): number {
@@ -56,23 +50,17 @@ export default function WeeklySchedule() {
   const { toast } = useToast();
   const { user } = useAuth();
 
-  // Default to the upcoming week (next Monday) — this is a *planned* schedule.
-  const [weekStart, setWeekStart] = useState<string>(() => mondayOf(addDays(new Date(), 7)));
-  const thisWeek = mondayOf(new Date());
-  const weekEnd = format(addDays(parseISO(weekStart), 6), "MMM d");
-  const weekLabel = `${format(parseISO(weekStart), "MMM d")} – ${weekEnd}, ${format(parseISO(weekStart), "yyyy")}`;
-
   const [days, setDays] = useState<DaysMap>(defaultDays());
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
 
   const { data, isLoading } = useQuery<{ schedule: any }>({
-    queryKey: ["/api/schedule", weekStart],
-    queryFn: () => apiRequest("GET", "/api/schedule?weekStart=" + weekStart),
+    queryKey: ["/api/schedule"],
+    queryFn: () => apiRequest("GET", "/api/schedule"),
   });
   const saved = data?.schedule ?? null;
 
-  // Load the saved schedule (or defaults) whenever the week or data changes.
+  // Load the saved schedule (or defaults) once data arrives.
   useEffect(() => {
     if (isLoading) return;
     if (saved?.days && Object.keys(saved.days).length) {
@@ -86,22 +74,22 @@ export default function WeeklySchedule() {
     }
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, isLoading, saved?.updatedAt]);
+  }, [isLoading, saved?.updatedAt]);
 
   const { data: team = [] } = useQuery<any[]>({
-    queryKey: ["/api/schedule/team", weekStart],
-    queryFn: () => apiRequest("GET", "/api/schedule/team?weekStart=" + weekStart),
+    queryKey: ["/api/schedule/team"],
+    queryFn: () => apiRequest("GET", "/api/schedule/team"),
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => apiRequest("PUT", "/api/schedule", { weekStart, days, notes }),
+    mutationFn: () => apiRequest("PUT", "/api/schedule", { days, notes }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/schedule", weekStart] });
-      queryClient.invalidateQueries({ queryKey: ["/api/schedule/team", weekStart] });
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule/team"] });
       setDirty(false);
-      toast({ title: "Schedule submitted", description: "Your planned week of " + weekLabel + " is saved." });
+      toast({ title: "Schedule saved", description: "Your weekly schedule is set." });
     },
-    onError: (e: any) => toast({ title: "Could not submit", description: e?.message ?? "Try again.", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
   const totalHours = useMemo(
@@ -114,38 +102,25 @@ export default function WeeklySchedule() {
     setDirty(true);
   }
 
-  const shiftWeek = (delta: number) => setWeekStart(mondayOf(addDays(parseISO(weekStart), delta * 7)));
+  const savedAgo = saved?.updatedAt
+    ? formatDistanceToNow(parseDbTimestamp(saved.updatedAt) ?? new Date(), { addSuffix: true })
+    : null;
 
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <CalendarDays className="w-6 h-6" /> Weekly Schedule
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Plan and submit your work schedule for the week so the team knows your coverage.
-        </p>
-      </div>
-
-      {/* Week picker */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => shiftWeek(-1)} data-testid="week-prev">
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <div className="px-3 py-1.5 rounded-md border bg-card text-sm font-semibold min-w-[210px] text-center">
-            {weekLabel}
-            {weekStart === thisWeek && <span className="ml-2 text-[10px] font-normal text-muted-foreground">(this week)</span>}
-            {weekStart === mondayOf(addDays(new Date(), 7)) && <span className="ml-2 text-[10px] font-normal text-muted-foreground">(next week)</span>}
-          </div>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => shiftWeek(1)} data-testid="week-next">
-            <ChevronRight className="w-4 h-4" />
-          </Button>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <CalendarDays className="w-6 h-6" /> Weekly Schedule
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Set your standard work week so the team knows when you're on. Update it whenever your schedule changes.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {saved && !dirty && (
             <Badge className="bg-green-600 text-white gap-1 text-xs">
-              <CheckCircle2 className="w-3 h-3" /> Submitted
+              <CheckCircle2 className="w-3 h-3" /> Saved{savedAgo ? ` ${savedAgo}` : ""}
             </Badge>
           )}
           {dirty && (
@@ -159,10 +134,10 @@ export default function WeeklySchedule() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="w-4 h-4" /> Planned Hours
+              <Clock className="w-4 h-4" /> My Week
             </CardTitle>
             <span className="text-sm text-muted-foreground">
-              Total: <strong className="text-foreground tabular-nums">{totalHours.toFixed(totalHours % 1 ? 1 : 0)}h</strong>
+              Total: <strong className="text-foreground tabular-nums">{totalHours.toFixed(totalHours % 1 ? 1 : 0)}h / week</strong>
             </span>
           </div>
         </CardHeader>
@@ -170,18 +145,14 @@ export default function WeeklySchedule() {
           {isLoading ? (
             <Skeleton className="h-64 w-full" />
           ) : (
-            DAY_KEYS.map((k, i) => {
+            DAY_KEYS.map((k) => {
               const p = days[k];
-              const dateLabel = format(addDays(parseISO(weekStart), i), "MMM d");
               const h = hoursOf(p);
               return (
                 <div key={k} className={`flex items-center gap-3 rounded-lg border px-3 py-2 flex-wrap ${p.working ? "" : "bg-muted/40"}`} data-testid={"day-row-" + k}>
-                  <label className="flex items-center gap-2.5 w-40 shrink-0 cursor-pointer">
+                  <label className="flex items-center gap-2.5 w-36 shrink-0 cursor-pointer">
                     <Switch checked={p.working} onCheckedChange={(v) => setDay(k, { working: v })} data-testid={"day-working-" + k} />
-                    <span className={`text-sm font-medium ${p.working ? "" : "text-muted-foreground"}`}>
-                      {DAY_LABELS[k]}
-                      <span className="block text-[10px] font-normal text-muted-foreground">{dateLabel}</span>
-                    </span>
+                    <span className={`text-sm font-medium ${p.working ? "" : "text-muted-foreground"}`}>{DAY_LABELS[k]}</span>
                   </label>
                   {p.working ? (
                     <div className="flex items-center gap-2 flex-1 flex-wrap">
@@ -206,7 +177,7 @@ export default function WeeklySchedule() {
               value={notes}
               onChange={e => { setNotes(e.target.value); setDirty(true); }}
               rows={2} maxLength={1000}
-              placeholder="Anything the team should know — appointments, partial days, etc."
+              placeholder="Anything the team should know — lunch breaks, timezone, recurring commitments, etc."
               data-testid="schedule-notes"
             />
           </div>
@@ -214,23 +185,22 @@ export default function WeeklySchedule() {
           <div className="flex justify-end pt-1">
             <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-1.5" data-testid="submit-schedule">
               <Send className="w-4 h-4" />
-              {saveMutation.isPending ? "Submitting…" : saved ? "Update Schedule" : "Submit Schedule"}
+              {saveMutation.isPending ? "Saving…" : saved ? "Update Schedule" : "Save Schedule"}
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Team schedules for the selected week */}
+      {/* Team schedules */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Users className="w-4 h-4" /> Team Schedules
-            <span className="text-xs font-normal text-muted-foreground">— week of {format(parseISO(weekStart), "MMM d")}</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {team.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-3 text-center">No one has submitted a schedule for this week yet.</p>
+            <p className="text-sm text-muted-foreground py-3 text-center">No one has set a weekly schedule yet.</p>
           ) : (
             team.map((t: any) => (
               <div key={t.userId} className="rounded-lg border px-3 py-2.5" data-testid={"team-sched-" + t.userId}>

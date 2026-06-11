@@ -4695,10 +4695,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Weekly Schedules ──────────────────────────────────────────────────────────
-  // CLRs submit their planned work schedule for a week (Mon–Sun). One row per
-  // user per week. Everyone can see the team's submitted schedules for coverage.
+  // Each CLR sets ONE standing weekly schedule (their normal Mon–Sun hours), not
+  // a per-week plan. Stored in weekly_schedules with the fixed week_start key
+  // 'standing' (the UNIQUE(org_id, user_id, week_start) constraint then gives
+  // exactly one row per user). Everyone can see the team's schedules for coverage.
   const SCHED_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  const isWeekStart = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const SCHED_STANDING_KEY = "standing";
   function sanitizeScheduleDays(raw: any): Record<string, { working: boolean; start: string; end: string }> {
     const isTime = (t: any) => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
     const out: Record<string, { working: boolean; start: string; end: string }> = {};
@@ -4717,15 +4719,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
-    const weekStart = req.query.weekStart;
-    if (!isWeekStart(weekStart)) return res.status(400).json({ error: "weekStart (YYYY-MM-DD) required" });
     try {
       const db = storageExtra.getRawSqlite();
-      const row = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start=?").get(orgId, userId, weekStart) as any;
+      const row = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start=?").get(orgId, userId, SCHED_STANDING_KEY) as any;
       if (!row) return res.json({ schedule: null });
       let days = {};
       try { days = JSON.parse(row.days || "{}"); } catch {}
-      res.json({ schedule: { id: row.id, weekStart: row.week_start, days, notes: row.notes ?? "", submittedAt: row.submitted_at, updatedAt: row.updated_at } });
+      res.json({ schedule: { id: row.id, days, notes: row.notes ?? "", submittedAt: row.submitted_at, updatedAt: row.updated_at } });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load schedule" });
     }
@@ -4735,8 +4735,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
-    const { weekStart, days, notes } = req.body ?? {};
-    if (!isWeekStart(weekStart)) return res.status(400).json({ error: "weekStart (YYYY-MM-DD) required" });
+    const { days, notes } = req.body ?? {};
     const clean = sanitizeScheduleDays(days);
     const notesStr = typeof notes === "string" ? notes.slice(0, 1000) : "";
     const nowIso = new Date().toISOString();
@@ -4747,9 +4746,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(org_id, user_id, week_start) DO UPDATE SET
           days=excluded.days, notes=excluded.notes, updated_at=excluded.updated_at
-      `).run(orgId, userId, weekStart, JSON.stringify(clean), notesStr, nowIso, nowIso);
+      `).run(orgId, userId, SCHED_STANDING_KEY, JSON.stringify(clean), notesStr, nowIso, nowIso);
       const me = storage.getUserById(userId) as any;
-      audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "weekly_schedule", entityId: 0, entityLabel: "Week of " + weekStart, details: JSON.stringify({ weekStart }) });
+      audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "weekly_schedule", entityId: 0, entityLabel: "Weekly schedule", details: null });
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save schedule" });
@@ -4759,16 +4758,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/schedule/team", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
-    const weekStart = req.query.weekStart;
-    if (!isWeekStart(weekStart)) return res.status(400).json({ error: "weekStart (YYYY-MM-DD) required" });
     try {
       const db = storageExtra.getRawSqlite();
-      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY user_id ASC").all(orgId, weekStart) as any[];
+      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY user_id ASC").all(orgId, SCHED_STANDING_KEY) as any[];
       const nameById = new Map<number, string>((storage.getUsers() as any[]).map((u: any) => [u.id, u.name]));
       res.json(rows.map(r => {
         let days = {};
         try { days = JSON.parse(r.days || "{}"); } catch {}
-        return { userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id), weekStart: r.week_start, days, notes: r.notes ?? "", submittedAt: r.submitted_at, updatedAt: r.updated_at };
+        return { userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id), days, notes: r.notes ?? "", submittedAt: r.submitted_at, updatedAt: r.updated_at };
       }));
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load team schedules" });
