@@ -45,6 +45,79 @@ function fmtTime(t: string): string {
   return m ? `${hh}:${String(m).padStart(2, "0")} ${ampm}` : `${hh} ${ampm}`;
 }
 
+const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+
+// Calendar-style week grid: hour labels down the left, one column per day,
+// the working window drawn as a filled block.
+function WeekGrid({ days }: { days: DaysMap }) {
+  const HOUR_PX = 34;
+  const working = DAY_KEYS.map(k => days[k]).filter(p => p?.working && toMin(p.end) > toMin(p.start));
+  let minH = 8, maxH = 17;
+  if (working.length) {
+    minH = Math.min(...working.map(p => Math.floor(toMin(p.start) / 60)));
+    maxH = Math.max(...working.map(p => Math.ceil(toMin(p.end) / 60)));
+  }
+  if (maxH - minH < 4) maxH = minH + 4;
+  const hours: number[] = [];
+  for (let h = minH; h <= maxH; h++) hours.push(h);
+  const fmtHour = (h: number) => (h % 12 === 0 ? 12 : h % 12) + (h >= 12 ? " PM" : " AM");
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[560px]">
+        {/* Day headers */}
+        <div className="flex">
+          <div className="w-14 shrink-0" />
+          {DAY_KEYS.map(k => (
+            <div key={k} className={`flex-1 text-center text-xs font-semibold py-1.5 border-b ${days[k]?.working ? "text-foreground" : "text-muted-foreground/60"}`}>
+              {DAY_LABELS[k].slice(0, 3)}
+            </div>
+          ))}
+        </div>
+        <div className="flex">
+          {/* Hour gutter */}
+          <div className="w-14 shrink-0 relative" style={{ height: (maxH - minH) * HOUR_PX }}>
+            {hours.slice(0, -1).map((h, i) => (
+              <div key={h} className="absolute right-1.5 text-[10px] text-muted-foreground tabular-nums" style={{ top: i * HOUR_PX - 6 }}>
+                {i === 0 ? "" : fmtHour(h)}
+              </div>
+            ))}
+          </div>
+          {/* Day columns */}
+          {DAY_KEYS.map(k => {
+            const p = days[k];
+            const on = !!p?.working && toMin(p.end) > toMin(p.start);
+            const top = on ? ((toMin(p.start) - minH * 60) / 60) * HOUR_PX : 0;
+            const height = on ? ((toMin(p.end) - toMin(p.start)) / 60) * HOUR_PX : 0;
+            return (
+              <div key={k} className="flex-1 relative border-l last:border-r" style={{ height: (maxH - minH) * HOUR_PX }}>
+                {/* hour lines */}
+                {hours.slice(0, -1).map((h, i) => (
+                  <div key={h} className="absolute left-0 right-0 border-b border-border/60" style={{ top: (i + 1) * HOUR_PX }} />
+                ))}
+                {!on && <div className="absolute inset-0 bg-muted/40" />}
+                {on && (
+                  <div
+                    className="absolute left-0.5 right-0.5 rounded-md bg-primary/80 text-primary-foreground px-1 py-0.5 overflow-hidden"
+                    style={{ top, height: Math.max(height, 14) }}
+                    title={`${DAY_LABELS[k]}: ${fmtTime(p.start)} – ${fmtTime(p.end)}`}
+                  >
+                    {height >= 30 && (
+                      <div className="text-[9px] leading-tight font-medium">
+                        {fmtTime(p.start)}<br />–{fmtTime(p.end)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function WeeklySchedule() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -153,6 +226,15 @@ export default function WeeklySchedule() {
           {isLoading ? (
             <Skeleton className="h-64 w-full" />
           ) : (
+            <>
+              {/* Calendar-style week view */}
+              <div className="rounded-lg border bg-card mb-4 pb-1 px-1">
+                <WeekGrid days={days} />
+              </div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest pt-1">Edit hours</p>
+            </>
+          )}
+          {!isLoading &&
             DAY_KEYS.map((k) => {
               const p = days[k];
               const h = hoursOf(p);
@@ -176,8 +258,7 @@ export default function WeeklySchedule() {
                   )}
                 </div>
               );
-            })
-          )}
+            })}
 
           <div className="pt-1">
             <label className="text-xs font-medium text-muted-foreground">Notes (optional)</label>
