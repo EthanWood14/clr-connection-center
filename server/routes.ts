@@ -4709,28 +4709,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // exactly one row per user). Everyone can see the team's schedules for coverage.
   const SCHED_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const SCHED_STANDING_KEY = "standing";
+  const isSchedTime = (t: any) => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
   function sanitizeScheduleDays(raw: any): Record<string, { working: boolean; start: string; end: string }> {
-    const isTime = (t: any) => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
     const out: Record<string, { working: boolean; start: string; end: string }> = {};
     for (const k of SCHED_DAY_KEYS) {
       const d = raw?.[k] ?? {};
       out[k] = {
         working: !!d.working,
-        start: isTime(d.start) ? d.start : "08:00",
-        end: isTime(d.end) ? d.end : "16:00",
+        start: isSchedTime(d.start) ? d.start : "08:00",
+        end: isSchedTime(d.end) ? d.end : "16:00",
       };
     }
     return out;
   }
+  // Daily lunch break, automatically subtracted from each working day.
+  function sanitizeScheduleLunch(raw: any): { start: string; minutes: number } {
+    const minutes = Math.max(0, Math.min(120, Math.round(Number(raw?.minutes ?? 0)) || 0));
+    return { start: isSchedTime(raw?.start) ? raw.start : "12:00", minutes };
+  }
 
   function mapSchedule(r: any, nameById: Map<number, string>) {
-    let days = {};
-    try { days = JSON.parse(r.days || "{}"); } catch {}
+    let parsed: any = {};
+    try { parsed = JSON.parse(r.days || "{}"); } catch {}
+    const { lunch = null, ...days } = parsed;
     return {
       id: r.id,
       userId: r.user_id,
       userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
       days,
+      lunch,
       notes: r.notes ?? "",
       status: r.status ?? "pending",
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
@@ -4758,7 +4765,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const val = d.working ? `${fmtSchedTime(d.start)} &ndash; ${fmtSchedTime(d.end)}` : "Off";
       const border = i === 0 ? "" : "border-top:1px solid #e2e8f0;";
       return `<tr><td style="padding:7px 10px;${border}font-size:13px;color:#64748b">${labels[k]}</td><td style="padding:7px 10px;${border}font-size:13px;color:#1e293b;text-align:right;font-weight:${d.working ? 600 : 400}">${val}</td></tr>`;
-    }).join("");
+    }).join("") + ((days as any).lunch?.minutes > 0
+      ? `<tr><td style="padding:7px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Lunch break</td><td style="padding:7px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#1e293b;text-align:right">${fmtSchedTime((days as any).lunch.start)} (${(days as any).lunch.minutes} min, daily)</td></tr>`
+      : "");
     const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> submitted their weekly schedule. Approve or deny it below.</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}</table>
       <table cellpadding="0" cellspacing="0"><tr>
@@ -4790,8 +4799,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
-    const { days, notes } = req.body ?? {};
-    const clean = sanitizeScheduleDays(days);
+    const { days, lunch, notes } = req.body ?? {};
+    // Lunch is stored alongside the day map and automatically subtracted from
+    // each working day's hours.
+    const clean: any = { ...sanitizeScheduleDays(days), lunch: sanitizeScheduleLunch(lunch) };
     const notesStr = typeof notes === "string" ? notes.slice(0, 1000) : "";
     const nowIso = new Date().toISOString();
     const token = crypto.randomBytes(24).toString("hex");

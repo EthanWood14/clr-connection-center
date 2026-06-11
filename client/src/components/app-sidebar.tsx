@@ -182,10 +182,13 @@ const reportingItems: NavItem[] = [
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
-  { title: "Time Off",              url: "/time-off",     icon: Plane },
-  { title: "Weekly Schedule",       url: "/my-schedule",  icon: CalendarDays },
-  { title: "Comp Requests",         url: "/comp-requests", icon: Wallet },
   { title: "Install App",           url: "/install",      icon: Smartphone },
+];
+
+const personalItems: NavItem[] = [
+  { title: "Time Off",        url: "/time-off",      icon: Plane },
+  { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
+  { title: "Comp Requests",   url: "/comp-requests", icon: Wallet },
 ];
 
 const teamItems: NavItem[] = [
@@ -402,6 +405,16 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(reportingItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* PERSONAL — time off, schedule, comp */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Personal
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(personalItems)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 

@@ -14,6 +14,7 @@ import { CalendarDays, Clock, Users, CheckCircle2, Send } from "lucide-react";
 
 type DayPlan = { working: boolean; start: string; end: string };
 type DaysMap = Record<string, DayPlan>;
+type Lunch = { start: string; minutes: number };
 
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -37,6 +38,22 @@ function hoursOf(p: DayPlan): number {
   return mins > 0 ? mins / 60 : 0;
 }
 
+// Minutes of the lunch break that fall inside this day's working window —
+// automatically subtracted from the day's hours.
+function lunchOverlapMin(p: DayPlan, lunch: Lunch | null): number {
+  if (!p.working || !lunch || !lunch.minutes) return 0;
+  const s = toMinOf(p.start), e = toMinOf(p.end);
+  const ls = toMinOf(lunch.start), le = ls + lunch.minutes;
+  return Math.max(0, Math.min(e, le) - Math.max(s, ls));
+}
+
+function netHoursOf(p: DayPlan, lunch: Lunch | null): number {
+  const base = hoursOf(p);
+  return base > 0 ? Math.max(0, base - lunchOverlapMin(p, lunch) / 60) : 0;
+}
+
+function toMinOf(t: string): number { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
+
 function fmtTime(t: string): string {
   const [h, m] = t.split(":").map(Number);
   const ampm = h >= 12 ? "PM" : "AM";
@@ -48,7 +65,7 @@ const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h
 
 // Calendar-style week grid: hour labels down the left, one column per day,
 // the working window drawn as a filled block.
-function WeekGrid({ days }: { days: DaysMap }) {
+function WeekGrid({ days, lunch }: { days: DaysMap; lunch: Lunch | null }) {
   const HOUR_PX = 34;
   const working = DAY_KEYS.map(k => days[k]).filter(p => p?.working && toMin(p.end) > toMin(p.start));
   let minH = 8, maxH = 17;
@@ -99,7 +116,7 @@ function WeekGrid({ days }: { days: DaysMap }) {
                   <div
                     className="absolute left-0.5 right-0.5 rounded-md bg-primary/80 text-primary-foreground px-1 py-0.5 overflow-hidden"
                     style={{ top, height: Math.max(height, 14) }}
-                    title={`${DAY_LABELS[k]}: ${fmtTime(p.start)} – ${fmtTime(p.end)}`}
+                    title={`${DAY_LABELS[k]}: ${fmtTime(p.start)} – ${fmtTime(p.end)}${lunch?.minutes ? ` (lunch ${fmtTime(lunch.start)}, ${lunch.minutes} min)` : ""}`}
                   >
                     {height >= 30 && (
                       <div className="text-[9px] leading-tight font-medium">
@@ -108,6 +125,19 @@ function WeekGrid({ days }: { days: DaysMap }) {
                     )}
                   </div>
                 )}
+                {/* Lunch gap drawn over the block */}
+                {on && lunch && lunch.minutes > 0 && (() => {
+                  const ls = Math.max(toMin(p.start), toMin(lunch.start));
+                  const le = Math.min(toMin(p.end), toMin(lunch.start) + lunch.minutes);
+                  if (le <= ls) return null;
+                  return (
+                    <div
+                      className="absolute left-0.5 right-0.5 bg-background/85 border-y border-dashed border-primary/40"
+                      style={{ top: ((ls - minH * 60) / 60) * HOUR_PX, height: ((le - ls) / 60) * HOUR_PX }}
+                      title={`Lunch: ${fmtTime(lunch.start)} (${lunch.minutes} min)`}
+                    />
+                  );
+                })()}
               </div>
             );
           })}
@@ -123,6 +153,7 @@ export default function WeeklySchedule() {
   const isManager = !!(user && (user.role === "admin" || (user as any).isManager || (user as any).superAdmin));
 
   const [days, setDays] = useState<DaysMap>(defaultDays());
+  const [lunch, setLunch] = useState<Lunch>({ start: "12:00", minutes: 60 });
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
 
@@ -140,9 +171,12 @@ export default function WeeklySchedule() {
       const merged = defaultDays();
       for (const k of DAY_KEYS) if (saved.days[k]) merged[k] = { ...merged[k], ...saved.days[k] };
       setDays(merged);
+      // Older submissions predate lunch tracking — treat missing as "no lunch".
+      setLunch(saved.lunch ?? { start: "12:00", minutes: 0 });
       setNotes(saved.notes ?? "");
     } else {
       setDays(defaultDays());
+      setLunch({ start: "12:00", minutes: 60 });
       setNotes("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,7 +188,7 @@ export default function WeeklySchedule() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (payload: { days: DaysMap; notes: string }) => apiRequest("PUT", "/api/schedule", payload),
+    mutationFn: (payload: { days: DaysMap; lunch: Lunch; notes: string }) => apiRequest("PUT", "/api/schedule", payload),
     onSuccess: (d: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/schedule"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schedule/team"] });
@@ -180,8 +214,8 @@ export default function WeeklySchedule() {
   });
 
   const totalHours = useMemo(
-    () => DAY_KEYS.reduce((sum, k) => sum + hoursOf(days[k]), 0),
-    [days]
+    () => DAY_KEYS.reduce((sum, k) => sum + netHoursOf(days[k], lunch), 0),
+    [days, lunch]
   );
 
   function setDay(k: string, patch: Partial<DayPlan>) {
@@ -229,7 +263,7 @@ export default function WeeklySchedule() {
               <Clock className="w-4 h-4" /> My Week
             </CardTitle>
             <span className="text-sm text-muted-foreground">
-              Total: <strong className="text-foreground tabular-nums">{totalHours.toFixed(totalHours % 1 ? 1 : 0)}h / week</strong>
+              Total: <strong className="text-foreground tabular-nums">{totalHours.toFixed(totalHours % 1 ? 1 : 0)}h / week</strong>{lunch.minutes > 0 ? <span className="text-xs font-normal"> (after lunch)</span> : null}
             </span>
           </div>
         </CardHeader>
@@ -240,7 +274,7 @@ export default function WeeklySchedule() {
             <>
               {/* Calendar-style week view */}
               <div className="rounded-lg border bg-card mb-4 pb-1 px-1">
-                <WeekGrid days={days} />
+                <WeekGrid days={days} lunch={lunch} />
               </div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest pt-1">Edit hours</p>
             </>
@@ -248,7 +282,7 @@ export default function WeeklySchedule() {
           {!isLoading &&
             DAY_KEYS.map((k) => {
               const p = days[k];
-              const h = hoursOf(p);
+              const h = netHoursOf(p, lunch);
               return (
                 <div key={k} className={`flex items-center gap-3 rounded-lg border px-3 py-2 flex-wrap ${p.working ? "" : "bg-muted/40"}`} data-testid={"day-row-" + k}>
                   <label className="flex items-center gap-2.5 w-36 shrink-0 cursor-pointer">
@@ -271,6 +305,37 @@ export default function WeeklySchedule() {
               );
             })}
 
+          {/* Lunch break — applied to every working day automatically */}
+          <div className="flex items-center gap-3 rounded-lg border border-dashed px-3 py-2 flex-wrap">
+            <span className="text-sm font-medium w-36 shrink-0">🍴 Lunch break</span>
+            <div className="flex items-center gap-2 flex-1 flex-wrap">
+              <select
+                value={lunch.minutes}
+                onChange={e => { setLunch(l => ({ ...l, minutes: Number(e.target.value) })); setDirty(true); }}
+                className="h-8 rounded-md border bg-background px-2 text-sm"
+                data-testid="lunch-minutes"
+              >
+                <option value={0}>No lunch</option>
+                <option value={30}>30 min</option>
+                <option value={45}>45 min</option>
+                <option value={60}>1 hour</option>
+              </select>
+              {lunch.minutes > 0 && (
+                <>
+                  <span className="text-xs text-muted-foreground">starting at</span>
+                  <Input
+                    type="time" value={lunch.start}
+                    onChange={e => { setLunch(l => ({ ...l, start: e.target.value })); setDirty(true); }}
+                    className="h-8 w-[110px] text-sm" data-testid="lunch-start"
+                  />
+                </>
+              )}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {lunch.minutes > 0 ? "subtracted from each working day" : "no break subtracted"}
+              </span>
+            </div>
+          </div>
+
           <div className="pt-1">
             <label className="text-xs font-medium text-muted-foreground">Notes (optional)</label>
             <Textarea
@@ -286,7 +351,7 @@ export default function WeeklySchedule() {
             <p className="text-[11px] text-muted-foreground">
               Submissions are reviewed by a manager and stay in effect until you change them.
             </p>
-            <Button onClick={() => saveMutation.mutate({ days, notes })} disabled={saveMutation.isPending} className="gap-1.5 shrink-0" data-testid="submit-schedule">
+            <Button onClick={() => saveMutation.mutate({ days, lunch, notes })} disabled={saveMutation.isPending} className="gap-1.5 shrink-0" data-testid="submit-schedule">
               <Send className="w-4 h-4" />
               {saveMutation.isPending ? "Submitting…" : saved ? "Resubmit for Approval" : "Submit for Approval"}
             </Button>
@@ -351,7 +416,13 @@ export default function WeeklySchedule() {
                     );
                   })}
                 </div>
-                {t.notes && <p className="text-xs text-muted-foreground mt-1.5 italic">{t.notes}</p>}
+                {(t.lunch?.minutes > 0 || t.notes) && (
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {t.lunch?.minutes > 0 && <span>Lunch: {fmtTime(t.lunch.start)} ({t.lunch.minutes} min)</span>}
+                    {t.lunch?.minutes > 0 && t.notes && <span> · </span>}
+                    {t.notes && <span className="italic">{t.notes}</span>}
+                  </p>
+                )}
               </div>
             ))
           )}
