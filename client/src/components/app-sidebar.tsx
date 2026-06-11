@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -183,6 +183,7 @@ const reportingItems: NavItem[] = [
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
   { title: "Time Off",              url: "/time-off",     icon: Plane },
+  { title: "Weekly Schedule",       url: "/my-schedule",  icon: CalendarDays },
   { title: "Comp Requests",         url: "/comp-requests", icon: Wallet },
   { title: "Install App",           url: "/install",      icon: Smartphone },
 ];
