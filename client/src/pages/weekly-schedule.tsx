@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -10,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { CalendarDays, Clock, Send, Users, CheckCircle2 } from "lucide-react";
+import { CalendarDays, Clock, Users, CheckCircle2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { parseDbTimestamp } from "@/lib/utils";
 
@@ -60,9 +59,10 @@ export default function WeeklySchedule() {
   });
   const saved = data?.schedule ?? null;
 
-  // Load the saved schedule (or defaults) once data arrives.
+  // Load the saved schedule (or defaults) once data arrives. Never clobber
+  // edits the user made while a save/refetch was in flight.
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || dirty) return;
     if (saved?.days && Object.keys(saved.days).length) {
       const merged = defaultDays();
       for (const k of DAY_KEYS) if (saved.days[k]) merged[k] = { ...merged[k], ...saved.days[k] };
@@ -72,7 +72,6 @@ export default function WeeklySchedule() {
       setDays(defaultDays());
       setNotes("");
     }
-    setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, saved?.updatedAt]);
 
@@ -82,15 +81,25 @@ export default function WeeklySchedule() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => apiRequest("PUT", "/api/schedule", { days, notes }),
+    mutationFn: (payload: { days: DaysMap; notes: string }) => apiRequest("PUT", "/api/schedule", payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/schedule"] });
       queryClient.invalidateQueries({ queryKey: ["/api/schedule/team"] });
       setDirty(false);
-      toast({ title: "Schedule saved", description: "Your weekly schedule is set." });
     },
-    onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Could not save schedule", description: e?.message ?? "Check your connection and edit again.", variant: "destructive" }),
   });
+
+  // Auto-save: changes persist on their own (~600ms after the last edit) and
+  // the schedule stays in effect permanently until it's changed again.
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!dirty) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => saveMutation.mutate({ days, notes }), 600);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, notes, dirty]);
 
   const totalHours = useMemo(
     () => DAY_KEYS.reduce((sum, k) => sum + hoursOf(days[k]), 0),
@@ -118,14 +127,13 @@ export default function WeeklySchedule() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {saved && !dirty && (
+          {dirty || saveMutation.isPending ? (
+            <Badge variant="outline" className="text-xs text-muted-foreground">Saving…</Badge>
+          ) : saved ? (
             <Badge className="bg-green-600 text-white gap-1 text-xs">
               <CheckCircle2 className="w-3 h-3" /> Saved{savedAgo ? ` ${savedAgo}` : ""}
             </Badge>
-          )}
-          {dirty && (
-            <Badge variant="outline" className="text-xs text-orange-500 border-orange-300">Unsaved changes</Badge>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -182,12 +190,9 @@ export default function WeeklySchedule() {
             />
           </div>
 
-          <div className="flex justify-end pt-1">
-            <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-1.5" data-testid="submit-schedule">
-              <Send className="w-4 h-4" />
-              {saveMutation.isPending ? "Saving…" : saved ? "Update Schedule" : "Save Schedule"}
-            </Button>
-          </div>
+          <p className="text-[11px] text-muted-foreground text-right pt-1">
+            Changes save automatically and stay in effect until you change them.
+          </p>
         </CardContent>
       </Card>
 
