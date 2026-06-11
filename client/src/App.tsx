@@ -17,6 +17,7 @@ import { DailyReportGate } from "@/components/daily-report-gate";
 import { EodLockGate } from "@/components/eod-lock-gate";
 import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
+import { GoalNudge } from "@/components/goal-nudge";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
@@ -234,6 +235,7 @@ function AuthenticatedApp() {
       {showPipelineSop && <PipelineSopModal />}
       <CookieNotice />
       <PushNudge />
+      <GoalNudge />
       <DailyReportGate>
         {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
         <div className="flex h-screen w-full overflow-hidden flex-col">
