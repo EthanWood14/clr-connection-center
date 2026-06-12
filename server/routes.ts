@@ -5538,16 +5538,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
       const grandTotal = items.reduce((s, i) => s + (i.amountCents || 0), 0);
 
-      // Per-person subtotals for the summary table
+      // 1) "Who gets paid" — one simple row per person: name → amount.
       const byPerson = new Map<string, any[]>();
       for (const i of items) { const k = i.userName; if (!byPerson.has(k)) byPerson.set(k, []); byPerson.get(k)!.push(i); }
+      let whoRows = "";
+      for (const [person, list] of byPerson) {
+        const sub = list.reduce((s, i) => s + (i.amountCents || 0), 0);
+        whoRows += `<tr><td class="who-name">${esc(person)}</td><td class="who-count">${list.length} item${list.length === 1 ? "" : "s"}</td><td class="num who-amt">${money(sub)}</td></tr>`;
+      }
+      whoRows += `<tr class="who-total"><td>Total payout</td><td></td><td class="num">${money(grandTotal)}</td></tr>`;
+
+      // 2) "What it's for" — itemized detail grouped by person.
       let summaryRows = "";
       for (const [person, list] of byPerson) {
         for (const i of list) {
           summaryRows += `<tr><td>${esc(person)}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
         }
-        const sub = list.reduce((s, i) => s + (i.amountCents || 0), 0);
-        if (byPerson.size > 1) summaryRows += `<tr class="subtotal"><td colspan="4">${esc(person)} — subtotal (${list.length} item${list.length === 1 ? "" : "s"})</td><td class="num">${money(sub)}</td></tr>`;
       }
 
       // Receipts per request
@@ -5586,10 +5592,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         'table.sum th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:6px 8px;border-bottom:2px solid var(--line)}' +
         'table.sum td{font-size:13px;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}' +
         'table.sum td.num,table.sum th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}' +
-        'tr.subtotal td{font-size:12px;color:var(--muted);font-weight:600;background:#f8fafc}' +
-        '.grand{display:flex;justify-content:flex-end;margin:10px 0 6px}' +
-        '.grand .box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 18px;font-size:15px;font-weight:700}' +
+        'table.who{width:100%;border-collapse:collapse;margin-bottom:6px}' +
+        'table.who td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:15px}' +
+        'td.who-name{font-weight:700}td.who-count{color:var(--muted);font-size:12px}' +
+        'table.who td.num{text-align:right;white-space:nowrap}' +
+        'td.who-amt{font-weight:700;font-variant-numeric:tabular-nums}' +
+        'tr.who-total td{background:#eff6ff;border-top:2px solid #bfdbfe;border-bottom:none;font-size:16px;font-weight:800}' +
         'h2{font-size:15px;margin:26px 0 10px;border-top:1px solid var(--line);padding-top:18px}' +
+        'h2.first{border-top:none;padding-top:0;margin-top:6px}' +
         '.hint{font-size:12px;color:var(--muted);margin:0 0 14px}' +
         '.req-head{font-size:13px;font-weight:700;margin:16px 0 8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--line);border-radius:8px}' +
         '.receipt{margin:0 0 14px}.receipt img{max-width:100%;border:1px solid var(--line);border-radius:10px;display:block}' +
@@ -5608,8 +5618,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         '<p class="sub">' + items.length + ' approved request' + (items.length === 1 ? "" : "s") + ' awaiting payout · ' + byPerson.size + ' team member' + (byPerson.size === 1 ? "" : "s") + '</p>' +
         (items.length === 0
           ? '<p class="hint">Nothing is awaiting payout. 🎉</p>'
-          : '<table class="sum"><thead><tr><th>Team member</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
-            '<div class="grand"><div class="box">Total payout: ' + money(grandTotal) + '</div></div>' +
+          : '<h2 class="first">Who gets paid</h2>' +
+            '<table class="who"><tbody>' + whoRows + '</tbody></table>' +
+            '<h2>What it&rsquo;s for</h2>' +
+            '<table class="sum"><thead><tr><th>Team member</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
             '<h2>Receipts &amp; attachments</h2>' +
             (receiptsHtml
               ? (pdfCount ? '<p class="hint">PDF receipts are embedded for on-screen review; when saving this page as one PDF they may need to be attached separately via their "open" links. Image receipts print inline automatically.</p>' : '') + receiptsHtml
