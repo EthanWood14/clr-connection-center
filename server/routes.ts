@@ -5506,6 +5506,161 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Combined payout sheet: ONE printable page covering every approved-but-unpaid
+  // comp request (optionally scoped via ?ids=1,2,3) — summary table with totals,
+  // then each request's receipts inline. Managers open it, Save-as-PDF, and send
+  // it to whoever pays out. ?print=1 auto-opens the print dialog.
+  app.get("/api/comp/payout-sheet", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!isCompManager(userId)) return res.status(403).send("Managers/admins only.");
+    try {
+      const db = storageExtra.getRawSqlite();
+      const nameById = compNameMap();
+      const idsParam = String(req.query.ids ?? "").split(",").map((s: string) => parseInt(s, 10)).filter(Number.isFinite);
+      let rows: any[];
+      if (idsParam.length) {
+        const ph = idsParam.map(() => "?").join(",");
+        rows = db.prepare(`SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 AND id IN (${ph}) ORDER BY user_id ASC, id ASC`).all(orgId, ...idsParam) as any[];
+      } else {
+        rows = db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 ORDER BY user_id ASC, id ASC").all(orgId) as any[];
+      }
+      const items = rows.map(r => mapComp(r, nameById));
+      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
+      const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
+      const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fmtDate = (d: any) => {
+        if (!d) return "—";
+        try { const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? String(d) + "T12:00:00" : String(d)); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return String(d); }
+      };
+      const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
+      const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
+      const grandTotal = items.reduce((s, i) => s + (i.amountCents || 0), 0);
+
+      // Per-person subtotals for the summary table
+      const byPerson = new Map<string, any[]>();
+      for (const i of items) { const k = i.userName; if (!byPerson.has(k)) byPerson.set(k, []); byPerson.get(k)!.push(i); }
+      let summaryRows = "";
+      for (const [person, list] of byPerson) {
+        for (const i of list) {
+          summaryRows += `<tr><td>${esc(person)}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
+        }
+        const sub = list.reduce((s, i) => s + (i.amountCents || 0), 0);
+        if (byPerson.size > 1) summaryRows += `<tr class="subtotal"><td colspan="4">${esc(person)} — subtotal (${list.length} item${list.length === 1 ? "" : "s"})</td><td class="num">${money(sub)}</td></tr>`;
+      }
+
+      // Receipts per request
+      const attStmt = db.prepare("SELECT id, filename, mime, size_bytes, data_base64 FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC");
+      const fmtBytes = (n: number) => n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+      let receiptsHtml = "";
+      let pdfCount = 0;
+      for (const i of items) {
+        const atts = attStmt.all(i.id, orgId) as any[];
+        if (!atts.length) continue;
+        receiptsHtml += `<div class="req-head">${esc(i.userName)} — ${money(i.amountCents)} · ${esc(i.description)}</div>`;
+        for (const a of atts) {
+          if (String(a.mime || "").startsWith("image/")) {
+            receiptsHtml += `<figure class="receipt"><img alt="${esc(a.filename)}" src="data:${esc(a.mime)};base64,${a.data_base64}"/><figcaption>${esc(a.filename)} · ${fmtBytes(a.size_bytes)}</figcaption></figure>`;
+          } else if (a.mime === "application/pdf") {
+            pdfCount++;
+            receiptsHtml += `<div class="pdf-receipt"><div class="pdf-name">📄 ${esc(a.filename)} · ${fmtBytes(a.size_bytes)} <a href="/api/comp-attachments/${a.id}" target="_blank" rel="noreferrer">open</a></div><embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,${a.data_base64}"/></div>`;
+          } else {
+            receiptsHtml += `<div class="pdf-receipt"><div class="pdf-name">📎 <a href="/api/comp-attachments/${a.id}" target="_blank" rel="noreferrer">${esc(a.filename)}</a> · ${fmtBytes(a.size_bytes)}</div></div>`;
+          }
+        }
+      }
+
+      const autoPrint = String(req.query.print || "") === "1";
+      const todayLabel = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"/>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
+        '<title>Comp Payout Sheet — ' + esc(todayLabel) + '</title><style>' +
+        ':root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#1d4ed8}' +
+        '*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:#f1f5f9;line-height:1.5}' +
+        '.sheet{max-width:820px;margin:24px auto;background:#fff;padding:40px 44px;border-radius:14px;box-shadow:0 6px 30px rgba(15,23,42,.08)}' +
+        '.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}' +
+        '.org{font-weight:700;color:var(--brand);font-size:15px}' +
+        'h1{font-size:22px;margin:2px 0 2px}.sub{color:var(--muted);font-size:13px;margin:0 0 20px}' +
+        'table.sum{width:100%;border-collapse:collapse;margin-bottom:6px}' +
+        'table.sum th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:6px 8px;border-bottom:2px solid var(--line)}' +
+        'table.sum td{font-size:13px;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}' +
+        'table.sum td.num,table.sum th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}' +
+        'tr.subtotal td{font-size:12px;color:var(--muted);font-weight:600;background:#f8fafc}' +
+        '.grand{display:flex;justify-content:flex-end;margin:10px 0 6px}' +
+        '.grand .box{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 18px;font-size:15px;font-weight:700}' +
+        'h2{font-size:15px;margin:26px 0 10px;border-top:1px solid var(--line);padding-top:18px}' +
+        '.hint{font-size:12px;color:var(--muted);margin:0 0 14px}' +
+        '.req-head{font-size:13px;font-weight:700;margin:16px 0 8px;padding:6px 10px;background:#f8fafc;border:1px solid var(--line);border-radius:8px}' +
+        '.receipt{margin:0 0 14px}.receipt img{max-width:100%;border:1px solid var(--line);border-radius:10px;display:block}' +
+        '.receipt figcaption{font-size:12px;color:var(--muted);margin-top:5px}' +
+        '.pdf-receipt{margin:0 0 16px}.pdf-name{font-size:13px;margin-bottom:6px}.pdf-name a{color:var(--brand)}' +
+        '.pdf-embed{width:100%;height:480px;border:1px solid var(--line);border-radius:10px}' +
+        '.toolbar{max-width:820px;margin:16px auto 0;text-align:right}' +
+        '.btn{display:inline-block;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer}' +
+        '.foot{margin-top:26px;border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:11px}' +
+        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{height:400px}.receipt,.pdf-receipt,tr{break-inside:avoid;page-break-inside:avoid}}' +
+        '</style></head><body>' +
+        '<div class="toolbar"><button class="btn" onclick="window.print()">Save as PDF / Print</button></div>' +
+        '<div class="sheet">' +
+        '<div class="topbar"><div class="org">' + orgName + '</div><div class="sub">' + esc(todayLabel) + '</div></div>' +
+        '<h1>Comp Payout Sheet</h1>' +
+        '<p class="sub">' + items.length + ' approved request' + (items.length === 1 ? "" : "s") + ' awaiting payout · ' + byPerson.size + ' team member' + (byPerson.size === 1 ? "" : "s") + '</p>' +
+        (items.length === 0
+          ? '<p class="hint">Nothing is awaiting payout. 🎉</p>'
+          : '<table class="sum"><thead><tr><th>Team member</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
+            '<div class="grand"><div class="box">Total payout: ' + money(grandTotal) + '</div></div>' +
+            '<h2>Receipts &amp; attachments</h2>' +
+            (receiptsHtml
+              ? (pdfCount ? '<p class="hint">PDF receipts are embedded for on-screen review; when saving this page as one PDF they may need to be attached separately via their "open" links. Image receipts print inline automatically.</p>' : '') + receiptsHtml
+              : '<p class="hint">No receipts were attached to these requests.</p>')) +
+        '<div class="foot">Generated by ' + orgName + ' on ' + esc(todayLabel) + '. Mark these requests as paid in the app once the payout is sent.</div>' +
+        '</div>' +
+        (autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});</script>' : "") +
+        '</body></html>';
+
+      audit({ userId, userName: (storage.getUserById(userId) as any)?.name ?? "Unknown", action: "view", entityType: "comp_request", entityId: 0, entityLabel: "Payout sheet (" + items.length + " items, " + money(grandTotal) + ")", details: null });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(html);
+    } catch (e: any) {
+      res.status(500).send("Failed to build payout sheet: " + (e?.message ?? "error"));
+    }
+  });
+
+  // Batch mark-paid: managers settle a whole payout run in one click.
+  app.post("/api/comp/payout/mark-paid", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    const userId = Number(sess?.userId);
+    if (!isCompManager(userId)) return res.status(403).json({ error: "Managers/admins only" });
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((n: any) => parseInt(n, 10)).filter(Number.isFinite) : [];
+    if (!ids.length) return res.status(400).json({ error: "ids[] required" });
+    const now = new Date().toISOString();
+    try {
+      const db = storageExtra.getRawSqlite();
+      const ph = ids.map(() => "?").join(",");
+      const targets = db.prepare(`SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 AND id IN (${ph})`).all(orgId, ...ids) as any[];
+      if (!targets.length) return res.status(400).json({ error: "No matching approved, unpaid requests." });
+      const tph = targets.map(() => "?").join(",");
+      db.prepare(`UPDATE comp_requests SET is_paid=1, paid_at=?, updated_at=? WHERE id IN (${tph})`).run(now, now, ...targets.map(t => t.id));
+      const actor = storage.getUserById(userId) as any;
+      const total = targets.reduce((s, t) => s + (t.amount_cents || 0), 0);
+      audit({ userId, userName: actor?.name ?? "Unknown", action: "update", entityType: "comp_request", entityId: 0, entityLabel: "Batch payout — " + targets.length + " request(s), $" + (total / 100).toFixed(2), details: JSON.stringify({ ids: targets.map(t => t.id) }) });
+      // Notify each requester their comp was paid out
+      for (const t of targets) {
+        try {
+          (storage as any).createNotification?.({
+            userId: t.user_id, type: "comp_request", title: "Comp paid out 💸",
+            message: "Your comp request for $" + ((t.amount_cents || 0) / 100).toFixed(2) + " (" + (t.description || "expense") + ") was paid out. Mark it received once it lands.",
+          });
+        } catch {}
+      }
+      res.json({ ok: true, paid: targets.length, totalCents: total });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to mark paid" });
+    }
+  });
+
   // ── Daily Assignments ────────────────────────────────────────────────────────
   // getDailyAssignments/getLoanOfficers/getUsers may return camelCase (Drizzle)
   // or snake_case (raw SQL, multi-org). Normalize reads across both shapes.

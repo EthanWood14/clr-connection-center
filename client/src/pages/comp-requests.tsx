@@ -454,6 +454,26 @@ export default function CompRequests() {
     onError: (e: any) => toast({ title: "Could not remove", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
+  // ── Payout Center: approved-but-unpaid requests, batch payout ──────────────
+  // Tracks explicit DE-selections so newly approved items auto-join the run.
+  const [payoutExcluded, setPayoutExcluded] = useState<Set<number>>(new Set());
+  const approvedUnpaid = useMemo(() => team.filter(r => r.status === "approved" && !r.isPaid), [team]);
+  const payoutItems = useMemo(() => approvedUnpaid.filter(r => !payoutExcluded.has(r.id)), [approvedUnpaid, payoutExcluded]);
+  const payoutTotal = useMemo(() => payoutItems.reduce((s, r) => s + (r.amountCents || 0), 0), [payoutItems]);
+  const batchPaidMutation = useMutation({
+    mutationFn: (ids: number[]) => apiRequest("POST", "/api/comp/payout/mark-paid", { ids }),
+    onSuccess: (d: any) => {
+      toast({ title: "Payout recorded 💸", description: (d?.paid ?? 0) + " request(s) marked paid — " + money(d?.totalCents ?? 0) + "." });
+      setPayoutExcluded(new Set());
+      refresh();
+    },
+    onError: (e: any) => toast({ title: "Could not mark paid", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+  function openPayoutSheet() {
+    const ids = payoutItems.map(r => r.id).join(",");
+    window.open("/api/comp/payout-sheet?ids=" + ids + "&print=1", "_blank", "noopener");
+  }
+
   function toggleSel(id: number) {
     setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
@@ -694,6 +714,66 @@ export default function CompRequests() {
 
       {/* Manager management — see + mark who can approve (admins only) */}
       {isAdmin && <ManagersPanel />}
+
+      {/* Payout Center — everything approved & awaiting payout, in one place */}
+      {isManager && approvedUnpaid.length > 0 && (
+        <Card className="border-emerald-300/60 dark:border-emerald-700/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BadgeDollarSign className="w-4 h-4 text-emerald-600" /> Payout Center
+              <Badge className="ml-1 bg-emerald-600 text-white text-[10px] px-1.5">{approvedUnpaid.length} awaiting payout</Badge>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Everything approved and not yet paid. Open one combined PDF (all requests + receipts) to send to whoever pays out, then mark the whole run paid in one click.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              {approvedUnpaid.map(r => {
+                const included = !payoutExcluded.has(r.id);
+                return (
+                  <label key={r.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer ${included ? "" : "opacity-50 bg-muted/30"}`} data-testid={"payout-row-" + r.id}>
+                    <Checkbox
+                      checked={included}
+                      onCheckedChange={(v) => setPayoutExcluded(prev => { const n = new Set(prev); if (v) n.delete(r.id); else n.add(r.id); return n; })}
+                      data-testid={"payout-check-" + r.id}
+                    />
+                    <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{r.userName}</span>
+                      <CatChip category={r.category} />
+                      <span className="text-sm text-muted-foreground truncate">{r.description}</span>
+                      {(r.attachmentCount ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"><Paperclip className="w-3 h-3" />{r.attachmentCount}</span>
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold tabular-nums shrink-0">{money(r.amountCents)}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap border-t pt-3">
+              <div className="text-sm">
+                <span className="text-muted-foreground">{payoutItems.length} selected · total</span>{" "}
+                <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(payoutTotal)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="gap-1.5" onClick={openPayoutSheet} disabled={payoutItems.length === 0} data-testid="button-payout-pdf">
+                  <FileText className="w-4 h-4" /> Payout PDF
+                </Button>
+                <Button
+                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => batchPaidMutation.mutate(payoutItems.map(r => r.id))}
+                  disabled={payoutItems.length === 0 || batchPaidMutation.isPending}
+                  data-testid="button-payout-mark-paid"
+                >
+                  <Check className="w-4 h-4" />
+                  {batchPaidMutation.isPending ? "Marking…" : `Mark ${payoutItems.length} paid`}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Manager: team comp requests */}
       {isManager && (
