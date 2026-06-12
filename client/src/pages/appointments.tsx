@@ -399,7 +399,8 @@ function AppointmentCard({
     setEditingNotes(false);
   };
 
-  const dateStr = outcome.followUpDate ?? "";
+  // Compare by date part only — followUpDate may be a datetime-local string.
+  const dateStr = (outcome.followUpDate ?? "").slice(0, 10);
   const todayStr = businessTodayClient();
   const isOverdue = !!dateStr && dateStr < todayStr;
   const isUpcoming = !!dateStr && dateStr > todayStr;
@@ -729,7 +730,9 @@ export default function Appointments() {
         (
           // dated entries always show
           (o.followUpDate != null && o.followUpDate !== "") ||
-          // undated deferrals still show (they have no date set by definition)
+          // undated callbacks/deferrals still show (callback dates are optional;
+          // deferrals have no date by definition) — they land in "No Date Set"
+          o.outcomeType === "callback_requested" ||
           o.outcomeType === "deferral" ||
           o.outcomeType === "future_contact"
         )
@@ -737,9 +740,13 @@ export default function Appointments() {
     .sort((a, b) => (a.followUpDate ?? "9999-99-99").localeCompare(b.followUpDate ?? "9999-99-99"));
 
   const hasDate = (o: Outcome) => o.followUpDate != null && o.followUpDate !== "";
-  const overdueList = allAppointments.filter((o) => hasDate(o) && o.followUpDate! < todayStr);
-  const todayList = allAppointments.filter((o) => hasDate(o) && o.followUpDate === todayStr);
-  const upcomingList = allAppointments.filter((o) => hasDate(o) && o.followUpDate! > todayStr);
+  // Bucket by the DATE part only — followUpDate is often a datetime-local string
+  // ("2026-06-12T15:00"), and comparing the full string against "2026-06-12"
+  // would push today's entries into Upcoming.
+  const dayOf = (o: Outcome) => String(o.followUpDate).slice(0, 10);
+  const overdueList = allAppointments.filter((o) => hasDate(o) && dayOf(o) < todayStr);
+  const todayList = allAppointments.filter((o) => hasDate(o) && dayOf(o) === todayStr);
+  const upcomingList = allAppointments.filter((o) => hasDate(o) && dayOf(o) > todayStr);
   const undatedList = allAppointments.filter((o) => !hasDate(o));
 
   const totalCount = allAppointments.length;
