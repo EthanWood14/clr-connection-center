@@ -5531,7 +5531,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const pdfHtml = pdfAtts.map(a =>
         '<div class="pdf-receipt"><div class="pdf-name">📄 ' + esc(a.filename) + ' · ' + fmtBytes(a.size_bytes) +
         ' <a href="/api/comp-attachments/' + a.id + '" target="_blank" rel="noreferrer">open</a></div>' +
-        '<embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,' + a.data_base64 + '"/></div>'
+        '<embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,' + a.data_base64 + '"/>' +
+        '<div class="pdf-print-note">📄 PDF receipt &ldquo;' + esc(a.filename) + '&rdquo; can&rsquo;t print inline &mdash; open it from the app and attach separately.</div></div>'
       ).join("");
 
       const otherHtml = otherAtts.map(a =>
@@ -5566,11 +5567,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         '.receipt figcaption{font-size:12px;color:var(--muted);margin-top:5px}' +
         '.pdf-receipt{margin:0 0 18px}.pdf-name{font-size:13px;margin-bottom:6px}.pdf-name a{color:var(--brand)}' +
         '.pdf-embed{width:100%;height:560px;border:1px solid var(--line);border-radius:10px}' +
+        '.pdf-print-note{display:none;font-size:11px;color:var(--muted);margin-top:4px}' +
         '.empty{color:var(--muted);font-size:14px}' +
         '.toolbar{max-width:780px;margin:16px auto 0;text-align:right}' +
         '.btn{display:inline-block;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}' +
         '.foot{margin-top:26px;border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:11px}' +
-        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{height:420px}.receipt,.pdf-receipt{break-inside:avoid;page-break-inside:avoid}}' +
+        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{display:none}.pdf-print-note{display:block}.receipt,.pdf-receipt{break-inside:avoid;page-break-inside:avoid}}' +
         '</style></head><body>' +
         '<div class="toolbar"><button class="btn" onclick="window.print()">Save as PDF / Print</button></div>' +
         '<div class="sheet">' +
@@ -5662,7 +5664,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             receiptsHtml += `<figure class="receipt"><img alt="${esc(a.filename)}" src="data:${esc(a.mime)};base64,${a.data_base64}"/><figcaption>${esc(a.filename)} · ${fmtBytes(a.size_bytes)}</figcaption></figure>`;
           } else if (a.mime === "application/pdf") {
             pdfCount++;
-            receiptsHtml += `<div class="pdf-receipt"><div class="pdf-name">📄 ${esc(a.filename)} · ${fmtBytes(a.size_bytes)} <a href="/api/comp-attachments/${a.id}" target="_blank" rel="noreferrer">open</a></div><embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,${a.data_base64}"/></div>`;
+            receiptsHtml += `<div class="pdf-receipt"><div class="pdf-name">📄 ${esc(a.filename)} · ${fmtBytes(a.size_bytes)} <a href="/api/comp-attachments/${a.id}" target="_blank" rel="noreferrer">open</a></div><embed class="pdf-embed" type="application/pdf" src="data:application/pdf;base64,${a.data_base64}"/><div class="pdf-print-note">📄 PDF receipt &ldquo;${esc(a.filename)}&rdquo; can&rsquo;t print inline &mdash; open it from the app and attach separately.</div></div>`;
           } else {
             receiptsHtml += `<div class="pdf-receipt"><div class="pdf-name">📎 <a href="/api/comp-attachments/${a.id}" target="_blank" rel="noreferrer">${esc(a.filename)}</a> · ${fmtBytes(a.size_bytes)}</div></div>`;
           }
@@ -5698,10 +5700,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         '.receipt figcaption{font-size:12px;color:var(--muted);margin-top:5px}' +
         '.pdf-receipt{margin:0 0 16px}.pdf-name{font-size:13px;margin-bottom:6px}.pdf-name a{color:var(--brand)}' +
         '.pdf-embed{width:100%;height:480px;border:1px solid var(--line);border-radius:10px}' +
+        '.pdf-print-note{display:none;font-size:11px;color:var(--muted);margin-top:4px}' +
         '.toolbar{max-width:820px;margin:16px auto 0;text-align:right}' +
         '.btn{display:inline-block;background:var(--brand);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer}' +
         '.foot{margin-top:26px;border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:11px}' +
-        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{height:400px}.receipt,.pdf-receipt,tr{break-inside:avoid;page-break-inside:avoid}}' +
+        '@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;border-radius:0;padding:0}.toolbar{display:none}.pdf-embed{display:none}.pdf-print-note{display:block}.receipt,.pdf-receipt,tr{break-inside:avoid;page-break-inside:avoid}}' +
         '</style></head><body>' +
         '<div class="toolbar"><button class="btn" onclick="window.print()">Save as PDF / Print</button></div>' +
         '<div class="sheet">' +
