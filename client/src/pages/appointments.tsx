@@ -54,6 +54,7 @@ import {
   StickyNote,
   Save,
   Trash2,
+  Search,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -665,6 +666,9 @@ export default function Appointments() {
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Outcome | null>(null);
   const [filterType, setFilterType] = useState<FilterKey>("all");
+  const [search, setSearch] = useState("");
+  // Section focus: clicking a scoreboard tile shows just that bucket.
+  const [focus, setFocus] = useState<"all" | "overdue" | "today" | "upcoming" | "undated">("all");
 
   const { data: outcomes = [], isLoading: loadingOutcomes } = useQuery<Outcome[]>({
     queryKey: ["/api/outcomes"],
@@ -702,12 +706,26 @@ export default function Appointments() {
     return myUserId != null && o.assistantId === myUserId;
   };
 
+  // Free-text search across borrower, LO, and CLR names.
+  const q = search.trim().toLowerCase();
+  const matchesSearch = (o: Outcome) => {
+    if (!q) return true;
+    const hay = [
+      o.borrowerName ?? "",
+      loMap.get(o.loId) ?? "",
+      clrNameFor(o.assistantId),
+      o.notes ?? "",
+    ].join(" ").toLowerCase();
+    return hay.includes(q);
+  };
+
   const allAppointments = outcomes
     .filter(
       (o) =>
         ACTIVE_APPT_TYPES.has(o.outcomeType) &&
         matchesFilter(o) &&
         isMineOrOverdue(o) &&
+        matchesSearch(o) &&
         (
           // dated entries always show
           (o.followUpDate != null && o.followUpDate !== "") ||
@@ -954,23 +972,59 @@ export default function Appointments() {
         })}
       </div>
 
-      {/* Stats bar */}
-      {!isLoading && totalCount > 0 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs px-3 py-2 rounded-md border border-border bg-muted/30">
-          <span className="font-semibold text-foreground">
-            {apptCount} <span className="text-muted-foreground font-normal">Appointment{apptCount === 1 ? "" : "s"}</span>
-          </span>
-          <span className="text-muted-foreground/40">·</span>
-          <span className="font-semibold text-foreground">
-            {callbackCount} <span className="text-muted-foreground font-normal">Callback{callbackCount === 1 ? "" : "s"}</span>
-          </span>
-          <span className="text-muted-foreground/40">·</span>
-          <span className="font-semibold text-foreground">
-            {deferralCount} <span className="text-muted-foreground font-normal">Deferral{deferralCount === 1 ? "" : "s"}</span>
-          </span>
-          <span className="text-muted-foreground/40">·</span>
-          <span className={`font-semibold ${overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>
-            {overdueCount} <span className="font-normal opacity-70">Overdue</span>
+      {/* Overdue alert strip */}
+      {!isLoading && overdueCount > 0 && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-4 py-2.5">
+          <span className="text-lg leading-none">⚠️</span>
+          <p className="text-sm text-red-800 dark:text-red-300 flex-1">
+            <strong>{overdueCount} appointment{overdueCount === 1 ? "" : "s"} past the scheduled time.</strong>{" "}
+            Mark each as transferred, rescheduled, or fell through — reminders repeat until they're handled.
+          </p>
+        </div>
+      )}
+
+      {/* Scoreboard — click a tile to focus that bucket */}
+      {!isLoading && (
+        <div className="grid grid-cols-4 gap-2">
+          {([
+            { key: "overdue", label: "Overdue", count: overdueList.length, cls: "border-red-300 dark:border-red-800", active: "bg-red-50 dark:bg-red-950/30", num: "text-red-600 dark:text-red-400" },
+            { key: "today", label: "Today", count: todayList.length, cls: "border-amber-300 dark:border-amber-800", active: "bg-amber-50 dark:bg-amber-950/30", num: "text-amber-600 dark:text-amber-400" },
+            { key: "upcoming", label: "Upcoming", count: upcomingList.length, cls: "border-emerald-300 dark:border-emerald-800", active: "bg-emerald-50 dark:bg-emerald-950/30", num: "text-emerald-600 dark:text-emerald-400" },
+            { key: "undated", label: "No Date", count: undatedList.length, cls: "border-border", active: "bg-muted/60", num: "text-muted-foreground" },
+          ] as const).map(t => {
+            const isActive = focus === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setFocus(isActive ? "all" : t.key)}
+                className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${t.cls} ${isActive ? t.active + " ring-2 ring-primary/30" : "bg-card hover:bg-muted/40"}`}
+                title={isActive ? "Show all sections" : `Show only ${t.label}`}
+                data-testid={`appt-tile-${t.key}`}
+              >
+                <div className={`text-2xl font-bold tabular-nums leading-none ${t.num}`}>{t.count}</div>
+                <div className="text-[11px] font-medium text-muted-foreground mt-1">{t.label}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Search + type counts */}
+      {!isLoading && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search borrower, LO, CLR, or notes…"
+              className="pl-8 h-9"
+              data-testid="appt-search"
+            />
+          </div>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {apptCount} appt{apptCount === 1 ? "" : "s"} · {callbackCount} callback{callbackCount === 1 ? "" : "s"} · {deferralCount} deferral{deferralCount === 1 ? "" : "s"}
           </span>
         </div>
       )}
@@ -998,7 +1052,7 @@ export default function Appointments() {
       )}
 
       {/* Overdue */}
-      {!isLoading && overdueList.length > 0 && (
+      {!isLoading && overdueList.length > 0 && (focus === "all" || focus === "overdue") && (
         <section>
           <SectionHeader label="Overdue" count={overdueList.length} overdue />
           <div className="space-y-2">
@@ -1021,7 +1075,7 @@ export default function Appointments() {
       )}
 
       {/* Today */}
-      {!isLoading && todayList.length > 0 && (
+      {!isLoading && todayList.length > 0 && (focus === "all" || focus === "today") && (
         <section>
           <SectionHeader label="Today" count={todayList.length} />
           <div className="space-y-2">
@@ -1044,7 +1098,7 @@ export default function Appointments() {
       )}
 
       {/* Upcoming */}
-      {!isLoading && upcomingList.length > 0 && (
+      {!isLoading && upcomingList.length > 0 && (focus === "all" || focus === "upcoming") && (
         <section>
           <SectionHeader label="Upcoming" count={upcomingList.length} upcoming />
           <div className="space-y-2">
@@ -1067,7 +1121,7 @@ export default function Appointments() {
       )}
 
       {/* Undated (mostly deferrals) */}
-      {!isLoading && undatedList.length > 0 && (
+      {!isLoading && undatedList.length > 0 && (focus === "all" || focus === "undated") && (
         <section>
           <SectionHeader label="No Date Set" count={undatedList.length} upcoming />
           <div className="space-y-2">
