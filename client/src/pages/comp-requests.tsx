@@ -353,7 +353,6 @@ export default function CompRequests() {
   const [category, setCategory] = useState("transfers");
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [compForUserId, setCompForUserId] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -374,23 +373,17 @@ export default function CompRequests() {
 
   function refresh() { queryClient.invalidateQueries({ queryKey: ["/api/comp"] }); }
 
-  const drafts = useMemo(() => mine.filter(r => r.status === "draft"), [mine]);
   const myRequests = useMemo(() => mine.filter(r => r.status !== "draft"), [mine]);
 
   const stats = useMemo(() => {
     const sum = (list: CompItem[]) => list.reduce((a, r) => a + (r.amountCents || 0), 0);
     return {
-      draft: sum(drafts),
+      total: sum(myRequests),
       pending: sum(myRequests.filter(r => r.status === "pending")),
       approved: sum(myRequests.filter(r => r.status === "approved")),
       received: sum(myRequests.filter(r => r.status === "approved" && r.isReceived)),
     };
-  }, [drafts, myRequests]);
-
-  const selectedTotal = useMemo(
-    () => drafts.filter(d => selected.has(d.id)).reduce((a, r) => a + r.amountCents, 0),
-    [drafts, selected]
-  );
+  }, [myRequests]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -413,25 +406,16 @@ export default function CompRequests() {
     },
     onSuccess: (d: any) => {
       const who = compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "the CLR") : null;
-      if (who) {
-        toast({ title: "Comp request submitted", description: "Filed for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + "." });
-      } else {
-        toast({ title: "Expense saved", description: pendingFiles.length ? (pendingFiles.length + " receipt(s) attached. Added to your saved expenses.") : "Added to your saved expenses." });
-      }
+      toast({
+        title: "Submitted for approval",
+        description: (who ? "Filed for " + who : "Your comp request is in")
+          + (pendingFiles.length ? " with " + pendingFiles.length + " receipt(s)" : "")
+          + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
+      });
       setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]);
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
-  });
-
-  const requestMutation = useMutation({
-    mutationFn: (ids: number[]) => apiRequest("POST", "/api/comp/request", { ids }),
-    onSuccess: (d: any) => {
-      toast({ title: "Comp requested", description: (d?.requested ?? 0) + " item(s) sent for approval" + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + "." });
-      setSelected(new Set());
-      refresh();
-    },
-    onError: (e: any) => toast({ title: "Could not request", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
   const decideMutation = useMutation({
@@ -474,13 +458,6 @@ export default function CompRequests() {
     window.open("/api/comp/payout-sheet?ids=" + ids + "&print=1", "_blank", "noopener");
   }
 
-  function toggleSel(id: number) {
-    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  }
-  function toggleAll() {
-    setSelected(prev => prev.size === drafts.length ? new Set() : new Set(drafts.map(d => d.id)));
-  }
-
   const amountValid = parseFloat(amount || "0") > 0;
   const canSubmit = !!description.trim() && amountValid && !createMutation.isPending;
   const pendingCount = team.filter(r => r.status === "pending").length;
@@ -507,7 +484,7 @@ export default function CompRequests() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Saved (unsent)", value: stats.draft, icon: Receipt, ring: "ring-slate-200 dark:ring-slate-700", fg: "text-slate-600 dark:text-slate-300" },
+          { label: "Total Requested", value: stats.total, icon: Receipt, ring: "ring-slate-200 dark:ring-slate-700", fg: "text-slate-600 dark:text-slate-300" },
           { label: "Pending", value: stats.pending, icon: Hourglass, ring: "ring-amber-200 dark:ring-amber-800", fg: "text-amber-600 dark:text-amber-400" },
           { label: "Approved", value: stats.approved, icon: CheckCircle2, ring: "ring-emerald-200 dark:ring-emerald-800", fg: "text-emerald-600 dark:text-emerald-400" },
           { label: "Received", value: stats.received, icon: CreditCard, ring: "ring-emerald-200 dark:ring-emerald-800", fg: "text-emerald-600 dark:text-emerald-400" },
@@ -644,71 +621,6 @@ export default function CompRequests() {
               <Plus className="w-4 h-4" /> {createMutation.isPending ? (compForUserId ? "Submitting…" : "Saving…") : (compForUserId ? ("Submit for " + (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "CLR")) : "Save Expense")}
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Saved expenses (drafts) */}
-      <Card>
-        <CardHeader className="pb-3 flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Receipt className="w-4 h-4" /> Saved Expenses
-            {drafts.length > 0 && <span className="text-xs font-normal text-muted-foreground">({drafts.length})</span>}
-          </CardTitle>
-          {drafts.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={toggleAll} data-testid="button-select-all-drafts">
-                {selected.size === drafts.length ? "Clear" : "Select all"}
-              </Button>
-              <Button
-                size="sm" className="h-8 gap-1.5"
-                disabled={selected.size === 0 || requestMutation.isPending}
-                onClick={() => requestMutation.mutate(Array.from(selected))}
-                data-testid="button-request-comp"
-              >
-                <Send className="w-3.5 h-3.5" />
-                Request Comp{selected.size > 0 ? " (" + money(selectedTotal) + ")" : ""}
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {mineLoading ? (
-            <Skeleton className="h-16 w-full" />
-          ) : drafts.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No saved expenses. Log one above and it will appear here until you request comp.</p>
-          ) : (
-            drafts.map(d => (
-              <div
-                key={d.id}
-                className={"rounded-lg border px-3 py-2.5 transition-colors " + (selected.has(d.id) ? "bg-primary/5 border-primary/40" : "")}
-                data-testid={"draft-" + d.id}
-              >
-                <div className="flex items-center gap-3">
-                <Checkbox checked={selected.has(d.id)} onCheckedChange={() => toggleSel(d.id)} data-testid={"check-draft-" + d.id} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium truncate">{d.description}</span>
-                    <CatChip category={d.category} />
-                  </div>
-                  {(d.expenseDate || d.note) && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {d.expenseDate ? fmtDate(d.expenseDate) : ""}{d.expenseDate && d.note ? " · " : ""}{d.note}
-                    </p>
-                  )}
-                </div>
-                <span className="text-sm font-semibold tabular-nums shrink-0">{money(d.amountCents)}</span>
-                <Button
-                  variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-600 shrink-0"
-                  onClick={() => deleteMutation.mutate(d.id)} disabled={deleteMutation.isPending}
-                  data-testid={"button-delete-draft-" + d.id}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
-                </div>
-                <Attachments compId={d.id} count={d.attachmentCount ?? 0} canEdit={true} />
-              </div>
-            ))
-          )}
         </CardContent>
       </Card>
 
@@ -878,7 +790,7 @@ export default function CompRequests() {
           {mineLoading ? (
             <Skeleton className="h-16 w-full" />
           ) : myRequests.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No comp requests yet. Select saved expenses above and click Request Comp.</p>
+            <p className="text-sm text-muted-foreground py-4 text-center">No comp requests yet. Submit an expense above and it goes straight to your approver.</p>
           ) : (
             myRequests.map(r => (
               <div key={r.id} className="rounded-lg border px-4 py-3" data-testid={"my-comp-" + r.id}>

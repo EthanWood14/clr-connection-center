@@ -5133,35 +5133,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const nowIso = new Date().toISOString();
     try {
       const db = storageExtra.getRawSqlite();
-      if (forClr) {
-        const token = crypto.randomBytes(24).toString("hex");
-        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, forClr, description, category, amountCents, expenseDate, note, token, nowIso, nowIso, nowIso);
-        const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
-        const requester = (storage.getUsers() as any[]).find(u => u.id === forClr);
-        const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
-        audit({
-          userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
-          entityType: "comp_request", entityId: row.id,
-          entityLabel: (requester?.name ?? "CLR") + " comp request (submitted by " + (submitter?.name ?? "manager") + ")",
-          details: JSON.stringify({ amountCents, onBehalfOf: forClr }),
-        });
-        let emailedTo: string | null = null;
-        try {
-          const settings = storageExtra.getEmailSettings() as any;
-          const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
-          const approver = approverId ? (storage.getUserById(approverId) as any) : null;
-          const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
-          if (approverEmail) {
-            const { subject, html } = buildCompApprovalEmail([row], token, requester?.name ?? "A team member");
-            await sendEmail({ to: approverEmail, subject, html });
-            emailedTo = approverEmail;
-          }
-        } catch (e: any) { console.error("[comp] on-behalf email failed:", e?.message ?? e); }
-        return res.json({ ...mapComp(row, compNameMap()), emailedTo, requested: 1 });
-      }
-      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").run(orgId, sessUserId, description, category, amountCents, expenseDate, note, nowIso, nowIso);
+      // Every saved expense is submitted for approval immediately — no draft
+      // step. Managers may still file on behalf of a CLR (forClr); otherwise
+      // the request is for the submitter themselves.
+      const targetId = forClr || sessUserId;
+      const token = crypto.randomBytes(24).toString("hex");
+      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, token, nowIso, nowIso, nowIso);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
-      res.json(mapComp(row, compNameMap()));
+      const requester = (storage.getUsers() as any[]).find(u => u.id === targetId);
+      const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
+      audit({
+        userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
+        entityType: "comp_request", entityId: row.id,
+        entityLabel: (requester?.name ?? "CLR") + " comp request" + (forClr ? " (submitted by " + (submitter?.name ?? "manager") + ")" : ""),
+        details: JSON.stringify({ amountCents, onBehalfOf: forClr || undefined }),
+      });
+      let emailedTo: string | null = null;
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        if (approverEmail) {
+          const { subject, html } = buildCompApprovalEmail([row], token, requester?.name ?? "A team member");
+          await sendEmail({ to: approverEmail, subject, html });
+          emailedTo = approverEmail;
+        }
+      } catch (e: any) { console.error("[comp] approval email failed:", e?.message ?? e); }
+      return res.json({ ...mapComp(row, compNameMap()), emailedTo, requested: 1 });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save expense" });
     }
