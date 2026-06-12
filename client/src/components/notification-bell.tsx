@@ -24,6 +24,7 @@ const typeRoutes: Record<string, string> = {
   forum: "/forum",
   schedule: "/my-schedule",
   missed_appointment: "/appointments",
+  transfer_celebration: "/leaderboard",
   nmls_check: "/nmls-checks",
   nmls_escalation: "/nmls-checks",
 };
@@ -38,6 +39,7 @@ const typeColors: Record<string, string> = {
   forum: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400",
   schedule: "bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400",
   missed_appointment: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  transfer_celebration: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   nmls_check: "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
   nmls_escalation: "bg-destructive/10 text-destructive",
 };

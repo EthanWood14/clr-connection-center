@@ -6248,6 +6248,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
+  // 🎉 Notify the whole org when someone lands a transfer. The bell shows it,
+  // push delivers it, and the client plays a celebration sound on the
+  // "transfer_celebration" notification type.
+  function broadcastTransferCelebration(assistantId: number, loName: string | null, borrowerName: string | null) {
+    const clr = storage.getUserById(assistantId) as any;
+    const clrOrg = Number(clr?.orgId ?? clr?.org_id ?? 1) || 1;
+    const users = (storage.getUsers() as any[]).filter((u: any) =>
+      (u.isActive ?? u.is_active) && (Number(u.orgId ?? u.org_id ?? 1) || 1) === clrOrg
+    );
+    const clrName = clr?.name ?? "A CLR";
+    const detail = [borrowerName, loName ? "→ " + loName : null].filter(Boolean).join(" ");
+    const title = `🎉 ${clrName} just got a transfer!`;
+    const message = (detail ? detail + " — " : "") + "Keep the momentum going!";
+    for (const u of users) {
+      try { storage.createNotification({ userId: u.id, type: "transfer_celebration", title, message, isRead: false }); } catch {}
+    }
+    sendPushToUsers(users.map((u: any) => u.id), { title, body: message, url: "/#/leaderboard" }).catch(() => {});
+  }
+
   app.post("/api/outcomes", (req: any, res) => {
     try {
       const body = { ...req.body };
@@ -6301,6 +6320,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: sessUserId || 0, userName: me?.name ?? "Unknown", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null, assistantId: outcome.assistantId }) });
+      // 🎉 Transfer celebration — notify the whole org (in-app + push). The
+      // client plays a celebration sound when it sees this notification type.
+      if (outcome.outcomeType === "transfer") {
+        try { broadcastTransferCelebration(outcome.assistantId, lo?.fullName ?? null, outcome.borrowerName ?? null); } catch {}
+      }
       // Update unified_contact + fire-and-forget Bonzo push
       try {
         storageExtra.updateUnifiedContactFromOutcome({
@@ -6345,7 +6369,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id);
     const sessionUser = req.session_user as { userId: number; role?: string } | undefined;
     const isAdmin = sessionUser?.role === "admin";
-    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id FROM lead_outcomes WHERE id = ?`).get(id) as any;
+    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id, outcome_type FROM lead_outcomes WHERE id = ?`).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
     if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
       return res.status(403).json({ error: "You can only edit your own outcomes" });
@@ -6388,6 +6412,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if ("rescheduled" in body) body.rescheduled = boolToInt(body.rescheduled);
     const outcome = storage.updateLeadOutcome(id, body);
     if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
+    // 🎉 Celebrate conversions to transfer (e.g. appointment completed as a
+    // transfer) — but not edits of something that was already a transfer.
+    if (outcome && body.outcomeType === "transfer" && existing.outcome_type !== "transfer") {
+      try {
+        const lo = outcome.loId ? (storage.getLoanOfficerById(outcome.loId) as any) : null;
+        broadcastTransferCelebration(outcome.assistantId, lo?.fullName ?? null, outcome.borrowerName ?? null);
+      } catch {}
+    }
     // If the appointment time changed (reschedule, edit, etc.), clear the
     // 30-minute reminder flag so the cron can fire a fresh reminder against
     // the new scheduled time. We check whether either field that the cron
