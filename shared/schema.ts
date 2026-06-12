@@ -101,6 +101,9 @@ export const loanOfficers = sqliteTable("loan_officers", {
   internalStatus: text("internal_status").notNull().default("active"), // active | inactive | archived
   boostScore: real("boost_score").notNull().default(0), // 0-10
   priorityTier: integer("priority_tier").notNull().default(2), // 1=VIP, 2=Standard, 3=Low
+  // When true, the assignment algorithm quarters this LO's score — they get
+  // picked far less often but are never fully removed from the rotation.
+  reducedOdds: integer("reduced_odds", { mode: "boolean" }).notNull().default(false),
   snoozeUntil: text("snooze_until"), // ISO date string or null
   snoozeReason: text("snooze_reason"),
   lastWorkedDate: text("last_worked_date"),

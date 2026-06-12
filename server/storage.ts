@@ -419,6 +419,7 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_status TEXT`); } ca
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_states TEXT NOT NULL DEFAULT '[]'`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_last_checked TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN reduced_odds INTEGER NOT NULL DEFAULT 0`); } catch {}
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}
 

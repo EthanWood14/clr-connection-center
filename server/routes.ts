@@ -197,7 +197,7 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
       // Small bonus for never-worked LOs so new additions get tried
       const neverWorkedBonus = lastWorked ? 0 : 0.05;
 
-      const score =
+      let score =
         settings.weightDaysSinceWorked * daysSinceNorm +
         settings.weightFrequency * freqScore +
         settings.weightAvailability * availScore +
@@ -206,6 +206,12 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
         weightRecentTransfers * recentXferScore +
         neverWorkedBonus +
         ((lo.id % 100) / 10000); // deterministic tiebreak (stable across runs same day)
+
+      // Reduced odds: LOs flagged in the Directory are made significantly less
+      // likely to be assigned — their final score is quartered. They still stay
+      // in the pool, so they get the occasional assignment when everyone else
+      // has been worked recently.
+      if (lo.reducedOdds ?? lo.reduced_odds) score *= 0.25;
 
       return { lo, score, daysSince };
     })

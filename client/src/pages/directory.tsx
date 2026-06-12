@@ -29,6 +29,7 @@ import {
 import { LoAvailabilityEditor } from "@/components/lo-availability-editor";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { LoCsvImport } from "@/components/lo-csv-import";
 import { LoStatusBadge } from "@/components/lo-status-badge";
 import { copyToClipboard } from "@/lib/utils";
@@ -383,6 +384,7 @@ function LOCard({
                 {TIER_LABELS[lo.priorityTier]}
               </Badge>
               <LoStatusBadge status={lo.internalStatus} className="text-xs" />
+              {!!lo.reducedOdds && <Badge variant="outline" className="text-xs px-1.5 py-0 border-slate-400 text-slate-500" title="Reduced odds: far less likely to be assigned">🐢 Reduced</Badge>}
               {lo.snoozeUntil && new Date(lo.snoozeUntil) > new Date() && (
                 <Badge variant="outline" className="text-xs px-1.5 py-0 text-orange-600 border-orange-300">
                   <BedDouble className="w-3 h-3 mr-1" />Snoozed
@@ -636,6 +638,7 @@ const loFormSchema = z.object({
   personalPreferences: z.string().optional(),
   boostScore: z.coerce.number().min(0).max(10).default(0),
   priorityTier: z.coerce.number().min(1).max(3).default(2),
+  reducedOdds: z.boolean().default(false),
   internalStatus: z.string().default("active"),
   snoozeUntil: z.string().optional(),
   snoozeReason: z.string().optional(),
@@ -684,6 +687,7 @@ function LOFormDialog({
       personalPreferences: (initialValues as any)?.personalPreferences ?? "",
       boostScore: initialValues?.boostScore ?? 0,
       priorityTier: initialValues?.priorityTier ?? 2,
+      reducedOdds: !!initialValues?.reducedOdds,
       internalStatus: initialValues?.internalStatus ?? "active",
       snoozeUntil: initialValues?.snoozeUntil ?? "",
       snoozeReason: initialValues?.snoozeReason ?? "",
@@ -709,6 +713,7 @@ function LOFormDialog({
         personalPreferences: (initialValues as any)?.personalPreferences ?? "",
         boostScore: initialValues?.boostScore ?? 0,
         priorityTier: initialValues?.priorityTier ?? 2,
+        reducedOdds: !!initialValues?.reducedOdds,
         internalStatus: initialValues?.internalStatus ?? "active",
         snoozeUntil: initialValues?.snoozeUntil ?? "",
         snoozeReason: initialValues?.snoozeReason ?? "",
@@ -810,6 +815,19 @@ function LOFormDialog({
                   <FormLabel>Boost Score (0–10)</FormLabel>
                   <FormControl><Input type="number" min={0} max={10} step={0.5} {...field} data-testid="input-boost-score" /></FormControl>
                   <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="reducedOdds" render={({ field }) => (
+                <FormItem className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:col-span-2">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-sm">Reduced odds 🐢</FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      Makes this LO significantly less likely to be assigned (score quartered). Still in the rotation, just rare.
+                    </p>
+                  </div>
+                  <FormControl>
+                    <Switch checked={!!field.value} onCheckedChange={field.onChange} data-testid="switch-reduced-odds" />
+                  </FormControl>
                 </FormItem>
               )} />
               <FormField control={form.control} name="internalStatus" render={({ field }) => (
