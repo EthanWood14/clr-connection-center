@@ -464,6 +464,7 @@ async function sendReport(
   interface ClrStats {
     name: string;
     calls: number;
+    messages: number;
     transfers: number;
     appointments: number;
     fellThrough: number;
@@ -508,10 +509,13 @@ async function sendReport(
 
     const ratio = myCalls > 0 ? ((myTransfers / myCalls) * 100).toFixed(1) + "%" : "—";
 
-    // EOD report notes (one per day in period)
-    const myEodReports = storageExtra.getEodReportsByRange(startDate, endDate)
-      .filter((r: any) => r.assistant_id === uid && r.notes && r.notes.trim());
-    const eodNotes = myEodReports.map((r: any) => `[${r.report_date}] ${r.notes.trim()}`);
+    // EOD reports in period — notes plus messages-sent totals
+    const myEodAll = storageExtra.getEodReportsByRange(startDate, endDate)
+      .filter((r: any) => r.assistant_id === uid);
+    const eodNotes = myEodAll
+      .filter((r: any) => r.notes && r.notes.trim())
+      .map((r: any) => `[${r.report_date}] ${r.notes.trim()}`);
+    const myMessages = myEodAll.reduce((s: number, r: any) => s + Number(r.messages_sent ?? 0), 0);
 
     // Additional activity log entries
     const myActivities = storageExtra.getEodActivitiesByRange(startDate, endDate, uid);
@@ -524,6 +528,7 @@ async function sendReport(
     return {
       name: u.name,
       calls: myCalls,
+      messages: myMessages,
       transfers: myTransfers,
       appointments: myAppointments,
       fellThrough: myFellThrough,
@@ -540,6 +545,7 @@ async function sendReport(
 
   // Team totals
   const teamCalls          = clrStats.reduce((s, r) => s + r.calls, 0);
+  const teamMessages       = clrStats.reduce((s, r) => s + r.messages, 0);
   const teamTransfers      = clrStats.reduce((s, r) => s + r.transfers, 0);
   const teamAppointments   = clrStats.reduce((s, r) => s + r.appointments, 0);
   const teamFellThrough    = clrStats.reduce((s, r) => s + r.fellThrough, 0);
@@ -608,7 +614,7 @@ async function sendReport(
   // Fell Throughs, Callbacks, Future Contacts, No Answers.
   const outcomeBreakdownHtml = (() => {
     const visibleRows = clrStats.filter(r =>
-      r.calls > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0 ||
+      r.calls > 0 || r.messages > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0 ||
       r.callbacks > 0 || r.futureContacts > 0 || r.noAnswers > 0,
     );
     if (visibleRows.length === 0) return "";
@@ -626,6 +632,7 @@ async function sendReport(
       return `<tr style="background:${bg}">
         <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
         ${cell(r.calls, "#0369a1", true)}
+        ${cell(r.messages, "#0d9488", true)}
         ${cell(r.transfers, "#1A2B4A", true)}
         ${cell(r.appointments, "#0f766e")}
         ${cell(r.fellThrough, "#b45309")}
@@ -638,6 +645,7 @@ async function sendReport(
     const totalsRow = isMultiDay ? `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
       <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Totals</td>
       ${cell(teamCalls, "#0369a1", true)}
+      ${cell(teamMessages, "#0d9488", true)}
       ${cell(teamTransfers, "#1A2B4A", true)}
       ${cell(teamAppointments, "#0f766e", true)}
       ${cell(teamFellThrough, "#b45309", true)}
@@ -654,6 +662,7 @@ async function sendReport(
           <tr style="background:#0F182D">
             <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
             ${cellHead("Total Calls")}
+            ${cellHead("Messages")}
             ${cellHead("Transfers")}
             ${cellHead("Appointments")}
             ${cellHead("Fell Throughs")}
@@ -714,6 +723,7 @@ async function sendReport(
       <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#1e293b">${row.name}</td>
       <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${row.transfers}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0369a1">${row.calls}</td>
+      <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0d9488">${row.messages}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;font-weight:600;color:${ratioColor}">${row.ratio}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0f766e">${row.appointments}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#b45309">${row.fellThrough}</td>
@@ -736,9 +746,11 @@ async function sendReport(
   interface DailyClrRow {
     name: string;
     calls: number;
+    messages: number;
     transfers: number;
     appointments: number;
     fellThrough: number;
+    notes: string;
   }
   interface DaySection {
     date: string;
@@ -764,23 +776,27 @@ async function sendReport(
         return {
           name: u.name,
           calls: eod.calls_made || 0,
+          messages: eod.messages_sent || 0,
           transfers: eod.transfers || 0,
           appointments: eod.appointments || 0,
           fellThrough: dayFellThroughFromOutcomes,
+          notes: String(eod.notes ?? ""),
         };
       }
       if (dayOutcomes.length === 0) {
-        return { name: u.name, calls: 0, transfers: 0, appointments: 0, fellThrough: 0 };
+        return { name: u.name, calls: 0, messages: 0, transfers: 0, appointments: 0, fellThrough: 0, notes: "" };
       }
       return {
         name: u.name,
         calls: dayOutcomes.length,
+        messages: 0,
         transfers: dayTransfersFromOutcomes,
         appointments: dayApptsFromOutcomes,
         fellThrough: dayFellThroughFromOutcomes,
+        notes: "",
       };
     })
-    .filter(r => r.calls > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0)
+    .filter(r => r.calls > 0 || r.messages > 0 || r.transfers > 0 || r.appointments > 0 || r.fellThrough > 0)
     .sort((a, b) => b.transfers - a.transfers || b.calls - a.calls);
 
     const heading = new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-US", {
@@ -789,16 +805,21 @@ async function sendReport(
     return { date: dateStr, heading, rows };
   }).filter(s => s.rows.length > 0);
 
+  const escNote = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const perDayHtml = daySections.map(section => {
     const rowsHtml = section.rows.map((r, i) => {
       const bg = i % 2 === 0 ? "#ffffff" : "#f9fafb";
+      const noteRow = r.notes
+        ? `<tr style="background:${bg}"><td colspan="6" style="padding:2px 12px 9px;font-size:12px;color:#64748b"><strong style="color:#475569">Notes:</strong> ${escNote(r.notes)}</td></tr>`
+        : "";
       return `<tr style="background:${bg}">
         <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0d9488">${r.messages}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${r.transfers}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0f766e">${r.appointments}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#b45309">${r.fellThrough}</td>
-      </tr>`;
+      </tr>${noteRow}`;
     }).join("");
 
     return `
@@ -811,6 +832,7 @@ async function sendReport(
           <tr style="background:#0F182D">
             <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
             <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
+            <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Msgs</th>
             <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
             <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
             <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
@@ -830,6 +852,7 @@ async function sendReport(
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Total</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${teamTransfers}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0369a1;text-align:center">${teamCalls}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0d9488;text-align:center">${teamMessages}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;text-align:center;color:${teamRatioColor}">${teamRatio}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0f766e;text-align:center">${teamAppointments}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#b45309;text-align:center">${teamFellThrough}</td>
@@ -868,6 +891,7 @@ async function sendReport(
       <tr>
         ${statCard(teamTransfers, "Transfers", "#1A2B4A")}
         ${statCard(teamCalls, "Total Calls", "#0369a1")}
+        ${statCard(teamMessages, "Messages", "#0d9488")}
         ${statCard(teamRatio, "Transfer / Call %", teamRatioColor)}
         ${statCard(teamAppointments, "Appointments", "#0f766e")}
       </tr>
@@ -921,6 +945,7 @@ async function sendReport(
           <th style="padding:9px 12px;text-align:left;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Xfers</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
+          <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Msgs</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Xfer/Call%</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
           <th style="padding:9px 12px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Thru</th>
@@ -1245,6 +1270,47 @@ cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
 cron.schedule("0 9 * * *", () => {
   try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
 });
+
+// ── Missed-appointment nag ────────────────────────────────────────────────────
+// Appointments whose scheduled time has passed without being completed
+// (transferred / rescheduled / fell through) still carry a follow_up_date in
+// the past. Nag the owning CLR every morning AND mid-afternoon (in-app + push)
+// until each one is handled.
+function nagMissedAppointments() {
+  const db = storageExtra.getRawSqlite();
+  const todayLA = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  const rows = db.prepare(`
+    SELECT assistant_id AS assistantId, COUNT(*) AS n, MIN(substr(follow_up_date, 1, 10)) AS oldest
+    FROM lead_outcomes
+    WHERE outcome_type = 'appointment'
+      AND follow_up_date IS NOT NULL AND follow_up_date != ''
+      AND substr(follow_up_date, 1, 10) < ?
+    GROUP BY assistant_id
+  `).all(todayLA) as any[];
+  for (const r of rows) {
+    const u = storage.getUserById(r.assistantId) as any;
+    if (!u || !(u.isActive ?? u.is_active)) continue;
+    const plural = r.n === 1 ? "" : "s";
+    storage.createNotification({
+      userId: r.assistantId,
+      type: "missed_appointment",
+      title: `⚠️ ${r.n} missed appointment${plural}`,
+      message: `You have ${r.n} appointment${plural} past the scheduled time (oldest: ${r.oldest}). Open Upcoming Appointments and mark each as transferred, rescheduled, or fell through — this reminder repeats until they're handled.`,
+      isRead: false,
+    });
+    sendPushToUser(r.assistantId, {
+      title: `${r.n} missed appointment${plural} need attention`,
+      body: "Mark them transferred, rescheduled, or fell through — tap to open.",
+      url: "/#/appointments",
+    }).catch(() => {});
+  }
+  if (rows.length) console.log(`[missed-appts] nagged ${rows.length} CLR(s)`);
+}
+
+// Twice daily: 9:30 AM and 2:30 PM PT — persistent enough to actually bother people.
+cron.schedule("30 9,14 * * *", () => {
+  try { nagMissedAppointments(); } catch (e) { console.error("missed-appt nag error:", e); }
+}, { timezone: "America/Los_Angeles" });
 
 // Daily SQLite backup at 8am UTC
 cron.schedule("0 8 * * *", () => {
@@ -2022,7 +2088,7 @@ cron.schedule("30 18 * * 1-5", async () => {
     const todayPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD
 
     const rows = db.prepare(`
-      SELECT e.report_date, e.calls_made, e.transfers, e.appointments, e.notes,
+      SELECT e.report_date, e.assistant_id, e.calls_made, e.messages_sent, e.transfers, e.appointments, e.notes,
              u.name AS clr_name, u.email AS clr_email
       FROM eod_reports e
       JOIN users u ON u.id = e.assistant_id
@@ -2035,25 +2101,46 @@ cron.schedule("30 18 * * 1-5", async () => {
       return;
     }
 
+    // Additional work logged for the day (eod_activities), grouped per CLR.
+    const activityByClr = new Map<number, any[]>();
+    try {
+      const acts = db.prepare(`SELECT assistant_id, activity_type, description FROM eod_activities WHERE report_date = ?`).all(todayPT) as any[];
+      for (const a of acts) {
+        if (!activityByClr.has(a.assistant_id)) activityByClr.set(a.assistant_id, []);
+        activityByClr.get(a.assistant_id)!.push(a);
+      }
+    } catch {}
+
     const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     const totalCalls = rows.reduce((s: number, r: any) => s + Number(r.calls_made ?? 0), 0);
+    const totalMsgs = rows.reduce((s: number, r: any) => s + Number(r.messages_sent ?? 0), 0);
     const totalXfers = rows.reduce((s: number, r: any) => s + Number(r.transfers ?? 0), 0);
     const totalAppts = rows.reduce((s: number, r: any) => s + Number(r.appointments ?? 0), 0);
 
-    const rowsHtml = rows.map((r: any) => `
+    const rowsHtml = rows.map((r: any) => {
+      const acts = activityByClr.get(r.assistant_id) ?? [];
+      const extras: string[] = [];
+      if (r.notes) extras.push(`<strong style="color:#475569">Notes:</strong> ${esc(String(r.notes))}`);
+      if (acts.length) extras.push(`<strong style="color:#475569">Additional work:</strong> ${acts.map((a: any) => esc(`${a.activity_type ? a.activity_type + ": " : ""}${a.description ?? ""}`)).join(" &middot; ")}`);
+      const extraRow = extras.length
+        ? `<tr><td colspan="5" style="padding:0 12px 10px;font-size:12px;color:#64748b;line-height:1.5">${extras.join("<br>")}</td></tr>`
+        : "";
+      return `
       <tr style="border-top:1px solid #e2e8f0">
         <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#1A2B4A">${esc(r.clr_name)}</td>
         <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#3B82F6">${r.calls_made ?? 0}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#0d9488">${r.messages_sent ?? 0}</td>
         <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#16a34a">${r.transfers ?? 0}</td>
         <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#A855F7">${r.appointments ?? 0}</td>
-        <td style="padding:10px 12px;font-size:12px;color:#64748b;max-width:200px">${r.notes ? esc(String(r.notes).slice(0, 120)) + (r.notes.length > 120 ? "…" : "") : ""}</td>
-      </tr>`).join("");
+      </tr>${extraRow}`;
+    }).join("");
 
     const body = `
       <p style="margin:0 0 20px;font-size:15px;font-weight:600;color:#1A2B4A">Daily EOD Summary — ${todayPT}</p>
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:24px">
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:18px">
         <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#3B82F6">${totalCalls}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Total Calls</div></div>
+        <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#0d9488">${totalMsgs}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Messages</div></div>
         <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#16a34a">${totalXfers}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Transfers</div></div>
         <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#A855F7">${totalAppts}</div><div style="font-size:11px;color:#64748b;margin-top:2px">Appointments</div></div>
         <div style="text-align:center;flex:1"><div style="font-size:28px;font-weight:800;color:#0F182D">${rows.length}</div><div style="font-size:11px;color:#64748b;margin-top:2px">CLRs submitted</div></div>
@@ -2063,9 +2150,9 @@ cron.schedule("30 18 * * 1-5", async () => {
           <tr style="background:#f8fafc">
             <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">CLR</th>
             <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Calls</th>
+            <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Msgs</th>
             <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Xfers</th>
             <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Appts</th>
-            <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Notes</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
@@ -2075,7 +2162,7 @@ cron.schedule("30 18 * * 1-5", async () => {
       </p>`;
 
     const subject = `EOD Team Digest — ${todayPT} (${rows.length} CLR${rows.length !== 1 ? "s" : ""})`;
-    const html = buildEmail({ subject, preheader: `${totalCalls} calls · ${totalXfers} transfers · ${totalAppts} appointments — ${rows.length} CLRs submitted`, body });
+    const html = buildEmail({ subject, preheader: `${totalCalls} calls · ${totalMsgs} messages · ${totalXfers} transfers · ${totalAppts} appointments — ${rows.length} CLRs submitted`, body });
     await sendEmail({ to: managers, subject, html });
     console.log(`[eod-digest] sent to ${managers.length} managers covering ${rows.length} submissions`);
   } catch (e: any) {
@@ -6546,6 +6633,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const outcomesPrev = storage.getLeadOutcomes({ startDate: prevStartStr, endDate: prevEndStr }) as any[];
     const callLogsAll = storage.getCallLogsByRange(startDate, endDate) as any[];
     const callLogsPrev = storage.getCallLogsByRange(prevStartStr, prevEndStr) as any[];
+    // Messages sent (texts/DMs) come from EOD reports — tracked alongside calls.
+    const eodInRange = storageExtra.getEodReportsByRange(startDate, endDate) as any[];
+    const sumMessages = (rows: any[]) => rows.reduce((s, r) => s + Number(r.messages_sent ?? 0), 0);
     const users = storage.getUsers() as any[];
     const activeAssistants = users.filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive);
 
@@ -6569,6 +6659,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const rawCallLogs = clrId === undefined ? rawCallLogsAll : rawCallLogsAll.filter((l: any) => l.assistant_id === clrId);
 
     const totalCalls = sumCalls(callLogs);
+    const totalMessages = sumMessages(clrId === undefined ? eodInRange : eodInRange.filter((r: any) => r.assistant_id === clrId));
     const totalContactsReached = sumContacts(rawCallLogs);
     const totalDncHits = sumDnc(rawCallLogs);
     const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
@@ -6645,6 +6736,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const uLogs = callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === u.id);
       const uRawLogs = rawCallLogsAll.filter((l: any) => l.assistant_id === u.id);
       const uCalls = sumCalls(uLogs);
+      const uMessages = sumMessages(eodInRange.filter((r: any) => r.assistant_id === u.id));
       const uContacts = sumContacts(uRawLogs);
       const uDnc = sumDnc(uRawLogs);
       const uTransfers = uOutcomes.filter(o => ot(o) === "transfer").length;
@@ -6661,6 +6753,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         userId: u.id,
         name: u.name,
         calls: uCalls,
+        messages: uMessages,
         contactsReached: uContacts,
         dncHits: uDnc,
         transfers: uTransfers,
@@ -6682,6 +6775,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       clrId: clrId ?? null,
       totals: {
         calls: totalCalls,
+        messages: totalMessages,
         contactsReached: totalContactsReached,
         dncHits: totalDncHits,
         transfers: totalTransfers,
@@ -9867,6 +9961,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       goalsSource,
       totals: {
         calls: totalCalls,
+        messages: (storageExtra.getEodReportsByRange(startDate, endDate) as any[])
+          .filter((r: any) => r.assistant_id === userId)
+          .reduce((s: number, r: any) => s + Number(r.messages_sent ?? 0), 0),
         transfers: totalTransfers,
         appointments: totalAppointments,
         fellThrough: totalFellThrough,
@@ -9918,7 +10015,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Per-CLR Goals (admin-managed) ────────────────────────────────────────────
   // List all CLR goals for the org (admin only)
   app.get("/api/goals", requireAuth, (req: any, res) => {
-    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
+    if (!requireManagerOrAdmin(req, res)) return;
     const orgId = req.session_user?.orgId ?? 1;
     try {
       const sqlite = storageExtra.getSqlite();
@@ -9941,9 +10038,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/goals/:userId", requireAuth, (req: any, res) => {
     const userId = parseInt(req.params.userId, 10);
     if (!Number.isFinite(userId)) return res.status(400).json({ error: "Invalid user id" });
-    // Non-admins can only view their own goals
-    if (req.session_user?.role !== "admin" && req.session_user?.userId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    // Admins and managers can view anyone's goals; everyone else only their own.
+    if (req.session_user?.userId !== userId) {
+      const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+      const privileged = me?.role === "admin" || !!(me?.isManager ?? me?.is_manager);
+      if (!privileged) return res.status(403).json({ error: "Forbidden" });
     }
     try {
       const sqlite = storageExtra.getSqlite();
@@ -9990,9 +10089,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // Upsert goals for a user (admin only)
+  // Upsert goals for a user (admins and managers)
   app.patch("/api/goals/:userId", requireAuth, (req: any, res) => {
-    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admins only" });
+    if (!requireManagerOrAdmin(req, res)) return;
     const userId = parseInt(req.params.userId, 10);
     if (!Number.isFinite(userId)) return res.status(400).json({ error: "Invalid user id" });
     const toInt = (v: any) => {

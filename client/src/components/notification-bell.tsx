@@ -23,6 +23,7 @@ const typeRoutes: Record<string, string> = {
   chat: "/chat",
   forum: "/forum",
   schedule: "/my-schedule",
+  missed_appointment: "/appointments",
   nmls_check: "/nmls-checks",
   nmls_escalation: "/nmls-checks",
 };
@@ -36,6 +37,7 @@ const typeColors: Record<string, string> = {
   chat: "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
   forum: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400",
   schedule: "bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400",
+  missed_appointment: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
   nmls_check: "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
   nmls_escalation: "bg-destructive/10 text-destructive",
 };

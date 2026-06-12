@@ -55,7 +55,7 @@ interface StatsResponse {
   previous: { calls: number; transfers: number; appointments: number; transferRate: number };
   daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
+  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -82,22 +82,24 @@ function TrendBadge({ current, previous, suffix = "" }: { current: number; previ
   );
 }
 
-function SummaryCard({ title, value, previous, suffix = "" }: { title: string; value: number | string; previous: number; suffix?: string }) {
+function SummaryCard({ title, value, previous, suffix = "" }: { title: string; value: number | string; previous?: number; suffix?: string }) {
   const num = typeof value === "string" ? parseFloat(value) : value;
   return (
     <Card>
       <CardContent className="p-4">
         <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{title}</p>
         <p className="text-3xl font-bold mt-1.5">{value}{suffix}</p>
-        <div className="mt-2">
-          <TrendBadge current={num} previous={previous} suffix={suffix} />
-        </div>
+        {previous !== undefined && (
+          <div className="mt-2">
+            <TrendBadge current={num} previous={previous} suffix={suffix} />
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-type SortKey = "name" | "calls" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "vsGoal";
+type SortKey = "name" | "calls" | "messages" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "vsGoal";
 
 export default function TeamStats() {
   const { user } = useAuth();
@@ -266,8 +268,9 @@ export default function TeamStats() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <SummaryCard title="Total Calls" value={data.totals.calls} previous={data.previous.calls} />
+        <SummaryCard title="Messages Sent" value={(data.totals as any).messages ?? 0} />
         <SummaryCard title="Total Transfers" value={data.totals.transfers} previous={data.previous.transfers} />
         <SummaryCard title="Transfer Rate" value={data.totals.transferRate.toFixed(1)} previous={data.previous.transferRate} suffix="%" />
         <SummaryCard title="Total Appointments" value={data.totals.appointments} previous={data.previous.appointments} />
@@ -414,6 +417,7 @@ export default function TeamStats() {
                     const cols: [SortKey, string][] = [
                       ["name","CLR Name"],
                       ["calls","Calls"],
+                      ["messages","Messages"],
                       ["transfers","Transfers"],
                       ["vsGoal","vs Goal"],
                       ["transferRate","Transfer Rate"],
@@ -443,7 +447,7 @@ export default function TeamStats() {
               <tbody>
                 {perClrSorted.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
+                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
                   </tr>
                 ) : perClrSorted.map((row: any) => (
                   <tr
@@ -454,6 +458,7 @@ export default function TeamStats() {
                   >
                     <td className="px-4 py-2.5 font-medium">{row.name}</td>
                     <td className="px-4 py-2.5">{row.calls}</td>
+                    <td className="px-4 py-2.5 text-teal-600 dark:text-teal-400">{row.messages ?? 0}</td>
                     <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400">{row.transfers}</td>
                     <td className="px-4 py-2.5">
                       {Number(row.transfersGoal ?? 0) > 0 ? (

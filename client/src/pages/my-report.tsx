@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import {
   TrendingUp, PhoneCall, Calendar, XCircle, Target, Flame, Trophy,
-  Users, ArrowRight, Clock, AlertTriangle,
+  Users, ArrowRight, Clock, AlertTriangle, MessageSquare,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { aggregateByWeekday } from "@/lib/weekday-date";
@@ -388,6 +388,7 @@ export default function MyReport() {
           {/* Stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard icon={PhoneCall} label="Calls" value={data.totals.calls} color="text-blue-600 dark:text-blue-400" />
+            <StatCard icon={MessageSquare} label="Messages" value={(data.totals as any).messages ?? 0} color="text-teal-600 dark:text-teal-400" />
             <StatCard
               icon={TrendingUp}
               label="Transfers"

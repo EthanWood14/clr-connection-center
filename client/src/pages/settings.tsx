@@ -2038,6 +2038,51 @@ function SetGoalsButton({ user }: { user: any }) {
   );
 }
 
+// ── Team Goals Card (managers/admins set per-CLR goals from Settings) ───────
+function TeamGoalsCard({ users }: { users: any[] }) {
+  const clrs = (users ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || u.role === "admin"));
+  const { data: allGoals = [] } = useQuery<any[]>({
+    queryKey: ["/api/goals"],
+    queryFn: () => fetch("/api/goals", { credentials: "include" }).then(r => (r.ok ? r.json() : [])),
+  });
+  const goalsByUser = new Map<number, any>((allGoals ?? []).map((g: any) => [g.userId, g]));
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Target className="w-4 h-4 text-muted-foreground" />
+          Team Goals
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Set weekly goals for each CLR. These override the CLR's own targets and drive their dashboard progress bars.
+        </p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {clrs.length === 0 ? (
+          <p className="text-sm text-muted-foreground px-4 py-6 text-center">No active CLRs.</p>
+        ) : (
+          clrs.map((u: any) => {
+            const g = goalsByUser.get(u.id);
+            return (
+              <div key={u.id} className="flex items-center justify-between px-4 py-2.5 border-b last:border-0" data-testid={`team-goal-row-${u.id}`}>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{u.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {g
+                      ? `${g.callsGoal ?? 0} calls · ${g.transfersGoal ?? 0} transfers · ${g.appointmentsGoal ?? 0} appts / wk`
+                      : "No admin-set goal — using their personal targets"}
+                  </p>
+                </div>
+                <SetGoalsButton user={u} />
+              </div>
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Profile Goals Card (own-profile, inline, with model selector) ──────────
 function ProfileGoalsCard({ authUser }: { authUser: any }) {
   const { toast } = useToast();
@@ -2678,6 +2723,9 @@ export default function Settings() {
       {authUser && (authUser.role === 'assistant' || authUser.role === 'admin') && (
         <ProfileGoalsCard authUser={authUser} />
       )}
+
+      {/* Managers/admins: set weekly goals for any CLR right from Settings */}
+      {canReports && <TeamGoalsCard users={users} />}
 
       <TimezonePreferenceCard />
 
