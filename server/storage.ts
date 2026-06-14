@@ -62,6 +62,7 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN in_daily_assignments INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN exclude_from_stats INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER`); } catch {}
@@ -1342,11 +1343,25 @@ export class Storage implements IStorage {
     return this.getAlgorithmSettings();
   }
 
+  // Single source of truth: ids of "non-counted" CLRs whose data must never
+  // reach team totals / leaderboard. They still use the app and submit EODs.
+  getExcludedClrIds(): Set<number> {
+    const oid = currentOrgId();
+    const rows = oid != null
+      ? sqlite.prepare(`SELECT id FROM users WHERE exclude_from_stats = 1 AND org_id = ?`).all(oid)
+      : sqlite.prepare(`SELECT id FROM users WHERE exclude_from_stats = 1`).all();
+    return new Set((rows as any[]).map(r => r.id));
+  }
+
   getDashboardStats(startDate: string, endDate: string, assistantId?: number, tz?: string) {
     const oid = currentOrgId();
     const orgWhere = oid != null ? ` AND org_id = ${Number(oid)}` : "";
     const userWhere = assistantId != null ? ` AND assistant_id = ${Number(assistantId)}` : "";
-    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}${userWhere}`).all(startDate, endDate) as any[];
+    // Team scope (no assistantId): drop non-counted CLRs from every total.
+    const excludeWhere = assistantId != null
+      ? ""
+      : ` AND assistant_id NOT IN (SELECT id FROM users WHERE exclude_from_stats = 1${orgWhere})`;
+    const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}${userWhere}${excludeWhere}`).all(startDate, endDate) as any[];
 
     const total = outcomes.length;
     const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer").length;
@@ -1370,14 +1385,14 @@ export class Storage implements IStorage {
         return new Date().toISOString().split("T")[0];
       }
     })();
-    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}${userWhere}`).all(todayStr) as any[];
+    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}${userWhere}${excludeWhere}`).all(todayStr) as any[];
     const totalCallsToday = todayLogs.reduce((sum: number, l: any) => sum + (l.calls_made ?? 0), 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
 
     // Upcoming appointments. The "Upcoming Appointments" stat card is inherently
     // personal — when an assistantId is provided, scope to that user; otherwise
     // (team view) include the whole org.
-    const allOutcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE 1=1${orgWhere}${userWhere}`).all() as any[];
+    const allOutcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE 1=1${orgWhere}${userWhere}${excludeWhere}`).all() as any[];
     const upcomingAppointments = allOutcomes.filter(
       (o: any) => o.outcome_type === "appointment" && o.follow_up_date != null && o.follow_up_date >= todayStr
     ).length;
@@ -1391,8 +1406,8 @@ export class Storage implements IStorage {
     const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}`).all(startDate, endDate) as any[];
 
     const usersQuery = oid != null
-      ? sqlite.prepare(`SELECT * FROM users WHERE (role = 'assistant' OR role = 'admin') AND is_active = 1 AND org_id = ?`).all(oid)
-      : db.select().from(users).where(sql`(${users.role} = 'assistant' OR ${users.role} = 'admin') AND ${users.isActive} = 1`).all();
+      ? sqlite.prepare(`SELECT * FROM users WHERE (role = 'assistant' OR role = 'admin') AND is_active = 1 AND exclude_from_stats = 0 AND org_id = ?`).all(oid)
+      : db.select().from(users).where(sql`(${users.role} = 'assistant' OR ${users.role} = 'admin') AND ${users.isActive} = 1 AND ${users.excludeFromStats} = 0`).all();
     const allUsers = usersQuery as any[];
 
     const stats = allUsers.map((user: any) => {

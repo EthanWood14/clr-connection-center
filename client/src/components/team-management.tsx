@@ -66,6 +66,7 @@ interface User {
   isActive: boolean;
   isClr: boolean;
   inDailyAssignments: boolean;
+  excludeFromStats?: boolean;
   createdAt: string;
 }
 
@@ -100,6 +101,9 @@ function UserDialog({
   // false = this CLR is skipped by daily assignment generation (still does EODs,
   // dashboards, reports, and can receive manually reassigned leads).
   const [inAssignments, setInAssignments] = useState(editUser?.inDailyAssignments ?? true);
+  // true = "non-counted": still logs/EODs, but out of team totals, leaderboard,
+  // and daily assignments; shown as a separate group in reports.
+  const [excludeFromStats, setExcludeFromStats] = useState(editUser?.excludeFromStats ?? false);
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -112,7 +116,7 @@ function UserDialog({
   const watchedRole = form.watch("role");
 
   const createMutation = useMutation({
-    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, inDailyAssignments: inAssignments, sendWelcome }),
+    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, inDailyAssignments: inAssignments, excludeFromStats, sendWelcome }),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       if (res?.emailRequested) {
@@ -133,6 +137,7 @@ function UserDialog({
       setSendWelcome(true);
       setIsClr(true);
       setInAssignments(true);
+      setExcludeFromStats(false);
     },
     onError: (err: Error) =>
       toast({ title: "Failed to add team member", description: err.message, variant: "destructive" }),
@@ -140,7 +145,7 @@ function UserDialog({
 
   const updateMutation = useMutation({
     mutationFn: (data: UserFormValues) => {
-      const payload: any = { name: data.name, email: data.email, role: data.role, isClr, inDailyAssignments: inAssignments };
+      const payload: any = { name: data.name, email: data.email, role: data.role, isClr, inDailyAssignments: inAssignments, excludeFromStats };
       if (data.newPassword?.trim()) payload.newPassword = data.newPassword.trim();
       return apiRequest("PATCH", `/api/users/${editUser!.id}`, payload);
     },
@@ -253,6 +258,18 @@ function UserDialog({
                   </p>
                 </div>
                 <Switch checked={inAssignments} onCheckedChange={setInAssignments} data-testid="switch-in-daily-assignments" />
+              </div>
+            )}
+            {/* Non-counted CLR — excluded from totals/leaderboard/assignments, separate group in reports */}
+            {(watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
+                <div>
+                  <p className="text-sm font-medium">Exclude from stats (non-counted)</p>
+                  <p className="text-xs text-muted-foreground">
+                    Still logs outcomes and submits EODs, but is left out of team totals, the leaderboard, and daily assignments. Appears as a separate group in reports.
+                  </p>
+                </div>
+                <Switch checked={excludeFromStats} onCheckedChange={setExcludeFromStats} data-testid="switch-exclude-from-stats" />
               </div>
             )}
             {!isEditing && (
@@ -441,6 +458,15 @@ export function TeamManagement() {
                               No daily assignments
                             </Badge>
                           )}
+                        {user.excludeFromStats && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs font-medium bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600"
+                            data-testid={`badge-non-counted-${user.id}`}
+                          >
+                            Non-counted
+                          </Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-center">

@@ -42,6 +42,10 @@ export const users = sqliteTable("users", {
   // monthly shuffle). They remain a CLR everywhere else: EODs, dashboards,
   // leaderboard, reports, manual reassign/pre-configure targets.
   inDailyAssignments: integer("in_daily_assignments", { mode: "boolean" }).notNull().default(true),
+  // Non-counted CLR: still uses the app (logs outcomes, EODs) but is excluded
+  // from team/total stats, the leaderboard, and daily assignment generation.
+  // In reports they appear as a separate "Non-counted" group, not in the totals.
+  excludeFromStats: integer("exclude_from_stats", { mode: "boolean" }).notNull().default(false),
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
   isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),

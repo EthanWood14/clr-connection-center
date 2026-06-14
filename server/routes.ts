@@ -460,11 +460,14 @@ async function sendReport(
     : assignmentsAll;
 
   // CLR list — assistants + admin-CLRs. When clrId is set, scope to that CLR.
+  // Non-counted CLRs are excluded from the team breakdown/totals and rendered in
+  // a separate "Non-counted CLRs" section. A single-CLR scoped report still works
+  // for a non-counted CLR (they remain valid report subjects).
+  const isClrRow = (u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr));
   const clrs = users.filter((u: any) =>
-    u.isActive
-    && (u.role === "assistant" || (u.role === "admin" && u.isClr))
-    && (scopedClrId ? u.id === scopedClrId : true)
+    isClrRow(u) && (scopedClrId ? u.id === scopedClrId : !u.excludeFromStats)
   );
+  const nonCountedClrs = scopedClrId ? [] : users.filter((u: any) => isClrRow(u) && u.excludeFromStats);
 
   // Per-CLR aggregates
   interface ClrStats {
@@ -484,7 +487,7 @@ async function sendReport(
     activityNotes: Array<{ date: string; type: string; description: string }>;
   }
 
-  const clrStats: ClrStats[] = clrs.map((u: any) => {
+  function computeClrStat(u: any): ClrStats {
     const uid = u.id;
 
     // Calls from call logs (raw SQLite returns snake_case)
@@ -547,7 +550,11 @@ async function sendReport(
       eodNotes,
       activityNotes,
     };
-  }).sort((a, b) => b.transfers - a.transfers);
+  }
+
+  const clrStats: ClrStats[] = clrs.map(computeClrStat).sort((a, b) => b.transfers - a.transfers);
+  // Separate group — does NOT feed any team total.
+  const nonCountedStats: ClrStats[] = nonCountedClrs.map(computeClrStat).sort((a, b) => b.transfers - a.transfers);
 
   // Team totals
   const teamCalls          = clrStats.reduce((s, r) => s + r.calls, 0);
@@ -681,6 +688,39 @@ async function sendReport(
           ${rowsHtml}
           ${totalsRow}
         </tbody>
+      </table>
+    </div>`;
+  })();
+
+  // Separate "Non-counted CLRs" section — their activity, explicitly NOT in team totals.
+  const nonCountedHtml = nonCountedStats.length === 0 ? "" : (() => {
+    const rowsHtml = nonCountedStats.map((r, i) => {
+      const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
+      return `<tr style="background:${bg}">
+        <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0d9488">${r.messages}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${r.transfers}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0f766e">${r.appointments}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#b45309">${r.fellThrough}</td>
+      </tr>`;
+    }).join("");
+    return `
+    <div style="margin-top:28px">
+      <h2 style="margin:0 0 4px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Non-counted CLRs</h2>
+      <p style="margin:0 0 12px;font-size:12px;color:#64748b">Tracked separately — <strong>not included</strong> in the team totals, leaderboard, or charts above.</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:12px">
+        <thead>
+          <tr style="background:#475569">
+            <th style="padding:9px 12px;text-align:left;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR (non-counted)</th>
+            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
+            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Msgs</th>
+            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
+            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
+            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
       </table>
     </div>`;
   })();
@@ -969,6 +1009,8 @@ async function sendReport(
 
     <!--SEC:outcomeBreakdown-->${outcomeBreakdownHtml}<!--/SEC:outcomeBreakdown-->
 
+    ${nonCountedHtml}
+
     <!--SEC:transferDetails-->${transferDetailsHtml}<!--/SEC:transferDetails-->
 
     <!--SEC:activeLos-->
@@ -1205,7 +1247,7 @@ function getNextNmlsCheckDate(now: Date = new Date()): Date {
 function triggerNmlsChecks() {
   const periodKey = getNmlsPeriodKey();
   const activeLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active" && lo.nmlsId);
-  const assistants = storage.getUsers().filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+  const assistants = storage.getUsers().filter((u: any) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
   if (!assistants.length) return;
 
   for (const lo of activeLos) {
@@ -2093,19 +2135,22 @@ cron.schedule("30 18 * * 1-5", async () => {
     // Today's date in PT (matches report_date stored by CLRs)
     const todayPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD
 
-    const rows = db.prepare(`
+    const allRows = db.prepare(`
       SELECT e.report_date, e.assistant_id, e.calls_made, e.messages_sent, e.transfers, e.appointments, e.notes,
-             u.name AS clr_name, u.email AS clr_email
+             u.name AS clr_name, u.email AS clr_email, u.exclude_from_stats AS excluded
       FROM eod_reports e
       JOIN users u ON u.id = e.assistant_id
       WHERE e.report_date = ?
       ORDER BY u.name ASC
     `).all(todayPT) as any[];
 
-    if (rows.length === 0) {
+    if (allRows.length === 0) {
       console.log("[eod-digest] no submissions today, skipping manager digest");
       return;
     }
+    // Non-counted CLRs are shown in their own section and excluded from totals.
+    const rows = allRows.filter((r: any) => !r.excluded);
+    const nonCountedRows = allRows.filter((r: any) => r.excluded);
 
     // Additional work logged for the day (eod_activities), grouped per CLR.
     const activityByClr = new Map<number, any[]>();
@@ -2124,7 +2169,7 @@ cron.schedule("30 18 * * 1-5", async () => {
     const totalXfers = rows.reduce((s: number, r: any) => s + Number(r.transfers ?? 0), 0);
     const totalAppts = rows.reduce((s: number, r: any) => s + Number(r.appointments ?? 0), 0);
 
-    const rowsHtml = rows.map((r: any) => {
+    const renderDigestRows = (list: any[]) => list.map((r: any) => {
       const acts = activityByClr.get(r.assistant_id) ?? [];
       const extras: string[] = [];
       if (r.notes) extras.push(`<strong style="color:#475569">Notes:</strong> ${esc(String(r.notes))}`);
@@ -2141,6 +2186,20 @@ cron.schedule("30 18 * * 1-5", async () => {
         <td style="padding:10px 12px;text-align:center;font-size:14px;font-weight:700;color:#A855F7">${r.appointments ?? 0}</td>
       </tr>${extraRow}`;
     }).join("");
+    const rowsHtml = renderDigestRows(rows);
+    const nonCountedDigestHtml = nonCountedRows.length === 0 ? "" : `
+      <h3 style="margin:22px 0 6px;font-size:13px;font-weight:700;color:#0F182D">Non-counted CLRs</h3>
+      <p style="margin:0 0 8px;font-size:11px;color:#64748b">Not included in the totals above.</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+        <thead><tr style="background:#f1f5f9">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase">CLR</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Calls</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Msgs</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Xfers</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Appts</th>
+        </tr></thead>
+        <tbody>${renderDigestRows(nonCountedRows)}</tbody>
+      </table>`;
 
     const body = `
       <p style="margin:0 0 20px;font-size:15px;font-weight:600;color:#1A2B4A">Daily EOD Summary — ${todayPT}</p>
@@ -2163,6 +2222,7 @@ cron.schedule("30 18 * * 1-5", async () => {
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
+      ${nonCountedDigestHtml}
       <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center">
         This digest is sent once daily. Each CLR also receives their own full report immediately on submission.
       </p>`;
@@ -3394,7 +3454,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -5930,7 +5990,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
     // in_daily_assignments = 0 → CLR opted out of daily assignment generation only
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
     if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
@@ -6068,7 +6128,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
 
     storage.clearDailyAssignments(date);
-    const assistants = storage.getUsers().filter(u => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
     const assistantOrder: Record<number, number> = {};
     for (const item of items) {
       const aid = Number(item.assistantId);
@@ -6677,15 +6737,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const eodInRange = storageExtra.getEodReportsByRange(startDate, endDate) as any[];
     const sumMessages = (rows: any[]) => rows.reduce((s, r) => s + Number(r.messages_sent ?? 0), 0);
     const users = storage.getUsers() as any[];
-    const activeAssistants = users.filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive);
+    // Non-counted CLRs: excluded from the team view's totals/per-CLR list, but a
+    // single-CLR view of one still shows their own data.
+    const excluded = storage.getExcludedClrIds();
+    const aid = (o: any) => o.assistantId ?? o.assistant_id;
+    const activeAssistants = users.filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive && !u.excludeFromStats);
 
     const filterByClr = <T extends any>(arr: T[], field: string): T[] =>
       clrId === undefined ? arr : arr.filter((o: any) => (o[field] ?? o[field.replace(/([A-Z])/g, "_$1").toLowerCase()]) === clrId);
 
-    const outcomes = clrId === undefined ? outcomesAll : outcomesAll.filter((o: any) => (o.assistantId ?? o.assistant_id) === clrId);
-    const outcomesPrevFiltered = clrId === undefined ? outcomesPrev : outcomesPrev.filter((o: any) => (o.assistantId ?? o.assistant_id) === clrId);
-    const callLogs = clrId === undefined ? callLogsAll : callLogsAll.filter((l: any) => (l.assistantId ?? l.assistant_id) === clrId);
-    const callLogsPrevFiltered = clrId === undefined ? callLogsPrev : callLogsPrev.filter((l: any) => (l.assistantId ?? l.assistant_id) === clrId);
+    const outcomes = clrId === undefined ? outcomesAll.filter((o: any) => !excluded.has(aid(o))) : outcomesAll.filter((o: any) => aid(o) === clrId);
+    const outcomesPrevFiltered = clrId === undefined ? outcomesPrev.filter((o: any) => !excluded.has(aid(o))) : outcomesPrev.filter((o: any) => aid(o) === clrId);
+    const callLogs = clrId === undefined ? callLogsAll.filter((l: any) => !excluded.has(aid(l))) : callLogsAll.filter((l: any) => aid(l) === clrId);
+    const callLogsPrevFiltered = clrId === undefined ? callLogsPrev.filter((l: any) => !excluded.has(aid(l))) : callLogsPrev.filter((l: any) => aid(l) === clrId);
 
     const ot = (o: any) => o.outcomeType ?? o.outcome_type;
     const isAppt = (t: string) => t === "appointment" || t === "callback_requested" || t === "deferral";
@@ -6696,10 +6760,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     // Raw call logs include contacts_reached/dnc_hits columns (not exposed via Drizzle schema)
     const rawCallLogsAll = storageExtra.getCallLogsByRangeRaw(startDate, endDate);
-    const rawCallLogs = clrId === undefined ? rawCallLogsAll : rawCallLogsAll.filter((l: any) => l.assistant_id === clrId);
+    const rawCallLogs = clrId === undefined ? rawCallLogsAll.filter((l: any) => !excluded.has(l.assistant_id)) : rawCallLogsAll.filter((l: any) => l.assistant_id === clrId);
 
     const totalCalls = sumCalls(callLogs);
-    const totalMessages = sumMessages(clrId === undefined ? eodInRange : eodInRange.filter((r: any) => r.assistant_id === clrId));
+    const totalMessages = sumMessages(clrId === undefined ? eodInRange.filter((r: any) => !excluded.has(r.assistant_id)) : eodInRange.filter((r: any) => r.assistant_id === clrId));
     const totalContactsReached = sumContacts(rawCallLogs);
     const totalDncHits = sumDnc(rawCallLogs);
     const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
@@ -7055,6 +7119,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const allClrs = storage.getUsers().filter((u: any) =>
       u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr))
     ) as any[];
+    // Non-counted CLRs: stay in the EOD grid (they still submit EODs) but drop
+    // out of scorecard metrics, leaderboard, and per-CLR aggregate cards.
+    const excludedIds = storage.getExcludedClrIds();
+    const countedClrs = allClrs.filter((u: any) => !excludedIds.has(u.id));
+    // SQL fragment appended to raw team COUNT/aggregate queries.
+    const exClause = excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
+    const exClauseO = excludedIds.size ? ` AND o.assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
     const todayReports = (storageExtra.getEodReportsByRange(todayStr, todayStr) as any[]);
     const reportByUser = new Map<number, any>();
     for (const r of todayReports) {
@@ -7138,7 +7209,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const monthOutcomesAll = sqlite.prepare(`
       SELECT assistant_id, outcome_type, COUNT(*) AS count
       FROM lead_outcomes
-      WHERE date >= ? AND date <= ?
+      WHERE date >= ? AND date <= ?${exClause}
       GROUP BY assistant_id, outcome_type
     `).all(month.startDate, month.endDate) as any[];
     const outcomesByUser: Record<number, Record<string, number>> = {};
@@ -7151,7 +7222,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const monthCallsRows = sqlite.prepare(`
       SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
       FROM daily_call_logs
-      WHERE log_date >= ? AND log_date <= ?
+      WHERE log_date >= ? AND log_date <= ?${exClause}
       GROUP BY assistant_id
     `).all(month.startDate, month.endDate) as any[];
     const callsByUserMonth = new Map<number, number>();
@@ -7160,7 +7231,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Approximate weeks-in-month elapsed for goal proration
     const monthDaysElapsed = Math.max(1, (Date.now() - new Date(month.startDate + "T00:00:00").getTime()) / 86400000);
     const weeksElapsed = Math.max(1, monthDaysElapsed / 7);
-    const clrCards = allClrs.map((u: any) => {
+    const clrCards = countedClrs.map((u: any) => {
       const om = outcomesByUser[u.id] ?? {};
       const transfers = om.transfer ?? 0;
       const appointments = om.appointment ?? 0;
@@ -7223,7 +7294,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       FROM lead_outcomes o
       LEFT JOIN users u ON u.id = o.assistant_id
       LEFT JOIN loan_officers lo ON lo.id = o.lo_id
-      WHERE o.date >= ? AND o.date <= ? AND o.outcome_type = 'transfer'
+      WHERE o.date >= ? AND o.date <= ? AND o.outcome_type = 'transfer'${exClauseO}
       ORDER BY o.date DESC, o.id DESC
     `).all(sevenDaysAgoStr, todayStr) as any[];
 
@@ -7260,14 +7331,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                SUM(CASE WHEN outcome_type = 'appointment'  THEN 1 ELSE 0 END) AS appointments,
                SUM(CASE WHEN outcome_type = 'fell_through' THEN 1 ELSE 0 END) AS fell_through
         FROM lead_outcomes
-        WHERE date >= ? AND date <= ?
+        WHERE date >= ? AND date <= ?${exClause}
         GROUP BY date
         ORDER BY date ASC
       `).all(startDate, endDate) as any[];
       const callsRows = sqlite.prepare(`
         SELECT log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?
+        WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY log_date
         ORDER BY log_date ASC
       `).all(startDate, endDate) as any[];
@@ -7314,7 +7385,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const outcomeBreakdown = sqlite.prepare(`
         SELECT outcome_type, COUNT(*) AS count
         FROM lead_outcomes
-        WHERE date >= ? AND date <= ?
+        WHERE date >= ? AND date <= ?${exClause}
         GROUP BY outcome_type
         ORDER BY count DESC
       `).all(startDate, endDate) as any[];
@@ -7326,7 +7397,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         LEFT JOIN loan_officers lo ON lo.id = o.lo_id
         WHERE o.date >= ? AND o.date <= ?
           AND o.outcome_type = 'transfer'
-          AND lo.id IS NOT NULL
+          AND lo.id IS NOT NULL${exClauseO}
         GROUP BY lo.id
         ORDER BY transfers DESC
         LIMIT 10
@@ -7335,7 +7406,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Fell-through reasons (Other / unspecified bucket dropped)
       const ftRows = sqlite.prepare(`
         SELECT notes FROM lead_outcomes
-        WHERE date >= ? AND date <= ? AND outcome_type = 'fell_through'
+        WHERE date >= ? AND date <= ? AND outcome_type = 'fell_through'${exClause}
       `).all(startDate, endDate) as any[];
       const buckets: Record<string, number> = {};
       for (const r of ftRows) {
@@ -7353,7 +7424,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const lbOutcomes = sqlite.prepare(`
         SELECT assistant_id, outcome_type, COUNT(*) AS count
         FROM lead_outcomes
-        WHERE date >= ? AND date <= ?
+        WHERE date >= ? AND date <= ?${exClause}
         GROUP BY assistant_id, outcome_type
       `).all(startDate, endDate) as any[];
       const lbByUser: Record<number, { transfers: number; appointments: number; fellThrough: number; total: number }> = {};
@@ -7370,12 +7441,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const lbCalls = sqlite.prepare(`
         SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?
+        WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY assistant_id
       `).all(startDate, endDate) as any[];
       const lbCallsByUser = new Map<number, number>();
       for (const r of lbCalls) lbCallsByUser.set(r.assistant_id, Number(r.calls) || 0);
-      const leaderboard = allClrs
+      const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
           const calls = lbCallsByUser.get(u.id) ?? 0;
@@ -7408,13 +7479,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const clrOutcomeRows = sqlite.prepare(`
         SELECT assistant_id, date, outcome_type, COUNT(*) AS count
         FROM lead_outcomes
-        WHERE date >= ? AND date <= ?
+        WHERE date >= ? AND date <= ?${exClause}
         GROUP BY assistant_id, date, outcome_type
       `).all(startDate, endDate) as any[];
       const clrCallRows = sqlite.prepare(`
         SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?
+        WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY assistant_id, log_date
       `).all(startDate, endDate) as any[];
       // Build the date axis the same way as the team trend so they line up exactly.
@@ -7450,7 +7521,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       const clrTrend = {
         dates: clrTrendDates,
-        series: allClrs.map((u: any) => {
+        series: countedClrs.map((u: any) => {
           const b = clrTrendMap[u.id];
           return {
             userId: u.id,
@@ -7495,7 +7566,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       const heatmap = {
         dates: hmDates,
-        rows: allClrs.map((u: any) => ({
+        rows: countedClrs.map((u: any) => ({
           userId: u.id,
           name: u.name,
           cells: hmDates.map(d => heatmapMap[`${u.id}|${d}`] ?? 0),
@@ -7503,7 +7574,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       };
       const callsHeatmap = {
         dates: hmDates,
-        rows: allClrs.map((u: any) => ({
+        rows: countedClrs.map((u: any) => ({
           userId: u.id,
           name: u.name,
           cells: hmDates.map(d => callsHmMap[`${u.id}|${d}`] ?? 0),
@@ -7525,7 +7596,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const phoneRows = sqlite.prepare(`
           SELECT phone_number FROM lead_outcomes
           WHERE date >= ? AND date <= ? AND outcome_type = 'transfer'
-            AND phone_number IS NOT NULL AND phone_number != ''
+            AND phone_number IS NOT NULL AND phone_number != ''${exClause}
         `).all(startDate, endDate) as any[];
         const stateCounts: Record<string, number> = {};
         const rejectedSet = new Set<string>();
@@ -8650,7 +8721,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/monthly-assignments/shuffle", requireAuth, (req, res) => {
     const month = (req.body.month as string) || new Date().toISOString().slice(0, 7);
     const activeLos = storage.getLoanOfficers().filter(lo => lo.internalStatus === "active");
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
     if (!assistants.length) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
     // Shuffle LOs randomly then distribute round-robin
     const shuffled = [...activeLos].sort(() => Math.random() - 0.5);
@@ -8692,7 +8763,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
     if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
     // Clear ALL of today's assignments (override wipes everything)
