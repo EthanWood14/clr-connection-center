@@ -280,9 +280,10 @@ interface AssignmentRowProps {
   todayAvailabilitySlot?: string;
   reassignTargets?: ReassignTarget[];
   onReassign?: (assignmentId: number, assistantId: number) => void;
+  nextLoa?: { fullName: string; daysSinceLastTransfer: number | null } | null;
 }
 
-function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref, todayAvailabilitySlot, reassignTargets, onReassign }: AssignmentRowProps) {
+function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnworked, pref, onSavePref, todayAvailabilitySlot, reassignTargets, onReassign, nextLoa }: AssignmentRowProps) {
   const cfg = STATUS_CONFIG[assignment.status] ?? STATUS_CONFIG.recommended;
   const Icon = cfg.icon;
   const timeBadge = pref?.preferredTime ? PREFERRED_TIME_LABEL[pref.preferredTime] : null;
@@ -341,6 +342,15 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
             </span>
           )}
           <LoStatusBadge status={assignment.lo?.internalStatus} hideWhenActive />
+          {nextLoa && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300 font-semibold flex items-center gap-1"
+              title={`This LO has assistants — ${nextLoa.fullName} is next in line for a transfer${nextLoa.daysSinceLastTransfer == null ? " (no transfers yet)" : ` (last ${nextLoa.daysSinceLastTransfer}d ago)`}. Updates automatically as transfers are logged.`}
+              data-testid={`next-loa-${assignment.id}`}
+            >
+              <ArrowRightLeft className="w-3 h-3" />LOA up: {nextLoa.fullName}
+            </span>
+          )}
         </div>
         <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
           <span>
@@ -448,6 +458,7 @@ interface AssistantGroupProps {
   todayAvailability?: Record<number, string>;
   reassignTargets?: ReassignTarget[];
   onReassign?: (assignmentId: number, assistantId: number) => void;
+  nextLoaByLo?: Record<number, { fullName: string; daysSinceLastTransfer: number | null }>;
 }
 
 function AssistantGroup({
@@ -463,6 +474,7 @@ function AssistantGroup({
   todayAvailability,
   reassignTargets,
   onReassign,
+  nextLoaByLo,
 }: AssistantGroupProps) {
   const worked = assignments.filter(a => a.status === "worked").length;
   const total = assignments.length;
@@ -521,6 +533,7 @@ function AssistantGroup({
                 todayAvailabilitySlot={todayAvailability?.[loId]}
                 reassignTargets={reassignTargets?.filter(t => t.id !== (a.assistantId ?? a.assistant_id))}
                 onReassign={onReassign}
+                nextLoa={nextLoaByLo?.[loId]}
               />
             );
           });
@@ -976,6 +989,23 @@ export default function Assignments() {
   });
 
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
+
+  // LOA transfer queue — for LOs that have assistants, which one is next in line.
+  // Polls every 60s so it stays current as transfers are logged through the day.
+  const { data: loaQueue = [] } = useQuery<any[]>({
+    queryKey: ["/api/loan-officer-assistants/queue"],
+    queryFn: () => apiRequest("GET", "/api/loan-officer-assistants/queue"),
+    refetchInterval: 60000,
+  });
+  // The queue is sorted most-needy-first, so the first entry per LO is the
+  // assistant currently "due" a transfer for that LO.
+  const nextLoaByLo = useMemo(() => {
+    const map: Record<number, { fullName: string; daysSinceLastTransfer: number | null }> = {};
+    for (const e of loaQueue as any[]) {
+      if (e?.loId != null && !map[e.loId]) map[e.loId] = { fullName: e.fullName, daysSinceLastTransfer: e.daysSinceLastTransfer ?? null };
+    }
+    return map;
+  }, [loaQueue]);
 
   const { data: callLogs = [] } = useQuery<any[]>({
     queryKey: ["/api/call-logs", currentDate],
@@ -1433,6 +1463,7 @@ export default function Assignments() {
                 todayAvailability={todayAvailability}
                 reassignTargets={canReassign ? reassignTargets : undefined}
                 onReassign={canReassign ? handleRowReassign : undefined}
+                nextLoaByLo={nextLoaByLo}
               />
             );
           })}
@@ -1460,6 +1491,7 @@ export default function Assignments() {
                 todayAvailability={todayAvailability}
                 reassignTargets={canReassign ? reassignTargets : undefined}
                 onReassign={canReassign ? handleRowReassign : undefined}
+                nextLoaByLo={nextLoaByLo}
               />
             );
           })}
