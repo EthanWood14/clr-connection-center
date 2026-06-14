@@ -6151,6 +6151,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
 
     try {
+      const sqlite = storageExtra.getRawSqlite();
       const stmt = sqlite.prepare(`
         INSERT INTO daily_assignments
           (assignment_date, lo_id, assistant_id, global_rank, assistant_rank, status, notes, manually_configured, created_at)
@@ -8501,7 +8502,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Report Archive: regenerate any historical daily/weekly/monthly report ──
   // Available to admin and viewer roles. Lets them preview the rendered email
   // for any date range and optionally send it to a list of recipients.
-  function parseRange(body: any, type: "daily" | "weekly" | "monthly" | "mtd" | "alltime"): { startDate: string; endDate: string } {
+  function parseRange(req: any, body: any, type: "daily" | "weekly" | "monthly" | "mtd" | "alltime"): { startDate: string; endDate: string } {
     const ymd = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) ? String(s) : "";
     let s = ymd(body?.startDate);
     let e = ymd(body?.endDate);
@@ -8563,7 +8564,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
       rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     try {
-      const range = parseRange(req.body, type);
+      const range = parseRange(req, req.body, type);
       const clrIdRaw = req.body?.clrId;
       const clrId = typeof clrIdRaw === "number" && clrIdRaw > 0 ? clrIdRaw : undefined;
       const result: any = await sendReport(type, { customRange: range, renderOnly: true, clrId });
@@ -8588,7 +8589,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const type: "daily" | "weekly" | "monthly" | "mtd" | "alltime" =
       rawType === "daily" || rawType === "weekly" || rawType === "monthly" || rawType === "mtd" || rawType === "alltime" ? rawType : "daily";
     try {
-      const range = parseRange(req.body, type);
+      const range = parseRange(req, req.body, type);
       const requested: any[] = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
       // Default: send to the requesting user's own email if no list supplied
       const cleaned = requested
