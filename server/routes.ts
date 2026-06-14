@@ -851,12 +851,12 @@ async function sendReport(
     return { date: dateStr, heading, rows };
   }).filter(s => s.rows.length > 0);
 
-  const escNote = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escDayNote = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const perDayHtml = daySections.map(section => {
     const rowsHtml = section.rows.map((r, i) => {
       const bg = i % 2 === 0 ? "#ffffff" : "#f9fafb";
       const noteRow = r.notes
-        ? `<tr style="background:${bg}"><td colspan="6" style="padding:2px 12px 9px;font-size:12px;color:#64748b"><strong style="color:#475569">Notes:</strong> ${escNote(r.notes)}</td></tr>`
+        ? `<tr style="background:${bg}"><td colspan="6" style="padding:2px 12px 9px;font-size:12px;color:#64748b"><strong style="color:#475569">Notes:</strong> ${escDayNote(r.notes)}</td></tr>`
         : "";
       return `<tr style="background:${bg}">
         <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
