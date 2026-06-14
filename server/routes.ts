@@ -6662,21 +6662,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     };
 
     if (scope === "team") {
-      // Team totals — aggregate across all active CLRs
-      const allLogsToday = storage.getDailyCallLogs(todayStr) as any[];
-      myCallsToday = allLogsToday.reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+      // Team totals — aggregate across COUNTED CLRs (drop non-counted from every
+      // total: today's calls, period calls, contacts, messages, bulk-texter,
+      // future contacts).
+      const excluded = storage.getExcludedClrIds();
+      const aid = (x: any) => x.assistantId ?? x.assistant_id;
+      const exSql = excluded.size ? ` AND assistant_id NOT IN (${Array.from(excluded).join(",")})` : "";
 
-      const allOutcomes = storage.getLeadOutcomes({ startDate, endDate }) as any[];
+      const allLogsToday = storage.getDailyCallLogs(todayStr) as any[];
+      myCallsToday = allLogsToday.filter((l: any) => !excluded.has(aid(l))).reduce((sum: number, l: any) => sum + (l.callsMade ?? l.calls_made ?? 0), 0);
+
+      const allOutcomes = (storage.getLeadOutcomes({ startDate, endDate }) as any[]).filter((o: any) => !excluded.has(aid(o)));
       futureContactsCount = allOutcomes.filter((o: any) => {
         const t = o.outcomeType || o.outcome_type;
         return t === "deferral" || t === "future_contact";
       }).length;
 
-      myCallsInPeriod = sumCallsSql("", []);
-      contactsReachedPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
-      dncHitsPeriod = rawLogsInPeriod.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
-      messagesSentPeriod = sumMessagesSql("", []);
-      bulkTexterTransfers = countBulkTexterSql("", []);
+      myCallsInPeriod = sumCallsSql(exSql, []);
+      const teamRaw = rawLogsInPeriod.filter((l: any) => !excluded.has(l.assistant_id));
+      contactsReachedPeriod = teamRaw.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
+      dncHitsPeriod = teamRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
+      messagesSentPeriod = sumMessagesSql(exSql, []);
+      bulkTexterTransfers = countBulkTexterSql(exSql, []);
     } else if (userId) {
       const myLog = storage.getDailyCallLogs(todayStr).find(
         (l: any) => (l.assistantId ?? l.assistant_id) === userId,
