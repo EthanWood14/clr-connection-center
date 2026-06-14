@@ -7538,7 +7538,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const heatmapRows = sqlite.prepare(`
         SELECT assistant_id, date, COUNT(*) AS activity
         FROM lead_outcomes
-        WHERE date >= ? AND date <= ?
+        WHERE date >= ? AND date <= ?${exClause}
         GROUP BY assistant_id, date
       `).all(startDate, endDate) as any[];
       const heatmapMap: Record<string, number> = {};
@@ -7548,7 +7548,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const callsHmRows = sqlite.prepare(`
         SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?
+        WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY assistant_id, log_date
       `).all(startDate, endDate) as any[];
       const callsHmMap: Record<string, number> = {};
