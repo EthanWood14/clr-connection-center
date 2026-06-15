@@ -346,6 +346,41 @@ type ReportOptions = {
 
 type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
 
+// ── EOD "Additional Activity Log" presentation (shared by report emails) ───────
+// Mirrors the client's ACTIVITY_TYPES labels + colors so the emails read the same
+// as the app. Colors are email-safe inline hex (light bg / dark fg) for pills.
+const EOD_ACTIVITY_LABELS: Record<string, string> = {
+  follow_up: "Follow-Up Call",
+  email_sent: "Email Sent",
+  transfer_assisted: "Transfer Assisted",
+  appointment_set: "Appointment Set",
+  lo_contact: "LO Contact",
+  training: "Training / Meeting",
+  project_work: "Project Work",
+  admin: "Admin Work",
+  other: "Other",
+};
+const EOD_ACTIVITY_PILL: Record<string, { bg: string; fg: string }> = {
+  follow_up: { bg: "#dbeafe", fg: "#1e40af" },
+  email_sent: { bg: "#ede9fe", fg: "#6d28d9" },
+  transfer_assisted: { bg: "#dcfce7", fg: "#15803d" },
+  appointment_set: { bg: "#ccfbf1", fg: "#0f766e" },
+  lo_contact: { bg: "#ffedd5", fg: "#c2410c" },
+  training: { bg: "#fef9c3", fg: "#854d0e" },
+  project_work: { bg: "#e0e7ff", fg: "#4338ca" },
+  admin: { bg: "#f1f5f9", fg: "#475569" },
+  other: { bg: "#f1f5f9", fg: "#475569" },
+};
+function eodActivityLabel(t: string): string {
+  return EOD_ACTIVITY_LABELS[t] ?? String(t ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function eodActivityPill(t: string): { bg: string; fg: string } {
+  return EOD_ACTIVITY_PILL[t] ?? EOD_ACTIVITY_PILL.other;
+}
+function eodActivityEsc(s: string): string {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 async function sendReport(
   type: ReportType,
   opts: ReportOptions = {},
@@ -1037,14 +1072,18 @@ async function sendReport(
           ${row.eodNotes.map(n => `<p style="margin:0 0 6px;font-size:13px;color:#334155;padding:6px 10px;background:#f8fafc;border-radius:6px;border-left:3px solid #1A2B4A">${n}</p>`).join('')}
           ` : ''}
           ${row.activityNotes.length > 0 ? `
-          <p style="margin:${row.eodNotes.length > 0 ? '10px' : '0'} 0 8px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Activity Log</p>
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:12px">
-            ${row.activityNotes.map((a, ai) => `
-            <tr style="background:${ai % 2 === 0 ? '#f8fafc' : '#ffffff'}">
-              <td style="padding:5px 8px;color:#94a3b8;white-space:nowrap">${a.date}</td>
-              <td style="padding:5px 8px;color:#64748b;font-style:italic;white-space:nowrap">${a.type.replace(/_/g, ' ')}</td>
-              <td style="padding:5px 8px;color:#334155">${a.description}</td>
-            </tr>`).join('')}
+          <p style="margin:${row.eodNotes.length > 0 ? '12px' : '0'} 0 8px;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Activity Log</p>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:12px;border-collapse:separate;border-spacing:0 5px">
+            ${row.activityNotes.map((a) => {
+              const p = eodActivityPill(a.type);
+              return `
+            <tr>
+              <td style="vertical-align:top;white-space:nowrap;width:1%;padding:0">
+                <span style="display:inline-block;background:${p.bg};color:${p.fg};font-size:10px;font-weight:700;padding:3px 9px;border-radius:9999px;white-space:nowrap">${eodActivityLabel(a.type)}</span>
+              </td>
+              <td style="vertical-align:top;color:#334155;padding:2px 0 0 10px;line-height:1.5">${eodActivityEsc(a.description)} <span style="color:#94a3b8;font-size:11px;white-space:nowrap">&middot; ${a.date}</span></td>
+            </tr>`;
+            }).join('')}
           </table>
           ` : ''}
         </div>
@@ -2173,7 +2212,13 @@ cron.schedule("30 18 * * 1-5", async () => {
       const acts = activityByClr.get(r.assistant_id) ?? [];
       const extras: string[] = [];
       if (r.notes) extras.push(`<strong style="color:#475569">Notes:</strong> ${esc(String(r.notes))}`);
-      if (acts.length) extras.push(`<strong style="color:#475569">Additional work:</strong> ${acts.map((a: any) => esc(`${a.activity_type ? a.activity_type + ": " : ""}${a.description ?? ""}`)).join(" &middot; ")}`);
+      if (acts.length) {
+        const actHtml = acts.map((a: any) => {
+          const p = eodActivityPill(a.activity_type);
+          return `<span style="display:inline-block;background:${p.bg};color:${p.fg};font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px">${eodActivityLabel(a.activity_type)}</span> ${esc(a.description ?? "")}`;
+        }).join("<br>");
+        extras.push(`<strong style="color:#475569">Additional work:</strong><br>${actHtml}`);
+      }
       const extraRow = extras.length
         ? `<tr><td colspan="5" style="padding:0 12px 10px;font-size:12px;color:#64748b;line-height:1.5">${extras.join("<br>")}</td></tr>`
         : "";
@@ -2498,6 +2543,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if ((info.changes as number) > 0) console.log(`[migration] comp_drafts_to_pending_v1: promoted ${info.changes} saved comp request(s) to pending`);
     }
   } catch (e: any) { console.error('comp_drafts_to_pending_v1 failed:', e?.message ?? e); }
+
+  // One-time: purge old "transfer_celebration" notifications. Celebrations are now
+  // ephemeral (in-memory feed, not stored), so any historical ones just clog the
+  // notification bell. Runs once via migrations_applied.
+  try {
+    const db = storageExtra.getRawSqlite();
+    db.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const done = db.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'purge_transfer_celebration_notifications_v1'`).get();
+    if (!done) {
+      const nowIso = new Date().toISOString();
+      const info = db.prepare(`DELETE FROM notifications WHERE type = 'transfer_celebration'`).run();
+      db.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run('purge_transfer_celebration_notifications_v1', nowIso);
+      if ((info.changes as number) > 0) console.log(`[migration] purge_transfer_celebration_notifications_v1: removed ${info.changes} stale celebration notification(s)`);
+    }
+  } catch (e: any) { console.error('purge_transfer_celebration_notifications_v1 failed:', e?.message ?? e); }
 
   // ── comp_attachments migration ───────────────────────────────────────────────
   // Receipts / files attached to a comp request. Stored as base64 in SQLite (the
@@ -6378,9 +6438,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
-  // 🎉 Notify the whole org when someone lands a transfer. The bell shows it,
-  // push delivers it, and the client plays a celebration sound on the
-  // "transfer_celebration" notification type.
+  // 🎉 Org-wide transfer hype. Deliberately EPHEMERAL — celebrations are NOT
+  // written to the notifications table (they used to, and clogged the bell).
+  // Instead they live in a small in-memory ring buffer that the client polls via
+  // GET /api/transfer-celebrations to play the chime + pop a festive toast. Web
+  // push still fires for a real-time alert. Buffer is per-process (fine for the
+  // single Railway instance) and lost on restart, which is harmless for hype.
+  // The id seed is wall-clock based so ids keep increasing across restarts and a
+  // client's stored cursor never gets stranded above freshly-issued ids.
+  let celebSeq = Date.now();
+  const recentCelebrations: Array<{ id: number; orgId: number; title: string; message: string; createdAt: string }> = [];
   function broadcastTransferCelebration(assistantId: number, loName: string | null, borrowerName: string | null) {
     const clr = storage.getUserById(assistantId) as any;
     const clrOrg = Number(clr?.orgId ?? clr?.org_id ?? 1) || 1;
@@ -6391,11 +6458,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const detail = [borrowerName, loName ? "→ " + loName : null].filter(Boolean).join(" ");
     const title = `🎉 ${clrName} just got a transfer!`;
     const message = (detail ? detail + " — " : "") + "Keep the momentum going!";
-    for (const u of users) {
-      try { storage.createNotification({ userId: u.id, type: "transfer_celebration", title, message, isRead: false }); } catch {}
-    }
+    recentCelebrations.push({ id: ++celebSeq, orgId: clrOrg, title, message, createdAt: new Date().toISOString() });
+    if (recentCelebrations.length > 100) recentCelebrations.splice(0, recentCelebrations.length - 100);
     sendPushToUsers(users.map((u: any) => u.id), { title, body: message, url: "/#/leaderboard" }).catch(() => {});
   }
+
+  // Ephemeral celebration feed (org-scoped). Returns recent celebrations and the
+  // latest id; the client baselines to latestId on first load (no replay) and
+  // toasts anything newer than its stored cursor.
+  app.get("/api/transfer-celebrations", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const since = Number(req.query.since ?? 0) || 0;
+    const items = recentCelebrations.filter((c) => c.orgId === orgId && c.id > since);
+    res.json({ items, latestId: celebSeq });
+  });
 
   app.post("/api/outcomes", (req: any, res) => {
     try {
@@ -9849,8 +9925,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(activity);
   });
 
+  app.patch('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const { activityType, description } = req.body;
+    if (!activityType || !description || !String(description).trim()) {
+      return res.status(400).json({ error: 'activityType and description required' });
+    }
+    const updated = storageExtra.updateEodActivity(parseInt(req.params.id), userId, {
+      activityType,
+      description: String(description).trim(),
+    });
+    if (!updated) return res.status(404).json({ error: 'Activity not found' });
+    res.json(updated);
+  });
+
   app.delete('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
-    storageExtra.deleteEodActivity(parseInt(req.params.id));
+    storageExtra.deleteEodActivity(parseInt(req.params.id), Number(req.session_user?.userId));
     res.json({ ok: true });
   });
 

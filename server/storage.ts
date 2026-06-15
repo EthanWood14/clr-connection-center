@@ -2751,8 +2751,19 @@ export function addEodActivity(data: { reportDate: string; assistantId: number; 
   return sqlite.prepare(`SELECT * FROM eod_activities WHERE id=?`).get(result.lastInsertRowid) as any;
 }
 
-export function deleteEodActivity(id: number): void {
-  sqlite.prepare(`DELETE FROM eod_activities WHERE id=?`).run(id);
+export function updateEodActivity(id: number, assistantId: number, data: { activityType: string; description: string }): any | null {
+  const r = sqlite.prepare(`UPDATE eod_activities SET activity_type=?, description=? WHERE id=? AND assistant_id=?`)
+    .run(data.activityType, data.description, id, assistantId);
+  if ((r.changes as number) === 0) return null; // not found or not owned by this user
+  return sqlite.prepare(`SELECT * FROM eod_activities WHERE id=?`).get(id) as any;
+}
+
+export function deleteEodActivity(id: number, assistantId?: number): void {
+  if (assistantId != null) {
+    sqlite.prepare(`DELETE FROM eod_activities WHERE id=? AND assistant_id=?`).run(id, assistantId);
+  } else {
+    sqlite.prepare(`DELETE FROM eod_activities WHERE id=?`).run(id);
+  }
 }
 
 export function getEodReportsByRange(from: string, to: string): any[] {

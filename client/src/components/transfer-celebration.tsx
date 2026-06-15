@@ -1,10 +1,10 @@
 /**
  * TransferCelebration — org-wide hype for every transfer. 🎉
  *
- * The server broadcasts a "transfer_celebration" notification to everyone when
- * any CLR logs a transfer (or completes an appointment as one). This component
- * polls the user's notifications, and when a new celebration appears it plays
- * a happy chime and pops a festive toast — on every open client.
+ * The server records every transfer in an ephemeral in-memory feed (NOT the
+ * notifications table — those clog the bell). This component polls that feed
+ * (/api/transfer-celebrations), and when a new celebration appears it plays a
+ * happy chime and pops a festive toast — on every open client.
  *
  * Sound notes:
  * - The chime is synthesized with WebAudio (no audio file to load).
@@ -20,7 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 
-const lastKey = (uid: number) => `clr_transfer_celebrate_last_${uid}`;
+const lastKey = (uid: number) => `clr_transfer_celebrate_last_v2_${uid}`;
 
 // ── WebAudio chime ────────────────────────────────────────────────────────────
 let audioCtx: AudioContext | null = null;
@@ -89,43 +89,49 @@ export function TransferCelebration() {
 
   useEffect(() => { ensureUnlockListeners(); }, []);
 
-  const { data: notifications = [] } = useQuery<any[]>({
-    queryKey: [`/api/notifications?userId=${uid}`],
+  const { data } = useQuery<{ items: any[]; latestId: number }>({
+    queryKey: ["/api/transfer-celebrations"],
     enabled: uid > 0,
     refetchInterval: 20000, // org-wide celebrations land within ~20s
   });
 
   useEffect(() => {
-    if (!uid || !Array.isArray(notifications) || notifications.length === 0) return;
-    const celebs = notifications.filter((n: any) => n.type === "transfer_celebration");
-    if (celebs.length === 0) return;
-    const maxId = Math.max(...celebs.map((n: any) => Number(n.id) || 0));
+    if (!uid || !data) return;
+    const items = Array.isArray(data.items) ? data.items : [];
+    const latest = Number(data.latestId) || 0;
 
     let last = 0;
     try { last = parseInt(localStorage.getItem(lastKey(uid)) ?? "", 10) || 0; } catch {}
 
-    // First load of this browser: baseline without replaying history.
+    // First load of this browser: baseline to latest without replaying history.
     if (!initializedRef.current && last === 0) {
       initializedRef.current = true;
-      try { localStorage.setItem(lastKey(uid), String(maxId)); } catch {}
+      try { localStorage.setItem(lastKey(uid), String(latest)); } catch {}
       return;
     }
     initializedRef.current = true;
-    if (maxId <= last) return;
 
-    const fresh = celebs
-      .filter((n: any) => (Number(n.id) || 0) > last)
+    const fresh = items
+      .filter((c: any) => (Number(c.id) || 0) > last)
       .sort((a: any, b: any) => (Number(a.id) || 0) - (Number(b.id) || 0))
       .slice(-3); // never spam more than 3 at once
-    try { localStorage.setItem(lastKey(uid), String(maxId)); } catch {}
+
+    if (fresh.length === 0) {
+      // Keep the cursor moving even when the new celebrations were for other orgs.
+      if (latest > last) { try { localStorage.setItem(lastKey(uid), String(latest)); } catch {} }
+      return;
+    }
+
+    const newLast = Math.max(latest, ...fresh.map((c: any) => Number(c.id) || 0));
+    try { localStorage.setItem(lastKey(uid), String(newLast)); } catch {}
 
     playChime();
-    fresh.forEach((n: any, i: number) => {
+    fresh.forEach((c: any, i: number) => {
       setTimeout(() => {
-        toast({ title: n.title ?? "🎉 Transfer!", description: (n.message ?? "") + " 🎊", duration: 6000 });
+        toast({ title: c.title ?? "🎉 Transfer!", description: (c.message ?? "") + " 🎊", duration: 6000 });
       }, i * 700);
     });
-  }, [notifications, uid, toast]);
+  }, [data, uid, toast]);
 
   return null;
 }

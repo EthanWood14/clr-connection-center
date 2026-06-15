@@ -16,7 +16,7 @@ import { useAuth } from "@/lib/auth";
 import {
   PhoneCall, TrendingUp, Calendar, ClipboardList, Plus, Trash2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, FileText, Send, XCircle, Info,
-  History, ChevronDown, ChevronUp, User, Users, X, Save, Printer, MessageSquare,
+  History, ChevronDown, ChevronUp, User, Users, X, Save, Printer, MessageSquare, Pencil, Check,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -110,6 +110,9 @@ export default function EodReport() {
   // Activity form state
   const [activityType, setActivityType] = useState("follow_up");
   const [activityDesc, setActivityDesc] = useState("");
+  const [editingActivityId, setEditingActivityId] = useState<number | null>(null);
+  const [editActivityType, setEditActivityType] = useState("follow_up");
+  const [editActivityDesc, setEditActivityDesc] = useState("");
 
   // ── EOD draft (auto-save) ──────────────────────────────────────────────
   const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
@@ -353,6 +356,23 @@ export default function EodReport() {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/eod-reports/activities/${id}`),
     onSuccess: () => { refetch(); toast({ title: "Activity removed" }); },
   });
+
+  const updateActivityMutation = useMutation({
+    mutationFn: (v: { id: number; activityType: string; description: string }) =>
+      apiRequest("PATCH", `/api/eod-reports/activities/${v.id}`, { activityType: v.activityType, description: v.description }),
+    onSuccess: () => { refetch(); setEditingActivityId(null); toast({ title: "Activity updated" }); },
+    onError: () => toast({ title: "Failed to update activity", variant: "destructive" }),
+  });
+
+  function startEditActivity(a: any) {
+    setEditingActivityId(a.id);
+    setEditActivityType(a.activity_type);
+    setEditActivityDesc(a.description ?? "");
+  }
+  function saveEditActivity(id: number) {
+    if (!editActivityDesc.trim()) return;
+    updateActivityMutation.mutate({ id, activityType: editActivityType, description: editActivityDesc.trim() });
+  }
 
   function navigateDate(dir: -1 | 1) {
     const d = parseISO(selectedDate);
@@ -806,21 +826,72 @@ export default function EodReport() {
               ) : (
                 <div className="space-y-1.5">
                   {activities.map((a: any) => (
-                    <div key={a.id} className="flex items-center justify-between gap-3 py-2 border-b last:border-0">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <Badge className={`text-xs shrink-0 ${ACTIVITY_COLORS[a.activity_type] ?? ACTIVITY_COLORS.other}`}>
-                          {ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}
-                        </Badge>
-                        <span className="text-sm truncate">{a.description}</span>
-                      </div>
-                      <Button
-                        size="sm" variant="ghost"
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => deleteActivityMutation.mutate(a.id)}
-                        disabled={deleteActivityMutation.isPending}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                    <div key={a.id} className="flex items-center justify-between gap-2 py-2 border-b last:border-0">
+                      {editingActivityId === a.id ? (
+                        <div className="flex gap-2 flex-wrap items-center w-full">
+                          <Select value={editActivityType} onValueChange={setEditActivityType}>
+                            <SelectTrigger className="w-44 h-8 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ACTIVITY_TYPES.map(t => (
+                                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={editActivityDesc}
+                            onChange={e => setEditActivityDesc(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && editActivityDesc.trim()) saveEditActivity(a.id);
+                              if (e.key === "Escape") setEditingActivityId(null);
+                            }}
+                            className="flex-1 min-w-[160px] h-8 text-sm"
+                            autoFocus
+                          />
+                          <Button
+                            size="sm" className="h-8 gap-1"
+                            onClick={() => saveEditActivity(a.id)}
+                            disabled={!editActivityDesc.trim() || updateActivityMutation.isPending}
+                          >
+                            <Check className="w-3.5 h-3.5" /> Save
+                          </Button>
+                          <Button
+                            size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground"
+                            onClick={() => setEditingActivityId(null)}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Badge className={`text-xs shrink-0 ${ACTIVITY_COLORS[a.activity_type] ?? ACTIVITY_COLORS.other}`}>
+                              {ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}
+                            </Badge>
+                            <span className="text-sm truncate">{a.description}</span>
+                          </div>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => startEditActivity(a)}
+                              aria-label="Edit activity"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => deleteActivityMutation.mutate(a.id)}
+                              disabled={deleteActivityMutation.isPending}
+                              aria-label="Delete activity"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
