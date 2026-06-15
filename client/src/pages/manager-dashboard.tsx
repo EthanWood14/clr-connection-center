@@ -361,6 +361,9 @@ export default function ManagerDashboard() {
   type ClrTrendMetric = "transfers" | "appointments" | "fellThrough" | "calls";
   const [clrTrendMetric, setClrTrendMetric] = useState<ClrTrendMetric>("transfers");
   const [clrTrendSelected, setClrTrendSelected] = useState<number[] | null>(null); // null = auto (top 5)
+  // Rolling-average overlay: a dashed benchmark line smoothing the average across shown CLRs.
+  const [clrTrendShowAvg, setClrTrendShowAvg] = useState(true);
+  const [clrTrendAvgWindow, setClrTrendAvgWindow] = useState(7); // trailing window in business days
   const [pipelineRange, setPipelineRange] = useState<PipelineRange>("1d");
 
   const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
@@ -483,15 +486,30 @@ export default function ManagerDashboard() {
   const effectiveSelected = clrTrendSelected ?? autoSelectedIds;
   // Build chart rows: one row per date, one column per selected CLR.
   // Skip weekend dates so the per-CLR comparison only shows business days.
-  const clrTrendChartData = clrTrendDates.flatMap((d: string, i: number) => {
+  const clrTrendRows = clrTrendDates.flatMap((d: string, i: number) => {
     if (!isWeekday(d)) return [];
     const row: any = { date: d, label: format(parseISO(d), "MMM d") };
+    let sum = 0, n = 0;
     for (const s of clrTrendSeries) {
       if (!effectiveSelected.includes(s.userId)) continue;
       const arr = (s as any)[clrTrendMetric] as number[];
-      row[`u${s.userId}`] = arr[i] ?? 0;
+      const v = arr[i] ?? 0;
+      row[`u${s.userId}`] = v;
+      sum += v;
+      n++;
     }
+    row.__mean = n > 0 ? sum / n : 0; // average across shown CLRs that day
     return row;
+  });
+  // Overlay a trailing rolling average of the per-day mean (window in business days,
+  // partial window at the start so the line spans the whole chart). Same scale as the
+  // CLR lines, so it reads as a "team average" benchmark.
+  const clrTrendWindow = Math.max(1, clrTrendAvgWindow);
+  const clrTrendChartData = clrTrendRows.map((row: any, i: number) => {
+    const start = Math.max(0, i - clrTrendWindow + 1);
+    let acc = 0, cnt = 0;
+    for (let j = start; j <= i; j++) { acc += clrTrendRows[j].__mean; cnt++; }
+    return { ...row, __avg: cnt > 0 ? Math.round((acc / cnt) * 100) / 100 : 0 };
   });
   // Stable color palette for CLR lines.
   const CLR_LINE_COLORS = ["#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#0ea5e9", "#f59e0b"];
@@ -871,6 +889,23 @@ export default function ManagerDashboard() {
                 <option value="fellThrough">Fell through</option>
                 <option value="calls">Calls</option>
               </select>
+              <select
+                value={clrTrendShowAvg ? String(clrTrendAvgWindow) : "off"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "off") { setClrTrendShowAvg(false); return; }
+                  setClrTrendShowAvg(true);
+                  setClrTrendAvgWindow(Number(v));
+                }}
+                aria-label="Rolling average window"
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium brand-text focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="off">No avg</option>
+                <option value="3">3-day avg</option>
+                <option value="5">5-day avg</option>
+                <option value="7">7-day avg</option>
+                <option value="14">14-day avg</option>
+              </select>
             </div>
           }
         >
@@ -957,12 +992,24 @@ export default function ManagerDashboard() {
                           name={s.name}
                         />
                       ))}
+                    {clrTrendShowAvg && (
+                      <Line
+                        type="monotone"
+                        dataKey="__avg"
+                        stroke={isDark ? "#fafafa" : "#0f172a"}
+                        strokeWidth={2.5}
+                        strokeDasharray="6 4"
+                        dot={false}
+                        name={`Team avg · ${clrTrendWindow}d`}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average across the shown CLRs.` : ""}
             </p>
           </CardContent>
         </Card>
