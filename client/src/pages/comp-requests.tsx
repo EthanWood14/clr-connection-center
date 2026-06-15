@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown,
 } from "lucide-react";
 
 interface CompItem {
@@ -358,6 +358,159 @@ function CompSheetButton({ compId, label = "Comp PDF" }: { compId: number; label
   );
 }
 
+// ── Filtering / search / sort helpers ─────────────────────────────────────────
+// All client-side over the full list so the stat cards and Payout Center keep
+// working off complete data; only the rendered rows are filtered + windowed.
+type StageFilter = "all" | "pending" | "approved" | "processing" | "paid" | "denied";
+
+function matchesStage(r: CompItem, f: StageFilter): boolean {
+  switch (f) {
+    case "pending": return r.status === "pending";
+    case "approved": return r.status === "approved" && !r.isProcessing && !r.isPaid && !r.isReceived;
+    case "processing": return r.status === "approved" && r.isProcessing && !r.isPaid && !r.isReceived;
+    case "paid": return r.status === "approved" && (r.isPaid || r.isReceived);
+    case "denied": return r.status === "denied";
+    default: return true;
+  }
+}
+
+function matchesCat(r: CompItem, cat: string): boolean {
+  if (cat === "all") return true;
+  if (cat === "transfers") return r.category === "transfers" || r.category === "leads";
+  return r.category === cat;
+}
+
+function matchesText(r: CompItem, q: string): boolean {
+  const s = q.trim().toLowerCase();
+  if (!s) return true;
+  return (r.userName || "").toLowerCase().includes(s)
+    || (r.description || "").toLowerCase().includes(s)
+    || (r.note || "").toLowerCase().includes(s);
+}
+
+// Lower rank = more urgent: needs approval, then needs payout, then settled.
+function actionRank(r: CompItem): number {
+  if (r.status === "pending") return 0;
+  if (r.status === "approved" && !r.isPaid && !r.isReceived) return 1;
+  return 2;
+}
+
+function compareComps(a: CompItem, b: CompItem, sort: string): number {
+  if (sort === "amount") return (b.amountCents || 0) - (a.amountCents || 0);
+  if (sort === "name") return (a.userName || "").localeCompare(b.userName || "");
+  const dateDesc = String(b.requestedAt ?? b.createdAt ?? "").localeCompare(String(a.requestedAt ?? a.createdAt ?? ""));
+  if (sort === "newest") return dateDesc;
+  const ra = actionRank(a), rb = actionRank(b);
+  if (ra !== rb) return ra - rb;
+  return dateDesc;
+}
+
+function stageCounts(list: CompItem[]): Record<StageFilter, number> {
+  const c: Record<StageFilter, number> = { all: list.length, pending: 0, approved: 0, processing: 0, paid: 0, denied: 0 };
+  for (const r of list) {
+    if (matchesStage(r, "pending")) c.pending++;
+    else if (matchesStage(r, "paid")) c.paid++;
+    else if (matchesStage(r, "processing")) c.processing++;
+    else if (matchesStage(r, "approved")) c.approved++;
+    else if (matchesStage(r, "denied")) c.denied++;
+  }
+  return c;
+}
+
+const STAGE_TABS: { key: StageFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Approved" },
+  { key: "processing", label: "Processing" },
+  { key: "paid", label: "Paid" },
+  { key: "denied", label: "Denied" },
+];
+
+function CompToolbar({
+  search, onSearch, stage, onStage, counts, cat, onCat, sort, onSort, showCategory = true, showNameSort = false,
+}: {
+  search: string; onSearch: (v: string) => void;
+  stage: StageFilter; onStage: (v: StageFilter) => void;
+  counts: Record<StageFilter, number>;
+  cat: string; onCat: (v: string) => void;
+  sort: string; onSort: (v: string) => void;
+  showCategory?: boolean; showNameSort?: boolean;
+}) {
+  return (
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={e => onSearch(e.target.value)}
+            placeholder="Search name, description, note…"
+            className="h-9 pl-8"
+            data-testid="comp-search"
+          />
+          {search && (
+            <button type="button" onClick={() => onSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Clear search">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        {showCategory && (
+          <Select value={cat} onValueChange={onCat}>
+            <SelectTrigger className="h-9 w-[150px]" data-testid="comp-cat-filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {CATEGORY_KEYS.map(k => <SelectItem key={k} value={k}>{CATEGORIES[k].label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+        <Select value={sort} onValueChange={onSort}>
+          <SelectTrigger className="h-9 w-[170px]" data-testid="comp-sort"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="action">Needs action first</SelectItem>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="amount">Amount (high → low)</SelectItem>
+            {showNameSort && <SelectItem value="name">Name (A → Z)</SelectItem>}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {STAGE_TABS.map(t => {
+          const active = stage === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onStage(t.key)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${active ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground hover:bg-muted"}`}
+              data-testid={"comp-stage-" + t.key}
+            >
+              {t.label}
+              <span className={`tabular-nums ${active ? "text-primary-foreground/80" : "text-muted-foreground/70"}`}>{counts[t.key]}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ShowMore({ shown, total, onMore }: { shown: number; total: number; onMore: () => void }) {
+  if (total === 0) return null;
+  if (shown >= total) {
+    return <p className="text-[11px] text-muted-foreground text-center pt-1">Showing all {total}</p>;
+  }
+  return (
+    <div className="flex flex-col items-center gap-1 pt-1">
+      <Button variant="outline" size="sm" className="gap-1" onClick={onMore} data-testid="comp-show-more">
+        <ChevronDown className="w-3.5 h-3.5" /> Show more
+      </Button>
+      <span className="text-[11px] text-muted-foreground">Showing {shown} of {total}</span>
+    </div>
+  );
+}
+
+const PAGE_SIZE = 25;
+
 export default function CompRequests() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -482,6 +635,31 @@ export default function CompRequests() {
   const amountValid = parseFloat(amount || "0") > 0;
   const canSubmit = !!description.trim() && amountValid && !createMutation.isPending;
   const pendingCount = team.filter(r => r.status === "pending").length;
+
+  // ── Filter / search / sort / windowing (keeps hundreds of rows manageable) ──
+  const [teamSearch, setTeamSearch] = useState("");
+  const [teamStage, setTeamStage] = useState<StageFilter>("all");
+  const [teamCat, setTeamCat] = useState("all");
+  const [teamSort, setTeamSort] = useState("action");
+  const [teamVisible, setTeamVisible] = useState(PAGE_SIZE);
+
+  const [mySearch, setMySearch] = useState("");
+  const [myStage, setMyStage] = useState<StageFilter>("all");
+  const [myCat, setMyCat] = useState("all");
+  const [mySort, setMySort] = useState("newest");
+  const [myVisible, setMyVisible] = useState(PAGE_SIZE);
+
+  const teamCounts = useMemo(() => stageCounts(team), [team]);
+  const teamFiltered = useMemo(
+    () => team.filter(r => matchesStage(r, teamStage) && matchesCat(r, teamCat) && matchesText(r, teamSearch)).sort((a, b) => compareComps(a, b, teamSort)),
+    [team, teamStage, teamCat, teamSearch, teamSort]
+  );
+
+  const myCounts = useMemo(() => stageCounts(myRequests), [myRequests]);
+  const myFiltered = useMemo(
+    () => myRequests.filter(r => matchesStage(r, myStage) && matchesCat(r, myCat) && matchesText(r, mySearch)).sort((a, b) => compareComps(a, b, mySort)),
+    [myRequests, myStage, myCat, mySearch, mySort]
+  );
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-[1100px] mx-auto">
@@ -724,7 +902,19 @@ export default function CompRequests() {
             ) : team.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">No comp requests submitted yet.</p>
             ) : (
-              team.map(r => (
+              <>
+                <CompToolbar
+                  search={teamSearch} onSearch={(v) => { setTeamSearch(v); setTeamVisible(PAGE_SIZE); }}
+                  stage={teamStage} onStage={(v) => { setTeamStage(v); setTeamVisible(PAGE_SIZE); }}
+                  counts={teamCounts}
+                  cat={teamCat} onCat={(v) => { setTeamCat(v); setTeamVisible(PAGE_SIZE); }}
+                  sort={teamSort} onSort={(v) => { setTeamSort(v); setTeamVisible(PAGE_SIZE); }}
+                  showCategory showNameSort
+                />
+                {teamFiltered.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">No requests match your filters.</p>
+                ) : (
+                  teamFiltered.slice(0, teamVisible).map(r => (
                 <div key={r.id} className="rounded-lg border px-4 py-3" data-testid={"team-comp-" + r.id}>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
@@ -808,7 +998,10 @@ export default function CompRequests() {
                     <CompSheetButton compId={r.id} label="Full PDF for payout" />
                   </div>
                 </div>
-              ))
+                  ))
+                )}
+                <ShowMore shown={Math.min(teamVisible, teamFiltered.length)} total={teamFiltered.length} onMore={() => setTeamVisible(v => v + PAGE_SIZE)} />
+              </>
             )}
           </CardContent>
         </Card>
@@ -828,7 +1021,19 @@ export default function CompRequests() {
           ) : myRequests.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">No comp requests yet. Submit an expense above and it goes straight to your approver.</p>
           ) : (
-            myRequests.map(r => (
+            <>
+              <CompToolbar
+                search={mySearch} onSearch={(v) => { setMySearch(v); setMyVisible(PAGE_SIZE); }}
+                stage={myStage} onStage={(v) => { setMyStage(v); setMyVisible(PAGE_SIZE); }}
+                counts={myCounts}
+                cat={myCat} onCat={(v) => { setMyCat(v); setMyVisible(PAGE_SIZE); }}
+                sort={mySort} onSort={(v) => { setMySort(v); setMyVisible(PAGE_SIZE); }}
+                showCategory
+              />
+              {myFiltered.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">No requests match your filters.</p>
+              ) : (
+                myFiltered.slice(0, myVisible).map(r => (
               <div key={r.id} className="rounded-lg border px-4 py-3" data-testid={"my-comp-" + r.id}>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
@@ -883,7 +1088,10 @@ export default function CompRequests() {
                   <CompSheetButton compId={r.id} />
                 </div>
               </div>
-            ))
+                ))
+              )}
+              <ShowMore shown={Math.min(myVisible, myFiltered.length)} total={myFiltered.length} onMore={() => setMyVisible(v => v + PAGE_SIZE)} />
+            </>
           )}
         </CardContent>
       </Card>
