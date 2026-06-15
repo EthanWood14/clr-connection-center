@@ -4429,6 +4429,59 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(safe);
   });
 
+  // ── LO Performance Summary (cross-LO ranking) ──────────────────────────────────
+  // MUST be registered BEFORE the bare "/api/loan-officers/:id" route below — Express
+  // matches in registration order and ":id" would otherwise capture the literal
+  // "performance-summary" segment (parseInt -> NaN -> 404). Aggregates per-LO
+  // efficiency metrics (calls-per-transfer, fall-through rate, etc.) in one query.
+  // Intentionally EXCLUDES non-counted CLRs (exclude_from_stats) for a fair team-wide
+  // ranking — unlike /:id/performance, which includes everyone.
+  app.get("/api/loan-officers/performance-summary", (req, res) => {
+    const MIN_CALLS = 20;
+    const agg = storage.getLoPerformanceSummary();
+    const aggByLo = new Map<number, any>();
+    for (const r of agg) aggByLo.set(r.loId, r);
+
+    const los = storage.getLoanOfficers() as any[];
+    const rows = los
+      .filter((lo) => (lo.internalStatus ?? lo.internal_status ?? "active") !== "archived")
+      .map((lo) => {
+        const a = aggByLo.get(lo.id) ?? {};
+        const totalOutcomes = Number(a.totalOutcomes ?? 0);
+        const transfers = Number(a.transfers ?? 0);
+        const fellThrough = Number(a.fellThrough ?? 0);
+        const appointments = Number(a.appointments ?? 0);
+        const noAnswer = Number(a.noAnswer ?? 0);
+        const wrongNumber = Number(a.wrongNumber ?? 0);
+        const callbacks = Number(a.callbacks ?? 0);
+        const futureContact = Number(a.futureContact ?? 0);
+        const notInterested = Number(a.notInterested ?? 0);
+        const contacts = Math.max(0, totalOutcomes - noAnswer - wrongNumber);
+
+        const callsPerTransfer = transfers > 0 ? totalOutcomes / transfers : null;
+        const transferDenom = transfers + fellThrough;
+        const fallThroughRate = transferDenom > 0 ? (fellThrough / transferDenom) * 100 : null;
+        const transferRate = totalOutcomes > 0 ? (transfers / totalOutcomes) * 100 : 0;
+        const appointmentRate = totalOutcomes > 0 ? (appointments / totalOutcomes) * 100 : 0;
+        const contactRate = totalOutcomes > 0 ? (contacts / totalOutcomes) * 100 : 0;
+
+        return {
+          loId: lo.id,
+          fullName: lo.fullName ?? lo.full_name ?? "",
+          nmlsId: lo.nmlsId ?? lo.nmls_id ?? null,
+          internalStatus: lo.internalStatus ?? lo.internal_status ?? "active",
+          priorityTier: lo.priorityTier ?? lo.priority_tier ?? 2,
+          totalOutcomes, transfers, fellThrough, appointments,
+          noAnswer, wrongNumber, callbacks, futureContact, notInterested, contacts,
+          callsPerTransfer, fallThroughRate, transferRate, appointmentRate, contactRate,
+          lastOutcomeDate: a.lastOutcomeDate ?? null,
+          rankable: totalOutcomes >= MIN_CALLS && transfers > 0,
+        };
+      });
+
+    res.json({ minCalls: MIN_CALLS, rows });
+  });
+
   app.get("/api/loan-officers/:id", (req, res) => {
     const lo = storage.getLoanOfficerById(parseInt(req.params.id));
     if (!lo) return res.status(404).json({ error: "Not found" });

@@ -1002,6 +1002,7 @@ export interface IStorage {
 
   // Lead Outcomes
   getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number }): LeadOutcome[];
+  getLoPerformanceSummary(): any[];
   createLeadOutcome(data: InsertLeadOutcome): LeadOutcome;
   updateLeadOutcome(id: number, data: Partial<InsertLeadOutcome>): LeadOutcome | undefined;
   deleteLeadOutcome(id: number): void;
@@ -1249,6 +1250,38 @@ export class Storage implements IStorage {
     const whereSql = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
     const rows = sqlite.prepare(`SELECT * FROM lead_outcomes ${whereSql} ORDER BY date DESC`).all(...params);
     return rows as any[];
+  }
+  // Cross-LO performance rollup in a single GROUP BY query — powers the LO Stats
+  // comparison/ranking (calls-per-transfer efficiency, fall-through rate, etc.).
+  // Excludes outcomes logged by non-counted CLRs (exclude_from_stats = 1) so the
+  // ranking matches team/leaderboard semantics; the single-LO drill-down endpoint
+  // (/api/loan-officers/:id/performance) intentionally still includes everyone.
+  getLoPerformanceSummary(): any[] {
+    const oid = currentOrgId();
+    const orgWhere = oid != null ? ` AND org_id = ?` : ``;
+    const excludeSub = ` AND assistant_id NOT IN (SELECT id FROM users WHERE exclude_from_stats = 1${oid != null ? ` AND org_id = ?` : ``})`;
+    const sql = `
+      SELECT
+        lo_id AS loId,
+        COUNT(*)                                                            AS totalOutcomes,
+        SUM(CASE WHEN outcome_type = 'transfer'           THEN 1 ELSE 0 END) AS transfers,
+        SUM(CASE WHEN outcome_type = 'fell_through'        THEN 1 ELSE 0 END) AS fellThrough,
+        SUM(CASE WHEN outcome_type = 'appointment'         THEN 1 ELSE 0 END) AS appointments,
+        SUM(CASE WHEN outcome_type = 'no_answer'           THEN 1 ELSE 0 END) AS noAnswer,
+        SUM(CASE WHEN outcome_type = 'wrong_number'        THEN 1 ELSE 0 END) AS wrongNumber,
+        SUM(CASE WHEN outcome_type = 'callback_requested'  THEN 1 ELSE 0 END) AS callbacks,
+        SUM(CASE WHEN outcome_type IN ('deferral','future_contact') THEN 1 ELSE 0 END) AS futureContact,
+        SUM(CASE WHEN outcome_type = 'not_interested'      THEN 1 ELSE 0 END) AS notInterested,
+        MAX(date)                                                            AS lastOutcomeDate
+      FROM lead_outcomes
+      WHERE lo_id IS NOT NULL${orgWhere}${excludeSub}
+      GROUP BY lo_id
+    `;
+    // Param order must match the textual order of the `?` placeholders above
+    // (orgWhere first, then the org filter inside excludeSub).
+    const params: any[] = [];
+    if (oid != null) { params.push(oid); params.push(oid); }
+    return sqlite.prepare(sql).all(...params) as any[];
   }
   createLeadOutcome(data: InsertLeadOutcome) {
     const oid = currentOrgId();
