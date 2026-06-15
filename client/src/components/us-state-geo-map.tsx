@@ -1,5 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { US_STATE_PATHS, US_MAP_W, US_MAP_H } from "./us-state-paths";
+import { useMemo, useRef, useState } from "react";
+import { US_STATE_PATHS, US_STATE_LABEL_POINTS, US_MAP_W, US_MAP_H } from "./us-state-paths";
 
 export interface GeoMapState {
   abbr: string;
@@ -39,8 +39,6 @@ const RIGHT_X = US_MAP_W + 70;       // x of the label chips
 const VIEW_W = US_MAP_W + 170;       // extra room on the right for the column
 const VIEW_H = US_MAP_H + 6;
 
-type Box = { cx: number; cy: number; w: number; h: number };
-
 function fillFor(count: number, selected: boolean): string {
   if (selected) return "hsl(var(--primary) / 0.92)";
   if (!count) return "hsl(var(--muted))";
@@ -58,8 +56,6 @@ function labelLight(count: number, selected: boolean): boolean {
 
 export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }: UsStateGeoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [boxes, setBoxes] = useState<Record<string, Box>>({});
   const [hover, setHover] = useState<{ abbr: string; x: number; y: number } | null>(null);
 
   // Pointer position relative to the container, so the tooltip lands correctly
@@ -69,19 +65,6 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
     if (!rect) return;
     setHover({ abbr, x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
-
-  // Measure each rendered path once so we can place labels at true centroids.
-  useLayoutEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const next: Record<string, Box> = {};
-    svg.querySelectorAll<SVGPathElement>("path[data-abbr]").forEach((p) => {
-      const abbr = p.getAttribute("data-abbr")!;
-      const b = p.getBBox();
-      next[abbr] = { cx: b.x + b.width / 2, cy: b.y + b.height / 2, w: b.width, h: b.height };
-    });
-    setBoxes(next);
-  }, []);
 
   const abbrs = useMemo(() => Object.keys(US_STATE_PATHS), []);
   const rightColumn = useMemo(() => {
@@ -117,7 +100,6 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
   return (
     <div ref={containerRef} className="relative w-full">
       <svg
-        ref={svgRef}
         viewBox={`-4 -3 ${VIEW_W} ${VIEW_H}`}
         className="w-full h-auto select-none"
         role="group"
@@ -175,19 +157,20 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           );
         })()}
 
-        {/* In-place labels for states big enough to fit them */}
+        {/* In-place labels for states big enough to fit them, anchored at the
+            visual centroid of the state's largest landmass (precomputed). */}
         {abbrs.map((abbr) => {
           if (RIGHT_COLUMN.includes(abbr)) return null;
-          const b = boxes[abbr];
-          if (!b || b.w < 22 || b.h < 18) return null;
+          const p = US_STATE_LABEL_POINTS[abbr];
+          if (!p || p.w < 22 || p.h < 18) return null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
           const light = labelLight(count, selected);
           const fg = light ? "hsl(var(--primary-foreground))" : "hsl(var(--foreground))";
           return (
             <g key={`lbl-${abbr}`} className="pointer-events-none" textAnchor="middle">
-              <text x={b.cx} y={b.cy - 1} fontSize={11} fontWeight={700} fill={fg}>{abbr}</text>
-              <text x={b.cx} y={b.cy + 10} fontSize={9} fill={count ? fg : "hsl(var(--muted-foreground))"} opacity={count ? 0.85 : 0.6}>
+              <text x={p.x} y={p.y - 1} fontSize={11} fontWeight={700} fill={fg}>{abbr}</text>
+              <text x={p.x} y={p.y + 10} fontSize={9} fill={count ? fg : "hsl(var(--muted-foreground))"} opacity={count ? 0.85 : 0.6}>
                 {count || ""}
               </text>
             </g>
@@ -196,7 +179,8 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
 
         {/* Right-column election-style labels + leader lines for tiny states */}
         {rightColumn.map(({ abbr, y }) => {
-          const anchor = abbr === "DC" ? DC_POS : boxes[abbr] ? { x: boxes[abbr].cx, y: boxes[abbr].cy } : null;
+          const lp = US_STATE_LABEL_POINTS[abbr];
+          const anchor = abbr === "DC" ? DC_POS : lp ? { x: lp.x, y: lp.y } : null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
           const light = labelLight(count, selected);

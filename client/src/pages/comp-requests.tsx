@@ -28,8 +28,10 @@ interface CompItem {
   note: string;
   status: "draft" | "pending" | "approved" | "denied";
   isPaid: boolean;
+  isProcessing: boolean;
   isReceived: boolean;
   receivedAt: string | null;
+  processingAt: string | null;
   reviewedBy: number | null;
   reviewerName: string | null;
   reviewerNote: string;
@@ -74,9 +76,10 @@ function CatChip({ category }: { category: string }) {
   );
 }
 
-function StatusBadge({ status, isPaid, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isReceived?: boolean }) {
+function StatusBadge({ status, isPaid, isProcessing, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isProcessing?: boolean; isReceived?: boolean }) {
   if (status === "approved" && isReceived) return <Badge className="text-xs px-2 py-0.5 bg-emerald-600 text-white">Received</Badge>;
   if (status === "approved" && isPaid) return <Badge className="text-xs px-2 py-0.5 bg-sky-600 text-white">Paid</Badge>;
+  if (status === "approved" && isProcessing) return <Badge className="text-xs px-2 py-0.5 bg-indigo-600 text-white">Processing</Badge>;
   const map: Record<CompItem["status"], { label: string; cls: string }> = {
     draft: { label: "Draft", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
     pending: { label: "Pending", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" },
@@ -222,8 +225,8 @@ function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (
 }
 
 // Visual pipeline so you can see at a glance where a request sits:
-// Waiting Approval → Approved → Paid. Denied requests show a denied state.
-function CompStageTracker({ status, isPaid, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isReceived?: boolean }) {
+// Waiting Approval → Approved → Processing → Paid. Denied requests show a denied state.
+function CompStageTracker({ status, isPaid, isProcessing, isReceived }: { status: CompItem["status"]; isPaid?: boolean; isProcessing?: boolean; isReceived?: boolean }) {
   if (status === "draft") return null;
   if (status === "denied") {
     return (
@@ -232,8 +235,8 @@ function CompStageTracker({ status, isPaid, isReceived }: { status: CompItem["st
       </div>
     );
   }
-  const stages = ["Waiting Approval", "Approved", "Paid"];
-  const current = status === "pending" ? 0 : (isPaid || isReceived) ? 2 : 1;
+  const stages = ["Waiting Approval", "Approved", "Processing", "Paid"];
+  const current = status === "pending" ? 0 : (isPaid || isReceived) ? 3 : isProcessing ? 2 : 1;
   return (
     <div className="mt-3 flex items-start" aria-label={`Status: ${stages[current]}`}>
       {stages.map((label, i) => {
@@ -252,6 +255,19 @@ function CompStageTracker({ status, isPaid, isReceived }: { status: CompItem["st
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Reusable help note about payout timing — shown to requesters and managers so
+// everyone has the same expectation for when approved comp actually pays out.
+function PayoutTimingNote() {
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:bg-indigo-950/30 dark:border-indigo-800 px-3 py-2 flex items-start gap-2">
+      <Info className="w-4 h-4 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
+      <p className="text-[12px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
+        Approved requests are usually paid around the <strong>16th</strong> or the <strong>1st</strong> of the month.
+      </p>
     </div>
   );
 }
@@ -426,8 +442,13 @@ export default function CompRequests() {
   });
 
   const fulfillMutation = useMutation({
-    mutationFn: (v: { id: number; paid?: boolean; received?: boolean }) =>
-      apiRequest("POST", "/api/comp/" + v.id + "/paid", v.paid !== undefined ? { paid: v.paid } : { received: v.received }),
+    mutationFn: (v: { id: number; paid?: boolean; processing?: boolean; received?: boolean }) => {
+      const body: Record<string, boolean> = {};
+      if (v.paid !== undefined) body.paid = v.paid;
+      if (v.processing !== undefined) body.processing = v.processing;
+      if (v.received !== undefined) body.received = v.received;
+      return apiRequest("POST", "/api/comp/" + v.id + "/paid", body);
+    },
     onSuccess: () => refresh(),
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
@@ -695,6 +716,7 @@ export default function CompRequests() {
               <Clock className="w-4 h-4" /> Team Comp Requests
               {pendingCount > 0 && <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5">{pendingCount} pending</Badge>}
             </CardTitle>
+            <div className="mt-2"><PayoutTimingNote /></div>
           </CardHeader>
           <CardContent className="space-y-2">
             {teamLoading ? (
@@ -709,7 +731,7 @@ export default function CompRequests() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold">{r.userName}</span>
                         <CatChip category={r.category} />
-                        <StatusBadge status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
+                        <StatusBadge status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                       </div>
                       <p className="text-sm text-foreground mt-0.5">
                         <span className="font-semibold tabular-nums">{money(r.amountCents)}</span>
@@ -754,20 +776,33 @@ export default function CompRequests() {
                       </div>
                     )}
                     {r.status === "approved" && (
-                      <label className="flex items-center gap-2 text-xs cursor-pointer shrink-0" title="Mark when this reimbursement has been paid out">
-                        <span className={r.isPaid ? "text-sky-600 font-medium" : "text-muted-foreground"}>
-                          {r.isPaid ? "Paid out" : "Mark paid out"}
-                        </span>
-                        <Switch
-                          checked={r.isPaid}
-                          onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, paid: v })}
-                          disabled={fulfillMutation.isPending}
-                          data-testid={"team-switch-paid-" + r.id}
-                        />
-                      </label>
+                      <div className="flex flex-col items-end gap-1.5 shrink-0">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer" title="Flip on while this request is being processed for payout">
+                          <span className={r.isProcessing ? "text-indigo-600 font-medium" : "text-muted-foreground"}>
+                            {r.isProcessing ? "Processing" : "Mark processing"}
+                          </span>
+                          <Switch
+                            checked={r.isProcessing}
+                            onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, processing: v })}
+                            disabled={fulfillMutation.isPending || r.isPaid}
+                            data-testid={"team-switch-processing-" + r.id}
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer" title="Mark when this reimbursement has been paid out">
+                          <span className={r.isPaid ? "text-sky-600 font-medium" : "text-muted-foreground"}>
+                            {r.isPaid ? "Paid out" : "Mark paid out"}
+                          </span>
+                          <Switch
+                            checked={r.isPaid}
+                            onCheckedChange={(v) => fulfillMutation.mutate({ id: r.id, paid: v })}
+                            disabled={fulfillMutation.isPending}
+                            data-testid={"team-switch-paid-" + r.id}
+                          />
+                        </label>
+                      </div>
                     )}
                   </div>
-                  <CompStageTracker status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
+                  <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                   <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
                     <CompSheetButton compId={r.id} label="Full PDF for payout" />
@@ -785,6 +820,7 @@ export default function CompRequests() {
           <CardTitle className="text-base flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4" /> My Comp Requests
           </CardTitle>
+          <div className="mt-2"><PayoutTimingNote /></div>
         </CardHeader>
         <CardContent className="space-y-2">
           {mineLoading ? (
@@ -799,7 +835,7 @@ export default function CompRequests() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold tabular-nums">{money(r.amountCents)}</span>
                       <CatChip category={r.category} />
-                      <StatusBadge status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
+                      <StatusBadge status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5 truncate">{r.description}</p>
                     {r.status !== "pending" && r.reviewerName && (
@@ -841,7 +877,7 @@ export default function CompRequests() {
                     )}
                   </div>
                 </div>
-                <CompStageTracker status={r.status} isPaid={r.isPaid} isReceived={r.isReceived} />
+                <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                 <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                   <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
                   <CompSheetButton compId={r.id} />

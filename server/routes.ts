@@ -2472,6 +2472,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN last_reminder_at TEXT`); } catch {}
+  // "Processing" stage: managers flip this on once an approved request is being
+  // worked through for payout (sits between Approved and Paid in the tracker).
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_processing INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN processing_at TEXT`); } catch {}
 
   // One-time: any comp requests that CLRs had saved as drafts are promoted to
   // "pending" (sent for approval) so they surface in the approval queue instead
@@ -5085,8 +5089,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       note: r.note ?? "",
       status: r.status,
       isPaid: !!r.is_paid,
+      isProcessing: !!r.is_processing,
       isReceived: !!r.is_received,
       receivedAt: r.received_at ?? null,
+      processingAt: r.processing_at ?? null,
       reviewedBy: r.reviewed_by ?? null,
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
       reviewerNote: r.reviewer_note ?? "",
@@ -5389,17 +5395,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id, 10);
     const hasPaid = req.body?.paid !== undefined;
     const hasReceived = req.body?.received !== undefined;
+    const hasProcessing = req.body?.processing !== undefined;
     try {
       const db = storageExtra.getRawSqlite();
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
       if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
-      if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked paid or received." });
+      // The "Processing" stage is a manager/payout control, not something the
+      // requester sets on their own request.
+      if (hasProcessing && !isCompManager(userId)) return res.status(403).json({ error: "Only managers can update the processing stage." });
+      if (existing.status !== "approved") return res.status(400).json({ error: "Only approved items can be marked paid, processing, or received." });
       const now = new Date().toISOString();
+      if (hasProcessing) {
+        const pr = req.body.processing ? 1 : 0;
+        db.prepare("UPDATE comp_requests SET is_processing=?, processing_at=?, updated_at=? WHERE id=?").run(pr, pr ? now : null, now, id);
+      }
       if (hasPaid) {
         const p = req.body.paid ? 1 : 0;
-        db.prepare("UPDATE comp_requests SET is_paid=?, paid_at=?, updated_at=? WHERE id=?").run(p, p ? now : null, now, id);
+        // Paying out implies processing is finished; flip it off so the tracker
+        // advances cleanly to Paid rather than showing both at once.
+        db.prepare("UPDATE comp_requests SET is_paid=?, paid_at=?, is_processing=CASE WHEN ?=1 THEN 0 ELSE is_processing END, updated_at=? WHERE id=?").run(p, p ? now : null, p, now, id);
       }
       if (hasReceived) {
         const rc = req.body.received ? 1 : 0;
@@ -5809,7 +5825,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const targets = db.prepare(`SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 AND id IN (${ph})`).all(orgId, ...ids) as any[];
       if (!targets.length) return res.status(400).json({ error: "No matching approved, unpaid requests." });
       const tph = targets.map(() => "?").join(",");
-      db.prepare(`UPDATE comp_requests SET is_paid=1, paid_at=?, updated_at=? WHERE id IN (${tph})`).run(now, now, ...targets.map(t => t.id));
+      db.prepare(`UPDATE comp_requests SET is_paid=1, paid_at=?, is_processing=0, updated_at=? WHERE id IN (${tph})`).run(now, now, ...targets.map(t => t.id));
       const actor = storage.getUserById(userId) as any;
       const total = targets.reduce((s, t) => s + (t.amount_cents || 0), 0);
       audit({ userId, userName: actor?.name ?? "Unknown", action: "update", entityType: "comp_request", entityId: 0, entityLabel: "Batch payout — " + targets.length + " request(s), $" + (total / 100).toFixed(2), details: JSON.stringify({ ids: targets.map(t => t.id) }) });
