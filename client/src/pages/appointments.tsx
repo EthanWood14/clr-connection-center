@@ -353,6 +353,7 @@ function AppointmentCard({
   loName,
   clrName,
   isMine,
+  seesAll,
   isConflict,
   onComplete,
   onQuickComplete,
@@ -369,6 +370,7 @@ function AppointmentCard({
   loName: string;
   clrName: string;
   isMine: boolean;
+  seesAll: boolean;
   isConflict: boolean;
   onComplete: (outcome: Outcome) => void;
   onQuickComplete: (id: number) => void;
@@ -386,6 +388,9 @@ function AppointmentCard({
   const [expanded, setExpanded] = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [noteDraft, setNoteDraft] = useState(outcome.notes ?? "");
+  // Only the appointment's owner (or an admin/manager) can act on it. Non-owners
+  // viewing a missed appointment get a read-only card.
+  const canEdit = seesAll || isMine;
 
   const handleReschedule = () => {
     if (!newDate) return;
@@ -496,17 +501,19 @@ function AppointmentCard({
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant="default"
-              className="h-8 text-xs gap-1.5"
-              onClick={() => onComplete(outcome)}
-              disabled={isPendingComplete}
-              title="Complete with outcome (Transfer or Fell Through)"
-            >
-              {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-              Complete
-            </Button>
+            {canEdit && (
+              <Button
+                size="sm"
+                variant="default"
+                className="h-8 text-xs gap-1.5"
+                onClick={() => onComplete(outcome)}
+                disabled={isPendingComplete}
+                title="Complete with outcome (Transfer or Fell Through)"
+              >
+                {isPendingComplete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                Complete
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -530,7 +537,7 @@ function AppointmentCard({
                   <StickyNote className="w-3 h-3" />
                   Notes
                 </span>
-                {!editingNotes && (
+                {!editingNotes && canEdit && (
                   <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => { setEditingNotes(true); setNoteDraft(outcome.notes ?? ""); }}>
                     <Pencil className="w-3 h-3 mr-1" />
                     {outcome.notes ? "Edit" : "Add"}
@@ -561,7 +568,8 @@ function AppointmentCard({
               )}
             </div>
 
-            {/* Action buttons */}
+            {/* Action buttons — owner or admin/manager only */}
+            {canEdit && (
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -602,6 +610,7 @@ function AppointmentCard({
                 Delete
               </Button>
             </div>
+            )}
 
             {/* Inline reschedule picker */}
             {rescheduling && (
@@ -700,11 +709,16 @@ export default function Appointments() {
     return o.outcomeType === filterType;
   };
 
-  // Visibility rule: admins and managers see all appointments.
-  // CLRs see only their own — appointments belong to the CLR who logged them.
-  const isMineOrOverdue = (o: Outcome) => {
+  // Visibility rule: admins and managers see all appointments. Everyone else
+  // sees their own appointments PLUS any missed (overdue) appointment from the
+  // whole team, so missed appointments are visible to all and handoffs can be
+  // picked up. Editing someone else's appointment stays restricted (see canEdit
+  // in AppointmentCard) — non-owners get a read-only view.
+  const isVisible = (o: Outcome) => {
     if (seesAll) return true;
-    return myUserId != null && o.assistantId === myUserId;
+    if (myUserId != null && o.assistantId === myUserId) return true;
+    const d = (o.followUpDate ?? "").slice(0, 10);
+    return !!d && d < todayStr; // missed / overdue — visible to everyone
   };
 
   // Free-text search across borrower, LO, and CLR names.
@@ -725,7 +739,7 @@ export default function Appointments() {
       (o) =>
         ACTIVE_APPT_TYPES.has(o.outcomeType) &&
         matchesFilter(o) &&
-        isMineOrOverdue(o) &&
+        isVisible(o) &&
         matchesSearch(o) &&
         (
           // dated entries always show
@@ -1067,6 +1081,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
@@ -1090,6 +1105,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
@@ -1113,6 +1129,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
@@ -1136,6 +1153,7 @@ export default function Appointments() {
               <AppointmentCard
                 key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
+                seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
                 onComplete={handleComplete} onQuickComplete={handleQuickComplete}
                 onEdit={handleEdit} onReschedule={handleReschedule} onSaveNotes={handleSaveNotes}
