@@ -1147,11 +1147,47 @@ function EodPrintSheet({
 // ── Report History Component ────────────────────────────────────────────────
 function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
   const [expanded, setExpanded] = useState<number | null>(null);
+  const { toast } = useToast();
 
-  const { data: history = [], isLoading } = useQuery<any[]>({
+  const { data: history = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["/api/eod-reports/history"],
     queryFn: () => fetch("/api/eod-reports/history", { credentials: "include" }).then(r => r.json()),
   });
+
+  // Inline editing of a past report's Additional Activity Log entries. Anything
+  // shown here is editable by the current user: the history endpoint scopes
+  // non-admins to their own reports, and admins may edit any CLR's entries.
+  const [editingActivityId, setEditingActivityId] = useState<number | null>(null);
+  const [editActivityType, setEditActivityType] = useState("follow_up");
+  const [editActivityDesc, setEditActivityDesc] = useState("");
+
+  const refreshAll = () => {
+    refetch();
+    // Keep the open EOD form's activity list in sync if it's showing the same entry.
+    queryClient.invalidateQueries({ queryKey: ["/api/eod-reports"] });
+  };
+
+  const updateActivityMutation = useMutation({
+    mutationFn: (v: { id: number; activityType: string; description: string }) =>
+      apiRequest("PATCH", `/api/eod-reports/activities/${v.id}`, { activityType: v.activityType, description: v.description }),
+    onSuccess: () => { refreshAll(); setEditingActivityId(null); toast({ title: "Activity updated" }); },
+    onError: () => toast({ title: "Failed to update activity", variant: "destructive" }),
+  });
+  const deleteHistActivityMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/eod-reports/activities/${id}`),
+    onSuccess: () => { refreshAll(); toast({ title: "Activity removed" }); },
+    onError: () => toast({ title: "Failed to remove activity", variant: "destructive" }),
+  });
+
+  function startEditActivity(a: any) {
+    setEditingActivityId(a.id);
+    setEditActivityType(a.activity_type);
+    setEditActivityDesc(a.description ?? "");
+  }
+  function saveEditActivity(id: number) {
+    if (!editActivityDesc.trim()) return;
+    updateActivityMutation.mutate({ id, activityType: editActivityType, description: editActivityDesc.trim() });
+  }
 
   if (isLoading) return (
     <div className="space-y-2 pt-2">
@@ -1335,24 +1371,83 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                     </div>
                   )}
 
-                  {/* Additional activity log — the "other tasks done that day" */}
+                  {/* Additional activity log — the "other tasks done that day".
+                      Editable inline: edit the type/description or remove an entry. */}
                   {Array.isArray(r.activities) && r.activities.length > 0 && (
                     <div className="rounded-lg bg-violet-50 dark:bg-violet-900/10 border border-violet-200 dark:border-violet-800 px-3 py-2.5 space-y-2">
                       <p className="text-xs font-semibold text-violet-700 dark:text-violet-400">
                         Additional Activities ({r.activities.length})
                       </p>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {r.activities.map((a: any) => (
-                          <div key={a.id} className="flex items-start gap-2">
-                            <Badge
-                              className={`text-[10px] shrink-0 ${ACTIVITY_COLORS[a.activity_type] ?? ACTIVITY_COLORS.other}`}
-                            >
-                              {ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground leading-relaxed">
-                              {a.description?.trim() || "—"}
-                            </span>
-                          </div>
+                          editingActivityId === a.id ? (
+                            <div key={a.id} className="flex flex-wrap items-center gap-1.5">
+                              <Select value={editActivityType} onValueChange={setEditActivityType}>
+                                <SelectTrigger className="w-40 h-8 text-xs bg-background">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ACTIVITY_TYPES.map(t => (
+                                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Input
+                                value={editActivityDesc}
+                                onChange={e => setEditActivityDesc(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter" && editActivityDesc.trim()) saveEditActivity(a.id);
+                                  if (e.key === "Escape") setEditingActivityId(null);
+                                }}
+                                className="flex-1 min-w-[140px] h-8 text-xs bg-background"
+                                autoFocus
+                              />
+                              <Button
+                                size="sm" className="h-8 gap-1"
+                                onClick={() => saveEditActivity(a.id)}
+                                disabled={!editActivityDesc.trim() || updateActivityMutation.isPending}
+                              >
+                                <Check className="w-3.5 h-3.5" /> Save
+                              </Button>
+                              <Button
+                                size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground"
+                                onClick={() => setEditingActivityId(null)}
+                                aria-label="Cancel edit"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div key={a.id} className="flex items-start gap-2 group">
+                              <Badge
+                                className={`text-[10px] shrink-0 ${ACTIVITY_COLORS[a.activity_type] ?? ACTIVITY_COLORS.other}`}
+                              >
+                                {ACTIVITY_TYPES.find(t => t.value === a.activity_type)?.label ?? a.activity_type}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground leading-relaxed flex-1 min-w-0">
+                                {a.description?.trim() || "—"}
+                              </span>
+                              <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                  size="sm" variant="ghost"
+                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                                  onClick={() => startEditActivity(a)}
+                                  aria-label="Edit activity"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </Button>
+                                <Button
+                                  size="sm" variant="ghost"
+                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                  onClick={() => deleteHistActivityMutation.mutate(a.id)}
+                                  disabled={deleteHistActivityMutation.isPending}
+                                  aria-label="Delete activity"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          )
                         ))}
                       </div>
                     </div>

@@ -9205,14 +9205,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get('/api/eod-reports/history', requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     const isAdmin = req.session_user?.role === 'admin';
+    const isSuper = !!req.session_user?.superAdmin;
+    const orgId = Number(req.session_user?.orgId) || 1;
     const sqlite = storageExtra.getSqlite();
 
-    const reports: any[] = isAdmin
+    // Admins see every CLR in their own org (super-admins intentionally cross orgs);
+    // everyone else sees only their own reports. Keeps read scope == edit scope.
+    const reports: any[] = isSuper
       ? sqlite.prepare(`
           SELECT e.*, u.name as clr_name
           FROM eod_reports e LEFT JOIN users u ON e.assistant_id=u.id
           ORDER BY e.report_date DESC LIMIT 120
         `).all() as any[]
+      : isAdmin
+      ? sqlite.prepare(`
+          SELECT e.*, u.name as clr_name
+          FROM eod_reports e LEFT JOIN users u ON e.assistant_id=u.id
+          WHERE u.org_id=?
+          ORDER BY e.report_date DESC LIMIT 120
+        `).all(orgId) as any[]
       : sqlite.prepare(`SELECT * FROM eod_reports WHERE assistant_id=? ORDER BY report_date DESC LIMIT 60`).all(userId) as any[];
 
     // Pre-fetch all activities for the reports we're returning, in one query,
@@ -9927,20 +9938,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.patch('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
     const userId = Number(req.session_user?.userId);
+    const isAdmin = req.session_user?.role === 'admin';
+    const isSuper = !!req.session_user?.superAdmin;
+    const orgId = Number(req.session_user?.orgId) || 1;
     const { activityType, description } = req.body;
     if (!activityType || !description || !String(description).trim()) {
       return res.status(400).json({ error: 'activityType and description required' });
     }
+    // Admins may edit any CLR in their org; super-admins cross orgs; others edit their own.
+    const scope = (isAdmin || isSuper)
+      ? { allowAny: true, orgScopeId: isSuper ? null : orgId }
+      : {};
     const updated = storageExtra.updateEodActivity(parseInt(req.params.id), userId, {
       activityType,
       description: String(description).trim(),
-    });
+    }, scope);
     if (!updated) return res.status(404).json({ error: 'Activity not found' });
     res.json(updated);
   });
 
   app.delete('/api/eod-reports/activities/:id', requireAuth, (req: any, res) => {
-    storageExtra.deleteEodActivity(parseInt(req.params.id), Number(req.session_user?.userId));
+    const userId = Number(req.session_user?.userId);
+    const isAdmin = req.session_user?.role === 'admin';
+    const isSuper = !!req.session_user?.superAdmin;
+    const orgId = Number(req.session_user?.orgId) || 1;
+    // Admins may delete any CLR in their org; super-admins cross orgs; others delete their own.
+    const scope = (isAdmin || isSuper)
+      ? { allowAny: true, orgScopeId: isSuper ? null : orgId }
+      : {};
+    storageExtra.deleteEodActivity(parseInt(req.params.id), (isAdmin || isSuper) ? undefined : userId, scope);
     res.json({ ok: true });
   });
 

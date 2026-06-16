@@ -2751,15 +2751,44 @@ export function addEodActivity(data: { reportDate: string; assistantId: number; 
   return sqlite.prepare(`SELECT * FROM eod_activities WHERE id=?`).get(result.lastInsertRowid) as any;
 }
 
-export function updateEodActivity(id: number, assistantId: number, data: { activityType: string; description: string }): any | null {
-  const r = sqlite.prepare(`UPDATE eod_activities SET activity_type=?, description=? WHERE id=? AND assistant_id=?`)
-    .run(data.activityType, data.description, id, assistantId);
-  if ((r.changes as number) === 0) return null; // not found or not owned by this user
+// Authorization scope for editing/deleting someone else's EOD activity.
+//  - default: owner only (scoped by assistantId).
+//  - allowAny + orgScopeId set: admins may touch any activity owned by a user in
+//    their org (regular admins are org-scoped, matching the rest of the app).
+//  - allowAny + orgScopeId null: super-admins intentionally cross orgs.
+type EodActivityScope = { allowAny?: boolean; orgScopeId?: number | null };
+
+export function updateEodActivity(
+  id: number,
+  assistantId: number,
+  data: { activityType: string; description: string },
+  scope: EodActivityScope = {},
+): any | null {
+  const { allowAny = false, orgScopeId = null } = scope;
+  let r;
+  if (allowAny && orgScopeId == null) {
+    r = sqlite.prepare(`UPDATE eod_activities SET activity_type=?, description=? WHERE id=?`)
+      .run(data.activityType, data.description, id);
+  } else if (allowAny) {
+    r = sqlite.prepare(`UPDATE eod_activities SET activity_type=?, description=?
+        WHERE id=? AND assistant_id IN (SELECT id FROM users WHERE org_id=?)`)
+      .run(data.activityType, data.description, id, orgScopeId);
+  } else {
+    r = sqlite.prepare(`UPDATE eod_activities SET activity_type=?, description=? WHERE id=? AND assistant_id=?`)
+      .run(data.activityType, data.description, id, assistantId);
+  }
+  if ((r.changes as number) === 0) return null; // not found or not permitted
   return sqlite.prepare(`SELECT * FROM eod_activities WHERE id=?`).get(id) as any;
 }
 
-export function deleteEodActivity(id: number, assistantId?: number): void {
-  if (assistantId != null) {
+export function deleteEodActivity(id: number, assistantId?: number, scope: EodActivityScope = {}): void {
+  const { allowAny = false, orgScopeId = null } = scope;
+  if (allowAny && orgScopeId == null) {
+    sqlite.prepare(`DELETE FROM eod_activities WHERE id=?`).run(id);
+  } else if (allowAny) {
+    sqlite.prepare(`DELETE FROM eod_activities WHERE id=? AND assistant_id IN (SELECT id FROM users WHERE org_id=?)`)
+      .run(id, orgScopeId);
+  } else if (assistantId != null) {
     sqlite.prepare(`DELETE FROM eod_activities WHERE id=? AND assistant_id=?`).run(id, assistantId);
   } else {
     sqlite.prepare(`DELETE FROM eod_activities WHERE id=?`).run(id);
