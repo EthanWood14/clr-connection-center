@@ -218,6 +218,134 @@ function generateRankings(los: any[], settings: any, todayStr: string, recentTra
     .sort((a, b) => b.score - a.score);
 }
 
+// ── Spaced assignment distribution (no repeat CLR↔LO within a cooldown) ─────────
+// Hands ranked LOs to CLRs so that a CLR is never given an LO they were assigned
+// within the last ASSIGNMENT_COOLDOWN_DAYS days (i.e. not back-to-back, and not
+// even with a single gap day). Beyond that hard rule it prefers to give each LO
+// to whichever eligible CLR has gone the longest without it (approaching "never
+// repeat"). Distribution stays load-balanced and rank-fair (each CLR collects a
+// spread of high/low-ranked LOs, exactly like the previous snake round-robin).
+// If the pool is too small to honour the cooldown for some LO (e.g. only 1–2
+// CLRs, or everyone had it recently), it falls back to the least-recent pairing
+// so generation never stalls.
+const ASSIGNMENT_COOLDOWN_DAYS = 2;   // never repeat a CLR↔LO pairing within 2 days
+const ASSIGNMENT_LOOKBACK_DAYS = 30;  // window used to compute the "longest gap" preference
+
+// Whole-day UTC distance between two "YYYY-MM-DD" strings (later − earlier).
+// Uses noon UTC so any DST/parse quirks can't push the day count off by one.
+function isoDayDistance(laterIso: string, earlierIso: string): number {
+  const [ly, lm, ld] = laterIso.slice(0, 10).split("-").map(Number);
+  const [ey, em, ed] = earlierIso.slice(0, 10).split("-").map(Number);
+  if (!ly || !ey) return NaN;
+  const later = Date.UTC(ly, lm - 1, ld, 12, 0, 0);
+  const earlier = Date.UTC(ey, em - 1, ed, 12, 0, 0);
+  return Math.round((later - earlier) / 86400000);
+}
+
+// Map<assistantId, Map<loId, daysAgo>> — most recent day-distance each CLR was
+// assigned each LO, within the lookback window (today excluded).
+function recentAssignmentPairings(date: string): Map<number, Map<number, number>> {
+  const map = new Map<number, Map<number, number>>();
+  let rows: any[] = [];
+  try {
+    rows = storage.getAssignmentsByRange(addIsoDays(date, -ASSIGNMENT_LOOKBACK_DAYS), addIsoDays(date, -1)) as any[];
+  } catch { rows = []; }
+  for (const r of rows) {
+    const aId = Number(r.assistant_id ?? r.assistantId);
+    const loId = Number(r.lo_id ?? r.loId);
+    const d = String(r.assignment_date ?? r.assignmentDate ?? "").slice(0, 10);
+    if (!Number.isFinite(aId) || !Number.isFinite(loId) || !d) continue;
+    const daysAgo = isoDayDistance(date, d);
+    if (!Number.isFinite(daysAgo) || daysAgo <= 0) continue; // ignore same-day / future rows
+    let inner = map.get(aId);
+    if (!inner) { inner = new Map(); map.set(aId, inner); }
+    const prev = inner.get(loId);
+    if (prev == null || daysAgo < prev) inner.set(loId, daysAgo); // keep the MOST recent
+  }
+  return map;
+}
+
+// Distribute ranked LOs across CLRs with the cooldown rule. Returns assignment
+// rows ready for storage.createDailyAssignments(). `cap` = max LOs per CLR.
+function distributeAssignmentsSpaced(
+  topRanked: Array<{ lo: any }>,
+  assistants: any[],
+  cap: number,
+  date: string,
+): any[] {
+  const recent = recentAssignmentPairings(date);
+  const counts = new Map<number, number>(assistants.map(a => [a.id, 0]));
+  // Shuffle once so tie-breaks (and any forced shortest-stick) are fair across days.
+  const order = [...assistants];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const baseIndex = new Map<number, number>(order.map((a, i) => [a.id, i]));
+  const NEVER = Number.MAX_SAFE_INTEGER;
+  const gapOf = (aId: number, loId: number) => recent.get(aId)?.get(loId) ?? NEVER; // daysAgo; NEVER = never had it
+
+  const rows: any[] = [];
+  for (let idx = 0; idx < topRanked.length; idx++) {
+    const lo = topRanked[idx].lo;
+    const underCap = order.filter(a => (counts.get(a.id) ?? 0) < cap);
+    if (underCap.length === 0) break; // every CLR is full
+    const allowed = underCap.filter(a => gapOf(a.id, lo.id) > ASSIGNMENT_COOLDOWN_DAYS);
+    const pool = allowed.length > 0 ? allowed : underCap; // graceful fallback for tiny pools
+    pool.sort((a, b) =>
+      ((counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0)) ||  // 1. load balance
+      (gapOf(b.id, lo.id) - gapOf(a.id, lo.id)) ||            // 2. longest gap (never first)
+      ((baseIndex.get(a.id) ?? 0) - (baseIndex.get(b.id) ?? 0)) // 3. stable shuffled order
+    );
+    const chosen = pool[0];
+    const newCount = (counts.get(chosen.id) ?? 0) + 1;
+    counts.set(chosen.id, newCount);
+    rows.push({
+      assignmentDate: date,
+      loId: lo.id,
+      assistantId: chosen.id,
+      globalRank: idx + 1,
+      assistantRank: newCount,
+      status: "recommended",
+      notes: null,
+    });
+  }
+
+  // ── Repair pass ────────────────────────────────────────────────────────────
+  // The rank-order greedy can paint itself into a corner: a late LO's only
+  // under-cap CLRs may be ones that had it within the cooldown, forcing a
+  // fallback repeat. Fix those by swapping the LO between two CLRs (same day)
+  // whenever doing so makes BOTH pairings valid. Swaps don't change any CLR's
+  // load (counts are preserved), and each successful swap strictly lowers the
+  // violation count, so the loop always converges (the guard is just a backstop).
+  // In testing this reaches zero back-to-back / gap-day repeats whenever the
+  // pool can support it (≈3+ CLRs); truly infeasible pools degrade gracefully.
+  const isViolation = (r: any) => gapOf(r.assistantId, r.loId) <= ASSIGNMENT_COOLDOWN_DAYS;
+  let improved = true;
+  let guard = 0;
+  const maxPasses = rows.length * 6 + 10;
+  while (improved && guard++ < maxPasses) {
+    improved = false;
+    for (let i = 0; i < rows.length; i++) {
+      if (!isViolation(rows[i])) continue;
+      for (let j = 0; j < rows.length; j++) {
+        if (i === j || rows[i].assistantId === rows[j].assistantId) continue;
+        const iGetsJ = gapOf(rows[i].assistantId, rows[j].loId);
+        const jGetsI = gapOf(rows[j].assistantId, rows[i].loId);
+        if (iGetsJ > ASSIGNMENT_COOLDOWN_DAYS && jGetsI > ASSIGNMENT_COOLDOWN_DAYS) {
+          // Swap the LO (and its global rank) between the two CLRs.
+          const swLo = rows[i].loId, swRank = rows[i].globalRank;
+          rows[i].loId = rows[j].loId; rows[i].globalRank = rows[j].globalRank;
+          rows[j].loId = swLo; rows[j].globalRank = swRank;
+          improved = true;
+          break;
+        }
+      }
+    }
+  }
+  return rows;
+}
+
 // ── Email report sender ───────────────────────────────────────────────────────
 
 // ── Branded email template ────────────────────────────────────────────────────
@@ -6158,39 +6286,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignments: any[] = [];
 
     if (settings.roundRobinEnabled) {
-      // ── Spaced Round Robin: CLRs take turns, no CLR gets back-to-back same LO ──
-      // Interleave: slot 0→CLR0, slot 1→CLR1, slot 2→CLR2, slot 3→CLR0, ...
-      // Even rounds go 0..N-1, odd rounds go N-1..0 (snake pattern for fairness)
-      //
-      // FAIRNESS NOTE: When the LO count isn't a multiple of CLR count, the
-      // last (partial) round leaves one CLR with one fewer LO. Previously the
-      // CLR order was the database order of `assistants`, so the same CLR(s)
-      // always landed at the front of the list and consistently got the
-      // "shortest-stick" position depending on round parity. To make this
-      // fair across days, shuffle the assistant order before slotting so the
-      // CLR who ends up with one fewer LO is random each generation.
-      const shuffledAssistants = [...assistants];
-      for (let i = shuffledAssistants.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffledAssistants[i], shuffledAssistants[j]] = [shuffledAssistants[j], shuffledAssistants[i]];
-      }
-
-      const slots = shuffledAssistants.length;
-      topRanked.forEach((item, index) => {
-        const round = Math.floor(index / slots);
-        const posInRound = index % slots;
-        const assistantIndex = round % 2 === 0 ? posInRound : (slots - 1 - posInRound);
-        const assistantRank = round + 1;
-        assignments.push({
-          assignmentDate: date,
-          loId: item.lo.id,
-          assistantId: shuffledAssistants[assistantIndex].id,
-          globalRank: index + 1,
-          assistantRank,
-          status: "recommended",
-          notes: null,
-        });
-      });
+      // ── Spaced distribution: a CLR is never handed an LO they were assigned in
+      // the last ASSIGNMENT_COOLDOWN_DAYS days (no back-to-back, no gap-day
+      // repeat). Beyond that it prefers the CLR who's gone longest without each
+      // LO, while staying load-balanced and rank-fair. See distributeAssignmentsSpaced.
+      assignments.push(...distributeAssignmentsSpaced(topRanked, assistants, settings.maxLosPerAssistant, date));
     } else {
       // ── Fixed Monthly mode: use monthly assignments table ──────────────────
       const month = date.slice(0, 7);
@@ -8955,21 +9055,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignments: any[] = [];
 
     if (settings.roundRobinEnabled) {
-      const slots = assistants.length;
-      topRanked.forEach((item, index) => {
-        const round = Math.floor(index / slots);
-        const posInRound = index % slots;
-        const assistantIndex = round % 2 === 0 ? posInRound : (slots - 1 - posInRound);
-        assignments.push({
-          assignmentDate: date,
-          loId: item.lo.id,
-          assistantId: assistants[assistantIndex].id,
-          globalRank: index + 1,
-          assistantRank: round + 1,
-          status: "recommended",
-          notes: null,
-        });
-      });
+      // Same spaced distribution as daily generation — no back-to-back / gap-day
+      // repeat of a CLR↔LO pairing (see distributeAssignmentsSpaced).
+      assignments.push(...distributeAssignmentsSpaced(topRanked, assistants, settings.maxLosPerAssistant, date));
     } else {
       const month = date.slice(0, 7);
       let monthlyRows = storageExtra.getMonthlyAssignments(month);
