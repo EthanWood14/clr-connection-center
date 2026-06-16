@@ -6577,10 +6577,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const isAdmin = sessionUser?.role === "admin";
     const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id, outcome_type FROM lead_outcomes WHERE id = ?`).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
-    if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
+    const isOwner = existing.assistant_id === sessionUser?.userId;
+    // "Completing" an appointment — flipping it to a terminal outcome
+    // (transfer / fell_through) — is allowed for ANY signed-in user, so a missed
+    // appointment can be picked up as a handoff. Every other edit stays limited
+    // to the owner or an admin.
+    const isCompletion = req.body?.outcomeType === "transfer" || req.body?.outcomeType === "fell_through";
+    if (!isAdmin && !isOwner && !isCompletion) {
       return res.status(403).json({ error: "You can only edit your own outcomes" });
     }
-    const body = { ...req.body };
+    let body = { ...req.body };
+    // A non-owner completing someone else's appointment may only touch the
+    // fields a completion needs — never the borrower, LO, phone, schedule, etc.
+    if (!isAdmin && !isOwner) {
+      const ALLOWED_COMPLETION_FIELDS = new Set([
+        "outcomeType", "transferType", "followUpDate", "date",
+        "bulkTexter", "notes", "conversationNotes", "nextSteps",
+      ]);
+      body = Object.fromEntries(Object.entries(body).filter(([k]) => ALLOWED_COMPLETION_FIELDS.has(k)));
+    }
     // If caller is setting outcomeType, enforce the same rule.
     if (body.outcomeType === "transfer") {
       if (body.transferType !== "direct" && body.transferType !== "appointment") {

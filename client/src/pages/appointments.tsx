@@ -410,6 +410,9 @@ function AppointmentCard({
   const isOverdue = !!dateStr && dateStr < todayStr;
   const isUpcoming = !!dateStr && dateStr > todayStr;
   const isTodayAppt = dateStr === todayStr;
+  // Anyone can COMPLETE (pick up) a missed appointment as a handoff — even one
+  // they don't own. Other edits (reschedule/edit/delete) stay owner/admin-only.
+  const canComplete = canEdit || isOverdue;
 
   return (
     <Card className={`border transition-colors ${isConflict ? "border-amber-300 dark:border-amber-700/70" : isOverdue ? "border-red-200 dark:border-red-900/50" : "border-border hover:border-primary/30"}`}>
@@ -501,7 +504,7 @@ function AppointmentCard({
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-2 flex-wrap">
-            {canEdit && (
+            {canComplete && (
               <Button
                 size="sm"
                 variant="default"
