@@ -298,9 +298,14 @@ function CompleteDialog({
   loName: string;
   open: boolean;
   onClose: () => void;
-  onComplete: (id: number, type: "transfer" | "fell_through") => void;
+  onComplete: (id: number, type: "transfer" | "fell_through", notes: string) => void;
   isPending: boolean;
 }) {
+  // Prefill with any note already on the appointment so existing context isn't
+  // lost — the CLR can add to it when completing. Reset when the target changes.
+  const [note, setNote] = useState(outcome.notes ?? "");
+  useEffect(() => { setNote(outcome.notes ?? ""); }, [outcome.id]);
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-sm">
@@ -317,9 +322,23 @@ function CompleteDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="space-y-1.5 pt-1">
+          <label className="text-xs font-medium text-foreground/70 flex items-center gap-1">
+            <StickyNote className="w-3 h-3" />
+            Note <span className="font-normal text-muted-foreground">(optional)</span>
+          </label>
+          <Textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            placeholder="Add a note about this outcome…"
+            className="text-sm"
+          />
+        </div>
+
         <div className="grid grid-cols-2 gap-3 py-2">
           <button
-            onClick={() => onComplete(outcome.id, "transfer")}
+            onClick={() => onComplete(outcome.id, "transfer", note)}
             disabled={isPending}
             className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-green-200 bg-green-50 hover:border-green-400 hover:bg-green-100 dark:bg-green-900/10 dark:border-green-800 dark:hover:border-green-600 transition-all"
           >
@@ -328,7 +347,7 @@ function CompleteDialog({
             <span className="text-xs text-muted-foreground text-center">Converted successfully</span>
           </button>
           <button
-            onClick={() => onComplete(outcome.id, "fell_through")}
+            onClick={() => onComplete(outcome.id, "fell_through", note)}
             disabled={isPending}
             className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-red-200 bg-red-50 hover:border-red-400 hover:bg-red-100 dark:bg-red-900/10 dark:border-red-800 dark:hover:border-red-600 transition-all"
           >
@@ -814,7 +833,7 @@ export default function Appointments() {
 
   // Complete mutation — opens dialog flow (Transfer vs Fell Through)
   const completeMutation = useMutation({
-    mutationFn: ({ id, type }: { id: number; type: "transfer" | "fell_through" }) => {
+    mutationFn: ({ id, type, notes }: { id: number; type: "transfer" | "fell_through"; notes?: string }) => {
       setPendingCompleteId(id);
       const payload: Record<string, any> = { outcomeType: type, followUpDate: null };
       if (type === "transfer") {
@@ -823,6 +842,8 @@ export default function Appointments() {
         // day the appointment was originally booked/scheduled.
         payload.date = businessTodayClient();
       }
+      // Persist the note left in the Complete dialog (empty clears it).
+      if (notes !== undefined) payload.notes = notes.trim() ? notes.trim() : null;
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
@@ -945,7 +966,7 @@ export default function Appointments() {
 
   const handleComplete = (outcome: Outcome) => setCompleteTarget(outcome);
   const handleQuickComplete = (id: number) => quickCompleteMutation.mutate(id);
-  const handleConfirmComplete = (id: number, type: "transfer" | "fell_through") => completeMutation.mutate({ id, type });
+  const handleConfirmComplete = (id: number, type: "transfer" | "fell_through", notes: string) => completeMutation.mutate({ id, type, notes });
   const handleReschedule = (id: number, date: string) => rescheduleMutation.mutate({ id, date });
   const handleSaveNotes = (id: number, notes: string) => notesMutation.mutate({ id, notes });
   const handleEdit = (outcome: Outcome) => setEditTarget(outcome);
