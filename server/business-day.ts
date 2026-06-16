@@ -1,14 +1,17 @@
 // Business-day calendar helpers.
 //
-// The system uses a 10pm forward rollover: a moment after 10:00pm in the user's
-// local timezone is already considered the *next* calendar day for reporting,
-// dashboards, EOD reports, leaderboards, follow-ups, and any other "today" logic.
+// The system uses a 2am reset: the business day rolls over at 2:00am in the
+// user's local timezone. Anything logged between midnight and 1:59am still
+// belongs to the *previous* business day, so a CLR wrapping up late (or just
+// after midnight) has it counted toward the day they were actually working.
+// This "today" logic drives reporting, dashboards, EOD reports, leaderboards,
+// follow-ups, and anything else date-based.
 //
 // All exported functions return ISO date strings ("YYYY-MM-DD"). They never
-// touch wall-clock components other than to compute the date label \u2014 they do
+// touch wall-clock components other than to compute the date label - they do
 // not return Date objects, to avoid downstream timezone bugs.
 
-const ROLLOVER_HOUR = 22; // 10pm \u2014 first hour of the *next* business day
+const ROLLOVER_HOUR = 2; // 2am - first hour of a new business day (resets here)
 const DEFAULT_TZ = "America/Los_Angeles";
 
 // Format any Date as "YYYY-MM-DD" *as observed in* the given IANA timezone.
@@ -22,7 +25,7 @@ function formatDateInTz(d: Date, tz: string): string {
   }).format(d);
 }
 
-// Get the hour-of-day (0\u201323) of the given Date as observed in the given timezone.
+// Get the hour-of-day (0-23) of the given Date as observed in the given timezone.
 function hourInTz(d: Date, tz: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
@@ -30,12 +33,12 @@ function hourInTz(d: Date, tz: string): number {
     hour12: false,
   }).formatToParts(d);
   const h = parts.find(p => p.type === "hour")?.value ?? "0";
-  // hour12:false can return "24" at midnight in some locales \u2014 normalize.
+  // hour12:false can return "24" at midnight in some locales - normalize.
   const n = parseInt(h, 10);
   return isNaN(n) ? 0 : (n === 24 ? 0 : n);
 }
 
-// Add `days` calendar days to an ISO "YYYY-MM-DD" string. Pure string math \u2014
+// Add `days` calendar days to an ISO "YYYY-MM-DD" string. Pure string math -
 // no timezone confusion possible.
 export function addIsoDays(iso: string, days: number): string {
   // Treat as a date-only at noon UTC so DST shifts can't push the date.
@@ -46,18 +49,18 @@ export function addIsoDays(iso: string, days: number): string {
 }
 
 /**
- * Business "today" in the given timezone, with 10pm forward rollover.
+ * Business "today" in the given timezone, with a 2am reset.
  *
  * Examples (TZ = America/Los_Angeles):
- *   2026-05-05 21:59 PT \u2192 "2026-05-05"
- *   2026-05-05 22:00 PT \u2192 "2026-05-06"
- *   2026-05-06 03:00 PT \u2192 "2026-05-06"
+ *   2026-05-05 01:59 PT -> "2026-05-04"  (before 2am: still the previous day)
+ *   2026-05-05 02:00 PT -> "2026-05-05"  (2am: the new business day begins)
+ *   2026-05-05 23:00 PT -> "2026-05-05"
  */
 export function businessTodayInTz(tz: string | null | undefined, now: Date = new Date()): string {
   const zone = tz || DEFAULT_TZ;
   const calendarDate = formatDateInTz(now, zone);
   const hour = hourInTz(now, zone);
-  return hour >= ROLLOVER_HOUR ? addIsoDays(calendarDate, 1) : calendarDate;
+  return hour < ROLLOVER_HOUR ? addIsoDays(calendarDate, -1) : calendarDate;
 }
 
 /**
