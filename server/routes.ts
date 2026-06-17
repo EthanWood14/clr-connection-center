@@ -6680,6 +6680,61 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Resurrect a fall-through: ANY CLR can revive a fell-through lead and record
+  // that THEY landed the transfer. Converts the outcome to a transfer credited
+  // to the reviving CLR, dated today, with a note preserving where it came from.
+  app.post("/api/outcomes/:id/resurrect", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const sessionUser = req.session_user as { userId: number; role?: string; orgId?: number; superAdmin?: boolean } | undefined;
+    const userId = Number(sessionUser?.userId);
+    const isSuper = !!sessionUser?.superAdmin;
+    const orgId = Number(sessionUser?.orgId) || 1;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const sqlite = storageExtra.getRawSqlite();
+    const existing = sqlite.prepare(
+      `SELECT id, assistant_id, outcome_type, org_id, lo_id, borrower_name, notes FROM lead_outcomes WHERE id = ?`
+    ).get(id) as any;
+    if (!existing) return res.status(404).json({ error: "Outcome not found" });
+    if (!isSuper && Number(existing.org_id) !== orgId) {
+      return res.status(403).json({ error: "Not in your organization" });
+    }
+    if (existing.outcome_type !== "fell_through") {
+      return res.status(400).json({ error: "Only fall-throughs can be resurrected." });
+    }
+
+    const transferType = req.body?.transferType === "appointment" ? "appointment" : "direct";
+    const userNote = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
+    const reviverName = (storage.getUserById(userId) as any)?.name ?? `CLR #${userId}`;
+    const origName = existing.assistant_id
+      ? ((storage.getUserById(existing.assistant_id) as any)?.name ?? `CLR #${existing.assistant_id}`)
+      : "another CLR";
+    const stamp = `Resurrected by ${reviverName} from ${origName}'s fall-through.`;
+    const combinedNotes = [String(existing.notes ?? "").trim(), userNote, stamp].filter(Boolean).join("\n");
+
+    const date = businessTodayForRequest(req, sqlite);
+    const updated = storage.updateLeadOutcome(id, {
+      outcomeType: "transfer",
+      transferType,
+      assistantId: userId,
+      date,
+      followUpDate: null,
+      notes: combinedNotes,
+    } as any);
+    if (!updated) return res.status(500).json({ error: "Failed to resurrect outcome" });
+
+    // Credit + celebrate the reviving CLR's transfer.
+    try {
+      const lo = existing.lo_id ? (storage.getLoanOfficerById(existing.lo_id) as any) : null;
+      broadcastTransferCelebration(userId, lo?.fullName ?? null, existing.borrower_name ?? null);
+    } catch {}
+    try {
+      audit({ userId, userName: reviverName, action: "resurrect", entityType: "outcome", entityId: id, entityLabel: existing.borrower_name ?? null, details: JSON.stringify({ from: existing.assistant_id, to: userId, transferType }) });
+    } catch {}
+
+    res.json(updated);
+  });
+
   app.patch("/api/outcomes/:id", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const sessionUser = req.session_user as { userId: number; role?: string } | undefined;

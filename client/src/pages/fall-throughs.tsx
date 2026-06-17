@@ -4,16 +4,22 @@
 // stays fast even with a long history.
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { TrendingDown, Search, Phone, User as UserIcon } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import { TrendingDown, Search, Phone, User as UserIcon, ArrowUpRight, RefreshCw } from "lucide-react";
 import { format, parseISO, isValid } from "date-fns";
 import { businessTodayClient, addIsoDays } from "@/lib/business-day";
 
@@ -99,6 +105,26 @@ export default function FallThroughs() {
 
   const windowed = filtered.slice(0, visible);
 
+  // ── Resurrect: any CLR can revive a fall-through and record they got the transfer ──
+  const { toast } = useToast();
+  const [resTarget, setResTarget] = useState<FT | null>(null);
+  const [resType, setResType] = useState<"direct" | "appointment">("direct");
+  const [resNote, setResNote] = useState("");
+
+  const resurrectMutation = useMutation({
+    mutationFn: (v: { id: number; transferType: string; notes: string }) =>
+      apiRequest("POST", `/api/outcomes/${v.id}/resurrect`, { transferType: v.transferType, notes: v.notes }),
+    onSuccess: () => {
+      // Refreshes this list (the row is now a transfer), plus appointments + stats.
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      setResTarget(null); setResNote(""); setResType("direct");
+      toast({ title: "🎉 Transfer recorded", description: "The fall-through was resurrected and credited to you." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't resurrect", description: e?.message ?? "Try again", variant: "destructive" }),
+  });
+
+  function openResurrect(r: FT) { setResTarget(r); setResType("direct"); setResNote(""); }
+
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-6xl mx-auto">
       <div className="flex items-center gap-2">
@@ -165,6 +191,7 @@ export default function FallThroughs() {
                     <th className="px-3 py-2 font-medium">Loan Officer</th>
                     <th className="px-3 py-2 font-medium">CLR</th>
                     <th className="px-3 py-2 font-medium">Notes</th>
+                    <th className="px-3 py-2 font-medium text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -183,6 +210,15 @@ export default function FallThroughs() {
                       <td className="px-3 py-2 whitespace-nowrap">{r.assistant?.name || (r.assistant?.id ? `CLR #${r.assistant.id}` : "—")}</td>
                       <td className="px-3 py-2 text-muted-foreground max-w-[28rem]">
                         <span className="whitespace-pre-wrap leading-relaxed">{r.notes?.trim() || "—"}</span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 text-xs gap-1 whitespace-nowrap border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                          onClick={() => openResurrect(r)}
+                        >
+                          <ArrowUpRight className="w-3 h-3" /> Got transfer
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -212,6 +248,13 @@ export default function FallThroughs() {
                   {r.notes?.trim() && (
                     <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{r.notes}</p>
                   )}
+                  <Button
+                    size="sm" variant="outline"
+                    className="h-8 w-full text-xs gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                    onClick={() => openResurrect(r)}
+                  >
+                    <ArrowUpRight className="w-3.5 h-3.5" /> I got the transfer
+                  </Button>
                 </CardContent>
               </Card>
             ))}
@@ -226,6 +269,61 @@ export default function FallThroughs() {
           )}
         </>
       )}
+
+      {/* Resurrect dialog — record that the current CLR landed the transfer */}
+      <Dialog open={!!resTarget} onOpenChange={(o) => { if (!o) setResTarget(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowUpRight className="w-4 h-4 text-emerald-600" />
+              Got the transfer?
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              <span className="font-medium text-foreground">{resTarget?.borrowerName?.trim() || "Unknown Borrower"}</span>
+              {resTarget?.lo?.fullName ? ` · LO: ${resTarget.lo.fullName}` : ""}
+              <br />
+              This resurrects the fall-through as a transfer credited to you, dated today.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-1">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground/70">Transfer type</label>
+              <Select value={resType} onValueChange={(v) => setResType(v as "direct" | "appointment")}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">Direct transfer</SelectItem>
+                  <SelectItem value="appointment">Appointment</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground/70">
+                Note <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <Textarea
+                value={resNote}
+                onChange={(e) => setResNote(e.target.value)}
+                rows={3}
+                placeholder="How you revived it…"
+                className="text-sm"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setResTarget(null)} disabled={resurrectMutation.isPending}>Cancel</Button>
+            <Button
+              size="sm" className="gap-1.5"
+              onClick={() => resTarget && resurrectMutation.mutate({ id: resTarget.id, transferType: resType, notes: resNote })}
+              disabled={resurrectMutation.isPending}
+            >
+              {resurrectMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
+              Mark as my transfer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

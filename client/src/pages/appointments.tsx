@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,6 +56,7 @@ import {
   Save,
   Trash2,
   Search,
+  TrendingDown,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -988,6 +990,12 @@ export default function Appointments() {
           <p className="text-sm text-muted-foreground mt-0.5">
             All active appointments — overdue, today, and upcoming — sorted earliest first
           </p>
+          <Link
+            href="/fall-throughs"
+            className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium text-rose-600 hover:underline dark:text-rose-400"
+          >
+            <TrendingDown className="w-3.5 h-3.5" /> View all fall-throughs
+          </Link>
         </div>
         <HelpIcon title="Appointments">
           All active appointments, callbacks, and deferrals. Mark them complete when done.

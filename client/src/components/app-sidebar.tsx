@@ -193,7 +193,6 @@ const personalItems: NavItem[] = [
 
 const teamItems: NavItem[] = [
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
-  { title: "Fall-Throughs",         url: "/fall-throughs", icon: TrendingDown },
   { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
 ];
@@ -201,6 +200,7 @@ const teamItems: NavItem[] = [
 const toolItems: NavItem[] = [
   { title: "LO Directory",    url: "/directory",      icon: Users,        help: help.directory },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
+  { title: "Fall-Throughs",   url: "/fall-throughs",  icon: TrendingDown },
   { title: "LO Vacation",     url: "/snooze",         icon: BedDouble,    help: help.loVacation },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
