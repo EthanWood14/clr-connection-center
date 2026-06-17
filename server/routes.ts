@@ -7778,10 +7778,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       `).all(startDate, endDate) as any[];
       const lbCallsByUser = new Map<number, number>();
       for (const r of lbCalls) lbCallsByUser.set(r.assistant_id, Number(r.calls) || 0);
+      // Messages sent (from EOD reports) per CLR for this range.
+      const lbMsgs = sqlite.prepare(`
+        SELECT assistant_id, COALESCE(SUM(messages_sent), 0) AS messages
+        FROM eod_reports
+        WHERE report_date >= ? AND report_date <= ?${exClause}
+        GROUP BY assistant_id
+      `).all(startDate, endDate) as any[];
+      const lbMsgsByUser = new Map<number, number>();
+      for (const r of lbMsgs) lbMsgsByUser.set(r.assistant_id, Number(r.messages) || 0);
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
           const calls = lbCallsByUser.get(u.id) ?? 0;
+          const messages = lbMsgsByUser.get(u.id) ?? 0;
           const conversionRate = s.total > 0 ? Math.round((s.transfers / s.total) * 100) : 0;
           // Outcome ratios as percentages of all logged outcomes (excludes pure call counts).
           const transferPct    = s.total > 0 ? Math.round((s.transfers    / s.total) * 1000) / 10 : 0;
@@ -7797,6 +7807,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             fellThrough: s.fellThrough,
             totalOutcomes: s.total,
             calls,
+            messages,
             conversionRate,
             transferPct,
             appointmentPct,

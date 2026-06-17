@@ -59,7 +59,7 @@ type RangeBlock = {
   leaderboard: {
     userId: number; name: string;
     transfers: number; appointments: number; fellThrough: number;
-    totalOutcomes: number; calls: number; conversionRate: number;
+    totalOutcomes: number; calls: number; messages: number; conversionRate: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
   }[];
@@ -176,6 +176,67 @@ function SectionTitle({ icon: Icon, children, action }: { icon: any; children: R
       </h2>
       {action}
     </div>
+  );
+}
+
+// Heatmap cell color: grade `value` against the column's min/max. Green = strong,
+// red = weak; pass higherIsBetter=false to invert (e.g. fall-throughs). Light
+// pastel fills with dark text, like a producer scorecard.
+function heatColor(value: number, min: number, max: number, higherIsBetter: boolean): string {
+  if (max <= 0 && min <= 0) return "transparent";   // whole column is zero → no fill
+  if (max === min) return "hsl(95, 55%, 88%)";       // no spread → mild green
+  let t = (value - min) / (max - min);               // 0..1
+  if (!higherIsBetter) t = 1 - t;
+  const hue = Math.round(t * 130);                    // 0 = red → 130 = green
+  return `hsl(${hue}, 78%, 88%)`;
+}
+
+// Weekly Scorecard — last-7-days per-CLR snapshot as a color-graded table.
+function WeeklyScorecard({ rows }: { rows: any[] }) {
+  const list = [...(rows ?? [])].sort((a, b) => (b.transfers - a.transfers) || (b.calls - a.calls));
+  if (list.length === 0) {
+    return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No CLR activity in the last 7 days.</CardContent></Card>;
+  }
+  const cols: Array<{ key: string; label: string; get: (r: any) => number; better: boolean; fmt: (r: any) => string }> = [
+    { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
+    { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
+    { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
+    { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
+    { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
+    { key: "ctt",          label: "C>T%",      get: r => r.callToTransferPct ?? 0, better: true,  fmt: r => r.callToTransferPct == null ? "—" : `${r.callToTransferPct}%` },
+  ];
+  const ranges = cols.map(c => { const v = list.map(c.get); return { min: Math.min(...v), max: Math.max(...v) }; });
+  return (
+    <Card>
+      <CardContent className="p-0 overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium w-8">#</th>
+              <th className="text-left px-3 py-2 font-medium">CLR</th>
+              {cols.map(c => <th key={c.key} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((r, idx) => (
+              <tr key={r.userId} className="border-t border-border">
+                <td className="px-3 py-2 text-muted-foreground tabular-nums">{idx + 1}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{r.name}</td>
+                {cols.map((c, ci) => (
+                  <td
+                    key={c.key}
+                    className="px-3 py-2 text-center tabular-nums font-semibold"
+                    style={{ backgroundColor: heatColor(c.get(r), ranges[ci].min, ranges[ci].max, c.better), color: "#1f2937" }}
+                  >
+                    {c.fmt(r)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -792,6 +853,17 @@ export default function ManagerDashboard() {
             <div className="col-span-full text-center text-muted-foreground py-6 text-sm">No CLRs found</div>
           )}
         </div>
+      </div>
+
+      {/* Weekly Scorecard — running last-7-days per-CLR snapshot (heatmap) */}
+      <div>
+        <SectionTitle icon={Award}>
+          Weekly Scorecard — last 7 days
+        </SectionTitle>
+        <WeeklyScorecard rows={byRange["week"]?.leaderboard ?? []} />
+        <p className="text-[11px] text-muted-foreground mt-2">
+          Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
+        </p>
       </div>
 
       {/* Heatmaps — outcomes + calls, shared range selector */}
