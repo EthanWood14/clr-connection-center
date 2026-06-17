@@ -679,6 +679,17 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
+      {/* Weekly Scorecard — running last-7-days per-CLR snapshot (heatmap) */}
+      <div>
+        <SectionTitle icon={Award}>
+          Weekly Scorecard — last 7 days
+        </SectionTitle>
+        <WeeklyScorecard rows={byRange["week"]?.leaderboard ?? []} />
+        <p className="text-[11px] text-muted-foreground mt-2">
+          Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
+        </p>
+      </div>
+
       {/* Trend chart with range selector */}
       <Card>
         <CardHeader className="pb-2">
@@ -853,17 +864,6 @@ export default function ManagerDashboard() {
             <div className="col-span-full text-center text-muted-foreground py-6 text-sm">No CLRs found</div>
           )}
         </div>
-      </div>
-
-      {/* Weekly Scorecard — running last-7-days per-CLR snapshot (heatmap) */}
-      <div>
-        <SectionTitle icon={Award}>
-          Weekly Scorecard — last 7 days
-        </SectionTitle>
-        <WeeklyScorecard rows={byRange["week"]?.leaderboard ?? []} />
-        <p className="text-[11px] text-muted-foreground mt-2">
-          Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
-        </p>
       </div>
 
       {/* Heatmaps — outcomes + calls, shared range selector */}
