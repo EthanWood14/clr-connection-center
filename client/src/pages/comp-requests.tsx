@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays,
 } from "lucide-react";
 
 interface CompItem {
@@ -266,10 +266,28 @@ function PayoutTimingNote() {
     <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:bg-indigo-950/30 dark:border-indigo-800 px-3 py-2 flex items-start gap-2">
       <Info className="w-4 h-4 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0" />
       <p className="text-[12px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
-        Approved requests are usually paid around the <strong>16th</strong> or the <strong>1st</strong> of the month.
+        Approved requests are paid out on the <strong>15th</strong> and the <strong>1st</strong> of every month.
       </p>
     </div>
   );
+}
+
+// Payout schedule: Chris pays out on the 1st and the 15th of every month. A
+// request's pay date is the next 1st-or-15th on/after it was approved (falling
+// back to when it was filed). Used to group the Payout Center into pay runs.
+function compPayDate(r: CompItem): Date {
+  const base = r.reviewedAt ?? r.requestedAt ?? r.createdAt;
+  const d = base ? new Date(base) : new Date();
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  if (day <= 1) return new Date(y, m, 1);    // the 1st
+  if (day <= 15) return new Date(y, m, 15);  // the 15th
+  return new Date(y, m + 1, 1);              // past the 15th → the 1st next month
+}
+function payKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function payLabel(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 // Admin-only panel to see who can approve comp requests and mark people as
@@ -616,8 +634,20 @@ export default function CompRequests() {
   // Tracks explicit DE-selections so newly approved items auto-join the run.
   const [payoutExcluded, setPayoutExcluded] = useState<Set<number>>(new Set());
   const approvedUnpaid = useMemo(() => team.filter(r => r.status === "approved" && !r.isPaid), [team]);
-  const payoutItems = useMemo(() => approvedUnpaid.filter(r => !payoutExcluded.has(r.id)), [approvedUnpaid, payoutExcluded]);
-  const payoutTotal = useMemo(() => payoutItems.reduce((s, r) => s + (r.amountCents || 0), 0), [payoutItems]);
+  const payoutTodayStart = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
+  // Split the payout run into Chris's pay dates (1st / 15th). Each group is its
+  // own pay run that gets marked paid on that date. Sorted earliest-first.
+  const payoutGroups = useMemo(() => {
+    const map = new Map<string, { key: string; date: Date; items: CompItem[] }>();
+    for (const r of approvedUnpaid) {
+      const d = compPayDate(r);
+      const k = payKey(d);
+      let g = map.get(k);
+      if (!g) { g = { key: k, date: d, items: [] }; map.set(k, g); }
+      g.items.push(r);
+    }
+    return Array.from(map.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [approvedUnpaid]);
   const batchPaidMutation = useMutation({
     mutationFn: (ids: number[]) => apiRequest("POST", "/api/comp/payout/mark-paid", { ids }),
     onSuccess: (d: any) => {
@@ -627,9 +657,9 @@ export default function CompRequests() {
     },
     onError: (e: any) => toast({ title: "Could not mark paid", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
-  function openPayoutSheet() {
-    const ids = payoutItems.map(r => r.id).join(",");
-    window.open("/api/comp/payout-sheet?ids=" + ids + "&print=1", "_blank", "noopener");
+  function openPayoutSheetFor(ids: number[]) {
+    if (!ids.length) return;
+    window.open("/api/comp/payout-sheet?ids=" + ids.join(",") + "&print=1", "_blank", "noopener");
   }
 
   const amountValid = parseFloat(amount || "0") > 0;
@@ -835,53 +865,70 @@ export default function CompRequests() {
               <Badge className="ml-1 bg-emerald-600 text-white text-[10px] px-1.5">{approvedUnpaid.length} awaiting payout</Badge>
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
-              Everything approved and not yet paid. Open one combined PDF (all requests + receipts) to send to whoever pays out, then mark the whole run paid in one click.
+              Approved &amp; unpaid requests, split into pay runs by date (Chris pays out on the <strong>15th</strong> and the <strong>1st</strong>). On each date, open that run's PDF and mark it paid in one click.
             </p>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              {approvedUnpaid.map(r => {
-                const included = !payoutExcluded.has(r.id);
-                return (
-                  <label key={r.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer ${included ? "" : "opacity-50 bg-muted/30"}`} data-testid={"payout-row-" + r.id}>
-                    <Checkbox
-                      checked={included}
-                      onCheckedChange={(v) => setPayoutExcluded(prev => { const n = new Set(prev); if (v) n.delete(r.id); else n.add(r.id); return n; })}
-                      data-testid={"payout-check-" + r.id}
-                    />
-                    <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold">{r.userName}</span>
-                      <CatChip category={r.category} />
-                      <span className="text-sm text-muted-foreground truncate">{r.description}</span>
-                      {(r.attachmentCount ?? 0) > 0 && (
-                        <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"><Paperclip className="w-3 h-3" />{r.attachmentCount}</span>
-                      )}
+          <CardContent className="space-y-4">
+            {payoutGroups.map(g => {
+              const included = g.items.filter(r => !payoutExcluded.has(r.id));
+              const groupTotal = included.reduce((s, r) => s + (r.amountCents || 0), 0);
+              const overdue = g.date.getTime() < payoutTodayStart;
+              return (
+                <div key={g.key} className="rounded-lg border border-border overflow-hidden" data-testid={"payout-group-" + g.key}>
+                  <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <CalendarDays className="w-4 h-4 text-emerald-600" />
+                      <span className="text-sm font-semibold">Pay date — {payLabel(g.date)}</span>
+                      {overdue
+                        ? <Badge className="bg-red-500 text-white text-[10px] px-1.5">overdue</Badge>
+                        : <Badge variant="outline" className="text-[10px] px-1.5">{g.items.length} request{g.items.length === 1 ? "" : "s"}</Badge>}
                     </div>
-                    <span className="text-sm font-semibold tabular-nums shrink-0">{money(r.amountCents)}</span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between gap-3 flex-wrap border-t pt-3">
-              <div className="text-sm">
-                <span className="text-muted-foreground">{payoutItems.length} selected · total</span>{" "}
-                <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(payoutTotal)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" className="gap-1.5" onClick={openPayoutSheet} disabled={payoutItems.length === 0} data-testid="button-payout-pdf">
-                  <FileText className="w-4 h-4" /> Payout PDF
-                </Button>
-                <Button
-                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={() => batchPaidMutation.mutate(payoutItems.map(r => r.id))}
-                  disabled={payoutItems.length === 0 || batchPaidMutation.isPending}
-                  data-testid="button-payout-mark-paid"
-                >
-                  <Check className="w-4 h-4" />
-                  {batchPaidMutation.isPending ? "Marking…" : `Mark ${payoutItems.length} paid`}
-                </Button>
-              </div>
-            </div>
+                    <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(groupTotal)}</span>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {g.items.map(r => {
+                      const inc = !payoutExcluded.has(r.id);
+                      return (
+                        <label key={r.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${inc ? "" : "opacity-50 bg-muted/30"}`} data-testid={"payout-row-" + r.id}>
+                          <Checkbox
+                            checked={inc}
+                            onCheckedChange={(v) => setPayoutExcluded(prev => { const n = new Set(prev); if (v) n.delete(r.id); else n.add(r.id); return n; })}
+                            data-testid={"payout-check-" + r.id}
+                          />
+                          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold">{r.userName}</span>
+                            <CatChip category={r.category} />
+                            <span className="text-sm text-muted-foreground truncate">{r.description}</span>
+                            {(r.attachmentCount ?? 0) > 0 && (
+                              <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"><Paperclip className="w-3 h-3" />{r.attachmentCount}</span>
+                            )}
+                          </div>
+                          <span className="text-sm font-semibold tabular-nums shrink-0">{money(r.amountCents)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-between gap-3 flex-wrap border-t border-border px-3 py-2">
+                    <span className="text-xs text-muted-foreground">{included.length} of {g.items.length} selected</span>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openPayoutSheetFor(included.map(r => r.id))} disabled={included.length === 0}>
+                        <FileText className="w-3.5 h-3.5" /> PDF
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                        onClick={() => batchPaidMutation.mutate(included.map(r => r.id))}
+                        disabled={included.length === 0 || batchPaidMutation.isPending}
+                        data-testid={"button-payout-mark-paid-" + g.key}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {batchPaidMutation.isPending ? "Marking…" : "Mark paid"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}
