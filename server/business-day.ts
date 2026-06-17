@@ -1,17 +1,16 @@
 // Business-day calendar helpers.
 //
-// The system uses a 2am reset: the business day rolls over at 2:00am in the
-// user's local timezone. Anything logged between midnight and 1:59am still
-// belongs to the *previous* business day, so a CLR wrapping up late (or just
-// after midnight) has it counted toward the day they were actually working.
-// This "today" logic drives reporting, dashboards, EOD reports, leaderboards,
-// follow-ups, and anything else date-based.
+// The business day rolls over at 11:00pm (23:00) in the user's local timezone:
+// anything logged before 11pm counts toward the current calendar day, and from
+// 11pm onward counts toward the NEXT day. This "today" logic drives reporting,
+// dashboards, EOD reports, leaderboards, follow-ups, and anything else
+// date-based, so a CLR can submit their EOD for "today" any time up to 11pm.
 //
 // All exported functions return ISO date strings ("YYYY-MM-DD"). They never
 // touch wall-clock components other than to compute the date label - they do
 // not return Date objects, to avoid downstream timezone bugs.
 
-const ROLLOVER_HOUR = 2; // 2am - first hour of a new business day (resets here)
+const ROLLOVER_HOUR = 23; // 11pm - first hour counted as the *next* business day
 const DEFAULT_TZ = "America/Los_Angeles";
 
 // Format any Date as "YYYY-MM-DD" *as observed in* the given IANA timezone.
@@ -49,18 +48,18 @@ export function addIsoDays(iso: string, days: number): string {
 }
 
 /**
- * Business "today" in the given timezone, with a 2am reset.
+ * Business "today" in the given timezone, with an 11pm rollover.
  *
  * Examples (TZ = America/Los_Angeles):
- *   2026-05-05 01:59 PT -> "2026-05-04"  (before 2am: still the previous day)
- *   2026-05-05 02:00 PT -> "2026-05-05"  (2am: the new business day begins)
- *   2026-05-05 23:00 PT -> "2026-05-05"
+ *   2026-05-05 22:59 PT -> "2026-05-05"  (before 11pm: still today)
+ *   2026-05-05 23:00 PT -> "2026-05-06"  (11pm onward: counts as the next day)
+ *   2026-05-06 08:00 PT -> "2026-05-06"
  */
 export function businessTodayInTz(tz: string | null | undefined, now: Date = new Date()): string {
   const zone = tz || DEFAULT_TZ;
   const calendarDate = formatDateInTz(now, zone);
   const hour = hourInTz(now, zone);
-  return hour < ROLLOVER_HOUR ? addIsoDays(calendarDate, -1) : calendarDate;
+  return hour >= ROLLOVER_HOUR ? addIsoDays(calendarDate, 1) : calendarDate;
 }
 
 /**

@@ -35,8 +35,22 @@
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        // If this page is already controlled by a service worker, a later
+        // controller change means a NEW app version activated — reload once so
+        // users always get the latest deploy instead of a stale cached bundle.
+        // (Skipped on first install, when there's no existing controller.)
+        var __hadController = !!navigator.serviceWorker.controller;
+        var __refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (__refreshing || !__hadController) return;
+          __refreshing = true;
+          window.location.reload();
+        });
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').then(function (reg) {
+            // Proactively check for an updated worker on each load.
+            try { reg.update(); } catch (e) {}
+          }).catch(function () {});
         });
       }
     </script>
