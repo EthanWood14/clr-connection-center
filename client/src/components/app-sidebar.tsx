@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useAuth } from "@/lib/auth";
+import { APP_VERSION } from "@shared/version";
 
 // ── Nav structure ────────────────────────────────────────────────────────────
 
@@ -532,6 +533,7 @@ export function AppSidebar() {
             <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
+        <p className="mt-2 text-center text-[10px] text-sidebar-foreground/40">C3 v{APP_VERSION}</p>
       </SidebarFooter>
     </Sidebar>
   );

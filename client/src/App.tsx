@@ -19,6 +19,7 @@ import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
+import { UpdatePrompt } from "@/components/update-prompt";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 
@@ -241,6 +242,7 @@ function AuthenticatedApp() {
       <PushNudge />
       <GoalNudge />
       <TransferCelebration />
+      <UpdatePrompt />
       <DailyReportGate>
         {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
         <div className="flex h-screen w-full overflow-hidden flex-col">

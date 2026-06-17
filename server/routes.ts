@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
+import { APP_VERSION } from "@shared/version";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
@@ -6491,6 +6492,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Lead Outcomes ────────────────────────────────────────────────────────────
+  // Currently-deployed app version — the client polls this to detect new builds
+  // and show an "update available" prompt. Public + no-store (always fresh).
+  app.get("/api/version", (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json({ version: APP_VERSION });
+  });
+
   app.get("/api/outcomes", (req, res) => {
     const { startDate, endDate, assistantId, loId, outcomeType } = req.query;
     const outcomes = storage.getLeadOutcomes({
