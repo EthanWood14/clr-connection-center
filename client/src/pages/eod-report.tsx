@@ -159,7 +159,17 @@ export default function EodReport() {
   const loAssistantId = (lo: any) => lo.assistantId ?? lo.assistant_id;
   const additionalPickable = useMemo(
     () => (allLos as any[])
-      .filter(lo => !assignedLoIdSet.has(lo.id) && !additionalCalled.includes(lo.id) && (lo.isActive ?? lo.is_active ?? 1))
+      .filter(lo => {
+        if (assignedLoIdSet.has(lo.id) || additionalCalled.includes(lo.id)) return false;
+        // Only currently-active LOs (same definition the assignment generator
+        // uses): active flag set, internal status "active", and not snoozed.
+        if (!(lo.isActive ?? lo.is_active ?? 1)) return false;
+        const status = String(lo.internalStatus ?? lo.internal_status ?? "active").toLowerCase();
+        if (status !== "active") return false;
+        const sn = lo.snoozeUntil ?? lo.snooze_until;
+        if (sn && new Date(sn).getTime() > Date.now()) return false;
+        return true;
+      })
       .sort((a, b) => String(a.fullName ?? a.full_name ?? "").localeCompare(String(b.fullName ?? b.full_name ?? ""))),
     [allLos, assignedLoIdSet, additionalCalled]
   );
