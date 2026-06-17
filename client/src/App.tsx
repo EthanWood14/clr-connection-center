@@ -32,6 +32,7 @@ import Settings from "@/pages/settings";
 import StateLookup from "@/pages/state-lookup";
 import CallHours from "@/pages/call-hours";
 import Appointments from "@/pages/appointments";
+import FallThroughs from "@/pages/fall-throughs";
 import Snooze from "@/pages/snooze";
 import Reporting from "@/pages/reporting";
 import AuditLog from "@/pages/audit-log";
@@ -94,6 +95,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/assignments":  "Assignments",
   "/outcomes":     "Outcomes",
   "/appointments": "Appointments",
+  "/fall-throughs": "Fall-Throughs",
   "/leaderboard":  "Team Stats",
   "/state-lookup": "State Lookup",
   "/call-hours":   "Call Hours by State",
@@ -142,6 +144,7 @@ function AppRouter() {
       <Route path="/assignments" component={Assignments} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/appointments" component={Appointments} />
+      <Route path="/fall-throughs" component={FallThroughs} />
       <Route path="/leaderboard" component={TeamStats} />
       <Route path="/team-stats" component={TeamStats} />
       <Route path="/leaderboard-classic" component={Leaderboard} />

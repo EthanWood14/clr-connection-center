@@ -6492,12 +6492,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // ── Lead Outcomes ────────────────────────────────────────────────────────────
   app.get("/api/outcomes", (req, res) => {
-    const { startDate, endDate, assistantId, loId } = req.query;
+    const { startDate, endDate, assistantId, loId, outcomeType } = req.query;
     const outcomes = storage.getLeadOutcomes({
       startDate: startDate as string,
       endDate: endDate as string,
       assistantId: assistantId ? parseInt(assistantId as string) : undefined,
       loId: loId ? parseInt(loId as string) : undefined,
+      outcomeType: outcomeType ? String(outcomeType) : undefined,
     });
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();

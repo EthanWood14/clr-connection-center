@@ -1001,7 +1001,7 @@ export interface IStorage {
   clearDailyAssignments(date: string): void;
 
   // Lead Outcomes
-  getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number }): LeadOutcome[];
+  getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number; outcomeType?: string }): LeadOutcome[];
   getLoPerformanceSummary(): any[];
   createLeadOutcome(data: InsertLeadOutcome): LeadOutcome;
   updateLeadOutcome(id: number, data: Partial<InsertLeadOutcome>): LeadOutcome | undefined;
@@ -1238,7 +1238,7 @@ export class Storage implements IStorage {
     db.delete(dailyAssignments).where(eq(dailyAssignments.assignmentDate, date)).run();
   }
 
-  getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number }) {
+  getLeadOutcomes(filters?: { startDate?: string; endDate?: string; assistantId?: number; loId?: number; outcomeType?: string }) {
     const oid = currentOrgId();
     const wheres: string[] = [];
     const params: any[] = [];
@@ -1246,6 +1246,7 @@ export class Storage implements IStorage {
     if (filters?.endDate)   { wheres.push(`date <= ?`); params.push(filters.endDate); }
     if (filters?.assistantId) { wheres.push(`assistant_id = ?`); params.push(filters.assistantId); }
     if (filters?.loId) { wheres.push(`lo_id = ?`); params.push(filters.loId); }
+    if (filters?.outcomeType) { wheres.push(`outcome_type = ?`); params.push(filters.outcomeType); }
     if (oid != null) { wheres.push(`org_id = ?`); params.push(oid); }
     const whereSql = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
     const rows = sqlite.prepare(`SELECT * FROM lead_outcomes ${whereSql} ORDER BY date DESC`).all(...params);

@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
-  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, MessageCircle, MessagesSquare, ShieldCheck,
+  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
   FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -191,9 +191,10 @@ const personalItems: NavItem[] = [
 ];
 
 const teamItems: NavItem[] = [
-  { title: "Team Stats",            url: "/leaderboard",  icon: Trophy,          help: help.stats },
-  { title: "Forum",                 url: "/forum",        icon: MessagesSquare,  help: help.forum },
-  { title: "Chat",                  url: "/chat",         icon: MessageCircle,   badge: "chat", help: help.chat },
+  { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
+  { title: "Fall-Throughs",         url: "/fall-throughs", icon: TrendingDown },
+  { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
+  { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
 ];
 
 const toolItems: NavItem[] = [
