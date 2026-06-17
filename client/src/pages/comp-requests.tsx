@@ -289,6 +289,20 @@ function payKey(d: Date): string {
 function payLabel(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+// Label a pay run by the span of dates its requests were submitted (filed).
+function submittedRangeLabel(items: CompItem[]): string {
+  const times = items
+    .map(r => r.requestedAt ?? r.createdAt)
+    .filter(Boolean)
+    .map(s => new Date(s as string).getTime())
+    .filter(t => !Number.isNaN(t));
+  if (times.length === 0) return "—";
+  const min = new Date(Math.min(...times));
+  const max = new Date(Math.max(...times));
+  const md = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const mdy = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return payKey(min) === payKey(max) ? mdy(min) : `${md(min)} – ${mdy(max)}`;
+}
 
 // Admin-only panel to see who can approve comp requests and mark people as
 // managers inline (managers are the approvers in the comp pipeline).
@@ -878,7 +892,7 @@ export default function CompRequests() {
                   <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2 flex-wrap">
                     <div className="flex items-center gap-2">
                       <CalendarDays className="w-4 h-4 text-emerald-600" />
-                      <span className="text-sm font-semibold">Pay date — {payLabel(g.date)}</span>
+                      <span className="text-sm font-semibold">Submitted {submittedRangeLabel(g.items)}</span>
                       {overdue
                         ? <Badge className="bg-red-500 text-white text-[10px] px-1.5">overdue</Badge>
                         : <Badge variant="outline" className="text-[10px] px-1.5">{g.items.length} request{g.items.length === 1 ? "" : "s"}</Badge>}
