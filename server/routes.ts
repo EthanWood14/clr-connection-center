@@ -2051,6 +2051,65 @@ cron.schedule("*/5 * * * *", async () => {
   } catch (e: any) { console.error("[appt-30m] cron error:", e?.message ?? e); }
 });
 
+// ── 2-minute appointment reminder ───────────────────────────────────────────
+// A second, last-call push ~2 minutes before an appointment. Runs EVERY minute
+// (the 30-min reminder runs every 5) so it can catch the tight window: it fires
+// when the scheduled time is within the next ~3 minutes and reminder_sent_2m
+// hasn't fired yet, then sets the flag. Push-only — an email 2 minutes out is
+// just noise. Its flag is reset alongside reminder_sent_30m when an appointment
+// time changes (see the PATCH /api/outcomes/:id handler).
+try { storageExtra.getRawSqlite().exec(`ALTER TABLE lead_outcomes ADD COLUMN reminder_sent_2m INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+cron.schedule("* * * * *", async () => {
+  try {
+    const sqlite = storageExtra.getRawSqlite();
+    const nowMs = Date.now();
+    const cutoffMs = nowMs + 3 * 60 * 1000; // ~2 min before, with a 1-min cron buffer
+    const rows = sqlite.prepare(`
+      SELECT lo.id, lo.assistant_id, lo.borrower_name,
+             lo.appointment_datetime, lo.follow_up_date,
+             COALESCE(u.timezone, 'America/Los_Angeles') AS clr_timezone,
+             loff.full_name AS lo_name
+      FROM lead_outcomes lo
+      JOIN users u ON u.id = lo.assistant_id
+      LEFT JOIN loan_officers loff ON loff.id = lo.lo_id
+      WHERE lo.outcome_type = 'appointment'
+        AND COALESCE(lo.reminder_sent_2m, 0) = 0
+        AND (
+          (lo.appointment_datetime IS NOT NULL AND lo.appointment_datetime <> '')
+          OR
+          (lo.follow_up_date IS NOT NULL AND lo.follow_up_date <> '')
+        )
+    `).all() as any[];
+
+    for (const r of rows) {
+      const rawTime = (r.appointment_datetime && String(r.appointment_datetime).trim())
+        || (r.follow_up_date && String(r.follow_up_date).trim())
+        || "";
+      if (!rawTime) continue;
+      const clrTz = r.clr_timezone || "America/Los_Angeles";
+      const t = parseWallClockInTz(rawTime, clrTz);
+      if (!Number.isFinite(t)) continue;
+      if (t <= nowMs || t > cutoffMs) continue;
+
+      const borrower = r.borrower_name?.trim() || "Unknown";
+      const loName = r.lo_name || "Unknown LO";
+      let pushSummary: { sent: number; failed: number } = { sent: 0, failed: 0 };
+      try {
+        pushSummary = await sendPushToUser(r.assistant_id, {
+          title: "⏰ Appointment in 2 minutes",
+          body: `${borrower} — ${loName} — starting soon`,
+          url: "/appointments",
+        });
+      } catch (e: any) {
+        console.error(`[appt-2m] push failed outcome=${r.id}:`, e?.message ?? e);
+      }
+      try { sqlite.prepare(`UPDATE lead_outcomes SET reminder_sent_2m = 1 WHERE id = ?`).run(r.id); } catch {}
+      console.log(`[appt-2m] reminder fired outcome=${r.id} user=${r.assistant_id} push.sent=${pushSummary.sent}`);
+    }
+  } catch (e: any) { console.error("[appt-2m] cron error:", e?.message ?? e); }
+});
+
 
 // ── EOD Missing-Report Reminders ─────────────────────────────────────────────
 // Tracks which CLRs are missing weekday EOD reports and reminds them (and
@@ -2832,6 +2891,83 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ── One-time import: replace Ethan's lead outcomes ──────────────────────
+  // Read-only transfers feed for the LeadVault "transfer verifier". Returns every
+  // transfer outcome (outcomeType='transfer') with the lead phone + assigned LO,
+  // so LeadVault can cross-check each against its call data and flag transfers
+  // with no LO connect. Token-auth (no session): X-Api-Token must equal
+  // TRANSFER_API_TOKEN (defaults to the Railway project id, matching the existing
+  // bootstrap-token pattern). ?since=YYYY-MM-DD bounds by outcome date.
+  app.get("/api/transfers", (req: any, res: any) => {
+    const token = req.headers["x-api-token"] || req.headers["x-bootstrap-token"];
+    const expected = process.env.TRANSFER_API_TOKEN || "06e30810-b43c-4bad-8fac-0093a269a917";
+    if (token !== expected) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const since = typeof req.query.since === "string" ? req.query.since : undefined;
+      const rows = storage.getLeadOutcomes({ outcomeType: "transfer", startDate: since }) as any[];
+      const los = storage.getLoanOfficers() as any[];
+      const loById = new Map<number, any>(los.map((l) => [l.id, l]));
+      const rawDb = (storageExtra as any).getRawSqlite();
+      const users = rawDb.prepare("SELECT id, name FROM users").all() as { id: number; name: string }[];
+      const userById = new Map<number, string>(users.map((u) => [u.id, u.name]));
+      const transfers = rows.map((o) => {
+        const loId = o.lo_id ?? o.loId ?? null;
+        const lo = loId != null ? loById.get(loId) : null;
+        const assistantId = o.assistant_id ?? o.assistantId ?? null;
+        return {
+          id: o.id,
+          date: o.date,
+          createdAt: o.created_at ?? o.createdAt ?? null,
+          borrowerName: o.borrower_name ?? o.borrowerName ?? null,
+          phoneNumber: o.phone_number ?? o.phoneNumber ?? null,
+          transferType: o.transfer_type ?? o.transferType ?? null,
+          bulkTexter: o.bulk_texter ?? o.bulkTexter ?? null,
+          loId,
+          loName: lo?.fullName ?? lo?.full_name ?? null,
+          loPhone: lo?.phone ?? null,
+          // The CLR (Connection Center agent) who logged this transfer.
+          assistantId,
+          clrName: assistantId != null ? (userById.get(assistantId) ?? null) : null,
+          // Verification written back by the LeadVault verifier.
+          verificationStatus: o.verification_status ?? null,
+          verificationReason: o.verification_reason ?? null,
+          verifiedAt: o.verified_at ?? null,
+          notes: o.notes ?? null,
+        };
+      });
+      res.json({ transfers, count: transfers.length, generatedAt: new Date().toISOString() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "transfers_failed" });
+    }
+  });
+
+  // Verification write-back from the LeadVault verifier. Token-auth (same token
+  // as GET /api/transfers). Body: { results: [{ id, status, reason }] }. Stamps
+  // verification_status/reason/verified_at on each lead_outcome so C3 shows it.
+  app.post("/api/transfers/verification", (req: any, res: any) => {
+    const token = req.headers["x-api-token"] || req.headers["x-bootstrap-token"];
+    const expected = process.env.TRANSFER_API_TOKEN || "06e30810-b43c-4bad-8fac-0093a269a917";
+    if (token !== expected) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const items = Array.isArray(req.body?.results) ? req.body.results : [];
+      const rawDb = (storageExtra as any).getRawSqlite();
+      const stmt = rawDb.prepare("UPDATE lead_outcomes SET verification_status = ?, verification_reason = ?, verified_at = ? WHERE id = ?");
+      const now = new Date().toISOString();
+      let updated = 0;
+      const tx = rawDb.transaction((rows: any[]) => {
+        for (const r of rows) {
+          const id = Number(r?.id);
+          if (!Number.isFinite(id)) continue;
+          const info = stmt.run(String(r?.status ?? ""), String(r?.reason ?? ""), now, id);
+          updated += info.changes || 0;
+        }
+      });
+      tx(items);
+      res.json({ updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "verification_write_failed" });
+    }
+  });
+
   // Auth: either authenticated admin OR a request bearing the Railway project ID
   // in X-Bootstrap-Token (so the import can be triggered without a session).
   app.post("/api/admin/import-ethan-outcomes", async (req: any, res: any) => {
@@ -6540,6 +6676,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         appointmentDatetime: o.appointmentDatetime ?? o.appointment_datetime ?? null,
         journeyId: o.journeyId ?? o.journey_id ?? null,
         phoneNumber: o.phoneNumber ?? o.phone_number ?? null,
+        verificationStatus: o.verificationStatus ?? o.verification_status ?? null,
+        verificationReason: o.verificationReason ?? o.verification_reason ?? null,
+        verifiedAt: o.verifiedAt ?? o.verified_at ?? null,
         lo,
         assistant,
       };
@@ -6812,7 +6951,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if ("appointmentDatetime" in body || "followUpDate" in body || "assistantId" in body) {
       try {
         storageExtra.getRawSqlite()
-          .prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 0 WHERE id = ?`)
+          .prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 0, reminder_sent_2m = 0 WHERE id = ?`)
           .run(id);
       } catch (e: any) {
         console.error(`[appt-30m] failed to reset reminder flag for outcome=${id}:`, e?.message ?? e);
