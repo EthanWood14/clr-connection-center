@@ -308,12 +308,17 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN rescheduled INTEGER`); }
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN reschedule_datetime TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN next_steps TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN phone_number TEXT`); } catch {}
+// 2026-06-18: transfer-verification write-back from LeadVault (was the LO actually
+// reached?). Status: verified_direct | verified_callback | unverifiable | suspect.
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verification_status TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verification_reason TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verified_at TEXT`); } catch {}
 
 // ── Migration: manually_configured flag on daily_assignments ──────────
 try { sqlite.exec(`ALTER TABLE daily_assignments ADD COLUMN manually_configured INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 try {
-  sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
+  sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com', 'credoble@westcapitallending.com')`).run();
 } catch {}
 
 // ── Backfill: parse "Scheduled: <date>" out of notes into appointment_datetime ──
@@ -1713,7 +1718,7 @@ function runNewMigrations() {
     const ALIASES = new Set([
       "spetrie@westcapitallending.com",
       "spetries@westcapitallending.com",
-      "credoble@westcapitallending.com",
+      // credoble@ intentionally NOT stripped — it's Chris's chosen address.
     ]);
     const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
     const updateStmt = sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`);
@@ -1734,7 +1739,7 @@ function runNewMigrations() {
     const ALIASES = new Set([
       "spetrie@westcapitallending.com",
       "spetries@westcapitallending.com",
-      "credoble@westcapitallending.com",
+      // credoble@ intentionally NOT stripped — it's Chris's chosen address.
     ]);
     const rows = sqlite.prepare(`SELECT id, manager_emails FROM email_settings`).all() as any[];
     const updateStmt = sqlite.prepare(`UPDATE email_settings SET manager_emails = ? WHERE id = ?`);
@@ -1753,15 +1758,31 @@ function runNewMigrations() {
   // If any user rows still have the legacy alias email, promote them to the
   // full-name version (preserving the is_manager flag from line ~195).
   try {
+    // scott.petrie@ is still canonicalized from the legacy short forms. Chris's
+    // address is intentionally NOT rewritten anymore — credoble@ is the one he
+    // chose, so the old credoble@ → chris.redoble@ rewrite was removed (it ran on
+    // every boot and kept reverting his email). See the one-time adopt below.
     sqlite.prepare(
       `UPDATE users SET email = 'scott.petrie@westcapitallending.com'
        WHERE LOWER(email) IN ('spetrie@westcapitallending.com','spetries@westcapitallending.com')`
     ).run();
-    sqlite.prepare(
-      `UPDATE users SET email = 'chris.redoble@westcapitallending.com'
-       WHERE LOWER(email) = 'credoble@westcapitallending.com'`
-    ).run();
   } catch (e) { console.error("users alias cleanup failed:", e); }
+
+  // One-time: adopt credoble@ as Chris's account email (he uses the short form).
+  // Guarded so it runs ONCE — afterward his email is freely editable and won't
+  // revert on restart. (Removing the rewrite above is what makes it stick.)
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'chris_email_to_credoble_v1'`).get();
+    if (!done) {
+      sqlite.prepare(
+        `UPDATE users SET email = 'credoble@westcapitallending.com'
+         WHERE LOWER(email) = 'chris.redoble@westcapitallending.com'`
+      ).run();
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("chris_email_to_credoble_v1", new Date().toISOString());
+    }
+  } catch (e) { console.error("chris adopt-credoble migration failed:", e); }
 
   // monthly_assignments
   sqlite.exec(`CREATE TABLE IF NOT EXISTS monthly_assignments (
