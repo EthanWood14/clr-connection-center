@@ -11,6 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
@@ -1254,10 +1258,12 @@ export default function Outcomes() {
     onError: () => toast({ title: "Error updating date", variant: "destructive" }),
   });
 
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/outcomes/${id}`),
     onSuccess: () => {
       refreshAll();
+      setDeleteTarget(null);
       toast({ title: "Outcome deleted" });
     },
     onError: () => toast({ title: "Error deleting outcome", variant: "destructive" }),
@@ -1463,7 +1469,7 @@ export default function Outcomes() {
                           variant="ghost"
                           size="icon"
                           className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-                          onClick={() => deleteMutation.mutate(o.id)}
+                          onClick={() => setDeleteTarget(o)}
                           data-testid={`button-delete-outcome-${o.id}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1510,6 +1516,31 @@ export default function Outcomes() {
         los={los}
         currentUserId={authUser?.id}
       />
+
+      {/* Delete confirmation — outcomes (incl. transfers) are real records, so confirm first. */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete this {OUTCOME_LABELS[deleteTarget?.outcomeType] ?? "outcome"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.borrowerName?.trim() ? `${deleteTarget.borrowerName.trim()} — ` : ""}
+              this permanently removes the record and updates the stats. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
