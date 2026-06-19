@@ -1,6 +1,6 @@
 import { Resend } from "resend";
 import { getRawSqlite, storage } from "./storage";
-import { sendPushToUser } from "./push";
+import { sendPushToUser, inQuietHours } from "./push";
 import { sendSms, isTwilioConfigured, normalizePhone } from "./sms";
 import { parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
 
@@ -203,6 +203,9 @@ export async function runRemindersTick(): Promise<{ sent: number; skipped: numbe
   `);
 
   for (const o of pending) {
+    // Quiet hours (9 PM–8 AM, recipient tz): skip every channel; the next tick
+    // after 8 AM will pick it back up (push is also gated inside sendPushToUser).
+    if (inQuietHours(o.assistant_id)) { stats.skipped++; continue; }
     const { subject, html } = buildEmail(o);
     const oTz = o.clr_timezone || BUSINESS_DAY_DEFAULT_TZ;
     const emailEligible = !!o.clr_reminder_enabled && !!o.clr_email;

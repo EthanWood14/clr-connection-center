@@ -15,7 +15,7 @@ import fs from "fs";
 import { checkNmlsLicense, nmlsProfileUrl } from "./nmls";
 import { registerSaConsole } from "./saConsole";
 import { LANDING_HTML } from "./landing";
-import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers } from "./push";
+import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, sendPushToUser, sendPushToUsers, inQuietHours } from "./push";
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
@@ -2003,6 +2003,11 @@ cron.schedule("*/5 * * * *", async () => {
         continue;
       }
       if (t <= nowMs || t > cutoffMs) continue;
+      // Quiet hours (9 PM–8 AM): suppress and mark sent so it doesn't fire later.
+      if (inQuietHours(r.assistant_id)) {
+        try { sqlite.prepare(`UPDATE lead_outcomes SET reminder_sent_30m = 1 WHERE id = ?`).run(r.id); } catch {}
+        continue;
+      }
 
       const borrower = r.borrower_name?.trim() || "Unknown";
       const loName = r.lo_name || "Unknown LO";
@@ -2091,6 +2096,11 @@ cron.schedule("* * * * *", async () => {
       const t = parseWallClockInTz(rawTime, clrTz);
       if (!Number.isFinite(t)) continue;
       if (t <= nowMs || t > cutoffMs) continue;
+      // Quiet hours (9 PM–8 AM): suppress and mark sent so it doesn't fire later.
+      if (inQuietHours(r.assistant_id)) {
+        try { sqlite.prepare(`UPDATE lead_outcomes SET reminder_sent_2m = 1 WHERE id = ?`).run(r.id); } catch {}
+        continue;
+      }
 
       const borrower = r.borrower_name?.trim() || "Unknown";
       const loName = r.lo_name || "Unknown LO";

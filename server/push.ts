@@ -4,6 +4,26 @@ import { getSqlite, getWebhookSettings } from "./storage";
 let initialized = false;
 let publicKey: string | null = null;
 
+// ── Quiet hours ─────────────────────────────────────────────────────────────
+// No C3 notifications between 9 PM and 8 AM in the recipient's local timezone
+// (falling back to Pacific). Keeps the app from buzzing people late at night.
+const QUIET_START_HOUR = 21; // 9 PM — quiet from here…
+const QUIET_END_HOUR = 8;    // …until 8 AM
+
+export function inQuietHours(userId: number, now: Date = new Date()): boolean {
+  try {
+    const sqlite = getSqlite();
+    const row = sqlite.prepare(`SELECT timezone FROM users WHERE id=?`).get(userId) as any;
+    const tz = (row?.timezone && String(row.timezone).trim()) || "America/Los_Angeles";
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).formatToParts(now);
+    const raw = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+    const hour = Number.isNaN(raw) ? 0 : (raw === 24 ? 0 : raw);
+    return hour >= QUIET_START_HOUR || hour < QUIET_END_HOUR;
+  } catch {
+    return false; // never suppress on error
+  }
+}
+
 export function initPush() {
   const sqlite = getSqlite();
   const settings = getWebhookSettings() as any;
@@ -73,6 +93,8 @@ export async function sendPushToUser(
   payload: { title: string; body: string; url?: string }
 ): Promise<{ sent: number; failed: number }> {
   if (!initialized) return { sent: 0, failed: 0 };
+  // Respect quiet hours — no pushes between 9 PM and 8 AM (recipient's tz).
+  if (inQuietHours(userId)) return { sent: 0, failed: 0 };
   const sqlite = getSqlite();
   const subs = getUserSubscriptions(userId);
   let sent = 0;
