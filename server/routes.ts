@@ -519,7 +519,7 @@ function eodActivityEsc(s: string): string {
 function compRateForTransfers(t: number): number {
   return t >= 200 ? 15 : t >= 100 ? 10 : 5;
 }
-function buildCompSummaryHtml(startDate: string, endDate: string): string {
+function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projected?: boolean } = {}): string {
   try {
     const sqlite = storageExtra.getRawSqlite();
     const rows = sqlite.prepare(`
@@ -531,6 +531,54 @@ function buildCompSummaryHtml(startDate: string, endDate: string): string {
       ORDER BY transfers DESC
     `).all(startDate, endDate) as any[];
     const money = (c: number) => "$" + (Number(c) || 0).toLocaleString("en-US");
+
+    // Projected mode (Wednesday MTD): extrapolate each CLR's transfers to
+    // month-end at their current daily pace, then price the projected count.
+    if (opts.projected) {
+      const [ey, em, ed] = endDate.split("-").map(n => parseInt(n, 10));
+      const daysElapsed = Math.max(1, ed);                          // window starts on the 1st
+      const daysInMonth = new Date(Date.UTC(ey, em, 0)).getUTCDate();
+      const projectCount = (mtd: number) => Math.round((mtd / daysElapsed) * daysInMonth);
+      let totMtd = 0, totProj = 0, totComp = 0;
+      const pbody = rows.map((r: any) => {
+        const mtd = Number(r.transfers) || 0;
+        const proj = projectCount(mtd);
+        const rate = compRateForTransfers(proj);
+        const comp = proj * rate;
+        totMtd += mtd; totProj += proj; totComp += comp;
+        const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
+        return `<tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${name}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${mtd}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${proj}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">$${rate}/ea</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${money(comp)}</td>
+        </tr>`;
+      }).join("");
+      return `
+      <div style="margin:24px 0">
+        <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Projected Bonus Costs (month-end estimate)</h2>
+        <p style="font-size:12px;color:#64748b;margin:0 0 10px">Each CLR's transfers projected to month-end at their current pace (day ${daysElapsed} of ${daysInMonth}), then priced by tier: &lt;100 = $5, 100–199 = $10, 200+ = $15 per transfer. <strong>Estimate only — not final pay.</strong></p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
+          <thead><tr style="background:#f8fafc">
+            <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">CLR</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">MTD</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">Proj.</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">Rate</th>
+            <th style="padding:8px 12px;text-align:right;color:#64748b;font-size:11px;text-transform:uppercase">Proj. Comp</th>
+          </tr></thead>
+          <tbody>${pbody || `<tr><td colspan="5" style="padding:12px;text-align:center;color:#94a3b8">No transfers logged this month yet.</td></tr>`}</tbody>
+          <tfoot><tr style="background:#f8fafc;font-weight:700">
+            <td style="padding:8px 12px">Total</td>
+            <td style="padding:8px 12px;text-align:center">${totMtd}</td>
+            <td style="padding:8px 12px;text-align:center">${totProj}</td>
+            <td style="padding:8px 12px"></td>
+            <td style="padding:8px 12px;text-align:right">${money(totComp)}</td>
+          </tr></tfoot>
+        </table>
+      </div>`;
+    }
+
     let totalTransfers = 0, totalComp = 0;
     const body = rows.map((r: any) => {
       const t = Number(r.transfers) || 0;
@@ -2029,8 +2077,14 @@ cron.schedule("* * * * *", async () => {
       const target = 8 * 60, cutoff = 19 * 60;
       if (nowMinutes >= target && nowMinutes < cutoff) {
         extraReportFiredAt.wedMtd = ptDateKey; markReportSent("wed_mtd", ptDateKey);
-        try { await sendReport("mtd"); }
-        catch (e: any) { console.error("[wed-mtd] report failed:", e?.message ?? e); }
+        const [wy, wm] = ptDateKey.split("-").map(n => parseInt(n, 10));
+        const wMonthStart = `${wy}-${String(wm).padStart(2, "0")}-01`;
+        try {
+          await sendReport("mtd", {
+            customRange: { startDate: wMonthStart, endDate: ptDateKey },
+            appendBodyHtml: buildCompSummaryHtml(wMonthStart, ptDateKey, { projected: true }),
+          });
+        } catch (e: any) { console.error("[wed-mtd] report failed:", e?.message ?? e); }
       } else if (nowMinutes >= cutoff) {
         extraReportFiredAt.wedMtd = ptDateKey; markReportSent("wed_mtd", ptDateKey);
       }
