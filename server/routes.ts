@@ -1943,6 +1943,56 @@ cron.schedule("0 15 * * 1", async () => {
   }
 });
 
+// ── Wednesday MTD + Friday end-of-week reports ──────────────────────────────
+// Checked against the Pacific wall-clock every minute (DST-safe) and fired once
+// per PT day via an in-memory + persisted guard:
+//   • Wednesday  8:00 AM PT → month-to-date report (1st → today)
+//   • Friday     6:00 PM PT → end-of-week report (this week Mon → Fri)
+// Always-on (independent of the daily/Monday toggles); still needs recipients.
+let extraReportFiredAt: { wedMtd: string; friEow: string } = { wedMtd: "", friEow: "" };
+cron.schedule("* * * * *", async () => {
+  try {
+    const now = new Date();
+    const ptDateKey = now.toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+    const dow = now.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short" });
+    const ptTime = now.toLocaleTimeString("en-GB", { timeZone: "America/Los_Angeles", hour12: false });
+    const tm = ptTime.match(/^(\d{1,2}):(\d{2})/);
+    if (!tm) return;
+    const nowMinutes = Number(tm[1]) * 60 + Number(tm[2]);
+    const s = storageExtra.getEmailSettings() as any;
+
+    // Wednesday MTD — 8:00 AM PT (19:00 lateness cutoff).
+    if (dow === "Wed" && extraReportFiredAt.wedMtd !== ptDateKey && !reportSentOn(s, "wed_mtd", ptDateKey)) {
+      const target = 8 * 60, cutoff = 19 * 60;
+      if (nowMinutes >= target && nowMinutes < cutoff) {
+        extraReportFiredAt.wedMtd = ptDateKey; markReportSent("wed_mtd", ptDateKey);
+        try { await sendReport("mtd"); }
+        catch (e: any) { console.error("[wed-mtd] report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoff) {
+        extraReportFiredAt.wedMtd = ptDateKey; markReportSent("wed_mtd", ptDateKey);
+      }
+    }
+
+    // Friday end-of-week — 6:00 PM PT, covering this week's Monday → Friday.
+    if (dow === "Fri" && extraReportFiredAt.friEow !== ptDateKey && !reportSentOn(s, "fri_eow", ptDateKey)) {
+      const target = 18 * 60, cutoff = 23 * 60 + 30;
+      if (nowMinutes >= target && nowMinutes < cutoff) {
+        extraReportFiredAt.friEow = ptDateKey; markReportSent("fri_eow", ptDateKey);
+        const t = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+        const [yy, mm, dd] = t.split("-").map(n => parseInt(n, 10));
+        const anchor = new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
+        const stepToMon = (anchor.getUTCDay() + 6) % 7; // days back to Monday
+        const monDt = new Date(anchor); monDt.setUTCDate(anchor.getUTCDate() - stepToMon);
+        const monIso = monDt.toISOString().split("T")[0];
+        try { await sendReport("weekly", { customRange: { startDate: monIso, endDate: t } }); }
+        catch (e: any) { console.error("[fri-eow] report failed:", e?.message ?? e); }
+      } else if (nowMinutes >= cutoff) {
+        extraReportFiredAt.friEow = ptDateKey; markReportSent("fri_eow", ptDateKey);
+      }
+    }
+  } catch (e: any) { console.error("[wed-mtd/fri-eow cron] error:", e?.message ?? e); }
+});
+
 // ── 30-minute appointment reminder ──────────────────────────────────────────
 // Adds a `reminder_sent_30m` column to lead_outcomes (idempotent), then every
 // 5 minutes finds appointment outcomes whose appointment_datetime is between
