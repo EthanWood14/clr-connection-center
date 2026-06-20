@@ -1424,6 +1424,21 @@ export default function Outcomes() {
                       {o.transferType === "direct" ? "Direct" : "Appt/Callback"}
                     </Badge>
                   )}
+                  {o.verificationStatus && (
+                    <Badge
+                      className={`text-[10px] w-fit px-1.5 py-0 ${
+                        o.verificationStatus.includes("verified")
+                          ? "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400"
+                          : o.verificationStatus === "suspect"
+                          ? "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-400"
+                          : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                      }`}
+                      title={o.verificationReason ?? ""}
+                      data-testid={`badge-verify-${o.id}`}
+                    >
+                      {o.verificationStatus.includes("verified") ? "✓ Verified" : o.verificationStatus === "suspect" ? "⚠ Suspect" : "Unverified"}
+                    </Badge>
+                  )}
                 </div>
                 <span className="text-sm text-muted-foreground truncate" data-testid={`text-outcome-lo-${o.id}`}>
                   {o.lo?.fullName ?? `LO #${o.loId}`}

@@ -2931,6 +2931,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
           phoneNumber: o.phone_number ?? o.phoneNumber ?? null,
           transferType: o.transfer_type ?? o.transferType ?? null,
           bulkTexter: o.bulk_texter ?? o.bulkTexter ?? null,
+          appointmentDatetime: o.appointment_datetime ?? o.appointmentDatetime ?? null,
           loId,
           loName: lo?.fullName ?? lo?.full_name ?? null,
           loPhone: lo?.phone ?? null,

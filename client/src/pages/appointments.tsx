@@ -121,6 +121,9 @@ interface Outcome {
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
+  // Transfer verification written back by the LeadVault verifier.
+  verificationStatus?: string | null;
+  verificationReason?: string | null;
 }
 
 interface LoanOfficer {
@@ -443,6 +446,21 @@ function AppointmentCard({
           <div className="flex-1 min-w-0 space-y-2 cursor-pointer" onClick={() => setExpanded(e => !e)}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold truncate">{outcome.borrowerName || "Unknown Borrower"}</span>
+              {outcome.verificationStatus && (
+                <Badge
+                  className={`text-xs px-1.5 py-0 ${
+                    outcome.verificationStatus.includes("verified")
+                      ? "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400"
+                      : outcome.verificationStatus === "suspect"
+                      ? "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-400"
+                      : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                  }`}
+                  title={outcome.verificationReason ?? ""}
+                  data-testid={`badge-verify-${outcome.id}`}
+                >
+                  {outcome.verificationStatus.includes("verified") ? "✓ Verified" : outcome.verificationStatus === "suspect" ? "⚠ Suspect" : "Unverified"}
+                </Badge>
+              )}
               {isOverdue && (
                 <Badge className="text-xs px-1.5 py-0 bg-red-100 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400">
                   Overdue
