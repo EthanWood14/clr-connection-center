@@ -471,6 +471,9 @@ type ReportOptions = {
   //   -1 (default) = yesterday (the morning-summary behavior)
   //    0           = today (partial day so far)
   dailyOffset?: number;
+  // Extra HTML appended to the email body (after section stripping) — used by the
+  // EOM report to attach the preliminary comp summary.
+  appendBodyHtml?: string;
 };
 
 type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
@@ -508,6 +511,64 @@ function eodActivityPill(t: string): { bg: string; fg: string } {
 }
 function eodActivityEsc(s: string): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Preliminary comp estimate for the EOM report. Flat per-transfer rate decided
+// by each CLR's total transfers for the window: <100 = $5, 100–199 = $10,
+// 200+ = $15 — applied to ALL their transfers. Estimate only, not final pay.
+function compRateForTransfers(t: number): number {
+  return t >= 200 ? 15 : t >= 100 ? 10 : 5;
+}
+function buildCompSummaryHtml(startDate: string, endDate: string): string {
+  try {
+    const sqlite = storageExtra.getRawSqlite();
+    const rows = sqlite.prepare(`
+      SELECT lo.assistant_id AS uid, COUNT(*) AS transfers, u.name AS name
+      FROM lead_outcomes lo
+      LEFT JOIN users u ON u.id = lo.assistant_id
+      WHERE lo.outcome_type = 'transfer' AND lo.date >= ? AND lo.date <= ?
+      GROUP BY lo.assistant_id
+      ORDER BY transfers DESC
+    `).all(startDate, endDate) as any[];
+    const money = (c: number) => "$" + (Number(c) || 0).toLocaleString("en-US");
+    let totalTransfers = 0, totalComp = 0;
+    const body = rows.map((r: any) => {
+      const t = Number(r.transfers) || 0;
+      const rate = compRateForTransfers(t);
+      const comp = t * rate;
+      totalTransfers += t; totalComp += comp;
+      const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
+      return `<tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${name}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${t}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">$${rate}/ea</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${money(comp)}</td>
+      </tr>`;
+    }).join("");
+    return `
+    <div style="margin:24px 0">
+      <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Preliminary Comp Summary</h2>
+      <p style="font-size:12px;color:#64748b;margin:0 0 10px">Estimate from current transfer entries (${startDate} → ${endDate}). Flat per-transfer rate by monthly tier: &lt;100 = $5, 100–199 = $10, 200+ = $15. <strong>Not final pay.</strong></p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
+        <thead><tr style="background:#f8fafc">
+          <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">CLR</th>
+          <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">Transfers</th>
+          <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">Rate</th>
+          <th style="padding:8px 12px;text-align:right;color:#64748b;font-size:11px;text-transform:uppercase">Est. Comp</th>
+        </tr></thead>
+        <tbody>${body || `<tr><td colspan="4" style="padding:12px;text-align:center;color:#94a3b8">No transfers logged this month yet.</td></tr>`}</tbody>
+        <tfoot><tr style="background:#f8fafc;font-weight:700">
+          <td style="padding:8px 12px">Total</td>
+          <td style="padding:8px 12px;text-align:center">${totalTransfers}</td>
+          <td style="padding:8px 12px"></td>
+          <td style="padding:8px 12px;text-align:right">${money(totalComp)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  } catch (e: any) {
+    console.error("[comp-summary] build failed:", e?.message ?? e);
+    return "";
+  }
 }
 
 async function sendReport(
@@ -1373,7 +1434,7 @@ async function sendReport(
   }
 
   const wrappedCallNotes = callNotesHtml ? `<!--SEC:callNotes-->${callNotesHtml}<!--/SEC:callNotes-->` : "";
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: stripDisabledSections(body + wrappedCallNotes) });
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: stripDisabledSections(body + wrappedCallNotes) + (opts.appendBodyHtml ?? "") });
   if (opts.renderOnly) {
     console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
     return { id: null, recipients: [], html, subject, startDate, endDate };
@@ -1943,13 +2004,15 @@ cron.schedule("0 15 * * 1", async () => {
   }
 });
 
-// ── Wednesday MTD + Friday end-of-week reports ──────────────────────────────
+// ── Wednesday MTD + Friday EOW + end-of-month reports ───────────────────────
 // Checked against the Pacific wall-clock every minute (DST-safe) and fired once
 // per PT day via an in-memory + persisted guard:
-//   • Wednesday  8:00 AM PT → month-to-date report (1st → today)
-//   • Friday     6:00 PM PT → end-of-week report (this week Mon → Fri)
+//   • Wednesday    8:00 AM PT → month-to-date report (1st → today)
+//   • Friday       6:00 PM PT → end-of-week report (this week Mon → Fri)
+//   • Last of month 6:00 PM PT → end-of-month report (whole month) + a
+//                                preliminary comp summary per CLR
 // Always-on (independent of the daily/Monday toggles); still needs recipients.
-let extraReportFiredAt: { wedMtd: string; friEow: string } = { wedMtd: "", friEow: "" };
+let extraReportFiredAt: { wedMtd: string; friEow: string; eom: string } = { wedMtd: "", friEow: "", eom: "" };
 cron.schedule("* * * * *", async () => {
   try {
     const now = new Date();
@@ -1990,7 +2053,30 @@ cron.schedule("* * * * *", async () => {
         extraReportFiredAt.friEow = ptDateKey; markReportSent("fri_eow", ptDateKey);
       }
     }
-  } catch (e: any) { console.error("[wed-mtd/fri-eow cron] error:", e?.message ?? e); }
+
+    // End-of-month — last day of the month, 6:00 PM PT. Monthly summary for the
+    // current month + a preliminary comp estimate from current transfer entries.
+    {
+      const [yy, mm, dd] = ptDateKey.split("-").map(n => parseInt(n, 10));
+      const tomorrow = new Date(Date.UTC(yy, mm - 1, dd + 1, 12, 0, 0));
+      const isLastDayOfMonth = (tomorrow.getUTCMonth() + 1) !== mm; // month rolls over tomorrow
+      if (isLastDayOfMonth && extraReportFiredAt.eom !== ptDateKey && !reportSentOn(s, "eom", ptDateKey)) {
+        const target = 18 * 60, cutoff = 23 * 60 + 30;
+        if (nowMinutes >= target && nowMinutes < cutoff) {
+          extraReportFiredAt.eom = ptDateKey; markReportSent("eom", ptDateKey);
+          const monthStart = `${yy}-${String(mm).padStart(2, "0")}-01`;
+          try {
+            await sendReport("monthly", {
+              customRange: { startDate: monthStart, endDate: ptDateKey },
+              appendBodyHtml: buildCompSummaryHtml(monthStart, ptDateKey),
+            });
+          } catch (e: any) { console.error("[eom] report failed:", e?.message ?? e); }
+        } else if (nowMinutes >= cutoff) {
+          extraReportFiredAt.eom = ptDateKey; markReportSent("eom", ptDateKey);
+        }
+      }
+    }
+  } catch (e: any) { console.error("[wed-mtd/fri-eow/eom cron] error:", e?.message ?? e); }
 });
 
 // ── 30-minute appointment reminder ──────────────────────────────────────────
