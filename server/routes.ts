@@ -474,6 +474,9 @@ type ReportOptions = {
   // Extra HTML appended to the email body (after section stripping) — used by the
   // EOM report to attach the preliminary comp summary.
   appendBodyHtml?: string;
+  // Extra HTML prepended to the email body (before section stripping content) —
+  // used by the Wednesday MTD report to put projected bonus costs up top.
+  prependBodyHtml?: string;
 };
 
 type ReportType = "daily" | "weekly" | "monthly" | "mtd" | "alltime";
@@ -1482,7 +1485,7 @@ async function sendReport(
   }
 
   const wrappedCallNotes = callNotesHtml ? `<!--SEC:callNotes-->${callNotesHtml}<!--/SEC:callNotes-->` : "";
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: stripDisabledSections(body + wrappedCallNotes) + (opts.appendBodyHtml ?? "") });
+  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: (opts.prependBodyHtml ?? "") + stripDisabledSections(body + wrappedCallNotes) + (opts.appendBodyHtml ?? "") });
   if (opts.renderOnly) {
     console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
     return { id: null, recipients: [], html, subject, startDate, endDate };
@@ -2082,7 +2085,7 @@ cron.schedule("* * * * *", async () => {
         try {
           await sendReport("mtd", {
             customRange: { startDate: wMonthStart, endDate: ptDateKey },
-            appendBodyHtml: buildCompSummaryHtml(wMonthStart, ptDateKey, { projected: true }),
+            prependBodyHtml: buildCompSummaryHtml(wMonthStart, ptDateKey, { projected: true }),
           });
         } catch (e: any) { console.error("[wed-mtd] report failed:", e?.message ?? e); }
       } else if (nowMinutes >= cutoff) {
