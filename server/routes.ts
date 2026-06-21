@@ -2133,31 +2133,6 @@ cron.schedule("* * * * *", async () => {
   } catch (e: any) { console.error("[wed-mtd/fri-eow/eom cron] error:", e?.message ?? e); }
 });
 
-// TEMP one-time test send — fires the three new reports once on boot to ALL
-// configured manager recipients so they can be verified immediately. Guarded by
-// migrations_applied so it runs exactly once, never on subsequent restarts.
-// Remove after confirming.
-setTimeout(() => { (async () => {
-  try {
-    const sqlite = storageExtra.getRawSqlite();
-    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
-    if (sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'test_send_reports_v4'`).get()) return;
-    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("test_send_reports_v4", new Date().toISOString());
-    const today = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
-    const [yy, mm, dd] = today.split("-").map(n => parseInt(n, 10));
-    const monthStart = `${yy}-${String(mm).padStart(2, "0")}-01`;
-    const anchor = new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
-    const stepToMon = (anchor.getUTCDay() + 6) % 7;
-    const monDt = new Date(anchor); monDt.setUTCDate(anchor.getUTCDate() - stepToMon);
-    const monIso = monDt.toISOString().split("T")[0];
-    console.log("[test-send] firing MTD + EOW + EOM test reports to all configured managers");
-    await sendReport("mtd", { customRange: { startDate: monthStart, endDate: today }, appendBodyHtml: buildCompSummaryHtml(monthStart, today, { projected: true }) });
-    await sendReport("weekly", { customRange: { startDate: monIso, endDate: today } });
-    await sendReport("monthly", { customRange: { startDate: monthStart, endDate: today }, appendBodyHtml: buildCompSummaryHtml(monthStart, today) });
-    console.log("[test-send] all three test reports sent.");
-  } catch (e: any) { console.error("[test-send] failed:", e?.message ?? e); }
-})(); }, 8000);
-
 // ── 30-minute appointment reminder ──────────────────────────────────────────
 // Adds a `reminder_sent_30m` column to lead_outcomes (idempotent), then every
 // 5 minutes finds appointment outcomes whose appointment_datetime is between
