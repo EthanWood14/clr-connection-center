@@ -29,15 +29,20 @@
       rel="stylesheet"
     />
     <title>WCLCC</title>
-    <script type="module" crossorigin src="./assets/index-vHQ_8qD-.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-wyWzuCWs.css">
+    <script type="module" crossorigin src="./assets/index-D1L3SD-m.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BAE1lJig.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        // New deploys are surfaced via an in-app "update available" prompt
+        // (see UpdatePrompt, which polls /api/version), so the worker just
+        // registers and refreshes itself — no silent auto-reload.
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').then(function (reg) {
+            try { reg.update(); } catch (e) {}
+          }).catch(function () {});
         });
       }
     </script>

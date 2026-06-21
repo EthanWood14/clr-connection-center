@@ -1,7 +1,7 @@
 // CLR Connection Center — Service Worker
 // Provides offline shell caching and background sync support
 
-const CACHE_NAME = "wclcc-v5";
+const CACHE_NAME = "wclcc-v6";
 const STATIC_ASSETS = [
   "/",
   "/manifest.json",
