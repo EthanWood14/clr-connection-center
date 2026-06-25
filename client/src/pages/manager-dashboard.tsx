@@ -550,16 +550,23 @@ export default function ManagerDashboard() {
   const clrTrendRows = clrTrendDates.flatMap((d: string, i: number) => {
     if (!isWeekday(d)) return [];
     const row: any = { date: d, label: format(parseISO(d), "MMM d") };
-    let sum = 0, n = 0;
+    // Per-CLR columns: only the selected/shown CLRs get a plotted line.
     for (const s of clrTrendSeries) {
       if (!effectiveSelected.includes(s.userId)) continue;
       const arr = (s as any)[clrTrendMetric] as number[];
-      const v = arr[i] ?? 0;
-      row[`u${s.userId}`] = v;
-      sum += v;
-      n++;
+      row[`u${s.userId}`] = arr[i] ?? 0;
     }
-    row.__mean = n > 0 ? sum / n : 0; // average across shown CLRs that day
+    // Benchmark mean = average per CLR across the WHOLE team (every CLR in the
+    // series, including zero days), not just the shown lines. So the dashed line
+    // reads as the typical CLR's daily output and doesn't move when you toggle
+    // individual lines on/off.
+    let teamSum = 0, teamN = 0;
+    for (const s of clrTrendSeries) {
+      const arr = (s as any)[clrTrendMetric] as number[];
+      teamSum += arr[i] ?? 0;
+      teamN++;
+    }
+    row.__mean = teamN > 0 ? teamSum / teamN : 0; // avg metric per CLR that day
     return row;
   });
   // Overlay a trailing rolling average of the per-day mean (window in business days,
@@ -1072,7 +1079,7 @@ export default function ManagerDashboard() {
                         strokeWidth={2.5}
                         strokeDasharray="6 4"
                         dot={false}
-                        name={`Team avg · ${clrTrendWindow}d`}
+                        name={`Avg per CLR · ${clrTrendWindow}d`}
                       />
                     )}
                   </LineChart>
@@ -1081,7 +1088,7 @@ export default function ManagerDashboard() {
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
-              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average across the shown CLRs.` : ""}
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per CLR across the whole team.` : ""}
             </p>
           </CardContent>
         </Card>
