@@ -6887,6 +6887,50 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assistant,
       };
     });
+
+    // Fall-Throughs list only: hide any fall-through whose lead has SINCE been
+    // transferred again (a later transfer outcome for the same lead). The lead is
+    // matched by journey id, phone number, or borrower-name + LO. A fall-through
+    // is suppressed only when a matching transfer is dated on/after it — so if the
+    // lead fell through AGAIN after that transfer, the newest fall-through stays.
+    if (String(outcomeType ?? "") === "fell_through") {
+      const digits = (v: any) => String(v ?? "").replace(/\D/g, "");
+      const norm = (v: any) => String(v ?? "").trim().toLowerCase();
+      const xferByJourney = new Map<string, string>();
+      const xferByPhone = new Map<string, string>();
+      const xferByNameLo = new Map<string, string>();
+      const keepMax = (m: Map<string, string>, k: string, d: string) => {
+        if (!k || !d) return;
+        const prev = m.get(k);
+        if (!prev || d > prev) m.set(k, d);
+      };
+      for (const t of storage.getLeadOutcomes({ outcomeType: "transfer" }) as any[]) {
+        const d = String(t.date ?? "");
+        if (!d) continue;
+        const j = t.journey_id != null && t.journey_id !== "" ? String(t.journey_id) : "";
+        const ph = digits(t.phone_number);
+        const nm = norm(t.borrower_name);
+        const lo = t.lo_id != null ? String(t.lo_id) : "";
+        if (j) keepMax(xferByJourney, j, d);
+        if (ph) keepMax(xferByPhone, ph, d);
+        if (nm) keepMax(xferByNameLo, `${nm}|${lo}`, d);
+      }
+      const visible = enriched.filter((o: any) => {
+        const ftDate = String(o.date ?? "");
+        const j = o.journeyId != null && o.journeyId !== "" ? String(o.journeyId) : "";
+        const ph = digits(o.phoneNumber);
+        const nm = norm(o.borrowerName);
+        const lo = o.loId != null ? String(o.loId) : "";
+        const lastXfer = [
+          j ? xferByJourney.get(j) : undefined,
+          ph ? xferByPhone.get(ph) : undefined,
+          nm ? xferByNameLo.get(`${nm}|${lo}`) : undefined,
+        ].filter(Boolean).sort().pop(); // latest matching transfer date (ISO sorts chronologically)
+        return !(lastXfer && lastXfer >= ftDate);
+      });
+      return res.json(visible);
+    }
+
     res.json(enriched);
   });
 

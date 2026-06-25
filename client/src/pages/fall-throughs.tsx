@@ -1,7 +1,9 @@
 // Fall-Throughs — a team-wide, all-time log of every appointment/lead that fell
 // through. Pulls only fell_through outcomes (server-filtered) across all CLRs and
 // dates, with search, a CLR filter, a date-range filter, and row windowing so it
-// stays fast even with a long history.
+// stays fast even with a long history. The server also drops any fall-through
+// whose lead was later transferred again (matched by journey id / phone / name+LO),
+// so a recovered lead disappears from the list once it converts.
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
