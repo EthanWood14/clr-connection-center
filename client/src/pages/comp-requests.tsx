@@ -10,11 +10,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle,
 } from "lucide-react";
 
 interface CompItem {
@@ -658,6 +663,54 @@ export default function CompRequests() {
     onError: (e: any) => toast({ title: "Could not remove", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
+  // ── Edit a request (resubmits it for approval) ─────────────────────────────
+  const [editTarget, setEditTarget] = useState<CompItem | null>(null);
+  const [editDesc, setEditDesc] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editCategory, setEditCategory] = useState("transfers");
+  const [editDate, setEditDate] = useState("");
+  const [editNote, setEditNote] = useState("");
+  function openEdit(r: CompItem) {
+    setEditTarget(r);
+    setEditDesc(r.description ?? "");
+    setEditAmount(((r.amountCents ?? 0) / 100).toString());
+    setEditCategory(r.category === "leads" ? "transfers" : (r.category || "transfers"));
+    setEditDate(r.expenseDate ?? "");
+    setEditNote(r.note ?? "");
+  }
+  const editMutation = useMutation({
+    mutationFn: (v: { id: number; body: any }) => apiRequest("PATCH", "/api/comp/" + v.id, v.body),
+    onSuccess: (d: any) => {
+      const resubmitted = d?.status === "pending";
+      toast({
+        title: resubmitted ? "Edited & resubmitted" : "Saved",
+        description: resubmitted ? "Your changes were saved and the request was sent back for approval." : "Changes saved.",
+      });
+      setEditTarget(null);
+      refresh();
+    },
+    onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+  function saveEdit() {
+    if (!editTarget) return;
+    const amountCents = Math.round(parseFloat(editAmount || "0") * 100);
+    if (!editDesc.trim()) { toast({ title: "Description required", variant: "destructive" }); return; }
+    if (!(amountCents > 0)) { toast({ title: "Enter an amount greater than 0", variant: "destructive" }); return; }
+    editMutation.mutate({ id: editTarget.id, body: { description: editDesc.trim(), category: editCategory, amountCents, expenseDate: editDate || undefined, note: editNote } });
+  }
+
+  // ── Deny an already-approved request (reverse approval) ────────────────────
+  const [denyTarget, setDenyTarget] = useState<CompItem | null>(null);
+  const [denyNote, setDenyNote] = useState("");
+
+  // ── "Ask manager": client-side prompt pointing the CLR to their manager ────
+  function askManager(r: CompItem) {
+    toast({
+      title: "Questions about this request?",
+      description: "Reach out to " + (r.reviewerName || "your manager") + " for more information on this comp request.",
+    });
+  }
+
   // ── Payout Center: approved-but-unpaid requests, batch payout ──────────────
   // Tracks explicit DE-selections so newly approved items auto-join the run.
   const [payoutExcluded, setPayoutExcluded] = useState<Set<number>>(new Set());
@@ -1074,13 +1127,34 @@ export default function CompRequests() {
                             data-testid={"team-switch-paid-" + r.id}
                           />
                         </label>
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 text-xs gap-1 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                          onClick={() => { setDenyTarget(r); setDenyNote(""); }}
+                          disabled={decideMutation.isPending || r.isPaid || r.isReceived}
+                          title={r.isPaid || r.isReceived ? "Already paid — can't deny" : "Reverse this approval"}
+                          data-testid={"team-deny-approved-" + r.id}
+                        >
+                          <X className="w-3.5 h-3.5" /> Deny
+                        </Button>
                       </div>
                     )}
                   </div>
                   <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                   <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
-                    <CompSheetButton compId={r.id} label="Full PDF for payout" />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(r)}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+                        title="Edit this request (resubmits it for approval)"
+                        data-testid={"team-edit-comp-" + r.id}
+                      >
+                        <Pencil className="w-3 h-3" /> Edit
+                      </button>
+                      <CompSheetButton compId={r.id} label="Full PDF for payout" />
+                    </div>
                   </div>
                 </div>
                   ))
@@ -1170,7 +1244,29 @@ export default function CompRequests() {
                 <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                 <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                   <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
-                  <CompSheetButton compId={r.id} />
+                  <div className="flex items-center gap-2">
+                    {r.status !== "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => askManager(r)}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+                        title="Have a question? Reach out to your manager."
+                        data-testid={"ask-manager-" + r.id}
+                      >
+                        <HelpCircle className="w-3 h-3" /> Ask manager
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openEdit(r)}
+                      className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+                      title="Edit this request (resubmits it for approval)"
+                      data-testid={"edit-comp-" + r.id}
+                    >
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                    <CompSheetButton compId={r.id} />
+                  </div>
                 </div>
               </div>
                 ))
@@ -1180,6 +1276,89 @@ export default function CompRequests() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit dialog — saving resubmits the request for approval */}
+      <Dialog open={!!editTarget} onOpenChange={(o) => { if (!o) setEditTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Pencil className="w-4 h-4" /> Edit comp request</DialogTitle>
+            <DialogDescription>
+              {editTarget && editTarget.status !== "draft"
+                ? "Saving your changes resubmits this request for approval (it goes back to pending)."
+                : "Update the details of this request."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Amount (USD)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                  <Input type="number" min="0" step="0.01" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} placeholder="0.00" className="pl-6" data-testid="edit-comp-amount" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Category</label>
+                <Select value={editCategory} onValueChange={setEditCategory}>
+                  <SelectTrigger data-testid="edit-comp-category"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CATEGORY_KEYS.map((key) => <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Date spent</label>
+                <Input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} data-testid="edit-comp-date" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Description</label>
+              <Input value={editDesc} onChange={e => setEditDesc(e.target.value)} maxLength={300} placeholder="What did you spend on?" data-testid="edit-comp-description" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>
+              <Textarea value={editNote} onChange={e => setEditNote(e.target.value)} rows={2} maxLength={1000} placeholder="Receipt link, context, etc." data-testid="edit-comp-note" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setEditTarget(null)} disabled={editMutation.isPending}>Cancel</Button>
+            <Button size="sm" className="gap-1.5" onClick={saveEdit} disabled={editMutation.isPending}>
+              <Send className="w-3.5 h-3.5" />
+              {editMutation.isPending ? "Saving…" : (editTarget && editTarget.status !== "draft" ? "Save & resubmit" : "Save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Deny confirmation — reverses an approval */}
+      <AlertDialog open={!!denyTarget} onOpenChange={(o) => { if (!o) { setDenyTarget(null); setDenyNote(""); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deny this approved request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {denyTarget ? `${denyTarget.userName} · ${money(denyTarget.amountCents)} — ${denyTarget.description}. ` : ""}
+              This reverses the approval and marks the request denied. The requester is notified.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            placeholder="Reason (optional)"
+            value={denyNote}
+            onChange={e => setDenyNote(e.target.value)}
+            className="h-9 text-sm"
+            data-testid="deny-approved-note"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={decideMutation.isPending}>Keep approved</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => { if (denyTarget) decideMutation.mutate({ id: denyTarget.id, status: "denied", reviewerNote: denyNote }); }}
+              disabled={decideMutation.isPending}
+            >
+              {decideMutation.isPending ? "Denying…" : "Deny request"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

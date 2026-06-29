@@ -5820,7 +5820,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  app.patch("/api/comp/:id", requireAuth, (req: any, res) => {
+  app.patch("/api/comp/:id", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
@@ -5829,8 +5829,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const db = storageExtra.getRawSqlite();
       const existing = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Not found" });
-      if (existing.user_id !== userId) return res.status(403).json({ error: "Not your expense." });
-      if (existing.status !== "draft") return res.status(400).json({ error: "Only draft expenses can be edited." });
+      const isOwner = existing.user_id === userId;
+      // Owners may edit their own requests; managers/admins may edit anyone's.
+      if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your expense." });
       const body = req.body ?? {};
       const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : existing.description;
       const category = COMP_CATEGORIES.has(body.category) ? body.category : existing.category;
@@ -5839,8 +5840,56 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const note = typeof body.note === "string" ? body.note.slice(0, 1000) : existing.note;
       if (!description) return res.status(400).json({ error: "A description is required." });
       if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
-      db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, new Date().toISOString(), id);
+      const nowIso = new Date().toISOString();
+
+      if (existing.status === "draft") {
+        // Draft: just update the fields in place (stays a draft).
+        db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, nowIso, id);
+        const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
+        return res.json(mapComp(row, compNameMap()));
+      }
+
+      // Editing an already-submitted request RESUBMITS it: the fields change, it
+      // goes back to pending, the prior decision + payout state is cleared, a
+      // fresh approval token is issued, and the approver is re-emailed.
+      const token = crypto.randomBytes(24).toString("hex");
+      db.prepare(`UPDATE comp_requests SET
+          description=?, category=?, amount_cents=?, expense_date=?, note=?,
+          status='pending', reviewer_note='', reviewed_by=NULL, reviewed_at=NULL,
+          is_paid=0, paid_at=NULL, is_processing=0, processing_at=NULL,
+          is_received=0, received_at=NULL,
+          approval_token=?, requested_at=?, updated_at=?
+        WHERE id=?`).run(description, category, amountCents, expenseDate, note, token, nowIso, nowIso, id);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
+      const nameById = compNameMap();
+      const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
+      audit({
+        userId, userName: actor?.name ?? "Unknown", action: "update",
+        entityType: "comp_request", entityId: id,
+        entityLabel: (nameById.get(existing.user_id) ?? "User") + " comp request edited & resubmitted",
+        details: JSON.stringify({ amountCents, from: existing.status }),
+      });
+      // Notify the requester that their edited request is pending again.
+      try {
+        if (!isOwner) {
+          const dollars = "$" + (amountCents / 100).toFixed(2);
+          (storage as any).createNotification?.({
+            userId: existing.user_id, type: "comp_request", title: "Comp request updated",
+            message: "Your comp request was edited to " + dollars + " (" + description + ") and resubmitted for approval.",
+          });
+        }
+      } catch {}
+      // Re-email the configured approver with the updated request.
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        if (approverEmail) {
+          const { subject, html } = buildCompApprovalEmail([row], token, nameById.get(existing.user_id) ?? "A team member");
+          await sendEmail({ to: approverEmail, subject, html });
+        }
+      } catch (e: any) { console.error("[comp] resubmit approver email failed:", e?.message ?? e); }
       res.json(mapComp(row, compNameMap()));
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to update expense" });
