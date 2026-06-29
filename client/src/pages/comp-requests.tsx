@@ -210,15 +210,29 @@ function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (
           </div>
         </div>
       )}
-      {onUse && prev && (
-        <button
-          type="button"
-          onClick={() => onUse("Monthly transfer request — " + prev.month + " (" + prev.transfers + " transfer" + plural(prev.transfers) + ")")}
-          className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
-          data-testid="button-use-transfers"
-        >
-          <Plus className="w-3 h-3" /> Use last month for this request
-        </button>
+      {onUse && (prev || cur) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          {prev && (
+            <button
+              type="button"
+              onClick={() => onUse("Monthly transfer request — " + prev.month + " (" + prev.transfers + " transfer" + plural(prev.transfers) + ")")}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
+              data-testid="button-use-transfers"
+            >
+              <Plus className="w-3 h-3" /> Use last month ({prev.month})
+            </button>
+          )}
+          {cur && (
+            <button
+              type="button"
+              onClick={() => onUse("Monthly transfer request — " + cur.month + " (" + cur.transfers + " transfer" + plural(cur.transfers) + ")")}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
+              data-testid="button-use-transfers-current"
+            >
+              <Plus className="w-3 h-3" /> Use this month ({cur.month})
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -675,6 +689,11 @@ export default function CompRequests() {
     if (!ids.length) return;
     window.open("/api/comp/payout-sheet?ids=" + ids.join(",") + "&print=1", "_blank", "noopener");
   }
+  // Export the WHOLE payout center as one PDF (every approved-unpaid request,
+  // across all pay runs). No ids → the server renders all of them together.
+  function openAllPayoutSheet() {
+    window.open("/api/comp/payout-sheet?print=1", "_blank", "noopener");
+  }
 
   const amountValid = parseFloat(amount || "0") > 0;
   const canSubmit = !!description.trim() && amountValid && !createMutation.isPending;
@@ -874,12 +893,17 @@ export default function CompRequests() {
       {isManager && approvedUnpaid.length > 0 && (
         <Card className="border-emerald-300/60 dark:border-emerald-700/60">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <BadgeDollarSign className="w-4 h-4 text-emerald-600" /> Payout Center
-              <Badge className="ml-1 bg-emerald-600 text-white text-[10px] px-1.5">{approvedUnpaid.length} awaiting payout</Badge>
-            </CardTitle>
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base flex items-center gap-2">
+                <BadgeDollarSign className="w-4 h-4 text-emerald-600" /> Payout Center
+                <Badge className="ml-1 bg-emerald-600 text-white text-[10px] px-1.5">{approvedUnpaid.length} awaiting payout</Badge>
+              </CardTitle>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={openAllPayoutSheet} data-testid="button-payout-export-all">
+                <FileText className="w-3.5 h-3.5" /> Export all (PDF)
+              </Button>
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Approved &amp; unpaid requests, split into pay runs by date (Chris pays out on the <strong>15th</strong> and the <strong>1st</strong>). On each date, open that run's PDF and mark it paid in one click.
+              Approved &amp; unpaid requests, split into pay runs by date (Chris pays out on the <strong>15th</strong> and the <strong>1st</strong>). On each date, open that run's PDF and mark it paid in one click — or use <strong>Export all</strong> for the whole payout center in one PDF.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
