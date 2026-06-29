@@ -1146,6 +1146,15 @@ export default function CompRequests() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        onClick={() => askManager(r)}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+                        title="Have a question? Reach out to your manager."
+                        data-testid={"team-ask-manager-" + r.id}
+                      >
+                        <HelpCircle className="w-3 h-3" /> Ask manager
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => openEdit(r)}
                         className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
                         title="Edit this request (resubmits it for approval)"

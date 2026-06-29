@@ -7,4 +7,4 @@
 //
 // Convention: patch (3.11.x) for fixes/small features, minor (3.x.0) for larger
 // features, major (x.0.0) for big releases.
-export const APP_VERSION = "3.11.36";
+export const APP_VERSION = "3.11.37";
