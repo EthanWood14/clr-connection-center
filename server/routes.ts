@@ -356,6 +356,11 @@ function buildEmail(opts: {
   body: string;
 }): string {
   const { subject, preheader = "", body } = opts;
+  // Escape the subject/preheader before they land in <title>/<h1>/preheader —
+  // they can be derived from user-controlled names. `body` is intentional HTML
+  // assembled by callers (already escaped at their own sinks).
+  const subjectSafe = eodActivityEsc(subject);
+  const preheaderSafe = eodActivityEsc(preheader);
   // Render "today" in the business-day default tz so a 6pm PT send doesn't get
   // labeled with tomorrow's date because the host server is on UTC.
   const now = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ });
@@ -365,10 +370,10 @@ function buildEmail(opts: {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>${subject}</title>
+  <title>${subjectSafe}</title>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;-webkit-font-smoothing:antialiased">
-  ${preheader ? `<div style="display:none;max-height:0;overflow:hidden">${preheader}</div>` : ""}
+  ${preheader ? `<div style="display:none;max-height:0;overflow:hidden">${preheaderSafe}</div>` : ""}
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5f9;padding:32px 16px">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%">
@@ -388,7 +393,7 @@ function buildEmail(opts: {
               </tr>
             </table>
             <div style="margin-top:20px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.12)">
-              <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">${subject}</h1>
+              <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700">${subjectSafe}</h1>
               <p style="margin:6px 0 0;color:#94a3b8;font-size:13px">${now}</p>
             </div>
           </td>
@@ -418,7 +423,9 @@ function buildEmail(opts: {
 }
 
 // ── Shared Resend send helper ─────────────────────────────────────────────────
-const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
+// Key comes from the RESEND_API_KEY env var (set in Railway) — never hardcoded.
+// Falls back to a valid per-org DB key (see sendEmail) and fails closed if neither.
+const DEFAULT_RESEND_KEY = process.env.RESEND_API_KEY || "";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
 async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }): Promise<string> {
@@ -432,6 +439,12 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
   // known-good default instead of hard-failing with "API key is invalid".
   const looksLikeRealKey = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey);
   const apiKey = looksLikeRealKey ? dbKey : DEFAULT_RESEND_KEY;
+  if (!apiKey) {
+    // Fail closed rather than send with an empty/invalid key. Configure
+    // RESEND_API_KEY (env) or a valid per-org key in email settings.
+    console.error("[sendEmail] no Resend API key configured (RESEND_API_KEY env or org email settings) — skipping send");
+    throw new Error("Email is not configured (no Resend API key).");
+  }
   // Same logic for the From address — only use a DB-configured value when it
   // is non-empty AND plausibly an email; otherwise fall back to the default.
   const dbFrom = String(s.from_address_resend || "").trim();
@@ -874,7 +887,7 @@ async function sendReport(
       const tt = t.transferType === "direct" ? "Direct" : t.transferType === "appointment" ? "Appt" : null;
       const tf = t.leadTimeframe ? String(t.leadTimeframe).replace(/_/g, " ") : null;
       const followup = t.requiresFollowup
-        ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${t.followupDate ? ` by ${t.followupDate}` : ""}</strong>${t.followupReason ? ` — ${esc(t.followupReason)}` : ""}</div>`
+        ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${t.followupDate ? ` by ${esc(String(t.followupDate))}` : ""}</strong>${t.followupReason ? ` — ${esc(t.followupReason)}` : ""}</div>`
         : "";
       return `<div style="padding:10px 0;${i < transferDetails.length - 1 ? "border-bottom:1px solid #dcfce7" : ""}">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2723,14 +2736,15 @@ function buildCompApprovalEmail(
   const rows = items.map((r) => {
     const dateTag = r.expense_date ? ` <span style=\"color:#94a3b8\">(${r.expense_date})</span>` : "";
     const stateTag = r.status === "approved" ? ` <span style=\"color:#0284c7;font-size:12px\">approved, awaiting payment</span>` : "";
-    return `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
+    return `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${eodActivityEsc(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
   }).join("");
   const approveUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=approve`;
   const denyUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=deny`;
   const paidUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=paid`;
+  const requesterSafe = eodActivityEsc(requesterName);
   const intro = reminder
-    ? `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>Reminder:</strong> the comp request from <strong>${requesterName}</strong> for <strong>${fmt(totalCents)}</strong> has been waiting <strong>${reminder.days} day(s)</strong> without being fully approved and paid. Please take action below.</p>`
-    : `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> submitted a comp request totaling <strong>${fmt(totalCents)}</strong>. Approve, deny, or mark it paid below.</p>`;
+    ? `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>Reminder:</strong> the comp request from <strong>${requesterSafe}</strong> for <strong>${fmt(totalCents)}</strong> has been waiting <strong>${reminder.days} day(s)</strong> without being fully approved and paid. Please take action below.</p>`
+    : `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterSafe}</strong> submitted a comp request totaling <strong>${fmt(totalCents)}</strong>. Approve, deny, or mark it paid below.</p>`;
   const body = `${intro}
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}
       <tr><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D">Total</td><td style="padding:10px;font-size:14px;font-weight:700;color:#0F182D;text-align:right">${fmt(totalCents)}</td></tr>
@@ -2763,8 +2777,8 @@ function buildTimeOffApprovalEmail(
   const range = reqRow.start_date === reqRow.end_date ? prettyDate(reqRow.start_date) : (prettyDate(reqRow.start_date) + " &rarr; " + prettyDate(reqRow.end_date));
   const approveUrl = `${COMP_APP_URL}/api/time-off/email-decision?token=${reqRow.approval_token}&action=approve`;
   const denyUrl = `${COMP_APP_URL}/api/time-off/email-decision?token=${reqRow.approval_token}&action=deny`;
-  const reasonRow = reqRow.reason ? `<tr><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Reason</td><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right">${reqRow.reason}</td></tr>` : "";
-  const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> requested time off. Approve or deny it below.</p>
+  const reasonRow = reqRow.reason ? `<tr><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Reason</td><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right">${eodActivityEsc(reqRow.reason)}</td></tr>` : "";
+  const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${eodActivityEsc(requesterName)}</strong> requested time off. Approve or deny it below.</p>
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">
       <tr><td style="padding:8px 10px;font-size:13px;color:#64748b">Dates</td><td style="padding:8px 10px;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${range}</td></tr>
       <tr><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Length</td><td style="padding:8px 10px;border-top:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right">${days} day${days === 1 ? "" : "s"}</td></tr>
@@ -3102,8 +3116,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // bootstrap-token pattern). ?since=YYYY-MM-DD bounds by outcome date.
   app.get("/api/transfers", (req: any, res: any) => {
     const token = req.headers["x-api-token"] || req.headers["x-bootstrap-token"];
-    const expected = process.env.TRANSFER_API_TOKEN || "06e30810-b43c-4bad-8fac-0093a269a917";
-    if (token !== expected) return res.status(401).json({ error: "Unauthorized" });
+    const expected = process.env.TRANSFER_API_TOKEN || "";
+    if (!expected || token !== expected) return res.status(401).json({ error: "Unauthorized" });
     try {
       const since = typeof req.query.since === "string" ? req.query.since : undefined;
       const rows = storage.getLeadOutcomes({ outcomeType: "transfer", startDate: since }) as any[];
@@ -3149,8 +3163,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // verification_status/reason/verified_at on each lead_outcome so C3 shows it.
   app.post("/api/transfers/verification", (req: any, res: any) => {
     const token = req.headers["x-api-token"] || req.headers["x-bootstrap-token"];
-    const expected = process.env.TRANSFER_API_TOKEN || "06e30810-b43c-4bad-8fac-0093a269a917";
-    if (token !== expected) return res.status(401).json({ error: "Unauthorized" });
+    const expected = process.env.TRANSFER_API_TOKEN || "";
+    if (!expected || token !== expected) return res.status(401).json({ error: "Unauthorized" });
     try {
       const items = Array.isArray(req.body?.results) ? req.body.results : [];
       const rawDb = (storageExtra as any).getRawSqlite();
@@ -3176,7 +3190,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // in X-Bootstrap-Token (so the import can be triggered without a session).
   app.post("/api/admin/import-ethan-outcomes", async (req: any, res: any) => {
     const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
     if (!isBootstrap) {
       const raw = (req as any).signedCookies?.[COOKIE_NAME];
       if (!raw) return res.status(401).json({ error: "Unauthorized" });
@@ -3271,7 +3285,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Verify Ethan's outcome count ─────────────────────────────────────────
   app.get("/api/admin/ethan-outcomes-count", (req: any, res: any) => {
     const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
     if (!isBootstrap) {
       const raw = (req as any).signedCookies?.[COOKIE_NAME];
       if (!raw) return res.status(401).json({ error: "Unauthorized" });
@@ -3299,7 +3313,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // historical outcomes/assignments tied to them.
   function isBootstrapOrAdmin(req: any): boolean {
     const bootstrap = req.headers["x-bootstrap-token"];
-    if (typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917") return true;
+    if (typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN)) return true;
     try {
       const raw = (req as any).signedCookies?.[COOKIE_NAME];
       if (!raw) return false;
@@ -3432,7 +3446,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── One-time import v2: Ryan + Randy outcomes ────────────────────────────
   app.post("/api/admin/run-import-v2", async (req: any, res: any) => {
     const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
     if (!isBootstrap) {
       const sess = req.session_user;
       const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
@@ -4406,7 +4420,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // that single endpoint be reached from automation without a session.
     if (req.path === "/loan-officers/import") {
       const bootstrap = (req.headers["x-bootstrap-token"] ?? "") as string;
-      if (bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917") return next();
+      if ((!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN)) return next();
     }
     requireAuth(req, res, next);
   });
@@ -4416,10 +4430,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(storage.getUsers());
   });
 
-  app.post("/api/users", async (req, res) => {
+  app.post("/api/users", async (req: any, res) => {
+    // Creating team members is an admin-only action (the global /api guard already
+    // requires a session; this adds the missing role check). Re-derive from DB.
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    const isAdmin = !!(me && (me.role === "admin" || me.superAdmin || me.super_admin));
+    const isSuper = !!(me && (me.superAdmin || me.super_admin));
+    if (!isAdmin) return res.status(403).json({ error: "Admins only" });
     const parsed = insertUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const newUser = storage.createUser(parsed.data);
+    // Force the new user into the creator's org; only a super-admin may mint a
+    // super-admin or place a user in another org (anti mass-assignment).
+    const createData: any = { ...parsed.data };
+    if (!isSuper) {
+      delete createData.superAdmin; delete createData.super_admin;
+      createData.orgId = Number(me?.orgId ?? me?.org_id ?? req.session_user?.orgId ?? 1) || 1;
+    }
+    const newUser = storage.createUser(createData);
 
     // Generate WCL-themed temp password, hash + store, flag must_change_password
     const WCL_WORDS = ["Lending", "Capital", "Realty", "Connect", "Bridge", "Funded", "Closed"];
@@ -4516,11 +4543,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.patch("/api/users/:id", requireAuth, async (req: any, res) => {
     const id = parseInt(req.params.id);
     const { newPassword, ...rest } = req.body;
-    // Only admins can edit other users
     const requester = req.session_user;
-    if (requester.userId !== id && requester.role !== "admin") {
+    // Re-derive privileges from the DB — never trust the cookie's role for this.
+    const me = storage.getUserById(Number(requester?.userId)) as any;
+    const isAdmin = !!(me && (me.role === "admin" || me.superAdmin || me.super_admin));
+    const isSuper = !!(me && (me.superAdmin || me.super_admin));
+    if (requester.userId !== id && !isAdmin) {
       return res.status(403).json({ error: "Admins only" });
     }
+    // Privilege + tenancy columns may ONLY be set by an admin (superAdmin only by
+    // a super-admin). Strip them from a non-admin's request so a user cannot
+    // escalate their own role, flip manager/clr/stats flags, change org, or
+    // reactivate themselves via a self-edit (mass-assignment guard).
+    const PRIVILEGED = [
+      "role", "isManager", "is_manager", "isClr", "is_clr",
+      "excludeFromStats", "exclude_from_stats", "inDailyAssignments", "in_daily_assignments",
+      "isActive", "is_active", "orgId", "org_id", "mustChangePassword", "must_change_password",
+    ];
+    if (!isAdmin) for (const k of PRIVILEGED) delete (rest as any)[k];
+    if (!isSuper) { delete (rest as any).superAdmin; delete (rest as any).super_admin; }
     if (newPassword?.trim()) {
       const hash = await bcrypt.hash(newPassword.trim(), 10);
       storage.setUserPassword(id, hash);
@@ -4673,7 +4714,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // bulk imports can be driven from automation without a browser session.
   app.post("/api/loan-officers/import", async (req: any, res) => {
     const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && bootstrap === "06e30810-b43c-4bad-8fac-0093a269a917";
+    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
     if (!isBootstrap) {
       const raw = (req as any).signedCookies?.[COOKIE_NAME];
       if (!raw) return res.status(401).json({ error: "Unauthorized" });
@@ -4691,6 +4732,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const { rows } = req.body ?? {};
       if (!Array.isArray(rows)) {
         return res.status(400).json({ error: "Request body must include a 'rows' array" });
+      }
+      if (rows.length > 5000) {
+        return res.status(400).json({ error: "Too many rows (max 5000 per import)." });
       }
 
       const existingLOs = storage.getLoanOfficers() as any[];
@@ -5100,7 +5144,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Copy credential endpoint (reveals plaintext password)
-  app.get("/api/loan-officers/:id/credentials", (req, res) => {
+  app.get("/api/loan-officers/:id/credentials", (req: any, res) => {
+    // Plaintext LO portal/email passwords. CLRs legitimately need these to work
+    // leads, so allow the operational team (admin / assistant / manager) but
+    // block read-only "viewer" (and any other low-trust) accounts from
+    // enumerating every LO's credentials.
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    const allowed = !!me && (me.role === "admin" || me.role === "assistant" || me.isManager || me.is_manager || me.superAdmin || me.super_admin);
+    if (!allowed) return res.status(403).json({ error: "Not allowed" });
     const lo: any = storage.getLoanOfficerById(parseInt(req.params.id));
     if (!lo) return res.status(404).json({ error: "Not found" });
     // Defense in depth: accept either camelCase (Drizzle / normalized) or
@@ -5507,7 +5558,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }).join("") + ((days as any).lunch?.minutes > 0
       ? `<tr><td style="padding:7px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#64748b">Lunch break</td><td style="padding:7px 10px;border-top:1px solid #e2e8f0;font-size:13px;color:#1e293b;text-align:right">${fmtSchedTime((days as any).lunch.start)} (${(days as any).lunch.minutes} min, daily)</td></tr>`
       : "");
-    const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${requesterName}</strong> submitted their weekly schedule. Approve or deny it below.</p>
+    const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${eodActivityEsc(requesterName)}</strong> submitted their weekly schedule. Approve or deny it below.</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 20px;border-collapse:collapse">${rows}</table>
       <table cellpadding="0" cellspacing="0"><tr>
         <td style="padding-right:8px"><a href="${approveUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 26px;border-radius:8px">Approve</a></td>
@@ -6081,6 +6132,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Comp Attachments (receipts/files) ─────────────────────────────────────────
   const COMP_ATTACH_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/heic", "application/pdf"]);
   const COMP_ATTACH_MAX_BYTES = 8 * 1024 * 1024; // 8 MB per file
+  const COMP_ATTACH_MAX_PER_REQUEST = 25; // cap attachments per comp request (anti disk-exhaustion)
   function compAttachAccess(compId: number, userId: number, orgId: number) {
     const db = storageExtra.getRawSqlite();
     const item = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(compId, orgId) as any;
@@ -6100,6 +6152,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const { item, canEdit } = compAttachAccess(compId, userId, orgId);
     if (!item) return res.status(404).json({ error: "Comp item not found" });
     if (!canEdit) return res.status(403).json({ error: "You cannot attach files to this item." });
+    // Cap how many attachments a single request can hold so a user can't loop
+    // 8 MB uploads to exhaust the SQLite DB / disk.
+    try {
+      const db0 = storageExtra.getRawSqlite();
+      const cnt = (db0.prepare("SELECT COUNT(*) AS c FROM comp_attachments WHERE comp_id=? AND org_id=?").get(compId, orgId) as any)?.c ?? 0;
+      if (cnt >= COMP_ATTACH_MAX_PER_REQUEST) return res.status(400).json({ error: `Attachment limit reached (max ${COMP_ATTACH_MAX_PER_REQUEST} per request).` });
+    } catch {}
     const filename = typeof req.body?.filename === "string" ? req.body.filename.slice(0, 200) : "file";
     const mime = typeof req.body?.mime === "string" ? req.body.mime.toLowerCase() : "";
     let data = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
@@ -7336,15 +7395,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ count: storage.getUnreadCount(userId) });
   });
 
-  app.post("/api/notifications", async (req, res) => {
-    const notif = storage.createNotification(req.body);
+  app.post("/api/notifications", async (req: any, res) => {
+    // Creating notifications / push for others is a manager/admin action —
+    // otherwise any user could spam or phish arbitrary (incl. cross-org) users
+    // through the trusted in-app + push channel.
+    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers/admins only" });
+    const body = req.body ?? {};
+    // A targeted notification must be for a user in the caller's own org.
+    if (body.userId) {
+      const target = storage.getUserById(Number(body.userId)) as any;
+      const callerOrg = Number(req.session_user?.orgId ?? 1) || 1;
+      const targetOrg = Number(target?.orgId ?? target?.org_id ?? 1) || 1;
+      if (!target || targetOrg !== callerOrg) return res.status(404).json({ error: "Target user not found in your organization" });
+    }
+    const notif = storage.createNotification({
+      userId: body.userId ?? null,
+      type: body.type,
+      title: body.title,
+      message: body.message,
+    } as any);
     // Mirror as push
     try {
       const payload = { title: notif.title, body: notif.message, url: "/" };
       if (notif.userId) {
         sendPushToUser(notif.userId, payload).catch(() => {});
       } else {
-        // Broadcast: send to all active users
+        // Broadcast: send to all active users in the caller's org (getUsers is org-scoped)
         const all = (storage.getUsers() as any[]).filter((u: any) => u.isActive);
         sendPushToUsers(all.map((u: any) => u.id), payload).catch(() => {});
       }
@@ -7352,8 +7428,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(notif);
   });
 
-  app.patch("/api/notifications/:id/read", (req, res) => {
-    storage.markNotificationRead(parseInt(req.params.id));
+  app.patch("/api/notifications/:id/read", (req: any, res) => {
+    // Scope to the caller so a user can't flip another user's notification read.
+    storage.markNotificationRead(parseInt(req.params.id), Number(req.session_user?.userId));
     res.json({ ok: true });
   });
 
@@ -10324,7 +10401,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const body = `
           <div style="background:#1A2B4A;border-radius:10px;padding:22px 24px;margin-bottom:24px">
             <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.7px;font-weight:700">End of Day Report</p>
-            <h2 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:700">${clrName} &mdash; ${reportDateLong}</h2>
+            <h2 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:700">${eodActivityEsc(clrName)} &mdash; ${reportDateLong}</h2>
             <p style="margin:0;font-size:13px;color:#94a3b8">Submitted via CLR Connection Center</p>
           </div>
 
@@ -10382,7 +10459,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   const detailLine = (label: string, val: string | null | undefined) =>
                     val && String(val).trim() ? `<div style="font-size:12px;color:#334155;margin-top:4px"><strong style="color:#166534">${label}:</strong> ${escHtml(String(val).trim())}</div>` : '';
                   const followupLine = p.requiresFollowup
-                    ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${p.followupDate ? ` by ${p.followupDate}` : ''}</strong>${p.followupReason ? ` — ${escHtml(p.followupReason)}` : ''}</div>`
+                    ? `<div style="font-size:12px;color:#b45309;margin-top:4px;background:#fef3c7;padding:4px 8px;border-radius:4px;border-left:3px solid #d97706"><strong>⚑ Follow-up needed${p.followupDate ? ` by ${escHtml(String(p.followupDate))}` : ''}</strong>${p.followupReason ? ` — ${escHtml(p.followupReason)}` : ''}</div>`
                     : '';
                   return `<div style="padding:10px 0;${i < transferProspects.length - 1 ? 'border-bottom:1px solid #dcfce7' : ''}">
                     <div style="display:flex;align-items:center;gap:8px">
@@ -10510,7 +10587,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
           <!-- Week-to-date summary -->
           <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
-            <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#1A2B4A">📊 ${clrName}'s Stats This Week</p>
+            <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#1A2B4A">📊 ${eodActivityEsc(clrName)}'s Stats This Week</p>
             <p style="margin:0 0 12px;font-size:11px;color:#64748b">${wkStartLabel} – ${wkEndLabel} (Sun–Sat)${hasGoals ? " · progress toward weekly goals" : ""}</p>
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               ${wtdRow("Calls", wtdCalls, goalCalls, "#3B82F6")}
@@ -11733,6 +11810,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(400).json({ error: "type must be 'calls' or 'contacts'" });
     }
     if (!Array.isArray(rows)) return res.status(400).json({ error: "rows must be an array" });
+    if (rows.length > 5000) return res.status(400).json({ error: "Too many rows (max 5000 per import)." });
     let imported = 0;
     let matched = 0;
     let unmatched = 0;

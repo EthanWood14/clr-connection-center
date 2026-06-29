@@ -112,12 +112,26 @@ app.use((req, res, next) => {
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
+  // Routes whose responses contain secrets/PII — never log their bodies.
+  const SENSITIVE_PATH = /\/credentials$|^\/api\/auth\b|\/import$|email-decision|welcome-login/;
+  // Field names that should be redacted if they appear in any logged body.
+  const SENSITIVE_KEY = /password|secret|token|api[_-]?key|apikey|credential|bonzo|mailbox|resend/i;
+  const redact = (v: any): any => {
+    if (!v || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(redact);
+    const out: Record<string, any> = {};
+    for (const [k, val] of Object.entries(v)) {
+      out[k] = SENSITIVE_KEY.test(k) ? "[redacted]" : (typeof val === "object" ? redact(val) : val);
+    }
+    return out;
+  };
+
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (capturedJsonResponse && !SENSITIVE_PATH.test(path)) {
+        logLine += ` :: ${JSON.stringify(redact(capturedJsonResponse))}`;
       }
 
       log(logLine);

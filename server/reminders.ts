@@ -4,7 +4,7 @@ import { sendPushToUser, inQuietHours } from "./push";
 import { sendSms, isTwilioConfigured, normalizePhone } from "./sms";
 import { parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ } from "./business-day";
 
-const DEFAULT_RESEND_KEY = "re_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q";
+const DEFAULT_RESEND_KEY = process.env.RESEND_API_KEY || "";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
 function resolveResendKey(): string {

@@ -527,8 +527,8 @@ try {
 try {
   sqlite.prepare(`
     INSERT OR IGNORE INTO organizations (id, name, slug, company_name, resend_api_key, from_email, manager_emails, plan)
-    VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', 're_6yaHVd97_U3jABCg6Az64GCrkHCk2J24Q', 'reports@westcapitallending.center', ?, 'active')
-  `).run(JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"]));
+    VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', ?, 'reports@westcapitallending.center', ?, 'active')
+  `).run(process.env.RESEND_API_KEY || "", JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"]));
 } catch {}
 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -1015,7 +1015,7 @@ export interface IStorage {
   // Notifications
   getNotifications(userId?: number): Notification[];
   createNotification(data: InsertNotification): Notification;
-  markNotificationRead(id: number): void;
+  markNotificationRead(id: number, userId?: number): void;
   markAllNotificationsRead(userId: number): void;
   getUnreadCount(userId: number): number;
 
@@ -1326,7 +1326,15 @@ export class Storage implements IStorage {
   createNotification(data: InsertNotification) {
     return db.insert(notifications).values({ ...data, createdAt: new Date().toISOString() }).returning().get();
   }
-  markNotificationRead(id: number) {
+  markNotificationRead(id: number, userId?: number) {
+    // When a userId is supplied, only the recipient (or a broadcast row, userId
+    // NULL) can be marked read — prevents flipping another user's notification.
+    if (userId != null) {
+      db.update(notifications).set({ isRead: true })
+        .where(sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
+        .run();
+      return;
+    }
     db.update(notifications).set({ isRead: true }).where(eq(notifications.id, id)).run();
   }
   markAllNotificationsRead(userId: number) {
