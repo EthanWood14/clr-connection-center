@@ -438,7 +438,10 @@ async function sendEmail({ to, subject, html }: { to: string | string[]; subject
   // shorter/obviously-placeholder is treated as unset so we fall back to the
   // known-good default instead of hard-failing with "API key is invalid".
   const looksLikeRealKey = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey);
-  const apiKey = looksLikeRealKey ? dbKey : DEFAULT_RESEND_KEY;
+  // The RESEND_API_KEY env var wins over any DB-stored key. This makes key
+  // rotation a single env change and ensures a stale/revoked key left in the DB
+  // can never be used (it was the root cause of the 2026-06-30 key-abuse incident).
+  const apiKey = DEFAULT_RESEND_KEY || (looksLikeRealKey ? dbKey : "");
   if (!apiKey) {
     // Fail closed rather than send with an empty/invalid key. Configure
     // RESEND_API_KEY (env) or a valid per-org key in email settings.
@@ -2813,6 +2816,33 @@ export function registerRoutes(httpServer: Server, app: Express) {
   } catch (e) {
     console.error("[lo-creds] scrub failed", e);
   }
+
+  // ── Resend key rotation (2026-06-30 incident) ──────────────────────────────
+  // Overwrite any stale/revoked Resend key left in the DB with the current env
+  // value so a leaked key can't linger, and send one confirmation email to the
+  // owner proving the new key delivers. Guarded to run once.
+  setTimeout(() => { (async () => {
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+      if (sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name='resend_key_rotate_2026_06_30'`).get()) return;
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("resend_key_rotate_2026_06_30", new Date().toISOString());
+      const k = process.env.RESEND_API_KEY || "";
+      if (k) {
+        try { sqlite.prepare(`UPDATE email_settings SET resend_api_key=? WHERE id=1`).run(k); } catch {}
+        try { sqlite.prepare(`UPDATE organizations SET resend_api_key=? WHERE id=1`).run(k); } catch {}
+        console.log("[resend-rotate] synced DB resend_api_key to env value");
+      }
+      try {
+        await sendEmail({
+          to: "info@ethanwood.org",
+          subject: "C3 Resend key rotated — delivery confirmed",
+          html: buildEmail({ subject: "Email key rotated", preheader: "Your new Resend key is live.", body: `<p style="margin:0 0 14px;font-size:15px;color:#1e293b">This is an automated confirmation: the CLR Connection Center email key was rotated and the new key delivers successfully. The leaked key has been revoked and removed from the code and database.</p>` }),
+        });
+        console.log("[resend-rotate] confirmation email sent OK");
+      } catch (e: any) { console.error("[resend-rotate] confirmation email FAILED:", e?.message ?? e); }
+    } catch (e: any) { console.error("[resend-rotate] failed:", e?.message ?? e); }
+  })(); }, 6000);
 
   // ── lo_preferences migration ────────────────────────────────────────────────
   // Per-CLR-per-LO notes, preferred contact time, and pin flag for the daily

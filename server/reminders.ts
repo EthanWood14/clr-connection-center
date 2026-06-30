@@ -8,6 +8,8 @@ const DEFAULT_RESEND_KEY = process.env.RESEND_API_KEY || "";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
 function resolveResendKey(): string {
+  // Env wins over any DB key (rotation-proof; a stale/revoked DB key is ignored).
+  if (DEFAULT_RESEND_KEY) return DEFAULT_RESEND_KEY;
   try {
     const row = getRawSqlite().prepare(`SELECT resend_api_key FROM email_settings WHERE id=1`).get() as any;
     const dbKey = String(row?.resend_api_key || "").trim();
