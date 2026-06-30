@@ -58,11 +58,12 @@ type RangeBlock = {
   topLos: { id: number; name: string; transfers: number }[];
   leaderboard: {
     userId: number; name: string;
-    transfers: number; appointments: number; fellThrough: number;
+    transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; conversionRate: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
   }[];
+  textTransfersTotal?: number;
   heatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   callsHeatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
   topStates: { state: string; transfers: number }[];
@@ -909,6 +910,9 @@ export default function ManagerDashboard() {
           }
         >
           Leaderboard — {byRange[rangeLeaderboard]?.window?.label ?? ""}
+          {(leaderboardBlock?.textTransfersTotal ?? 0) > 0 && (
+            <span className="ml-2 text-xs font-normal text-muted-foreground">· {leaderboardBlock?.textTransfersTotal} from texting</span>
+          )}
         </SectionTitle>
         <Card>
           <CardContent className="p-0 overflow-x-auto">
@@ -917,12 +921,13 @@ export default function ManagerDashboard() {
                 <tr>
                   <th className="text-left px-4 py-2 font-medium">CLR</th>
                   <th className="text-right px-2 py-2 font-medium">Transfers</th>
+                  <th className="text-right px-2 py-2 font-medium" title="Transfers that came from texting (Bulk Texter)">Texting</th>
                   <th className="text-right px-4 py-2 font-medium">Calls</th>
                 </tr>
               </thead>
               <tbody>
                 {(leaderboardBlock?.leaderboard ?? []).length === 0 && (
-                  <tr><td colSpan={3} className="text-center text-muted-foreground py-6">No activity in this range</td></tr>
+                  <tr><td colSpan={4} className="text-center text-muted-foreground py-6">No activity in this range</td></tr>
                 )}
                 {(leaderboardBlock?.leaderboard ?? []).slice(0, 10).map((row, idx) => (
                   <tr key={row.userId} className="border-t">
@@ -939,6 +944,7 @@ export default function ManagerDashboard() {
                       </div>
                     </td>
                     <td className="text-right px-2 py-2 tabular-nums font-semibold" style={{ color: GREEN }}>{row.transfers ?? 0}</td>
+                    <td className="text-right px-2 py-2 tabular-nums font-medium brand-text-soft" title="from texting">{row.textTransfers ?? 0}</td>
                     <td className="text-right px-4 py-2 tabular-nums font-medium brand-text-soft">
                       {(row.calls ?? 0).toLocaleString()}
                     </td>

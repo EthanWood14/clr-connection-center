@@ -8330,11 +8330,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       `).all(startDate, endDate) as any[];
       const lbMsgsByUser = new Map<number, number>();
       for (const r of lbMsgs) lbMsgsByUser.set(r.assistant_id, Number(r.messages) || 0);
+      // Texting-sourced transfers (Bulk Texter) per CLR for this range.
+      const lbTextByUser = new Map<number, number>();
+      try {
+        const lbText = sqlite.prepare(`
+          SELECT assistant_id, COUNT(*) AS n
+          FROM lead_outcomes
+          WHERE outcome_type='transfer' AND bulk_texter=1 AND date >= ? AND date <= ?${exClause}
+          GROUP BY assistant_id
+        `).all(startDate, endDate) as any[];
+        for (const r of lbText) lbTextByUser.set(r.assistant_id, Number(r.n) || 0);
+      } catch { /* bulk_texter column may not exist on older DBs */ }
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
           const calls = lbCallsByUser.get(u.id) ?? 0;
           const messages = lbMsgsByUser.get(u.id) ?? 0;
+          const textTransfers = lbTextByUser.get(u.id) ?? 0;
           const conversionRate = s.total > 0 ? Math.round((s.transfers / s.total) * 100) : 0;
           // Outcome ratios as percentages of all logged outcomes (excludes pure call counts).
           const transferPct    = s.total > 0 ? Math.round((s.transfers    / s.total) * 1000) / 10 : 0;
@@ -8346,6 +8358,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             userId: u.id,
             name: u.name,
             transfers: s.transfers,
+            textTransfers,
             appointments: s.appointments,
             fellThrough: s.fellThrough,
             totalOutcomes: s.total,
@@ -8359,6 +8372,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
+      // Team total of texting-sourced transfers for this range.
+      const textTransfersTotal = leaderboard.reduce((acc: number, r: any) => acc + (r.textTransfers || 0), 0);
 
       // Per-CLR daily trend (transfers / appointments / fell-through, plus calls)
       // Used by the "CLR trend comparison" chart.
@@ -8504,7 +8519,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           .slice(0, 8);
       } catch (e) { /* phone_number column may not exist on older DBs */ }
 
-      return { trend, clrTrend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, heatmap, callsHeatmap, topStates, statesDiagnostics };
+      return { trend, clrTrend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, textTransfersTotal, heatmap, callsHeatmap, topStates, statesDiagnostics };
     }
 
     const byRange: Record<string, any> = {};
