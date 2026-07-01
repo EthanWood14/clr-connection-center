@@ -1915,6 +1915,10 @@ function runNewMigrations() {
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  // Optional pasted/attached image on a chat message (base64 + mime). Kept in a
+  // separate column so it can be excluded from the polled message list.
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN image_data TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN image_mime TEXT`); } catch {}
   // Emoji reactions on chat messages (one row per user+emoji+message).
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2661,20 +2665,27 @@ export function escalateNmlsCheck(id: number) {
 
 // ── Chat Messages storage ──────────────────────────────────────────────────────
 export function getChatMessages(limit = 100, beforeId?: number): any[] {
+  // Exclude the heavy image_data blob from the polled list — the client loads
+  // images lazily via GET /api/chat/:id/image. image_mime flags that one exists.
+  const cols = `id, user_id, user_name, message, image_mime, created_at`;
   if (beforeId) {
     return sqlite.prepare(
-      `SELECT * FROM chat_messages WHERE id < ? ORDER BY id DESC LIMIT ?`
+      `SELECT ${cols} FROM chat_messages WHERE id < ? ORDER BY id DESC LIMIT ?`
     ).all(beforeId, limit) as any[];
   }
   return sqlite.prepare(
-    `SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?`
+    `SELECT ${cols} FROM chat_messages ORDER BY id DESC LIMIT ?`
   ).all(limit) as any[];
 }
-export function postChatMessage(userId: number, userName: string, message: string): any {
+export function postChatMessage(userId: number, userName: string, message: string, imageData?: string | null, imageMime?: string | null): any {
   const result = sqlite.prepare(
-    `INSERT INTO chat_messages (user_id, user_name, message) VALUES (?, ?, ?)`
-  ).run(userId, userName, message);
-  return sqlite.prepare(`SELECT * FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+    `INSERT INTO chat_messages (user_id, user_name, message, image_data, image_mime) VALUES (?, ?, ?, ?, ?)`
+  ).run(userId, userName, message, imageData ?? null, imageMime ?? null);
+  // Return the row WITHOUT the blob (client fetches the image via its endpoint).
+  return sqlite.prepare(`SELECT id, user_id, user_name, message, image_mime, created_at FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+}
+export function getChatImage(id: number): { image_data: string | null; image_mime: string | null } | undefined {
+  return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=?`).get(id) as any;
 }
 export function deleteChatMessage(id: number): void {
   sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);

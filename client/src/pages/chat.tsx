@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -45,6 +45,7 @@ export default function Chat() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const [pendingImage, setPendingImage] = useState<{ dataUrl: string; base64: string; mime: string } | null>(null);
   const chatMuted = !!(user as any)?.muteChatNotifications;
   const [muting, setMuting] = useState(false);
   async function toggleChatMute() {
@@ -69,6 +70,7 @@ export default function Chat() {
   }
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const { data, isLoading } = useQuery<{ messages: any[] }>({
@@ -86,15 +88,43 @@ export default function Chat() {
   }, [messages.length, autoScroll]);
 
   const sendMsg = useMutation({
-    mutationFn: (message: string) => apiRequest("POST", "/api/chat", { message }),
+    mutationFn: (payload: { message: string; image: { base64: string; mime: string } | null }) =>
+      apiRequest("POST", "/api/chat", { message: payload.message, imageBase64: payload.image?.base64, imageMime: payload.image?.mime }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/chat"] });
       setDraft("");
+      setPendingImage(null);
       setAutoScroll(true);
       setTimeout(() => inputRef.current?.focus(), 50);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  // Read an image file (from paste or the picker) into a pending attachment.
+  function ingestImageFile(file: File | null | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
+    if (file.size > 5 * 1024 * 1024) { toast({ title: "Image too large", description: "Max 5 MB.", variant: "destructive" }); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      const comma = dataUrl.indexOf(",");
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      setPendingImage({ dataUrl, base64, mime: file.type });
+    };
+    reader.readAsDataURL(file);
+  }
+  // Paste a screenshot/image from the clipboard straight into the composer.
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const f = items[i].getAsFile();
+        if (f) { ingestImageFile(f); e.preventDefault(); }
+        return;
+      }
+    }
+  }
 
   const deleteMsg = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/chat/${id}`),
@@ -113,8 +143,8 @@ export default function Chat() {
   function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
     const text = draft.trim();
-    if (!text || sendMsg.isPending) return;
-    sendMsg.mutate(text);
+    if ((!text && !pendingImage) || sendMsg.isPending) return;
+    sendMsg.mutate({ message: text, image: pendingImage ? { base64: pendingImage.base64, mime: pendingImage.mime } : null });
   }
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -260,6 +290,16 @@ export default function Chat() {
                             ? "bg-primary text-primary-foreground rounded-tr-sm"
                             : "bg-white dark:bg-zinc-800 border rounded-tl-sm shadow-sm"
                         }`}>
+                          {m.image_mime && (
+                            <a href={`/api/chat/${m.id}/image`} target="_blank" rel="noreferrer" className="block">
+                              <img
+                                src={`/api/chat/${m.id}/image`}
+                                alt="shared image"
+                                loading="lazy"
+                                className={`rounded-lg max-w-[240px] max-h-[300px] object-contain ${m.message ? "mb-1.5" : ""}`}
+                              />
+                            </a>
+                          )}
                           {m.message}
                         </div>
                         {/* React button + picker */}
@@ -332,28 +372,68 @@ export default function Chat() {
       )}
 
       {/* Input bar */}
-      <form onSubmit={handleSend} className="flex items-center gap-2 mt-3">
-        <Input
-          ref={inputRef}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          placeholder="Message the team..."
-          className="flex-1 rounded-full px-4"
-          maxLength={1000}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-          autoFocus
-        />
-        <Button
-          type="submit"
-          size="icon"
-          className="rounded-full w-10 h-10 shrink-0"
-          disabled={!draft.trim() || sendMsg.isPending}
-        >
-          <Send className="w-4 h-4" />
-        </Button>
+      <form onSubmit={handleSend} className="mt-3">
+        {pendingImage && (
+          <div className="mb-2 flex items-center gap-2">
+            <div className="relative">
+              <img src={pendingImage.dataUrl} alt="attachment preview" className="h-16 w-16 rounded-lg object-cover border" />
+              <button
+                type="button"
+                onClick={() => setPendingImage(null)}
+                className="absolute -top-1.5 -right-1.5 rounded-full bg-background border shadow p-0.5 text-muted-foreground hover:text-destructive"
+                aria-label="Remove image"
+                data-testid="chat-remove-image"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <span className="text-xs text-muted-foreground">Image ready — press Enter or Send</span>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => { ingestImageFile(e.target.files?.[0]); if (imgInputRef.current) imgInputRef.current.value = ""; }}
+            data-testid="chat-image-input"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="rounded-full w-10 h-10 shrink-0"
+            onClick={() => imgInputRef.current?.click()}
+            title="Attach an image"
+            aria-label="Attach an image"
+            data-testid="chat-attach-image"
+          >
+            <ImageIcon className="w-4 h-4" />
+          </Button>
+          <Input
+            ref={inputRef}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onPaste={handlePaste}
+            placeholder="Message the team… (paste a screenshot too)"
+            className="flex-1 rounded-full px-4"
+            maxLength={1000}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            autoFocus
+          />
+          <Button
+            type="submit"
+            size="icon"
+            className="rounded-full w-10 h-10 shrink-0"
+            disabled={(!draft.trim() && !pendingImage) || sendMsg.isPending}
+          >
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
       </form>
       <p className="text-[10px] text-muted-foreground text-center mt-1.5">
-        Press Enter to send · {draft.length}/1000
+        Press Enter to send · paste or attach a screenshot · {draft.length}/1000
       </p>
       </div>
     </div>

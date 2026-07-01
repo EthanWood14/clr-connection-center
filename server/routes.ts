@@ -8607,6 +8607,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ messages: withReactions });
   });
 
+  // Serve a chat message's image blob (lazy-loaded by the client so the polled
+  // message list stays light). Auth-gated like the rest of chat.
+  app.get("/api/chat/:id/image", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id);
+    const row = storageExtra.getChatImage(id);
+    if (!row || !row.image_data || !row.image_mime) return res.status(404).send("Not found");
+    try {
+      const buf = Buffer.from(row.image_data, "base64");
+      res.setHeader("Content-Type", row.image_mime);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.send(buf);
+    } catch { res.status(500).send("error"); }
+  });
+
   // Toggle an emoji reaction on a chat message.
   const CHAT_EMOJIS = new Set(["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"]);
   app.post("/api/chat/:id/react", requireAuth, (req: any, res) => {
@@ -8621,16 +8635,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to react" }); }
   });
 
-  app.post("/api/chat", requireAuth, (req, res) => {
-    const { message } = req.body;
-    if (!message || typeof message !== "string" || !message.trim()) {
-      return res.status(400).json({ error: "Message cannot be empty" });
+  app.post("/api/chat", requireAuth, (req: any, res) => {
+    const { message, imageBase64, imageMime } = req.body;
+    const text = typeof message === "string" ? message.trim() : "";
+    // Optional pasted/attached image (e.g. a screenshot).
+    let imgData: string | null = null;
+    let imgMime: string | null = null;
+    if (imageBase64 && typeof imageBase64 === "string") {
+      const CHAT_IMG_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/heic"]);
+      const m = typeof imageMime === "string" ? imageMime.toLowerCase() : "";
+      let data = imageBase64;
+      const comma = data.indexOf(",");
+      if (data.startsWith("data:") && comma >= 0) data = data.slice(comma + 1);
+      if (!CHAT_IMG_MIMES.has(m)) return res.status(400).json({ error: "Unsupported image type. Use an image (PNG/JPG/etc)." });
+      const sizeBytes = Math.floor(data.length * 3 / 4);
+      if (sizeBytes > 5 * 1024 * 1024) return res.status(400).json({ error: "Image too large (max 5 MB)." });
+      imgData = data; imgMime = m;
     }
-    if (message.trim().length > 1000) {
-      return res.status(400).json({ error: "Message too long (max 1000 chars)" });
-    }
+    if (!text && !imgData) return res.status(400).json({ error: "Message cannot be empty" });
+    if (text.length > 1000) return res.status(400).json({ error: "Message too long (max 1000 chars)" });
     const user = storage.getUserById(req.session_user!.userId) as any;
-    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", message.trim());
+    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime);
 
     // Push + in-app notify all other active users in the org
     try {
@@ -8640,7 +8665,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
         && !(u.muteChatNotifications ?? u.mute_chat_notifications)
       );
-      const trimmed = message.trim();
+      const trimmed = text || (imgData ? "📷 Photo" : "");
       const preview = trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
       const pushPayload = {
         title: `💬 ${senderName}`,
