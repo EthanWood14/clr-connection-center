@@ -396,16 +396,19 @@ function ManagersPanel() {
 }
 
 function CompSheetButton({ compId, label = "Comp PDF" }: { compId: number; label?: string }) {
+  // A real <a target="_blank"> rather than window.open() — Chrome's popup
+  // blocker silently blocks scripted window.open, but genuine link clicks open.
   return (
-    <button
-      type="button"
-      onClick={() => window.open("/api/comp/" + compId + "/sheet?print=1", "_blank", "noopener")}
+    <a
+      href={"/api/comp/" + compId + "/sheet?print=1"}
+      target="_blank"
+      rel="noopener"
       className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
       data-testid={"comp-pdf-" + compId}
       title="Open a full printable comp request (with receipts) to save as PDF"
     >
       <FileText className="w-3 h-3" /> {label}
-    </button>
+    </a>
   );
 }
 
@@ -748,15 +751,6 @@ export default function CompRequests() {
     },
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
-  function openPayoutSheetFor(ids: number[]) {
-    if (!ids.length) return;
-    window.open("/api/comp/payout-sheet?ids=" + ids.join(",") + "&print=1", "_blank", "noopener");
-  }
-  // Export the WHOLE payout center as one PDF (every approved-unpaid request,
-  // across all pay runs). No ids → the server renders all of them together.
-  function openAllPayoutSheet() {
-    window.open("/api/comp/payout-sheet?print=1", "_blank", "noopener");
-  }
 
   const amountValid = parseFloat(amount || "0") > 0;
   const canSubmit = !!description.trim() && amountValid && !createMutation.isPending;
@@ -961,8 +955,10 @@ export default function CompRequests() {
                 <BadgeDollarSign className="w-4 h-4 text-emerald-600" /> Payout Center
                 <Badge className="ml-1 bg-emerald-600 text-white text-[10px] px-1.5">{approvedUnpaid.length} awaiting payout</Badge>
               </CardTitle>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={openAllPayoutSheet} data-testid="button-payout-export-all">
-                <FileText className="w-3.5 h-3.5" /> Export all (PDF)
+              <Button asChild variant="outline" size="sm" className="gap-1.5" data-testid="button-payout-export-all">
+                <a href="/api/comp/payout-sheet?print=1" target="_blank" rel="noopener">
+                  <FileText className="w-3.5 h-3.5" /> Export all (PDF)
+                </a>
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -1015,9 +1011,17 @@ export default function CompRequests() {
                   <div className="flex items-center justify-between gap-3 flex-wrap border-t border-border px-3 py-2">
                     <span className="text-xs text-muted-foreground">{included.length} of {g.items.length} selected</span>
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openPayoutSheetFor(included.map(r => r.id))} disabled={included.length === 0}>
-                        <FileText className="w-3.5 h-3.5" /> PDF
-                      </Button>
+                      {included.length === 0 ? (
+                        <Button variant="outline" size="sm" className="gap-1.5" disabled>
+                          <FileText className="w-3.5 h-3.5" /> PDF
+                        </Button>
+                      ) : (
+                        <Button asChild variant="outline" size="sm" className="gap-1.5">
+                          <a href={`/api/comp/payout-sheet?ids=${included.map(r => r.id).join(",")}&print=1`} target="_blank" rel="noopener">
+                            <FileText className="w-3.5 h-3.5" /> PDF
+                          </a>
+                        </Button>
+                      )}
                       {isProcessing ? (
                         <Button
                           variant="outline" size="sm" className="gap-1.5"
