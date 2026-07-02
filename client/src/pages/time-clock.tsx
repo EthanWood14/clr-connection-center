@@ -30,11 +30,13 @@ type TCResp = { scope: string; isManager: boolean; entries: Entry[]; open: Entry
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-// ISO datetime → value for <input type="datetime-local"> in the browser's local tz.
+// ISO datetime → value for <input type="datetime-local"> in the browser's local
+// tz. Includes seconds (step="1") so short/same-minute shifts round-trip exactly
+// and don't fail the "clock-out after clock-in" check on edit.
 function isoToLocalInput(iso: string): string {
   const d = new Date(iso);
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 // Local datetime-local value → full ISO (UTC) using the browser's tz.
 function localInputToIso(v: string): string | null {
@@ -305,11 +307,11 @@ export default function TimeClock() {
           <div className="space-y-3 py-1">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Clock in</label>
-              <Input type="datetime-local" value={fIn} onChange={e => setFIn(e.target.value)} data-testid="tc-in" />
+              <Input type="datetime-local" step="1" value={fIn} onChange={e => setFIn(e.target.value)} data-testid="tc-in" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Clock out <span className="font-normal">(optional)</span></label>
-              <Input type="datetime-local" value={fOut} onChange={e => setFOut(e.target.value)} data-testid="tc-out" />
+              <Input type="datetime-local" step="1" value={fOut} onChange={e => setFOut(e.target.value)} data-testid="tc-out" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>
