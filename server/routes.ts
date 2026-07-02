@@ -2076,8 +2076,8 @@ cron.schedule("0 15 * * 1", async () => {
 // per PT day via an in-memory + persisted guard:
 //   • Wednesday    8:00 AM PT → month-to-date report (1st → today)
 //   • Friday       6:00 PM PT → end-of-week report (this week Mon → Fri)
-//   • Last of month 6:00 PM PT → end-of-month report (whole month) + a
-//                                preliminary comp summary per CLR
+//   • 1st of month 8:00 AM PT → monthly report covering the FULL previous
+//                                calendar month + a comp summary for that month
 // Always-on (independent of the daily/Monday toggles); still needs recipients.
 let extraReportFiredAt: { wedMtd: string; friEow: string; eom: string } = { wedMtd: "", friEow: "", eom: "" };
 cron.schedule("* * * * *", async () => {
@@ -2127,23 +2127,29 @@ cron.schedule("* * * * *", async () => {
       }
     }
 
-    // End-of-month — last day of the month, 6:00 PM PT. Monthly summary for the
-    // current month + a preliminary comp estimate from current transfer entries.
+    // Monthly summary — fires on the 1st of the month, 8:00 AM PT, covering the
+    // FULL *previous* calendar month (the month that just ended) + a comp
+    // estimate for that month. (Previously ran on the last day covering the
+    // current/ending month; changed so the monthly report covers last month.)
     {
       const [yy, mm, dd] = ptDateKey.split("-").map(n => parseInt(n, 10));
-      const tomorrow = new Date(Date.UTC(yy, mm - 1, dd + 1, 12, 0, 0));
-      const isLastDayOfMonth = (tomorrow.getUTCMonth() + 1) !== mm; // month rolls over tomorrow
-      if (isLastDayOfMonth && extraReportFiredAt.eom !== ptDateKey && !reportSentOn(s, "eom", ptDateKey)) {
-        const target = 18 * 60, cutoff = 23 * 60 + 30;
+      if (dd === 1 && extraReportFiredAt.eom !== ptDateKey && !reportSentOn(s, "eom", ptDateKey)) {
+        const target = 8 * 60, cutoff = 19 * 60; // 8 AM PT, 7 PM lateness cutoff
         if (nowMinutes >= target && nowMinutes < cutoff) {
           extraReportFiredAt.eom = ptDateKey; markReportSent("eom", ptDateKey);
-          const monthStart = `${yy}-${String(mm).padStart(2, "0")}-01`;
+          // Previous calendar month range (handles Jan → prior-year Dec).
+          const prev = new Date(Date.UTC(yy, mm - 2, 1)); // mm is 1-based; mm-2 = prev month (0-based)
+          const py = prev.getUTCFullYear();
+          const pm = prev.getUTCMonth() + 1; // 1-based
+          const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+          const pmStart = `${py}-${String(pm).padStart(2, "0")}-01`;
+          const pmEnd = `${py}-${String(pm).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
           try {
             await sendReport("monthly", {
-              customRange: { startDate: monthStart, endDate: ptDateKey },
-              appendBodyHtml: buildCompSummaryHtml(monthStart, ptDateKey),
+              customRange: { startDate: pmStart, endDate: pmEnd },
+              appendBodyHtml: buildCompSummaryHtml(pmStart, pmEnd),
             });
-          } catch (e: any) { console.error("[eom] report failed:", e?.message ?? e); }
+          } catch (e: any) { console.error("[monthly] report failed:", e?.message ?? e); }
         } else if (nowMinutes >= cutoff) {
           extraReportFiredAt.eom = ptDateKey; markReportSent("eom", ptDateKey);
         }
