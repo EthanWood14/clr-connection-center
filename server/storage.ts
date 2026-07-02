@@ -1930,6 +1930,27 @@ function runNewMigrations() {
   )`);
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_chat_reactions_msg ON chat_reactions(message_id)`); } catch {}
 
+  // ── Time clock ────────────────────────────────────────────────────────────
+  // Clock-in/out shifts. clock_out NULL = currently clocked in. Times are ISO
+  // strings (UTC). Entries can be added/edited retroactively; a monthly payroll
+  // summary totals hours × rate (+ self-employment reimbursement).
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS time_clock_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL,
+    clock_in TEXT NOT NULL,
+    clock_out TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_timeclock_user ON time_clock_entries(user_id, clock_in)`); } catch {}
+  // Per-user hourly rate override (cents). NULL = use the org default rate.
+  try { sqlite.exec(`ALTER TABLE users ADD COLUMN hourly_rate_cents INTEGER`); } catch {}
+  // Org-level pay settings (defaults: $16.80/hr, +7.65% self-employment reimbursement).
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN pay_rate_cents INTEGER NOT NULL DEFAULT 1680`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN se_reimb_rate REAL NOT NULL DEFAULT 0.0765`); } catch {}
+
   // EOD reports table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2686,6 +2707,67 @@ export function postChatMessage(userId: number, userName: string, message: strin
 }
 export function getChatImage(id: number): { image_data: string | null; image_mime: string | null } | undefined {
   return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=?`).get(id) as any;
+}
+
+// ── Time clock storage ──────────────────────────────────────────────────────
+export function getTimeClockEntries(filters?: { userId?: number; startDate?: string; endDate?: string; orgId?: number }): any[] {
+  const wheres: string[] = [];
+  const params: any[] = [];
+  if (filters?.userId != null) { wheres.push("user_id = ?"); params.push(filters.userId); }
+  if (filters?.orgId != null) { wheres.push("org_id = ?"); params.push(filters.orgId); }
+  if (filters?.startDate) { wheres.push("substr(clock_in,1,10) >= ?"); params.push(filters.startDate); }
+  if (filters?.endDate) { wheres.push("substr(clock_in,1,10) <= ?"); params.push(filters.endDate); }
+  const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
+  return sqlite.prepare(`SELECT * FROM time_clock_entries ${where} ORDER BY clock_in DESC`).all(...params) as any[];
+}
+export function getTimeClockEntryById(id: number): any {
+  return sqlite.prepare(`SELECT * FROM time_clock_entries WHERE id=?`).get(id) as any;
+}
+export function getOpenTimeClock(userId: number): any {
+  return sqlite.prepare(`SELECT * FROM time_clock_entries WHERE user_id=? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1`).get(userId) as any;
+}
+export function clockIn(userId: number, orgId: number, whenIso: string, note?: string | null): any {
+  const now = new Date().toISOString();
+  const r = sqlite.prepare(`INSERT INTO time_clock_entries (org_id, user_id, clock_in, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`).run(orgId, userId, whenIso, note ?? null, now, now);
+  return getTimeClockEntryById(Number(r.lastInsertRowid));
+}
+export function clockOutEntry(id: number, whenIso: string): any {
+  sqlite.prepare(`UPDATE time_clock_entries SET clock_out=?, updated_at=? WHERE id=?`).run(whenIso, new Date().toISOString(), id);
+  return getTimeClockEntryById(id);
+}
+export function createTimeClockEntry(orgId: number, userId: number, clockInIso: string, clockOutIso: string | null, note?: string | null): any {
+  const now = new Date().toISOString();
+  const r = sqlite.prepare(`INSERT INTO time_clock_entries (org_id, user_id, clock_in, clock_out, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(orgId, userId, clockInIso, clockOutIso, note ?? null, now, now);
+  return getTimeClockEntryById(Number(r.lastInsertRowid));
+}
+export function updateTimeClockEntry(id: number, patch: { clockIn?: string; clockOut?: string | null; note?: string | null }): any {
+  const fields: string[] = []; const params: any[] = [];
+  if (patch.clockIn !== undefined) { fields.push("clock_in=?"); params.push(patch.clockIn); }
+  if (patch.clockOut !== undefined) { fields.push("clock_out=?"); params.push(patch.clockOut); }
+  if (patch.note !== undefined) { fields.push("note=?"); params.push(patch.note); }
+  if (!fields.length) return getTimeClockEntryById(id);
+  fields.push("updated_at=?"); params.push(new Date().toISOString());
+  params.push(id);
+  sqlite.prepare(`UPDATE time_clock_entries SET ${fields.join(", ")} WHERE id=?`).run(...params);
+  return getTimeClockEntryById(id);
+}
+export function deleteTimeClockEntry(id: number): void {
+  sqlite.prepare(`DELETE FROM time_clock_entries WHERE id=?`).run(id);
+}
+// Resolve the effective pay rate for a user: their per-user override if set,
+// else the org default ($16.80/hr), plus the self-employment reimbursement rate.
+export function resolvePayRate(userId?: number): { rateCents: number; seRate: number } {
+  const s = getEmailSettings() as any;
+  let rateCents = Number(s?.pay_rate_cents ?? 1680) || 1680;
+  let seRate = Number(s?.se_reimb_rate ?? 0.0765);
+  if (!Number.isFinite(seRate)) seRate = 0.0765;
+  if (userId != null) {
+    try {
+      const u = sqlite.prepare(`SELECT hourly_rate_cents FROM users WHERE id=?`).get(userId) as any;
+      if (u && u.hourly_rate_cents != null && Number(u.hourly_rate_cents) > 0) rateCents = Number(u.hourly_rate_cents);
+    } catch {}
+  }
+  return { rateCents, seRate };
 }
 export function deleteChatMessage(id: number): void {
   sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);

@@ -46,6 +46,7 @@ import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
 import TimeOff from "@/pages/time-off";
 import CompRequests from "@/pages/comp-requests";
+import TimeClock from "@/pages/time-clock";
 import WeeklySchedule from "@/pages/weekly-schedule";
 import MyReport from "@/pages/my-report";
 import ReportsArchive from "@/pages/reports-archive";
@@ -112,6 +113,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/eod-report":     "EOD Reporting",
   "/time-off":       "Time Off",
   "/comp-requests":  "Comp Requests",
+  "/time-clock":     "Time Clock",
   "/my-schedule":    "Weekly Schedule",
   "/my-report":      "My Report",
   "/install":         "Install App",
@@ -162,6 +164,7 @@ function AppRouter() {
       <Route path="/eod-report" component={EodReport} />
       <Route path="/time-off" component={TimeOff} />
       <Route path="/comp-requests" component={CompRequests} />
+      <Route path="/time-clock" component={TimeClock} />
       <Route path="/my-schedule" component={WeeklySchedule} />
       <Route path="/my-report" component={MyReport} />
       <Route path="/reports-archive" component={ReportsArchive} />

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -186,6 +186,7 @@ const reportingItems: NavItem[] = [
 ];
 
 const personalItems: NavItem[] = [
+  { title: "Time Clock",      url: "/time-clock",    icon: Timer },
   { title: "Time Off",        url: "/time-off",      icon: Plane },
   { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
   { title: "Comp Requests",   url: "/comp-requests", icon: Wallet },

@@ -638,6 +638,70 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
   }
 }
 
+// Payroll summary for the monthly report: totals each person's completed clock
+// hours in the window and prices them at their rate + self-employment reimbursement.
+function buildTimeClockSummaryHtml(startDate: string, endDate: string): string {
+  try {
+    const sqlite = storageExtra.getRawSqlite();
+    const nameRows = sqlite.prepare(`SELECT id, name FROM users`).all() as any[];
+    const nameById = new Map<number, string>();
+    for (const u of nameRows) nameById.set(Number(u.id), String(u.name ?? `User #${u.id}`));
+    const entries = storageExtra.getTimeClockEntries({ startDate, endDate }) as any[];
+    const byUser = new Map<number, { name: string; hours: number; baseCents: number; seCents: number }>();
+    for (const e of entries) {
+      if (!e.clock_out) continue; // only completed shifts count toward pay
+      const inMs = new Date(e.clock_in).getTime();
+      const outMs = new Date(e.clock_out).getTime();
+      if (!(outMs > inMs)) continue;
+      const hours = (outMs - inMs) / 3600000;
+      const rate = storageExtra.resolvePayRate(e.user_id);
+      let g = byUser.get(e.user_id);
+      if (!g) { g = { name: nameById.get(Number(e.user_id)) ?? `User #${e.user_id}`, hours: 0, baseCents: 0, seCents: 0 }; byUser.set(e.user_id, g); }
+      g.hours += hours;
+      g.baseCents += hours * rate.rateCents;
+      g.seCents += hours * rate.rateCents * rate.seRate;
+    }
+    const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const groups = Array.from(byUser.values()).sort((a, b) => b.hours - a.hours);
+    let totHours = 0, totBase = 0, totSe = 0;
+    const rows = groups.map(g => {
+      totHours += g.hours; totBase += g.baseCents; totSe += g.seCents;
+      return `<tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${eodActivityEsc(g.name)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${g.hours.toFixed(2)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right">${money(g.baseCents)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right">${money(g.seCents)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${money(g.baseCents + g.seCents)}</td>
+      </tr>`;
+    }).join("");
+    return `
+    <div style="margin:24px 0">
+      <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Payroll Summary — Hours</h2>
+      <p style="font-size:12px;color:#64748b;margin:0 0 10px">Completed clock-in/out hours (${startDate} → ${endDate}), priced at each person's rate + 7.65% self-employment reimbursement. <strong>Estimate — verify before paying.</strong></p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
+        <thead><tr style="background:#f8fafc">
+          <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">Person</th>
+          <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:11px;text-transform:uppercase">Hours</th>
+          <th style="padding:8px 12px;text-align:right;color:#64748b;font-size:11px;text-transform:uppercase">Base Pay</th>
+          <th style="padding:8px 12px;text-align:right;color:#64748b;font-size:11px;text-transform:uppercase">SE Reimb.</th>
+          <th style="padding:8px 12px;text-align:right;color:#64748b;font-size:11px;text-transform:uppercase">Total</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="5" style="padding:12px;text-align:center;color:#94a3b8">No clocked hours this month.</td></tr>`}</tbody>
+        <tfoot><tr style="background:#f8fafc;font-weight:700">
+          <td style="padding:8px 12px">Total</td>
+          <td style="padding:8px 12px;text-align:center">${totHours.toFixed(2)}</td>
+          <td style="padding:8px 12px;text-align:right">${money(totBase)}</td>
+          <td style="padding:8px 12px;text-align:right">${money(totSe)}</td>
+          <td style="padding:8px 12px;text-align:right">${money(totBase + totSe)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  } catch (e: any) {
+    console.error("[timeclock-summary] build failed:", e?.message ?? e);
+    return "";
+  }
+}
+
 async function sendReport(
   type: ReportType,
   opts: ReportOptions = {},
@@ -2147,7 +2211,7 @@ cron.schedule("* * * * *", async () => {
           try {
             await sendReport("monthly", {
               customRange: { startDate: pmStart, endDate: pmEnd },
-              appendBodyHtml: buildCompSummaryHtml(pmStart, pmEnd),
+              appendBodyHtml: buildCompSummaryHtml(pmStart, pmEnd) + buildTimeClockSummaryHtml(pmStart, pmEnd),
             });
           } catch (e: any) { console.error("[monthly] report failed:", e?.message ?? e); }
         } else if (nowMinutes >= cutoff) {
@@ -8786,6 +8850,130 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     storageExtra.deleteChatMessage(id);
     res.json({ ok: true });
+  });
+
+  // ── Time clock ──────────────────────────────────────────────────────────────
+  // Clock in/out, retroactive/manual entries, editable times. A monthly payroll
+  // summary (hours × rate + self-employment reimbursement) is appended to the
+  // end-of-month report, alongside the transfer comp summary.
+  const tcNormalizeIso = (v: any): string | null => {
+    if (typeof v !== "string" || !v.trim()) return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  };
+  function enrichTimeEntry(e: any, nameById: Map<number, string>) {
+    const rate = storageExtra.resolvePayRate(e.user_id);
+    const inMs = new Date(e.clock_in).getTime();
+    const outMs = e.clock_out ? new Date(e.clock_out).getTime() : NaN;
+    const hours = e.clock_out && Number.isFinite(outMs) && outMs > inMs ? (outMs - inMs) / 3600000 : 0;
+    const baseCents = Math.round(hours * rate.rateCents);
+    const seCents = Math.round(baseCents * rate.seRate);
+    return {
+      id: e.id, userId: e.user_id, userName: nameById.get(e.user_id) ?? ("User #" + e.user_id),
+      clockIn: e.clock_in, clockOut: e.clock_out ?? null, note: e.note ?? "",
+      hours: Math.round(hours * 100) / 100,
+      rateCents: rate.rateCents, seRate: rate.seRate,
+      baseCents, seCents, totalCents: baseCents + seCents,
+      open: !e.clock_out,
+    };
+  }
+
+  app.get("/api/timeclock", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const isMgr = isCompManager(userId);
+    const scope = req.query.scope === "team" && isMgr ? "team" : "mine";
+    const filters: any = { orgId };
+    if (req.query.startDate) filters.startDate = String(req.query.startDate);
+    if (req.query.endDate) filters.endDate = String(req.query.endDate);
+    if (scope === "mine") filters.userId = userId;
+    const nameById = compNameMap();
+    const entries = storageExtra.getTimeClockEntries(filters).map((e: any) => enrichTimeEntry(e, nameById));
+    const openRaw = storageExtra.getOpenTimeClock(userId);
+    const rate = storageExtra.resolvePayRate(userId);
+    res.json({
+      scope,
+      isManager: isMgr,
+      entries,
+      open: openRaw ? enrichTimeEntry(openRaw, nameById) : null,
+      rate: { rateCents: rate.rateCents, seRate: rate.seRate },
+    });
+  });
+
+  app.post("/api/timeclock/clock-in", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    if (storageExtra.getOpenTimeClock(userId)) return res.status(400).json({ error: "You're already clocked in." });
+    const entry = storageExtra.clockIn(userId, orgId, new Date().toISOString(), null);
+    res.json({ entry });
+  });
+
+  app.post("/api/timeclock/clock-out", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const open = storageExtra.getOpenTimeClock(userId);
+    if (!open) return res.status(400).json({ error: "You're not clocked in." });
+    const entry = storageExtra.clockOutEntry(open.id, new Date().toISOString());
+    res.json({ entry });
+  });
+
+  // Manual / retroactive entry (client sends full ISO datetimes).
+  app.post("/api/timeclock", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const isMgr = isCompManager(userId);
+    const targetId = (isMgr && Number(req.body?.userId)) ? Number(req.body.userId) : userId;
+    const clockInIso = tcNormalizeIso(req.body?.clockIn);
+    const clockOutIso = req.body?.clockOut ? tcNormalizeIso(req.body?.clockOut) : null;
+    if (!clockInIso) return res.status(400).json({ error: "Clock-in time is required." });
+    if (req.body?.clockOut && !clockOutIso) return res.status(400).json({ error: "Invalid clock-out time." });
+    if (clockOutIso && new Date(clockOutIso).getTime() <= new Date(clockInIso).getTime()) return res.status(400).json({ error: "Clock-out must be after clock-in." });
+    const note = typeof req.body?.note === "string" ? req.body.note.slice(0, 500) : null;
+    const entry = storageExtra.createTimeClockEntry(orgId, targetId, clockInIso, clockOutIso, note);
+    res.json({ entry });
+  });
+
+  app.patch("/api/timeclock/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id, 10);
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const existing = storageExtra.getTimeClockEntryById(id);
+    if (!existing || Number(existing.org_id) !== orgId) return res.status(404).json({ error: "Not found" });
+    if (existing.user_id !== userId && !isCompManager(userId)) return res.status(403).json({ error: "You can only edit your own time." });
+    const patch: any = {};
+    if (req.body?.clockIn !== undefined) { const v = tcNormalizeIso(req.body.clockIn); if (!v) return res.status(400).json({ error: "Invalid clock-in time." }); patch.clockIn = v; }
+    if (req.body?.clockOut !== undefined) { patch.clockOut = req.body.clockOut ? tcNormalizeIso(req.body.clockOut) : null; if (req.body.clockOut && !patch.clockOut) return res.status(400).json({ error: "Invalid clock-out time." }); }
+    if (req.body?.note !== undefined) { patch.note = typeof req.body.note === "string" ? req.body.note.slice(0, 500) : null; }
+    const ci = patch.clockIn ?? existing.clock_in;
+    const co = patch.clockOut !== undefined ? patch.clockOut : existing.clock_out;
+    if (co && new Date(co).getTime() <= new Date(ci).getTime()) return res.status(400).json({ error: "Clock-out must be after clock-in." });
+    const entry = storageExtra.updateTimeClockEntry(id, patch);
+    res.json({ entry });
+  });
+
+  app.delete("/api/timeclock/:id", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id, 10);
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const existing = storageExtra.getTimeClockEntryById(id);
+    if (!existing || Number(existing.org_id) !== orgId) return res.status(404).json({ error: "Not found" });
+    if (existing.user_id !== userId && !isCompManager(userId)) return res.status(403).json({ error: "You can only delete your own time." });
+    storageExtra.deleteTimeClockEntry(id);
+    res.json({ ok: true });
+  });
+
+  // Pay-rate settings (read: any signed-in; write: admin).
+  app.get("/api/timeclock/settings", requireAuth, (req: any, res) => {
+    const s = storageExtra.getEmailSettings() as any;
+    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1680) || 1680, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
+  });
+  app.post("/api/timeclock/settings", requireAuth, (req: any, res) => {
+    if (!isCompAdmin(Number(req.session_user?.userId))) return res.status(403).json({ error: "Admins only" });
+    const patch: any = {};
+    if (req.body?.payRateCents !== undefined) { const c = Math.round(Number(req.body.payRateCents)); if (Number.isFinite(c) && c >= 0) patch.payRateCents = c; }
+    if (req.body?.seRate !== undefined) { const r = Number(req.body.seRate); if (Number.isFinite(r) && r >= 0 && r < 1) patch.seReimbRate = r; }
+    if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
+    const s = storageExtra.getEmailSettings() as any;
+    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1680) || 1680, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
   });
 
   app.get("/api/audit-logs", (req, res) => {
