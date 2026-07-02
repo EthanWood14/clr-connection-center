@@ -182,7 +182,7 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
 
 // Shows the CLR how many transfers they logged last month (the basis for the
 // monthly transfer comp request), so they don't have to dig through reporting.
-function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (text: string) => void }) {
+function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string) => void }) {
   const qs = forUserId ? "?userId=" + forUserId : "";
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/comp/transfer-stats", forUserId ?? "me"],
@@ -191,11 +191,14 @@ function TransferStatsHint({ forUserId, onUse }: { forUserId?: number; onUse?: (
   const prev = data?.previous;
   const cur = data?.current;
   const plural = (n: number) => (n === 1 ? "" : "s");
+  // Label whose transfers these are — when filing on behalf of another CLR the
+  // numbers are THEIRS, not the viewer's, so don't call it "Your transfers".
+  const whoLabel = forUserName ? `${forUserName}'s transfers` : "Your transfers";
   return (
     <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-4 py-3">
       <div className="flex items-center gap-2 mb-2">
         <ArrowLeftRight className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-        <span className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">Your transfers — for the monthly transfer request</span>
+        <span className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">{whoLabel} — for the monthly transfer request</span>
       </div>
       {isLoading ? (
         <Skeleton className="h-12 w-full" />
@@ -835,6 +838,7 @@ export default function CompRequests() {
           </div>
           <TransferStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
+            forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
             onUse={(text) => { setDescription(text); setCategory("transfers"); }}
           />
           {isManager && (
