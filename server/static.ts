@@ -16,10 +16,22 @@ export function serveStatic(app: Express) {
     res.sendFile(path.resolve(distPath, "manifest.json"));
   });
 
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      // index.html must NEVER be cached — it points at the current hashed
+      // bundle, and a stale copy references a deleted asset → blank app after a
+      // deploy. Hashed build assets are content-addressed, so cache them forever.
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      } else if (/[\\/]assets[\\/]/.test(filePath)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  }));
 
-  // fall through to index.html if the file doesn't exist
+  // SPA fallback — always serve a fresh index.html (never cached).
   app.use("/{*path}", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

@@ -1,7 +1,7 @@
 // CLR Connection Center — Service Worker
 // Provides offline shell caching and background sync support
 
-const CACHE_NAME = "wclcc-v6";
+const CACHE_NAME = "wclcc-v7";
 const STATIC_ASSETS = [
   "/",
   "/manifest.json",
@@ -85,10 +85,12 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (url.pathname.startsWith("/api/")) return;
 
-  // For navigation requests, return index.html (SPA shell)
+  // For navigation requests, always fetch a FRESH shell (bypass HTTP cache) so a
+  // stale index.html can never pin the app to a deleted asset hash. Fall back to
+  // the cached shell only when truly offline.
   if (event.request.mode === "navigate") {
     event.respondWith(
-      fetch(event.request).catch(() =>
+      fetch(event.request, { cache: "no-store" }).catch(() =>
         caches.match("/").then((cached) => cached || new Response("Offline"))
       )
     );
