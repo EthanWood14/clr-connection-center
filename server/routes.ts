@@ -21,6 +21,7 @@ import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted } from "./business-day";
 import { createBackup, listBackups } from "./backup";
+import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -1727,6 +1728,26 @@ cron.schedule("0 8 * * *", () => {
     console.log("[backup] Daily backup complete");
   } catch (e) { console.error("[backup] Daily backup error:", e); }
 });
+
+// ── Shark Tank pool sync (pulled from LeadVault) ──────────────────────────────
+// Refresh the cold-lead calling pool once a day so opt-outs (STOP) and
+// responders — which drop out of LeadVault's scrubbed feed — get pruned out of
+// the CLR pool within 24h. 3:30 AM PT, after LeadVault's overnight opt-out
+// sweeps. Also runs ~90s after boot if the pool has never synced.
+cron.schedule("30 3 * * *", () => {
+  runSharkTankSync("cron").catch((e) => console.error("[shark-tank-sync] cron error:", e));
+}, { timezone: "America/Los_Angeles" });
+
+if (sharkTankSyncConfigured()) {
+  setTimeout(() => {
+    try {
+      const meta = storageExtra.getSharkTankSyncMeta();
+      if (!meta || !meta.lastRunAt) {
+        runSharkTankSync("boot").catch((e) => console.error("[shark-tank-sync] boot error:", e));
+      }
+    } catch (e) { console.error("[shark-tank-sync] boot check error:", e); }
+  }, 90_000);
+}
 
 // Purge comp-request attachments older than ~1 year (retention policy). Runs
 // daily at 4am UTC.
@@ -8779,6 +8800,73 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to send meme" }); }
   });
 
+  // ── Giphy GIF search (needs GIPHY_API_KEY env) ──────────────────────────────
+  // Real reaction-GIF search ("another one", "stonks", etc.). Falls back to
+  // disabled=false so the client hides the tab when no key is configured.
+  app.get("/api/memes/gif-enabled", requireAuth, (_req: any, res) => {
+    res.json({ enabled: !!(process.env.GIPHY_API_KEY || "") });
+  });
+  app.get("/api/memes/gif-search", requireAuth, async (req: any, res) => {
+    const key = process.env.GIPHY_API_KEY || "";
+    if (!key) return res.json({ enabled: false, items: [] });
+    try {
+      const q = String(req.query.q ?? "").trim();
+      const base = q
+        ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13&bundle=messaging_non_clips`
+        : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(key)}&limit=24&rating=pg-13&bundle=messaging_non_clips`;
+      const r = await fetch(base);
+      if (!r.ok) return res.json({ enabled: true, items: [], error: "giphy " + r.status });
+      const j = await r.json() as any;
+      const items = (Array.isArray(j?.data) ? j.data : []).map((g: any) => ({
+        id: String(g.id),
+        title: String(g.title || "gif"),
+        preview: g?.images?.fixed_width?.url || g?.images?.downsized?.url || g?.images?.original?.url || "",
+        full: g?.images?.downsized_medium?.url || g?.images?.original?.url || "",
+      })).filter((g: any) => g.preview && g.full);
+      res.json({ enabled: true, items });
+    } catch (e: any) {
+      res.json({ enabled: true, items: [], error: e?.message ?? "search failed" });
+    }
+  });
+
+  // Send a Giphy GIF as a chat image. Allowlisted to *.giphy.com to prevent SSRF.
+  app.post("/api/chat/gif", requireAuth, async (req: any, res) => {
+    const url = String(req.body?.url ?? "").trim();
+    // Allowlist *.giphy.com to prevent SSRF. Giphy CDN URLs carry a ?cid=…&ct=g
+    // query string, so parse the URL rather than regex-matching the whole thing.
+    let ok = false;
+    try {
+      const u = new URL(url);
+      ok = u.protocol === "https:"
+        && /^(media[0-9]*|i)\.giphy\.com$/i.test(u.hostname)
+        && /\.(gif|webp|mp4)$/i.test(u.pathname);
+    } catch { ok = false; }
+    if (!ok) return res.status(400).json({ error: "Invalid GIF URL" });
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return res.status(502).json({ error: "Could not fetch GIF" });
+      const ct = String(r.headers.get("content-type") || "");
+      if (!ct.startsWith("image/")) return res.status(502).json({ error: "Not an image" });
+      const ab = await r.arrayBuffer();
+      if (ab.byteLength > 8 * 1024 * 1024) return res.status(400).json({ error: "GIF too large (max 8 MB)." });
+      const base64 = Buffer.from(ab).toString("base64");
+      const mime = ct.split(";")[0].trim();
+      const user = storage.getUserById(req.session_user!.userId) as any;
+      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime);
+      try {
+        const orgId = req.session_user!.orgId ?? 1;
+        const senderName = user?.name ?? "Someone";
+        const others = storage.getUsers().filter((u: any) =>
+          u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
+          && !(u.muteChatNotifications ?? u.mute_chat_notifications));
+        const payload = { title: `💬 ${senderName}`, body: "📷 GIF", url: "/#/chat" };
+        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, isRead: false });
+        sendPushToUsers(others.map((u: any) => u.id), payload).catch(() => {});
+      } catch (e) { console.error("gif notify failed:", e); }
+      res.json({ message: msg });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to send GIF" }); }
+  });
+
   // Toggle an emoji reaction on a chat message.
   const CHAT_EMOJIS = new Set(["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"]);
   app.post("/api/chat/:id/react", requireAuth, (req: any, res) => {
@@ -12152,6 +12240,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const contact = storageExtra.getUnifiedContactById(id);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
     res.json(contact);
+  });
+
+  // ── Shark Tank pool (read-only mirror, synced daily from LeadVault) ───────
+  // Cold, re-workable mortgage leads already scrubbed of opt-outs, responders,
+  // engaged stages, CA/CO, and the out-of-inquiry-window by the source feed.
+  app.get("/api/shark-tank/leads", requireAuth, (req: any, res) => {
+    const q = req.query ?? {};
+    const result = storageExtra.getSharkTankLeads({
+      search: typeof q.search === "string" ? q.search : undefined,
+      state: typeof q.state === "string" ? q.state : undefined,
+      bucket: typeof q.bucket === "string" ? q.bucket : undefined,
+      limit: q.limit ? Number(q.limit) : 100,
+      offset: q.offset ? Number(q.offset) : 0,
+    });
+    res.json(result);
+  });
+
+  // Sync status (last run / count / errors) + whether the feed token is set.
+  app.get("/api/shark-tank/meta", requireAuth, (_req: any, res) => {
+    res.json({ sync: storageExtra.getSharkTankSyncMeta(), configured: sharkTankSyncConfigured() });
+  });
+
+  // Manager/admin can force an out-of-band refresh (otherwise it's a daily cron).
+  app.post("/api/shark-tank/sync", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const out = await runSharkTankSync("manual");
+    res.json(out);
   });
 
   // ── CSV import route ─────────────────────────────────────────────────────

@@ -159,6 +159,33 @@ export default function Chat() {
     return [...all].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   }, [memeData, memeSearch]);
 
+  // ── Giphy GIF search (only shown when GIPHY_API_KEY is configured) ──────────
+  type GifItem = { id: string; title: string; preview: string; full: string };
+  const [memeMode, setMemeMode] = useState<"memes" | "gifs">("memes");
+  const { data: gifCfg } = useQuery<{ enabled: boolean }>({
+    queryKey: ["/api/memes/gif-enabled"],
+    enabled: memeOpen,
+    staleTime: 10 * 60 * 1000,
+  });
+  const gifEnabled = gifCfg?.enabled === true;
+  const [gifQuery, setGifQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setGifQuery(memeSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [memeSearch]);
+  const { data: gifData, isFetching: gifsLoading } = useQuery<{ enabled: boolean; items: GifItem[] }>({
+    queryKey: ["/api/memes/gif-search", gifQuery],
+    queryFn: () => apiRequest("GET", "/api/memes/gif-search" + (gifQuery ? "?q=" + encodeURIComponent(gifQuery) : "")),
+    enabled: memeOpen && memeMode === "gifs" && gifEnabled,
+    staleTime: 60 * 1000,
+  });
+  const gifs = gifData?.items ?? [];
+  const sendGif = useMutation({
+    mutationFn: (url: string) => apiRequest("POST", "/api/chat/gif", { url }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/chat"] }); setMemeOpen(false); setMemeSearch(""); setAutoScroll(true); },
+    onError: (e: any) => toast({ title: "Couldn't send GIF", description: e.message, variant: "destructive" }),
+  });
+
   const deleteMsg = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/chat/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/chat"] }),
@@ -407,19 +434,59 @@ export default function Chat() {
       {/* Meme picker panel */}
       {memeOpen && (
         <div className="mt-2 rounded-xl border bg-background p-2 shadow-sm">
+          {gifEnabled && (
+            <div className="mb-2 flex gap-1 rounded-lg bg-muted/50 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setMemeMode("memes")}
+                className={`flex-1 rounded-md px-2 py-1 font-medium transition ${memeMode === "memes" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                data-testid="meme-tab-memes"
+              >Memes</button>
+              <button
+                type="button"
+                onClick={() => setMemeMode("gifs")}
+                className={`flex-1 rounded-md px-2 py-1 font-medium transition ${memeMode === "gifs" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                data-testid="meme-tab-gifs"
+              >GIFs</button>
+            </div>
+          )}
           <div className="relative mb-2">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
             <Input
               value={memeSearch}
               onChange={e => setMemeSearch(e.target.value)}
-              placeholder="Search memes… (drake, this is fine, gru, stonks…)"
+              placeholder={memeMode === "gifs" ? "Search GIFs on Giphy…" : "Search memes… (drake, this is fine, gru, stonks…)"}
               className="h-8 pl-8 text-sm"
               autoFocus
               data-testid="meme-search"
             />
           </div>
           <div className="max-h-[38vh] overflow-y-auto">
-            {memesLoading ? (
+            {memeMode === "gifs" ? (
+              gifsLoading ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="aspect-video rounded-lg" />)}
+                </div>
+              ) : gifs.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">{memeSearch.trim() ? `No GIFs match "${memeSearch}".` : "Type to search Giphy…"}</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {gifs.map(g => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      title={g.title || "GIF"}
+                      onClick={() => sendGif.mutate(g.full)}
+                      disabled={sendGif.isPending}
+                      className="group relative rounded-lg overflow-hidden border bg-muted/30 hover:ring-2 hover:ring-primary transition disabled:opacity-50"
+                      data-testid={`gif-${g.id}`}
+                    >
+                      <img src={g.preview} alt={g.title || "GIF"} loading="lazy" className="w-full aspect-video object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : memesLoading ? (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-lg" />)}
               </div>
@@ -444,7 +511,9 @@ export default function Chat() {
               </div>
             )}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1.5 text-center">Tap a meme to send · {memes.length} available · powered by memegen</p>
+          <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
+            {memeMode === "gifs" ? "Tap a GIF to send · powered by GIPHY" : `Tap a meme to send · ${memes.length} available · powered by memegen`}
+          </p>
         </div>
       )}
 
