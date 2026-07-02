@@ -6170,6 +6170,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Manually push a status-update notification (push pop-up + in-app) to the
+  // requester — e.g. "your comp request is now approved / processing / paid".
+  app.post("/api/comp/:id/notify", requireAuth, (req: any, res) => {
+    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const r = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!r) return res.status(404).json({ error: "Not found" });
+      const statusLabel =
+        r.status === "denied" ? "denied"
+        : (r.status === "approved" && r.is_received) ? "received"
+        : (r.status === "approved" && r.is_paid) ? "paid out"
+        : (r.status === "approved" && r.is_processing) ? "processing"
+        : (r.status === "approved") ? "approved"
+        : "pending review";
+      const dollars = "$" + ((r.amount_cents ?? 0) / 100).toFixed(2);
+      const desc = r.description || "expense";
+      const title =
+        statusLabel === "denied" ? "❌ Comp request denied"
+        : (statusLabel === "paid out" || statusLabel === "received") ? "💸 Comp request paid"
+        : statusLabel === "processing" ? "⏳ Comp request processing"
+        : statusLabel === "approved" ? "✅ Comp request approved"
+        : "🧾 Comp request update";
+      const body = `Your comp request for ${dollars} (${desc}) is now ${statusLabel}.`;
+      try { (storage as any).createNotification?.({ userId: r.user_id, type: "comp_request", title, message: body }); } catch {}
+      try { sendPushToUser(r.user_id, { title, body, url: "/#/comp-requests" }).catch(() => {}); } catch {}
+      res.json({ ok: true, status: statusLabel });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to notify" });
+    }
+  });
+
   app.post("/api/comp/:id/paid", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;

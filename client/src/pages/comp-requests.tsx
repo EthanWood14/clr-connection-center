@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle,
+  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell,
 } from "lucide-react";
 
 interface CompItem {
@@ -717,6 +717,16 @@ export default function CompRequests() {
     });
   }
 
+  // ── Notify requester: push pop-up + in-app with the request's current status ──
+  const notifyMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", "/api/comp/" + id + "/notify", {}),
+    onSuccess: (d: any, id: number) => {
+      const r = team.find(x => x.id === id);
+      toast({ title: "Notification sent 🔔", description: (r?.userName ? r.userName + " was" : "The requester was") + " notified — status: " + (d?.status ?? "updated") + "." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't notify", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+
   // ── Payout Center: approved-but-unpaid requests, batch payout ──────────────
   // Tracks explicit DE-selections so newly approved items auto-join the run.
   const [payoutExcluded, setPayoutExcluded] = useState<Set<number>>(new Set());
@@ -1185,6 +1195,16 @@ export default function CompRequests() {
                   <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
                     <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => notifyMutation.mutate(r.id)}
+                        disabled={notifyMutation.isPending}
+                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30 px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+                        title={"Send " + r.userName + " a pop-up + in-app notification with the current status"}
+                        data-testid={"team-notify-" + r.id}
+                      >
+                        <Bell className="w-3 h-3" /> Notify
+                      </button>
                       <button
                         type="button"
                         onClick={() => askManager(r)}
