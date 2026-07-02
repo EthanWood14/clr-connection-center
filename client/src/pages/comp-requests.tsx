@@ -715,19 +715,16 @@ export default function CompRequests() {
   // Tracks explicit DE-selections so newly approved items auto-join the run.
   const [payoutExcluded, setPayoutExcluded] = useState<Set<number>>(new Set());
   const approvedUnpaid = useMemo(() => team.filter(r => r.status === "approved" && !r.isPaid), [team]);
-  const payoutTodayStart = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
-  // Split the payout run into Chris's pay dates (1st / 15th). Each group is its
-  // own pay run that gets marked paid on that date. Sorted earliest-first.
-  const payoutGroups = useMemo(() => {
-    const map = new Map<string, { key: string; date: Date; items: CompItem[] }>();
-    for (const r of approvedUnpaid) {
-      const d = compPayDate(r);
-      const k = payKey(d);
-      let g = map.get(k);
-      if (!g) { g = { key: k, date: d, items: [] }; map.set(k, g); }
-      g.items.push(r);
-    }
-    return Array.from(map.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+  // Group the payout run by BATCH/STAGE rather than by pay date: everything
+  // starts in "Awaiting", and when a selection is moved to Processing it
+  // physically relocates into the Processing batch (and out of Awaiting).
+  const payoutBatches = useMemo(() => {
+    const awaiting = approvedUnpaid.filter(r => !r.isProcessing);
+    const processing = approvedUnpaid.filter(r => r.isProcessing);
+    return [
+      { key: "awaiting", title: "Awaiting Processing", stage: "awaiting" as const, items: awaiting },
+      { key: "processing", title: "Processing", stage: "processing" as const, items: processing },
+    ].filter(b => b.items.length > 0);
   }, [approvedUnpaid]);
   const batchPaidMutation = useMutation({
     mutationFn: (ids: number[]) => apiRequest("POST", "/api/comp/payout/mark-paid", { ids }),
@@ -737,6 +734,19 @@ export default function CompRequests() {
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not mark paid", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
+  // Move a batch of requests between the Awaiting and Processing groups.
+  const batchProcessingMutation = useMutation({
+    mutationFn: async (v: { ids: number[]; processing: boolean }) => {
+      for (const id of v.ids) await apiRequest("POST", "/api/comp/" + id + "/paid", { processing: v.processing });
+      return v;
+    },
+    onSuccess: (v: any) => {
+      toast({ title: v.processing ? "Moved to Processing" : "Moved back to Awaiting", description: v.ids.length + " request(s) updated." });
+      setPayoutExcluded(new Set());
+      refresh();
+    },
+    onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
   function openPayoutSheetFor(ids: number[]) {
     if (!ids.length) return;
@@ -956,23 +966,26 @@ export default function CompRequests() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Approved &amp; unpaid requests, split into pay runs by date (Chris pays out on the <strong>15th</strong> and the <strong>1st</strong>). On each date, open that run's PDF and mark it paid in one click — or use <strong>Export all</strong> for the whole payout center in one PDF.
+              Approved &amp; unpaid requests, grouped by batch. Select requests and <strong>Move to Processing</strong> to start a payout batch — they move into the Processing group. Mark a batch <strong>Paid</strong> when it's sent, or use <strong>Export all</strong> for one PDF of everything.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {payoutGroups.map(g => {
+            {payoutBatches.map(g => {
               const included = g.items.filter(r => !payoutExcluded.has(r.id));
               const groupTotal = included.reduce((s, r) => s + (r.amountCents || 0), 0);
-              const overdue = g.date.getTime() < payoutTodayStart;
+              const isProcessing = g.stage === "processing";
+              const busy = batchPaidMutation.isPending || batchProcessingMutation.isPending;
               return (
                 <div key={g.key} className="rounded-lg border border-border overflow-hidden" data-testid={"payout-group-" + g.key}>
                   <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <CalendarDays className="w-4 h-4 text-emerald-600" />
-                      <span className="text-sm font-semibold">Submitted {submittedRangeLabel(g.items)}</span>
-                      {overdue
-                        ? <Badge className="bg-red-500 text-white text-[10px] px-1.5">overdue</Badge>
-                        : <Badge variant="outline" className="text-[10px] px-1.5">{g.items.length} request{g.items.length === 1 ? "" : "s"}</Badge>}
+                      {isProcessing
+                        ? <Hourglass className="w-4 h-4 text-indigo-600" />
+                        : <Clock className="w-4 h-4 text-emerald-600" />}
+                      <span className="text-sm font-semibold">{g.title}</span>
+                      <Badge className={`text-[10px] px-1.5 ${isProcessing ? "bg-indigo-600 text-white" : ""}`} variant={isProcessing ? "default" : "outline"}>
+                        {g.items.length} request{g.items.length === 1 ? "" : "s"}
+                      </Badge>
                     </div>
                     <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(groupTotal)}</span>
                   </div>
@@ -1005,11 +1018,31 @@ export default function CompRequests() {
                       <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openPayoutSheetFor(included.map(r => r.id))} disabled={included.length === 0}>
                         <FileText className="w-3.5 h-3.5" /> PDF
                       </Button>
+                      {isProcessing ? (
+                        <Button
+                          variant="outline" size="sm" className="gap-1.5"
+                          onClick={() => batchProcessingMutation.mutate({ ids: included.map(r => r.id), processing: false })}
+                          disabled={included.length === 0 || busy}
+                          data-testid={"button-payout-unprocess-" + g.key}
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5" /> Back to Awaiting
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                          onClick={() => batchProcessingMutation.mutate({ ids: included.map(r => r.id), processing: true })}
+                          disabled={included.length === 0 || busy}
+                          data-testid={"button-payout-process-" + g.key}
+                        >
+                          <Hourglass className="w-3.5 h-3.5" />
+                          {batchProcessingMutation.isPending ? "Moving…" : "Move to Processing"}
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                         onClick={() => batchPaidMutation.mutate(included.map(r => r.id))}
-                        disabled={included.length === 0 || batchPaidMutation.isPending}
+                        disabled={included.length === 0 || busy}
                         data-testid={"button-payout-mark-paid-" + g.key}
                       >
                         <Check className="w-3.5 h-3.5" />
