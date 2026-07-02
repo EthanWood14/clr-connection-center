@@ -8621,6 +8621,60 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch { res.status(500).send("error"); }
   });
 
+  // Meme picker catalog — proxied from memegen.link (no API key). Cached 6h.
+  const MEME_FALLBACK = ["drake","fine","db","gru","success","doge","mordor","oprah","grumpycat","spongebob","disastergirl","rollsafe","yodawg","stonks","ds","exit","ll"]
+    .map(id => ({ id, name: id, blank: `https://api.memegen.link/images/${id}.png`, keywords: [] as string[] }));
+  let _memeCatalog: { at: number; items: any[] } | null = null;
+  app.get("/api/memes/catalog", requireAuth, async (_req: any, res) => {
+    try {
+      if (!_memeCatalog || Date.now() - _memeCatalog.at > 6 * 60 * 60 * 1000) {
+        const r = await fetch("https://api.memegen.link/templates/");
+        if (!r.ok) throw new Error("catalog " + r.status);
+        const raw = await r.json() as any[];
+        const items = raw
+          .filter((t: any) => t && typeof t.id === "string" && /^[a-z0-9_-]+$/i.test(t.id) && typeof t.blank === "string")
+          .map((t: any) => ({ id: String(t.id), name: String(t.name ?? t.id), blank: String(t.blank), keywords: Array.isArray(t.keywords) ? t.keywords.slice(0, 20) : [] }));
+        if (items.length) _memeCatalog = { at: Date.now(), items };
+      }
+      res.json({ items: _memeCatalog?.items ?? MEME_FALLBACK });
+    } catch (e: any) {
+      res.json({ items: MEME_FALLBACK });
+    }
+  });
+
+  // Send a meme as a chat image. Fetches the memegen image server-side (avoids
+  // CORS, keeps the meme permanent) after allowlisting the host to prevent SSRF.
+  app.post("/api/chat/meme", requireAuth, async (req: any, res) => {
+    const url = String(req.body?.url ?? "").trim();
+    if (!/^https:\/\/api\.memegen\.link\/images\/[A-Za-z0-9_\-/.]+\.(png|jpg|jpeg|gif|webp)$/i.test(url)) {
+      return res.status(400).json({ error: "Invalid meme URL" });
+    }
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return res.status(502).json({ error: "Could not fetch meme" });
+      const ct = String(r.headers.get("content-type") || "");
+      if (!ct.startsWith("image/")) return res.status(502).json({ error: "Not an image" });
+      const ab = await r.arrayBuffer();
+      if (ab.byteLength > 5 * 1024 * 1024) return res.status(400).json({ error: "Meme too large" });
+      const base64 = Buffer.from(ab).toString("base64");
+      const mime = ct.split(";")[0].trim();
+      const user = storage.getUserById(req.session_user!.userId) as any;
+      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime);
+      // Push + in-app notify other active users in the org (email intentionally skipped for memes).
+      try {
+        const orgId = req.session_user!.orgId ?? 1;
+        const senderName = user?.name ?? "Someone";
+        const others = storage.getUsers().filter((u: any) =>
+          u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
+          && !(u.muteChatNotifications ?? u.mute_chat_notifications));
+        const payload = { title: `💬 ${senderName}`, body: "📷 Meme", url: "/#/chat" };
+        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, isRead: false });
+        sendPushToUsers(others.map((u: any) => u.id), payload).catch(() => {});
+      } catch (e) { console.error("meme notify failed:", e); }
+      res.json({ message: msg });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to send meme" }); }
+  });
+
   // Toggle an emoji reaction on a chat message.
   const CHAT_EMOJIS = new Set(["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"]);
   app.post("/api/chat/:id/react", requireAuth, (req: any, res) => {

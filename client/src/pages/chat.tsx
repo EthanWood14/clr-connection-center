@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -125,6 +125,39 @@ export default function Chat() {
       }
     }
   }
+
+  // ── Meme picker (memegen.link catalog, no API key) ──────────────────────────
+  const [memeOpen, setMemeOpen] = useState(false);
+  const [memeSearch, setMemeSearch] = useState("");
+  type MemeItem = { id: string; name: string; blank: string; keywords: string[] };
+  const { data: memeData, isLoading: memesLoading } = useQuery<{ items: MemeItem[] }>({
+    queryKey: ["/api/memes/catalog"],
+    enabled: memeOpen,
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+  const sendMeme = useMutation({
+    mutationFn: (url: string) => apiRequest("POST", "/api/chat/meme", { url }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      setMemeOpen(false); setMemeSearch(""); setAutoScroll(true);
+    },
+    onError: (e: any) => toast({ title: "Couldn't send meme", description: e.message, variant: "destructive" }),
+  });
+  // Pin well-known templates to the top of the un-searched grid.
+  const MEME_POPULAR = ["drake", "fine", "db", "gru", "success", "doge", "mordor", "oprah", "grumpycat", "spongebob", "disastergirl", "rollsafe", "yodawg", "stonks", "ds", "exit", "ll"];
+  const memes = useMemo(() => {
+    const all = memeData?.items ?? [];
+    const q = memeSearch.trim().toLowerCase();
+    if (q) {
+      return all.filter(m =>
+        m.name.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q) ||
+        (m.keywords || []).some(k => String(k).toLowerCase().includes(q))
+      );
+    }
+    const rank = (id: string) => { const i = MEME_POPULAR.indexOf(id); return i === -1 ? 999 : i; };
+    return [...all].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
+  }, [memeData, memeSearch]);
 
   const deleteMsg = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/chat/${id}`),
@@ -371,6 +404,50 @@ export default function Chat() {
         </div>
       )}
 
+      {/* Meme picker panel */}
+      {memeOpen && (
+        <div className="mt-2 rounded-xl border bg-background p-2 shadow-sm">
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <Input
+              value={memeSearch}
+              onChange={e => setMemeSearch(e.target.value)}
+              placeholder="Search memes… (drake, this is fine, gru, stonks…)"
+              className="h-8 pl-8 text-sm"
+              autoFocus
+              data-testid="meme-search"
+            />
+          </div>
+          <div className="max-h-[38vh] overflow-y-auto">
+            {memesLoading ? (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-lg" />)}
+              </div>
+            ) : memes.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">No memes match "{memeSearch}".</p>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {memes.slice(0, 120).map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    title={m.name}
+                    onClick={() => sendMeme.mutate(m.blank)}
+                    disabled={sendMeme.isPending}
+                    className="group relative rounded-lg overflow-hidden border bg-muted/30 hover:ring-2 hover:ring-primary transition disabled:opacity-50"
+                    data-testid={`meme-${m.id}`}
+                  >
+                    <img src={m.blank} alt={m.name} loading="lazy" className="w-full aspect-square object-cover" />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[9px] leading-tight px-1 py-0.5 truncate opacity-0 group-hover:opacity-100">{m.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-1.5 text-center">Tap a meme to send · {memes.length} available · powered by memegen</p>
+        </div>
+      )}
+
       {/* Input bar */}
       <form onSubmit={handleSend} className="mt-3">
         {pendingImage && (
@@ -399,6 +476,18 @@ export default function Chat() {
             onChange={e => { ingestImageFile(e.target.files?.[0]); if (imgInputRef.current) imgInputRef.current.value = ""; }}
             data-testid="chat-image-input"
           />
+          <Button
+            type="button"
+            variant={memeOpen ? "default" : "outline"}
+            size="icon"
+            className="rounded-full w-10 h-10 shrink-0"
+            onClick={() => setMemeOpen(o => !o)}
+            title="Send a meme"
+            aria-label="Send a meme"
+            data-testid="chat-meme-toggle"
+          >
+            <Sticker className="w-4 h-4" />
+          </Button>
           <Button
             type="button"
             variant="outline"
