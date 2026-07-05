@@ -82,7 +82,7 @@ export default function TimeClock() {
   });
   const entries = data?.entries ?? [];
   const open = data?.open ?? null;
-  const rate = data?.rate ?? { rateCents: 1680, seRate: 0.0765 };
+  const rate = data?.rate ?? { rateCents: 1690, seRate: 0.0765 };
   const isManager = !!data?.isManager;
 
   function refresh() { qc.invalidateQueries({ queryKey: ["/api/timeclock"] }); }
@@ -156,14 +156,41 @@ export default function TimeClock() {
   }, [entries]);
 
   // ── Admin pay-rate settings ──
+  // Rates are per-user: each person uses the org default unless they have an
+  // override. Changing a rate here only ever affects that one person.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [rateInput, setRateInput] = useState("");
   const [seInput, setSeInput] = useState("");
+  const [rateDrafts, setRateDrafts] = useState<Record<number, string>>({});
   const settingsMut = useMutation({
     mutationFn: (body: any) => apiRequest("POST", "/api/timeclock/settings", body),
     onSuccess: () => { toast({ title: "Pay settings saved" }); setSettingsOpen(false); refresh(); },
     onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
   });
+
+  type RateRow = { userId: number; name: string; role: string; overrideCents: number | null; effectiveCents: number };
+  const { data: ratesData } = useQuery<{ defaultRateCents: number; users: RateRow[] }>({
+    queryKey: ["/api/timeclock/rates"],
+    queryFn: () => apiRequest("GET", "/api/timeclock/rates"),
+    enabled: settingsOpen && isAdmin,
+  });
+  const rateMut = useMutation({
+    mutationFn: (v: { userId: number; rateCents: number | null }) =>
+      apiRequest("POST", `/api/timeclock/rates/${v.userId}`, { rateCents: v.rateCents }),
+    onSuccess: (_d: any, v) => {
+      toast({ title: v.rateCents != null ? "Rate updated" : "Rate reset to default" });
+      setRateDrafts(d => { const n = { ...d }; delete n[v.userId]; return n; });
+      qc.invalidateQueries({ queryKey: ["/api/timeclock/rates"] });
+      refresh();
+    },
+    onError: (e: any) => toast({ title: "Couldn't update rate", description: e?.message, variant: "destructive" }),
+  });
+  function saveUserRate(row: RateRow) {
+    const draft = (rateDrafts[row.userId] ?? "").trim();
+    if (!draft) { rateMut.mutate({ userId: row.userId, rateCents: null }); return; }
+    const cents = Math.round(parseFloat(draft) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) { toast({ title: "Enter a valid rate", variant: "destructive" }); return; }
+    rateMut.mutate({ userId: row.userId, rateCents: cents });
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-4xl mx-auto">
@@ -228,8 +255,8 @@ export default function TimeClock() {
             </div>
           )}
           {isAdmin && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setRateInput((rate.rateCents / 100).toFixed(2)); setSeInput((rate.seRate * 100).toFixed(2)); setSettingsOpen(true); }}>
-              <Settings2 className="w-3.5 h-3.5" /> Pay rate
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setSeInput((rate.seRate * 100).toFixed(2)); setRateDrafts({}); setSettingsOpen(true); }}>
+              <Settings2 className="w-3.5 h-3.5" /> Pay rates
             </Button>
           )}
           <Button size="sm" className="gap-1.5" onClick={openNew} data-testid="add-entry"><Plus className="w-3.5 h-3.5" /> Add entry</Button>
@@ -344,34 +371,69 @@ export default function TimeClock() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Admin pay-rate settings */}
+      {/* Admin pay-rate settings — per-user overrides on top of the fixed default */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Pay settings</DialogTitle>
-            <DialogDescription>Default hourly rate and self-employment reimbursement, applied to everyone (unless a per-user override is set).</DialogDescription>
+            <DialogTitle>Pay rates</DialogTitle>
+            <DialogDescription>
+              Everyone earns the default rate of {money(ratesData?.defaultRateCents ?? 1690)}/hr unless you set a
+              personal rate below. Changing a rate only affects that person.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Hourly rate (USD)</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-                <Input type="number" step="0.01" min="0" value={rateInput} onChange={e => setRateInput(e.target.value)} className="pl-6" />
+              <label className="text-xs font-medium text-muted-foreground">Self-employment reimbursement (%) — applies to everyone</label>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Input type="number" step="0.01" min="0" value={seInput} onChange={e => setSeInput(e.target.value)} className="pr-6" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => settingsMut.mutate({ seRate: parseFloat(seInput || "0") / 100 })} disabled={settingsMut.isPending}>
+                  {settingsMut.isPending ? "Saving…" : "Save"}
+                </Button>
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Self-employment reimbursement (%)</label>
-              <div className="relative">
-                <Input type="number" step="0.01" min="0" value={seInput} onChange={e => setSeInput(e.target.value)} className="pr-6" />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+              <label className="text-xs font-medium text-muted-foreground">Per-user hourly rate (USD)</label>
+              <div className="mt-1 max-h-64 overflow-y-auto rounded-md border divide-y">
+                {(ratesData?.users ?? []).map((row) => {
+                  const draft = rateDrafts[row.userId];
+                  const shown = draft !== undefined ? draft : (row.overrideCents != null ? (row.overrideCents / 100).toFixed(2) : "");
+                  const dirty = draft !== undefined;
+                  return (
+                    <div key={row.userId} className="flex items-center gap-2 px-2.5 py-1.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{row.name}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {row.overrideCents != null ? `Override — earns ${money(row.effectiveCents)}/hr` : `Default — earns ${money(row.effectiveCents)}/hr`}
+                        </p>
+                      </div>
+                      <div className="relative w-24">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">$</span>
+                        <Input
+                          type="number" step="0.01" min="0"
+                          className="pl-5 h-8 text-sm"
+                          placeholder={((ratesData?.defaultRateCents ?? 1690) / 100).toFixed(2)}
+                          value={shown}
+                          onChange={e => setRateDrafts(d => ({ ...d, [row.userId]: e.target.value }))}
+                          data-testid={`rate-input-${row.userId}`}
+                        />
+                      </div>
+                      <Button size="sm" variant={dirty ? "default" : "outline"} className="h-8"
+                        onClick={() => saveUserRate(row)} disabled={!dirty || rateMut.isPending}>
+                        Save
+                      </Button>
+                    </div>
+                  );
+                })}
+                {!ratesData && <p className="px-3 py-4 text-sm text-muted-foreground">Loading…</p>}
               </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">Clear a rate and save to put that person back on the default.</p>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(false)} disabled={settingsMut.isPending}>Cancel</Button>
-            <Button size="sm" onClick={() => settingsMut.mutate({ payRateCents: Math.round(parseFloat(rateInput || "0") * 100), seRate: parseFloat(seInput || "0") / 100 })} disabled={settingsMut.isPending}>
-              {settingsMut.isPending ? "Saving…" : "Save"}
-            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

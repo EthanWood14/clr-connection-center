@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Megaphone, Plane, Laptop, Building2, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell,
+  CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, PhoneForwarded, Timer, Award,
 } from "lucide-react";
 
 interface CompItem {
@@ -47,19 +47,30 @@ interface CompItem {
   attachmentCount?: number;
 }
 
+// Categories mirror what comp requests are actually filed for: the monthly
+// transfer request, appointment comp, hour/time-clock adjustments, bonuses and
+// spiffs, and the occasional expense reimbursement.
+const REIMB_CLS = "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300";
 const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
-  transfers: { label: "Transfers", icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
-  equipment: { label: "Equipment", icon: CreditCard, cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300" },
-  software: { label: "Software", icon: Laptop, cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
-  marketing: { label: "Marketing", icon: Megaphone, cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
-  travel: { label: "Travel", icon: Plane, cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
-  office: { label: "Office", icon: Building2, cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300" },
-  other: { label: "Other", icon: Tag, cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
-  // Legacy alias: older requests were filed under "leads" before the rename to "transfers".
-  leads: { label: "Transfers", icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
+  transfers:     { label: "Transfers",     icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
+  appointments:  { label: "Appointments",  icon: PhoneForwarded, cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  hours:         { label: "Hours",         icon: Timer,          cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
+  bonus:         { label: "Bonus / Spiff", icon: Award,          cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
+  reimbursement: { label: "Reimbursement", icon: Receipt,        cls: REIMB_CLS },
+  other:         { label: "Other",         icon: Tag,            cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+  // Legacy aliases: "leads" predates the rename to "transfers"; the old
+  // expense-shop categories all fold into "Reimbursement" for display.
+  leads:     { label: "Transfers",     icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
+  equipment: { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
+  software:  { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
+  marketing: { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
+  travel:    { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
+  office:    { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
 };
-// Keys shown in the category dropdown (excludes the legacy "leads" alias).
-const CATEGORY_KEYS = ["transfers", "equipment", "software", "marketing", "travel", "office", "other"];
+// Keys shown in the category dropdown (excludes the legacy aliases).
+const CATEGORY_KEYS = ["transfers", "appointments", "hours", "bonus", "reimbursement", "other"];
+// Legacy keys that display/filter as Reimbursement.
+const LEGACY_REIMB = new Set(["equipment", "software", "marketing", "travel", "office"]);
 
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -434,6 +445,7 @@ function matchesStage(r: CompItem, f: StageFilter): boolean {
 function matchesCat(r: CompItem, cat: string): boolean {
   if (cat === "all") return true;
   if (cat === "transfers") return r.category === "transfers" || r.category === "leads";
+  if (cat === "reimbursement") return r.category === "reimbursement" || LEGACY_REIMB.has(r.category);
   return r.category === cat;
 }
 
@@ -680,7 +692,10 @@ export default function CompRequests() {
     setEditTarget(r);
     setEditDesc(r.description ?? "");
     setEditAmount(((r.amountCents ?? 0) / 100).toString());
-    setEditCategory(r.category === "leads" ? "transfers" : (r.category || "transfers"));
+    // Map legacy categories to their current equivalents so the dropdown
+    // always shows a selectable value.
+    const cat = r.category === "leads" ? "transfers" : LEGACY_REIMB.has(r.category) ? "reimbursement" : (r.category || "transfers");
+    setEditCategory(cat);
     setEditDate(r.expenseDate ?? "");
     setEditNote(r.note ?? "");
   }

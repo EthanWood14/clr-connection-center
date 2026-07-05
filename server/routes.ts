@@ -5830,7 +5830,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Users log expenses (draft), bundle them into a comp request (pending),
   // managers approve/deny, then the requester marks each as reimbursed (paid).
   // "leads" is kept as a legacy alias for older requests filed before the rename to "transfers".
-  const COMP_CATEGORIES = new Set(["transfers", "equipment", "software", "marketing", "travel", "office", "other", "leads"]);
+  // Current categories reflect what comp requests are actually filed for:
+  // monthly transfer comp, appointment comp, hours/time adjustments, bonuses,
+  // and expense reimbursements. The old expense-shop set (equipment/software/
+  // marketing/travel/office) plus "leads" stay accepted so historical records
+  // and old clients keep working; they display as Reimbursement / Transfers.
+  const COMP_CATEGORIES = new Set([
+    "transfers", "appointments", "hours", "bonus", "reimbursement", "other",
+    "leads", "equipment", "software", "marketing", "travel", "office",
+  ]);
   function mapComp(r: any, nameById: Map<number, string>) {
     return {
       id: r.id,
@@ -6409,7 +6417,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const c = mapComp(item, nameById);
       const atts = db.prepare("SELECT id, filename, mime, size_bytes, data_base64 FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC").all(compId, orgId) as any[];
 
-      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
+      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", appointments: "Appointments", hours: "Hours", bonus: "Bonus / Spiff", reimbursement: "Reimbursement", software: "Reimbursement", travel: "Reimbursement", marketing: "Reimbursement", equipment: "Reimbursement", office: "Reimbursement", other: "Other" };
       const STATUS_LABELS: Record<string, string> = { draft: "Draft (unsent)", pending: "Pending approval", approved: "Approved", denied: "Denied" };
       const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
       const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -6542,7 +6550,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         rows = db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 ORDER BY user_id ASC, id ASC").all(orgId) as any[];
       }
       const items = rows.map(r => mapComp(r, nameById));
-      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", software: "Software", travel: "Travel", marketing: "Marketing", equipment: "Equipment", office: "Office", other: "Other" };
+      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", appointments: "Appointments", hours: "Hours", bonus: "Bonus / Spiff", reimbursement: "Reimbursement", software: "Reimbursement", travel: "Reimbursement", marketing: "Reimbursement", equipment: "Reimbursement", office: "Reimbursement", other: "Other" };
       const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
       const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const fmtDate = (d: any) => {
@@ -9083,19 +9091,61 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
-  // Pay-rate settings (read: any signed-in; write: admin).
+  // Pay-rate settings (read: any signed-in; write: admin). The hourly rate is
+  // deliberately NOT writable here anymore — changing it broadly re-priced
+  // everyone's hours. Rates are per-user now (see /api/timeclock/rates below);
+  // the org default stays at $16.90 unless a user has an override.
   app.get("/api/timeclock/settings", requireAuth, (req: any, res) => {
     const s = storageExtra.getEmailSettings() as any;
-    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1680) || 1680, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
+    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1690) || 1690, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
   });
   app.post("/api/timeclock/settings", requireAuth, (req: any, res) => {
     if (!isCompAdmin(Number(req.session_user?.userId))) return res.status(403).json({ error: "Admins only" });
     const patch: any = {};
-    if (req.body?.payRateCents !== undefined) { const c = Math.round(Number(req.body.payRateCents)); if (Number.isFinite(c) && c >= 0) patch.payRateCents = c; }
     if (req.body?.seRate !== undefined) { const r = Number(req.body.seRate); if (Number.isFinite(r) && r >= 0 && r < 1) patch.seReimbRate = r; }
     if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
     const s = storageExtra.getEmailSettings() as any;
-    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1680) || 1680, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
+    res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1690) || 1690, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
+  });
+
+  // Per-user pay rates. Managers can view; only comp admins can change. Changing
+  // a rate affects ONLY that user — everyone else stays on the default or their
+  // own override.
+  app.get("/api/timeclock/rates", requireAuth, (req: any, res) => {
+    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers only" });
+    const db = storageExtra.getRawSqlite();
+    const rows = db.prepare(`SELECT id, name, role, hourly_rate_cents FROM users WHERE is_active = 1 AND role != 'viewer' ORDER BY name COLLATE NOCASE`).all() as any[];
+    res.json({
+      defaultRateCents: storageExtra.resolvePayRate().rateCents,
+      users: rows.map((r) => ({
+        userId: r.id,
+        name: r.name,
+        role: r.role,
+        overrideCents: r.hourly_rate_cents != null && Number(r.hourly_rate_cents) > 0 ? Number(r.hourly_rate_cents) : null,
+        effectiveCents: storageExtra.resolvePayRate(r.id).rateCents,
+      })),
+    });
+  });
+  app.post("/api/timeclock/rates/:userId", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!isCompAdmin(uid)) return res.status(403).json({ error: "Admins only" });
+    const targetId = parseInt(req.params.userId, 10);
+    const target = storage.getUserById(targetId) as any;
+    if (!target) return res.status(404).json({ error: "User not found" });
+    let cents: number | null = null;
+    if (req.body?.rateCents !== undefined && req.body.rateCents !== null && req.body.rateCents !== "") {
+      const c = Math.round(Number(req.body.rateCents));
+      if (!Number.isFinite(c) || c <= 0) return res.status(400).json({ error: "Enter a rate greater than 0, or clear it to use the default." });
+      cents = c;
+    }
+    storageExtra.setUserHourlyRate(targetId, cents);
+    const submitter = storage.getUserById(uid) as any;
+    audit({
+      userId: uid, userName: submitter?.name ?? "Unknown", action: "update",
+      entityType: "user", entityId: targetId, entityLabel: (target.name ?? "User") + " pay rate",
+      details: cents != null ? `Hourly rate set to $${(cents / 100).toFixed(2)}` : "Hourly rate override cleared (uses org default)",
+    });
+    res.json({ userId: targetId, overrideCents: cents, effectiveCents: storageExtra.resolvePayRate(targetId).rateCents });
   });
 
   app.get("/api/audit-logs", (req, res) => {
@@ -12251,10 +12301,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       search: typeof q.search === "string" ? q.search : undefined,
       state: typeof q.state === "string" ? q.state : undefined,
       bucket: typeof q.bucket === "string" ? q.bucket : undefined,
+      sort: typeof q.sort === "string" ? q.sort : undefined,
       limit: q.limit ? Number(q.limit) : 100,
       offset: q.offset ? Number(q.offset) : 0,
     });
     res.json(result);
+  });
+
+  // CSV export of the (filtered) pool. Priority-sorted by default so the top of
+  // the file is whoever has gone longest without a touch — never-contacted
+  // leads first. Managers/admins only (it's lead PII leaving the app).
+  app.get("/api/shark-tank/export", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const q = req.query ?? {};
+    const rows = storageExtra.getSharkTankLeadsForExport({
+      search: typeof q.search === "string" ? q.search : undefined,
+      state: typeof q.state === "string" ? q.state : undefined,
+      bucket: typeof q.bucket === "string" ? q.bucket : undefined,
+      sort: typeof q.sort === "string" ? q.sort : "priority",
+    });
+    const csv = toCsv(
+      ["Borrower", "Phone", "City", "State", "Loan Purpose", "Owner", "Stage", "Bucket", "Lead Created", "Last Contacted", "Never Contacted"],
+      rows.map((r: any) => [
+        r.borrowerName || "", r.phone || "", r.city || "", r.state || "",
+        r.loanPurpose || "", r.ownerName || "", r.stage || "", r.bucket || "",
+        r.sourceCreatedAt || "", r.lastContactedAt || "", r.lastContactedAt ? "no" : "yes",
+      ]),
+    );
+    sendCsv(res, `shark_tank_${todayIso()}.csv`, csv);
   });
 
   // Sync status (last run / count / errors) + whether the feed token is set.
