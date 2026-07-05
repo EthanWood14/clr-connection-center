@@ -63,6 +63,7 @@ import MojoSessions from "@/pages/mojo-sessions";
 import Contacts from "@/pages/contacts";
 import MojoImport from "@/pages/mojo-import";
 import Forum from "@/pages/forum";
+import SharkTank from "@/pages/shark-tank";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -128,6 +129,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/contacts":         "Contact Hub",
   "/mojo-import":      "Mojo Import",
   "/forum":            "Forum",
+  "/shark-tank":       "Shark Tank",
 };
 
 function usePageTitle() {
@@ -180,6 +182,7 @@ function AppRouter() {
       <Route path="/contacts" component={Contacts} />
       <Route path="/mojo-import" component={MojoImport} />
       <Route path="/forum" component={Forum} />
+      <Route path="/shark-tank" component={SharkTank} />
       <Route path="/super-admin" component={SuperAdmin} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
