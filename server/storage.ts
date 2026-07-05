@@ -1947,9 +1947,52 @@ function runNewMigrations() {
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_timeclock_user ON time_clock_entries(user_id, clock_in)`); } catch {}
   // Per-user hourly rate override (cents). NULL = use the org default rate.
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN hourly_rate_cents INTEGER`); } catch {}
-  // Org-level pay settings (defaults: $16.80/hr, +7.65% self-employment reimbursement).
-  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN pay_rate_cents INTEGER NOT NULL DEFAULT 1680`); } catch {}
+  // Org-level pay settings (defaults: $16.90/hr, +7.65% self-employment reimbursement).
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN pay_rate_cents INTEGER NOT NULL DEFAULT 1690`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN se_reimb_rate REAL NOT NULL DEFAULT 0.0765`); } catch {}
+  // One-time bump of the org default rate $16.80 → $16.90. Only rewrites the
+  // stored value if it still equals the old default, so a deliberately
+  // customized org rate is left alone.
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const rateBumped = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'pay_rate_default_1690_v1'`).get();
+    if (!rateBumped) {
+      sqlite.prepare(`UPDATE email_settings SET pay_rate_cents = 1690 WHERE pay_rate_cents = 1680`).run();
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("pay_rate_default_1690_v1", new Date().toISOString());
+    }
+  } catch {}
+
+  // Shark Tank pool: cold, re-workable mortgage leads pulled from LeadVault's
+  // token-auth /api/clr/shark-feed. READ-ONLY mirror — the daily sync fully owns
+  // these rows (mark-and-sweep on last_synced_at), so opt-outs/responders that
+  // leave the feed are pruned here within a day. external_id = LeadVault lead id.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shark_tank_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id TEXT NOT NULL UNIQUE,
+    borrower_name TEXT,
+    phone TEXT,
+    state TEXT,
+    city TEXT,
+    loan_purpose TEXT,
+    owner_name TEXT,
+    stage TEXT,
+    bucket TEXT,
+    source_created_at TEXT,
+    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shark_tank_sync (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_run_at TEXT,
+    last_status TEXT,
+    last_error TEXT,
+    synced_count INTEGER NOT NULL DEFAULT 0,
+    pruned_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 
   // EOD reports table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS eod_reports (
@@ -2755,10 +2798,10 @@ export function deleteTimeClockEntry(id: number): void {
   sqlite.prepare(`DELETE FROM time_clock_entries WHERE id=?`).run(id);
 }
 // Resolve the effective pay rate for a user: their per-user override if set,
-// else the org default ($16.80/hr), plus the self-employment reimbursement rate.
+// else the org default ($16.90/hr), plus the self-employment reimbursement rate.
 export function resolvePayRate(userId?: number): { rateCents: number; seRate: number } {
   const s = getEmailSettings() as any;
-  let rateCents = Number(s?.pay_rate_cents ?? 1680) || 1680;
+  let rateCents = Number(s?.pay_rate_cents ?? 1690) || 1690;
   let seRate = Number(s?.se_reimb_rate ?? 0.0765);
   if (!Number.isFinite(seRate)) seRate = 0.0765;
   if (userId != null) {
@@ -4174,4 +4217,132 @@ export function createLoanOfficerAssistant(data: { loId: number; fullName: strin
 export function deleteLoanOfficerAssistant(id: number) {
   // Soft-delete so historical outcomes that reference this LOA still resolve a name.
   sqlite.prepare(`UPDATE loan_officer_assistants SET active = 0 WHERE id = ?`).run(id);
+}
+
+// ── Shark Tank pool storage ──────────────────────────────────────────────────
+// Read-only mirror of LeadVault's shark feed (see shark-tank-sync.ts). The sync
+// upserts by external_id and stamps last_synced_at; anything the feed stopped
+// returning is pruned after the run (mark-and-sweep).
+
+export function upsertSharkTankLeads(rows: any[], runIso: string): number {
+  if (!rows.length) return 0;
+  const stmt = sqlite.prepare(`
+    INSERT INTO shark_tank_leads
+        (external_id, borrower_name, phone, state, city, loan_purpose, owner_name, stage, bucket, source_created_at, last_synced_at, updated_at)
+    VALUES (@external_id, @borrower_name, @phone, @state, @city, @loan_purpose, @owner_name, @stage, @bucket, @source_created_at, @run, @run)
+    ON CONFLICT(external_id) DO UPDATE SET
+        borrower_name=excluded.borrower_name, phone=excluded.phone, state=excluded.state, city=excluded.city,
+        loan_purpose=excluded.loan_purpose, owner_name=excluded.owner_name, stage=excluded.stage, bucket=excluded.bucket,
+        source_created_at=excluded.source_created_at, last_synced_at=@run, updated_at=@run
+  `);
+  sqlite.transaction((batch: any[]) => {
+    for (const r of batch) stmt.run({ ...r, run: runIso });
+  })(rows);
+  return rows.length;
+}
+
+export function pruneSharkTankLeads(runIso: string): number {
+  return sqlite.prepare(`DELETE FROM shark_tank_leads WHERE last_synced_at <> ?`).run(runIso).changes ?? 0;
+}
+
+type SharkTankQuery = { search?: string; state?: string; bucket?: string; sort?: string };
+
+// Filtered + sorted pool with a computed "last contacted": lead phones are
+// matched against every call outcome ever logged (lead_outcomes.phone_number,
+// normalized to 10 digits) so the pool can be worked coldest-first.
+// Sorts:
+//   priority (default) — never-contacted first (oldest lead first), then
+//                        longest-since-last-contact
+//   newest / oldest    — by the LeadVault created date
+function querySharkTankLeads(opts: SharkTankQuery): any[] {
+  const where: string[] = [];
+  const params: Record<string, any> = {};
+  if (opts.search && opts.search.trim()) {
+    where.push("(borrower_name LIKE @q OR phone LIKE @q OR city LIKE @q OR state LIKE @q)");
+    params.q = `%${opts.search.trim()}%`;
+  }
+  if (opts.state && opts.state.trim()) {
+    where.push("upper(coalesce(state, '')) = @st");
+    params.st = opts.state.trim().toUpperCase();
+  }
+  if (opts.bucket && opts.bucket !== "all") {
+    where.push("bucket = @bk");
+    params.bk = opts.bucket;
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = sqlite.prepare(`
+    SELECT id, external_id AS externalId, borrower_name AS borrowerName, phone, state, city,
+           loan_purpose AS loanPurpose, owner_name AS ownerName, stage, bucket,
+           source_created_at AS sourceCreatedAt, last_synced_at AS lastSyncedAt
+    FROM shark_tank_leads ${whereSql}
+  `).all(params) as any[];
+
+  const lastByPhone = new Map<string, string>();
+  const outcomes = sqlite.prepare(`
+    SELECT phone_number, MAX(COALESCE(created_at, date)) AS last
+    FROM lead_outcomes
+    WHERE phone_number IS NOT NULL AND phone_number != ''
+    GROUP BY phone_number
+  `).all() as any[];
+  for (const o of outcomes) {
+    const key = normPhone(o.phone_number);
+    if (!key || !o.last) continue;
+    const prev = lastByPhone.get(key);
+    if (!prev || String(o.last) > prev) lastByPhone.set(key, String(o.last));
+  }
+  for (const r of rows) {
+    const key = normPhone(r.phone);
+    r.lastContactedAt = (key && lastByPhone.get(key)) || null;
+  }
+
+  const sort = opts.sort || "priority";
+  if (sort === "newest") {
+    rows.sort((a, b) => String(b.sourceCreatedAt ?? "").localeCompare(String(a.sourceCreatedAt ?? "")) || a.id - b.id);
+  } else if (sort === "oldest") {
+    rows.sort((a, b) => String(a.sourceCreatedAt ?? "9999").localeCompare(String(b.sourceCreatedAt ?? "9999")) || a.id - b.id);
+  } else {
+    rows.sort((a, b) => {
+      const aContacted = a.lastContactedAt ? 1 : 0;
+      const bContacted = b.lastContactedAt ? 1 : 0;
+      if (aContacted !== bContacted) return aContacted - bContacted;
+      if (aContacted) {
+        const d = String(a.lastContactedAt).localeCompare(String(b.lastContactedAt));
+        if (d) return d;
+      }
+      const d = String(a.sourceCreatedAt ?? "9999").localeCompare(String(b.sourceCreatedAt ?? "9999"));
+      return d || a.id - b.id;
+    });
+  }
+  return rows;
+}
+
+export function getSharkTankLeads(opts: SharkTankQuery & { limit?: number; offset?: number }): { rows: any[]; total: number } {
+  const all = querySharkTankLeads(opts);
+  const limit = Math.min(Math.max(Number(opts.limit) || 100, 1), 500);
+  const offset = Math.max(Number(opts.offset) || 0, 0);
+  return { rows: all.slice(offset, offset + limit), total: all.length };
+}
+
+export function getSharkTankLeadsForExport(opts: SharkTankQuery): any[] {
+  return querySharkTankLeads(opts);
+}
+
+export function getSharkTankSyncMeta(): any {
+  return sqlite.prepare(`SELECT last_run_at AS lastRunAt, last_status AS lastStatus, last_error AS lastError,
+                                synced_count AS syncedCount, pruned_count AS prunedCount, duration_ms AS durationMs
+                         FROM shark_tank_sync WHERE id = 1`).get() ?? null;
+}
+
+export function setSharkTankSyncMeta(meta: { status: string; error?: string | null; synced?: number; pruned?: number; durationMs?: number }): void {
+  sqlite.prepare(`
+    INSERT INTO shark_tank_sync (id, last_run_at, last_status, last_error, synced_count, pruned_count, duration_ms, updated_at)
+    VALUES (1, datetime('now'), @status, @error, @synced, @pruned, @dur, datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET last_run_at=datetime('now'), last_status=@status, last_error=@error,
+        synced_count=@synced, pruned_count=@pruned, duration_ms=@dur, updated_at=datetime('now')
+  `).run({ status: meta.status, error: meta.error ?? null, synced: meta.synced ?? 0, pruned: meta.pruned ?? 0, dur: meta.durationMs ?? 0 });
+}
+
+// ── Per-user pay rate override ───────────────────────────────────────────────
+export function setUserHourlyRate(userId: number, rateCents: number | null): void {
+  sqlite.prepare(`UPDATE users SET hourly_rate_cents=? WHERE id=?`).run(rateCents, userId);
 }
