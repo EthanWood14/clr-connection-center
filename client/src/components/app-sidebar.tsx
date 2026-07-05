@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -170,15 +170,11 @@ const help = {
   },
 } as const;
 
+// MAIN is the daily workflow, always expanded. Everything that used to live in
+// the Reporting group moved here; the group itself is gone.
 const mainItems: NavItem[] = [
   { title: "Home",                  url: "/",             icon: LayoutDashboard, help: help.dashboard },
   { title: "Calling Script",        url: "/call-script",  icon: PhoneCall,       help: help.script },
-  { title: "State Lookup",          url: "/state-lookup", icon: MapPin },
-  { title: "Call Hours",            url: "/call-hours",   icon: Clock },
-  { title: "Install App",           url: "/install",      icon: Smartphone },
-];
-
-const reportingItems: NavItem[] = [
   { title: "Your Call List",        url: "/assignments",  icon: CalendarCheck,   help: help.assignments },
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
@@ -199,6 +195,10 @@ const teamItems: NavItem[] = [
 ];
 
 const toolItems: NavItem[] = [
+  { title: "State Lookup",    url: "/state-lookup",   icon: MapPin },
+  { title: "Call Hours",      url: "/call-hours",     icon: Clock },
+  { title: "Install App",     url: "/install",        icon: Smartphone },
+  { title: "Shark Tank",      url: "/shark-tank",     icon: Fish },
   { title: "LO Directory",    url: "/directory",      icon: Users,        help: help.directory },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
   { title: "Fall-Throughs",   url: "/fall-throughs",  icon: TrendingDown },
@@ -231,6 +231,20 @@ export function AppSidebar() {
   useEffect(() => {
     try { localStorage.setItem("sidebar.advancedOpen", advancedOpen ? "1" : "0"); } catch {}
   }, [advancedOpen]);
+
+  // Compressed rail groups (Personal / Team / Tools) — collapsed by default,
+  // each preference persisted the same way as the Advanced fold.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const load = (k: string) => { try { return localStorage.getItem(`sidebar.group.${k}`) === "1"; } catch { return false; } };
+    return { personal: load("personal"), team: load("team"), tools: load("tools") };
+  });
+  function toggleGroup(key: string) {
+    setOpenGroups(g => {
+      const next = { ...g, [key]: !g[key] };
+      try { localStorage.setItem(`sidebar.group.${key}`, next[key] ? "1" : "0"); } catch {}
+      return next;
+    });
+  }
 
   // Live appointment count — active appointment-type outcomes with followUpDate in the next 3 days.
   // Excludes outcomes that already became transfers or that are overdue (< today).
@@ -374,6 +388,38 @@ export function AppSidebar() {
     });
   }
 
+  // A compressed nav group: the header row toggles it open/closed. While
+  // collapsed, the header shows the summed badge count of the items inside so
+  // unread chat / upcoming appointments don't get lost behind the fold.
+  function renderCollapsibleGroup(key: string, label: string, items: NavItem[]) {
+    const groupOpen = !!openGroups[key];
+    const hiddenCount = groupOpen ? 0 : items.reduce((n, it) => n + getBadgeCount(it.badge), 0);
+    return (
+      <SidebarGroup>
+        <button
+          type="button"
+          onClick={() => toggleGroup(key)}
+          className="flex items-center gap-1.5 px-2 py-1.5 text-xs uppercase tracking-widest text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors w-full"
+          data-testid={`sidebar-group-${key}-toggle`}
+          aria-expanded={groupOpen}
+        >
+          {groupOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          <span className="font-semibold">{label}</span>
+          {hiddenCount > 0 && (
+            <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">
+              {hiddenCount > 99 ? "99+" : hiddenCount}
+            </Badge>
+          )}
+        </button>
+        {groupOpen && (
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(items)}</SidebarMenu>
+          </SidebarGroupContent>
+        )}
+      </SidebarGroup>
+    );
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   const { isMobile, state } = useSidebar();
   const showAdvanced = advancedOpen;
@@ -390,7 +436,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* MAIN — always visible, never collapsed */}
+        {/* MAIN — the daily workflow, always expanded */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
             Main
@@ -400,37 +446,12 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* REPORTING — always visible */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Reporting
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(reportingItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* Compressed groups — headers stay visible, items fold away */}
+        {renderCollapsibleGroup("personal", "Personal", personalItems)}
+        {renderCollapsibleGroup("team", "Team", teamItems)}
+        {renderCollapsibleGroup("tools", "Tools", toolItems)}
 
-        {/* PERSONAL — time off, schedule, comp */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Personal
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(personalItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* TEAM — always visible */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Team
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(teamItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* ADVANCED SETTINGS — collapsible folder containing every other group.
+        {/* ADVANCED SETTINGS — collapsible folder for admin/help/etc.
            Hidden entirely when the rail is in icon-only mode (the underlying
            groups still render below when advancedOpen is true, and their items
            show as icons in the rail). */}
@@ -449,16 +470,6 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {showAdvanced && <>
-        {/* TOOLS */}
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
-            Tools
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(toolItems)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
         {/* ADMIN (admin-only) */}
         {user?.role === "admin" && (
           <SidebarGroup>
