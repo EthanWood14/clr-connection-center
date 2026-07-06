@@ -16,8 +16,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Clock, Play, Square, Plus, Pencil, Trash2, DollarSign, ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
+import { Clock, Play, Square, Plus, Pencil, Trash2, DollarSign, ChevronLeft, ChevronRight, Settings2, Wallet } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { useLocation } from "wouter";
 
 type Entry = {
   id: number; userId: number; userName: string;
@@ -69,6 +70,7 @@ export default function TimeClock() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const isAdmin = !!(user && (user.role === "admin" || (user as any).superAdmin));
 
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
@@ -280,6 +282,31 @@ export default function TimeClock() {
           </div>
         ))}
       </div>
+
+      {/* Hand these hours to Comp Requests with the form prefilled */}
+      {scope === "mine" && totals.hours > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] text-amber-900 dark:text-amber-200">
+            <strong>{totals.hours.toFixed(2)} hrs in {label}</strong> ≈ {money(totals.total)} incl. SE reimbursement.
+          </p>
+          <Button
+            size="sm" variant="outline" className="gap-1.5"
+            data-testid="tc-file-comp"
+            onClick={() => {
+              try {
+                sessionStorage.setItem("comp.prefill", JSON.stringify({
+                  description: `Hours worked — ${label} (${totals.hours.toFixed(2)} hrs @ ${money(rate.rateCents)}/hr + ${(rate.seRate * 100).toFixed(2)}% SE)`,
+                  category: "hours",
+                  amountCents: totals.total,
+                }));
+              } catch {}
+              navigate("/comp-requests");
+            }}
+          >
+            <Wallet className="w-3.5 h-3.5" /> File a comp request
+          </Button>
+        </div>
+      )}
 
       {/* Entries */}
       <Card>

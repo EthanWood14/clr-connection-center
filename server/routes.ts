@@ -5944,6 +5944,52 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // Time-clock hours for the current + previous calendar month, priced at the
+  // target user's effective rate — the Comp Requests twin of transfer-stats, so
+  // a CLR can file an hours request without digging through the Time Clock.
+  app.get("/api/comp/hours-stats", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const sessUserId = Number(sess?.userId);
+    if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
+    const orgId = Number(sess?.orgId ?? 1) || 1;
+    let targetId = sessUserId;
+    const wanted = Number(req.query.userId) || 0;
+    if (wanted && wanted !== sessUserId) {
+      const me = storage.getUserById(sessUserId) as any;
+      const isMgr = !!(me && (me.role === "admin" || (me.isManager ?? me.is_manager) || (me.superAdmin ?? me.super_admin)));
+      if (isMgr && storage.getUserById(wanted)) targetId = wanted;
+    }
+    try {
+      const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+      const [ty, tm] = todayStr.split("-").map((x: string) => parseInt(x, 10));
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const monthName = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const rate = storageExtra.resolvePayRate(targetId);
+      const build = (y: number, m: number) => {
+        const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        const startDate = `${y}-${pad(m)}-01`;
+        const endDate = `${y}-${pad(m)}-${pad(lastDay)}`;
+        const entries = storageExtra.getTimeClockEntries({ orgId, userId: targetId, startDate, endDate }) as any[];
+        let hours = 0;
+        for (const e of entries) {
+          if (!e.clock_out) continue; // open shifts don't count yet
+          const inMs = new Date(e.clock_in).getTime();
+          const outMs = new Date(e.clock_out).getTime();
+          if (Number.isFinite(inMs) && Number.isFinite(outMs) && outMs > inMs) hours += (outMs - inMs) / 3600000;
+        }
+        hours = Math.round(hours * 100) / 100;
+        const baseCents = Math.round(hours * rate.rateCents);
+        const seCents = Math.round(baseCents * rate.seRate);
+        return { month: monthName(y, m), startDate, endDate, hours, baseCents, seCents, totalCents: baseCents + seCents };
+      };
+      const py = tm === 1 ? ty - 1 : ty;
+      const pm = tm === 1 ? 12 : tm - 1;
+      res.json({ userId: targetId, rateCents: rate.rateCents, seRate: rate.seRate, previous: build(py, pm), current: build(ty, tm) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load hours stats" });
+    }
+  });
+
   app.post("/api/comp", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;

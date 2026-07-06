@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -247,6 +247,72 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
               onClick={() => onUse("Monthly transfer request — " + cur.month + " (" + cur.transfers + " transfer" + plural(cur.transfers) + ")")}
               className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
               data-testid="button-use-transfers-current"
+            >
+              <Plus className="w-3 h-3" /> Use this month ({cur.month})
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Shows the CLR their time-clock hours for last/this month priced at their
+// rate — the Time Clock twin of TransferStatsHint, so an hours comp request
+// can be filed with the description AND amount prefilled.
+function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string, amountCents: number) => void }) {
+  const qs = forUserId ? "?userId=" + forUserId : "";
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/comp/hours-stats", forUserId ?? "me"],
+    queryFn: () => apiRequest("GET", "/api/comp/hours-stats" + qs),
+  });
+  const prev = data?.previous;
+  const cur = data?.current;
+  const whoLabel = forUserName ? `${forUserName}'s hours` : "Your hours";
+  const useText = (p: any) =>
+    "Hours worked — " + p.month + " (" + p.hours + " hrs @ " + money(data.rateCents) + "/hr + " + (data.seRate * 100).toFixed(2) + "% SE)";
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Timer className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+        <span className="text-sm font-semibold text-amber-900 dark:text-amber-200">{whoLabel} — from the Time Clock</span>
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-12 w-full" />
+      ) : (
+        <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-3xl font-bold tabular-nums text-amber-700 dark:text-amber-300" data-testid="prev-hours-count">{prev?.hours ?? 0}</span>
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">hrs in {prev?.month ?? "last month"}</span>
+            </div>
+            <div className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+              ≈ {money(prev?.totalCents ?? 0)} incl. SE reimbursement
+            </div>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            <span className="tabular-nums font-semibold text-foreground">{cur?.hours ?? 0}</span> hrs so far in {cur?.month ?? "this month"}
+          </div>
+        </div>
+      )}
+      {onUse && data && (prev?.hours > 0 || cur?.hours > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          {prev?.hours > 0 && (
+            <button
+              type="button"
+              onClick={() => onUse(useText(prev), prev.totalCents)}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              data-testid="button-use-hours"
+            >
+              <Plus className="w-3 h-3" /> Use last month ({prev.month})
+            </button>
+          )}
+          {cur?.hours > 0 && (
+            <button
+              type="button"
+              onClick={() => onUse(useText(cur), cur.totalCents)}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              data-testid="button-use-hours-current"
             >
               <Plus className="w-3 h-3" /> Use this month ({cur.month})
             </button>
@@ -591,6 +657,20 @@ export default function CompRequests() {
   const [category, setCategory] = useState("transfers");
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
+
+  // Prefill handed over from another page (e.g. the Time Clock's "file a comp
+  // request for these hours" button). One-shot: consumed and cleared on mount.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("comp.prefill");
+      if (!raw) return;
+      sessionStorage.removeItem("comp.prefill");
+      const p = JSON.parse(raw);
+      if (typeof p.description === "string") setDescription(p.description);
+      if (typeof p.category === "string") setCategory(p.category);
+      if (Number.isFinite(p.amountCents) && p.amountCents > 0) setAmount((p.amountCents / 100).toFixed(2));
+    } catch {}
+  }, []);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
   const [compForUserId, setCompForUserId] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -865,6 +945,11 @@ export default function CompRequests() {
             forUserId={compForUserId ? Number(compForUserId) : undefined}
             forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
             onUse={(text) => { setDescription(text); setCategory("transfers"); }}
+          />
+          <HoursStatsHint
+            forUserId={compForUserId ? Number(compForUserId) : undefined}
+            forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
+            onUse={(text, amountCents) => { setDescription(text); setCategory("hours"); setAmount((amountCents / 100).toFixed(2)); }}
           />
           {isManager && (
             <div>
