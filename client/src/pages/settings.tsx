@@ -357,12 +357,12 @@ function BulkTexterCard() {
 function NmlsScheduleCard() {
   const { toast } = useToast();
   const { data: schedule, isLoading } = useQuery<any>({ queryKey: ["/api/nmls-schedule"] });
-  const [intervalMonths, setIntervalMonths] = useState("2");
+  const [intervalDays, setIntervalDays] = useState("45");
   const [escalationDays, setEscalationDays] = useState("7");
 
   useEffect(() => {
     if (!schedule) return;
-    setIntervalMonths(String(schedule.interval_months ?? 2));
+    setIntervalDays(String(schedule.interval_days ?? 45));
     setEscalationDays(String(schedule.escalation_days ?? 7));
   }, [schedule]);
 
@@ -389,7 +389,7 @@ function NmlsScheduleCard() {
           NMLS License Check Schedule
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Every 2 months (or your configured interval), a random CLR is assigned to verify each active LO's NMLS license on Consumer Access.
+          Every 45 days (or your configured interval), a random CLR is assigned to verify each active LO's NMLS license on Consumer Access.
           If not confirmed within the escalation window, all CLRs are notified.
         </p>
       </CardHeader>
@@ -400,13 +400,13 @@ function NmlsScheduleCard() {
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Check interval (months)</label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Check interval (days)</label>
                 <Input
-                  type="number" min={1} max={12} value={intervalMonths}
-                  onChange={e => setIntervalMonths(e.target.value)}
+                  type="number" min={1} max={365} value={intervalDays}
+                  onChange={e => setIntervalDays(e.target.value)}
                   className="h-8 text-sm"
                 />
-                <p className="text-[10px] text-muted-foreground">How often checks run (default: every 2 months)</p>
+                <p className="text-[10px] text-muted-foreground">How often checks run (default: every 45 days). Saving restarts the countdown from today.</p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Escalation after (days)</label>
@@ -421,7 +421,7 @@ function NmlsScheduleCard() {
             <div className="flex items-center gap-2 pt-1">
               <Button
                 size="sm"
-                onClick={() => saveMutation.mutate({ intervalMonths: parseInt(intervalMonths), escalationDays: parseInt(escalationDays) })}
+                onClick={() => saveMutation.mutate({ intervalDays: parseInt(intervalDays), escalationDays: parseInt(escalationDays) })}
                 disabled={saveMutation.isPending}
                 className="gap-1.5"
               >

@@ -1577,32 +1577,49 @@ async function sendReport(
 }
 
 // ── NMLS Check trigger + cron ────────────────────────────────────────────────
-// Period key: groups months into blocks of intervalMonths.
-// E.g. intervalMonths=2 → Jan+Feb = "2026-01", Mar+Apr = "2026-03", etc.
+// Rounds fire on a rolling interval: every interval_days (default 45) from the
+// last round, tracked via nmls_schedule.next_run_at. Each round's period key is
+// the date it was triggered ("2026-07-06"), stored in current_period_key.
+// Older databases have legacy month-block keys ("2026-07"); until the first
+// rolling round fires, getNmlsPeriodKey falls back to that computation so
+// in-flight checks stay visible.
 function getNmlsPeriodKey(refDate?: Date): string {
-  const now = refDate ?? new Date();
   const schedule = storageExtra.getNmlsSchedule();
+  if (schedule.current_period_key) return schedule.current_period_key;
+  // Legacy month-block key (pre-rolling-schedule databases)
+  const now = refDate ?? new Date();
   const intervalMonths: number = schedule.interval_months ?? 2;
   const year = now.getFullYear();
   const month = now.getMonth(); // 0-indexed
-  // Find the start month of the current block (0-indexed)
   const blockStart = Math.floor(month / intervalMonths) * intervalMonths;
   return `${year}-${String(blockStart + 1).padStart(2, "0")}`;
 }
 
-// Next time the automatic check-reminder cron ("0 8 1 1,3,5,7,9,11 *") will
-// fire: the 1st of the next odd month (Jan/Mar/May/Jul/Sep/Nov) at 08:00 UTC.
-// Keep this in sync with the cron.schedule definition below.
-function getNextNmlsCheckDate(now: Date = new Date()): Date {
-  const months = [0, 2, 4, 6, 8, 10]; // 0-indexed Jan, Mar, May, Jul, Sep, Nov
-  const year = now.getUTCFullYear();
-  for (let addYear = 0; addYear <= 1; addYear++) {
-    for (const m of months) {
-      const d = new Date(Date.UTC(year + addYear, m, 1, 8, 0, 0));
-      if (d.getTime() > now.getTime()) return d;
-    }
+// Start a fresh round NOW: new period key (today's date) so every active LO
+// gets a new check regardless of prior rounds, and re-anchor the next run
+// interval_days out from this moment.
+function startNmlsRound(trigger: string) {
+  const schedule = storageExtra.getNmlsSchedule();
+  const intervalDays = Number(schedule.interval_days) > 0 ? Number(schedule.interval_days) : 45;
+  const periodKey = new Date().toISOString().slice(0, 10);
+  storageExtra.updateNmlsSchedule({
+    currentPeriodKey: periodKey,
+    nextRunAt: new Date(Date.now() + intervalDays * 86400000).toISOString(),
+  });
+  triggerNmlsChecks();
+  console.log(`[nmls] ${trigger}: started round ${periodKey}; next run in ${intervalDays} days`);
+}
+
+// Fire a round when it comes due. A fresh database with no next_run_at gets one
+// scheduled interval_days out rather than blasting checks on first boot.
+function runNmlsRoundIfDue(trigger: string) {
+  const schedule = storageExtra.getNmlsSchedule();
+  if (!schedule.next_run_at) {
+    const intervalDays = Number(schedule.interval_days) > 0 ? Number(schedule.interval_days) : 45;
+    storageExtra.updateNmlsSchedule({ nextRunAt: new Date(Date.now() + intervalDays * 86400000).toISOString() });
+    return;
   }
-  return new Date(Date.UTC(year + 2, 0, 1, 8, 0, 0));
+  if (new Date(schedule.next_run_at).getTime() <= Date.now()) startNmlsRound(trigger);
 }
 
 function triggerNmlsChecks() {
@@ -1670,10 +1687,15 @@ function runNmlsEscalations() {
   }
 }
 
-// Run NMLS checks on the 1st of every other month (Jan, Mar, May, Jul, Sep, Nov) at 8am UTC.
-cron.schedule("0 8 1 1,3,5,7,9,11 *", () => {
-  try { triggerNmlsChecks(); } catch (e) { console.error("NMLS check trigger error:", e); }
+// Rolling schedule: check every 30 minutes whether the next round is due
+// (next_run_at), and once shortly after boot so a due round isn't left waiting
+// for the next cron tick after a deploy.
+cron.schedule("*/30 * * * *", () => {
+  try { runNmlsRoundIfDue("cron"); } catch (e) { console.error("NMLS check trigger error:", e); }
 });
+setTimeout(() => {
+  try { runNmlsRoundIfDue("boot"); } catch (e) { console.error("NMLS boot check error:", e); }
+}, 20_000);
 
 // Check for escalations every morning at 9am
 cron.schedule("0 9 * * *", () => {
@@ -9571,12 +9593,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.patch("/api/nmls-schedule", requireAuth, (req, res) => {
-    const { checkDay1, checkDay2, escalationDays, intervalMonths } = req.body;
+    const { checkDay1, checkDay2, escalationDays, intervalMonths, intervalDays } = req.body;
+    const days = intervalDays !== undefined ? parseInt(intervalDays) : undefined;
+    if (days !== undefined && (!Number.isFinite(days) || days < 1 || days > 365)) {
+      return res.status(400).json({ error: "Check interval must be between 1 and 365 days." });
+    }
     const updated = storageExtra.updateNmlsSchedule({
       checkDay1: checkDay1 !== undefined ? parseInt(checkDay1) : undefined,
       checkDay2: checkDay2 !== undefined ? parseInt(checkDay2) : undefined,
       escalationDays: escalationDays !== undefined ? parseInt(escalationDays) : undefined,
       intervalMonths: intervalMonths !== undefined ? parseInt(intervalMonths) : undefined,
+      // Changing the interval re-anchors the next round that many days from now.
+      intervalDays: days,
+      nextRunAt: days !== undefined ? new Date(Date.now() + days * 86400000).toISOString() : undefined,
     });
     res.json(updated);
   });
@@ -9613,7 +9642,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const daysOverdue = Math.floor((Date.now() - assignedAt.getTime()) / 86400000);
         return { ...c, lo, daysOverdue };
       });
-    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7, nextCheckAt: getNextNmlsCheckDate().toISOString() });
+    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7, nextCheckAt: schedule.next_run_at ?? null });
   });
 
   // Confirm NMLS check for an LO
@@ -9638,7 +9667,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/nmls-checks/trigger", requireAuth, (req: any, res) => {
     const user = req.session_user;
     if (user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
-    triggerNmlsChecks();
+    // Starts a brand-new round (fresh period key, so every active LO gets a
+    // check) and resets the interval clock from this moment.
+    startNmlsRound("manual");
     res.json({ ok: true });
   });
 

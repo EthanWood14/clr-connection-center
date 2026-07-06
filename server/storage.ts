@@ -1906,6 +1906,25 @@ function runNewMigrations() {
   if (!nmlsCols.find(c => c.name === 'interval_months')) {
     sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN interval_months INTEGER NOT NULL DEFAULT 2`);
   }
+  // Rolling-interval scheduling: checks fire every interval_days from the last
+  // round (next_run_at), instead of on fixed odd-month calendar dates.
+  // current_period_key names the active round (the trigger date).
+  if (!nmlsCols.find(c => c.name === 'interval_days')) {
+    sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN interval_days INTEGER NOT NULL DEFAULT 45`);
+    sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN next_run_at TEXT`);
+    sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN current_period_key TEXT`);
+  }
+  // One-time switch to the 45-day cadence: make the next round due immediately,
+  // so the boot check sends it right after this deploy and every 45 days after.
+  try {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const nmls45 = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'nmls_45day_schedule_v1'`).get();
+    if (!nmls45) {
+      sqlite.prepare(`UPDATE nmls_schedule SET interval_days = 45, next_run_at = ? WHERE id = 1`).run(new Date().toISOString());
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("nmls_45day_schedule_v1", new Date().toISOString());
+    }
+  } catch {}
 
   // Chat messages table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_messages (
@@ -2689,13 +2708,16 @@ export function resetLoginAttempts(ip: string) {
 export function getNmlsSchedule() {
   return sqlite.prepare(`SELECT * FROM nmls_schedule WHERE id=1`).get() as any;
 }
-export function updateNmlsSchedule(data: { checkDay1?: number; checkDay2?: number; escalationDays?: number; intervalMonths?: number }) {
+export function updateNmlsSchedule(data: { checkDay1?: number; checkDay2?: number; escalationDays?: number; intervalMonths?: number; intervalDays?: number; nextRunAt?: string | null; currentPeriodKey?: string }) {
   const fields: string[] = [];
   const vals: any[] = [];
   if (data.checkDay1 !== undefined) { fields.push("check_day_1=?"); vals.push(data.checkDay1); }
   if (data.checkDay2 !== undefined) { fields.push("check_day_2=?"); vals.push(data.checkDay2); }
   if (data.escalationDays !== undefined) { fields.push("escalation_days=?"); vals.push(data.escalationDays); }
   if (data.intervalMonths !== undefined) { fields.push("interval_months=?"); vals.push(data.intervalMonths); }
+  if (data.intervalDays !== undefined) { fields.push("interval_days=?"); vals.push(data.intervalDays); }
+  if (data.nextRunAt !== undefined) { fields.push("next_run_at=?"); vals.push(data.nextRunAt); }
+  if (data.currentPeriodKey !== undefined) { fields.push("current_period_key=?"); vals.push(data.currentPeriodKey); }
   if (!fields.length) return getNmlsSchedule();
   fields.push("updated_at=?"); vals.push(new Date().toISOString());
   sqlite.prepare(`UPDATE nmls_schedule SET ${fields.join(",")} WHERE id=1`).run(...vals);
