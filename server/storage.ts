@@ -1925,6 +1925,29 @@ function runNewMigrations() {
         .run("nmls_45day_schedule_v1", new Date().toISOString());
     }
   } catch {}
+  // One-time purge: the unscoped NMLS cron used to create checks for OTHER
+  // orgs' LOs (the demo org's sample LOs) and assign them to real CLRs. Remove
+  // every check for a non-primary-org LO, plus the in-app notifications they
+  // generated, so the tracker and escalations only ever cover real LOs.
+  try {
+    const purged = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'nmls_purge_cross_org_checks_v1'`).get();
+    if (!purged) {
+      const junk = sqlite.prepare(`
+        SELECT c.id, lo.full_name AS name FROM nmls_check_logs c
+        JOIN loan_officers lo ON lo.id = c.lo_id
+        WHERE COALESCE(lo.org_id, 1) <> 1
+      `).all() as any[];
+      if (junk.length) {
+        sqlite.prepare(`DELETE FROM nmls_check_logs WHERE id IN (${junk.map(() => "?").join(",")})`).run(...junk.map(j => j.id));
+        const names = Array.from(new Set(junk.map(j => String(j.name ?? "")).filter(Boolean)));
+        const delNotif = sqlite.prepare(`DELETE FROM notifications WHERE type IN ('nmls_check','nmls_escalation') AND message LIKE ?`);
+        for (const n of names) delNotif.run(`%${n}%`);
+        console.log(`[nmls] purged ${junk.length} cross-org checks (${names.join(", ")})`);
+      }
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("nmls_purge_cross_org_checks_v1", new Date().toISOString());
+    }
+  } catch (e) { console.error("[nmls] cross-org purge failed:", e); }
 
   // Chat messages table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_messages (

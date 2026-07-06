@@ -1690,16 +1690,20 @@ function runNmlsEscalations() {
 // Rolling schedule: check every 30 minutes whether the next round is due
 // (next_run_at), and once shortly after boot so a due round isn't left waiting
 // for the next cron tick after a deploy.
+//
+// Scoped to the primary org (1): with no org context, getLoanOfficers()/
+// getUsers() return EVERY org's rows — which used to assign the demo org's
+// sample LOs ("Alex Thompson" & co, org 2) to real CLRs each round.
 cron.schedule("*/30 * * * *", () => {
-  try { runNmlsRoundIfDue("cron"); } catch (e) { console.error("NMLS check trigger error:", e); }
+  try { runWithOrg({ orgId: 1, superAdmin: false }, () => runNmlsRoundIfDue("cron")); } catch (e) { console.error("NMLS check trigger error:", e); }
 });
 setTimeout(() => {
-  try { runNmlsRoundIfDue("boot"); } catch (e) { console.error("NMLS boot check error:", e); }
+  try { runWithOrg({ orgId: 1, superAdmin: false }, () => runNmlsRoundIfDue("boot")); } catch (e) { console.error("NMLS boot check error:", e); }
 }, 20_000);
 
-// Check for escalations every morning at 9am
+// Check for escalations every morning at 9am (same org-1 scoping as the trigger)
 cron.schedule("0 9 * * *", () => {
-  try { runNmlsEscalations(); } catch (e) { console.error("NMLS escalation error:", e); }
+  try { runWithOrg({ orgId: 1, superAdmin: false }, () => runNmlsEscalations()); } catch (e) { console.error("NMLS escalation error:", e); }
 });
 
 // ── Missed-appointment nag ────────────────────────────────────────────────────
