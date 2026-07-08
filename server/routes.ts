@@ -5327,6 +5327,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const n = Math.round(Number(v));
     return Number.isFinite(n) ? Math.min(Math.max(n, 0), 100) : 100;
   };
+  // Whether a source appears on a given date. Deterministic hash of
+  // (source, date) so the answer is stable all day for everyone and across
+  // requests, while still averaging out to the percentage over many days.
+  function sourceAppearsOn(sourceId: number, pct: number, date: string): boolean {
+    if (pct >= 100) return true;
+    if (pct <= 0) return false;
+    let h = 0;
+    const s = `${sourceId}:${date}`;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 100 < pct;
+  }
+  // The sources that appear on a date — rendered as instruction cards at the
+  // top of Your Call List.
+  app.get("/api/lead-sources/today", requireAuth, (req: any, res) => {
+    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date
+      : businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const sources = storageExtra.getLeadSources()
+      .filter((s: any) => sourceAppearsOn(s.id, clampPct(s.appearancePct ?? 100), date))
+      .map((s: any) => ({ id: s.id, name: s.name, notes: s.notes }));
+    res.json({ date, sources });
+  });
   app.post("/api/lead-sources", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
     const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
@@ -7099,17 +7121,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const ranked = generateRankings(eligibleLOs, settings, date, recentTransferCounts);
     const maxTotal = settings.maxLosPerAssistant * assistants.length;
 
-    // ── Lead-source appearance roll ─────────────────────────────────────────────
+    // ── Lead-source appearance filter ───────────────────────────────────────────
     // Each lead source has an appearance percentage (0–100): the chance the
-    // whole source is part of TODAY's generation. 100 (the default, and the
-    // built-in General bucket for unsourced LOs) always appears; 0 never does;
-    // 30 shows up in roughly 3 of 10 generations. Rolled once per source per
-    // generation — the day's list is locked after, so the roll sticks all day.
+    // source is part of a given day's assignments. Uses the same deterministic
+    // per-(source, date) roll as the /api/lead-sources/today instruction cards,
+    // so tagged LOs and the source's card always agree. Unsourced LOs (the
+    // General bucket) always appear.
     const leadSources = storageExtra.getLeadSources();
     const sourceAppears = new Map<number, boolean>([[0, true]]);
     for (const s of leadSources) {
-      const pct = Math.min(Math.max(Number(s.appearancePct ?? 100), 0), 100);
-      sourceAppears.set(s.id, pct >= 100 ? true : pct <= 0 ? false : Math.random() * 100 < pct);
+      sourceAppears.set(s.id, sourceAppearsOn(s.id, clampPct(s.appearancePct ?? 100), date));
     }
     const throttled = ranked.filter(r => {
       const sid = Number(r.lo.leadSourceId ?? r.lo.lead_source_id ?? 0) || 0;

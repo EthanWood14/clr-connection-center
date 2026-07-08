@@ -1008,6 +1008,13 @@ export default function Assignments() {
     queryFn: () => apiRequest("GET", `/api/assignments?date=${currentDate}`),
   });
 
+  // Lead-source instruction cards for the selected date (deterministic per
+  // day — a 33% source shows on the same ~1/3 of days for everyone).
+  const { data: sourceCards } = useQuery<{ date: string; sources: { id: number; name: string; notes: string }[] }>({
+    queryKey: ["/api/lead-sources/today", currentDate],
+    queryFn: () => apiRequest("GET", `/api/lead-sources/today?date=${currentDate}`),
+  });
+
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
 
   // LOA transfer queue — for LOs that have assistants, which one is next in line.
@@ -1432,6 +1439,22 @@ export default function Assignments() {
             <span className="font-semibold">Start at #1</span>
             <span className="text-amber-800/80 dark:text-amber-300/80"> — work the list top to bottom. The order is calibrated by recency, frequency, and priority tier.</span>
           </p>
+        </div>
+      )}
+
+      {/* Lead-source instructions for this date — set on the Lead Sources page */}
+      {(sourceCards?.sources?.length ?? 0) > 0 && (
+        <div className="space-y-2">
+          {sourceCards!.sources.map((s) => (
+            <div
+              key={s.id}
+              className="rounded-lg border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-800 px-4 py-3"
+              data-testid={`source-card-${s.id}`}
+            >
+              <p className="text-sm font-semibold text-violet-900 dark:text-violet-200">{s.name}</p>
+              {s.notes && <p className="text-[13px] text-violet-800/90 dark:text-violet-300/90 mt-0.5 whitespace-pre-wrap">{s.notes}</p>}
+            </div>
+          ))}
         </div>
       )}
 

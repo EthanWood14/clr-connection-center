@@ -64,7 +64,8 @@ export default function LeadSources() {
           <div>
             <h1 className="text-2xl font-bold text-white">Lead Sources</h1>
             <p className="text-sm text-white/60">
-              Group LOs by where they came from. The percentage is the chance a source appears in a day's assignments; notes show on every assignment card.
+              Each source shows up as an instruction card at the top of Your Call List. The percentage is the chance it appears on a given day (100 = every day).
+              Optionally tag LOs to a source in the Directory to show a badge on their assignment rows.
             </p>
           </div>
         </div>
@@ -72,7 +73,7 @@ export default function LeadSources() {
 
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          Assign an LO to a source from its edit dialog in the LO Directory. Unassigned LOs form the built-in <strong>General</strong> bucket (weight 1).
+          Cards appear on Your Call List on the days their percentage hits. Tagging LOs to a source (LO Directory → edit) is optional.
         </p>
         {isAdmin && (
           <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew} data-testid="add-lead-source">
