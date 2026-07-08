@@ -200,13 +200,18 @@ const toolItems: NavItem[] = [
   { title: "Call Hours",      url: "/call-hours",     icon: Clock },
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Shark Tank",      url: "/shark-tank",     icon: Fish },
+  { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
+  { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
+];
+
+// LO management tools — parked in Advanced Settings for now, pending a
+// dedicated group of their own.
+const loManagementItems: NavItem[] = [
   { title: "LO Directory",    url: "/directory",      icon: Users,        help: help.directory },
   { title: "Lead Sources",    url: "/lead-sources",   icon: ListFilter },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
   { title: "Fall-Throughs",   url: "/fall-throughs",  icon: TrendingDown },
   { title: "LO Vacation",     url: "/snooze",         icon: BedDouble,    help: help.loVacation },
-  { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
-  { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
 ];
 
 const adminItems: NavItem[] = [
@@ -472,6 +477,16 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {showAdvanced && <>
+        {/* LO MANAGEMENT — parked here pending its own dedicated group */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            LO Management
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(loManagementItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {/* ADMIN (admin-only) */}
         {user?.role === "admin" && (
           <SidebarGroup>
