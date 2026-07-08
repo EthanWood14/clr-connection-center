@@ -1188,6 +1188,117 @@ function EditOutcomeDialog({
   );
 }
 
+// Log and review results a CLR got from working today's lead sources. Sits
+// alongside LO outcomes — a lead source is a workable target you log against,
+// just like an LO.
+function LeadSourceResults() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [sourceId, setSourceId] = useState("");
+  const [outcomeType, setOutcomeType] = useState("transfer");
+  const [count, setCount] = useState("1");
+  const [notes, setNotes] = useState("");
+
+  const { data: today } = useQuery<{ sources: { id: number; name: string; notes: string }[] }>({
+    queryKey: ["/api/lead-sources/today"],
+    queryFn: () => apiRequest("GET", "/api/lead-sources/today"),
+  });
+  const { data: logged = [] } = useQuery<any[]>({
+    queryKey: ["/api/lead-source-outcomes"],
+    queryFn: () => apiRequest("GET", "/api/lead-source-outcomes"),
+  });
+  const sources = today?.sources ?? [];
+
+  const logMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/lead-source-outcomes", {
+      leadSourceId: Number(sourceId), outcomeType, count: Number(count) || 1, notes,
+    }),
+    onSuccess: () => {
+      toast({ title: "Result logged" });
+      setNotes(""); setCount("1");
+      queryClient.invalidateQueries({ queryKey: ["/api/lead-source-outcomes"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't log", description: e?.message, variant: "destructive" }),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/lead-source-outcomes/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/lead-source-outcomes"] }),
+  });
+
+  // Nothing to work today and nothing logged — stay out of the way.
+  if (sources.length === 0 && logged.length === 0) return null;
+
+  return (
+    <Card className="border-violet-200 dark:border-violet-800">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ArrowRightLeft className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+          Lead Source Results
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">Log what you got from working today's lead sources.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {sources.length > 0 ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[160px] flex-1">
+              <label className="text-[11px] font-medium text-muted-foreground">Source</label>
+              <Select value={sourceId || String(sources[0].id)} onValueChange={setSourceId}>
+                <SelectTrigger data-testid="lso-source"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {sources.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-36">
+              <label className="text-[11px] font-medium text-muted-foreground">Result</label>
+              <Select value={outcomeType} onValueChange={setOutcomeType}>
+                <SelectTrigger data-testid="lso-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {OUTCOME_TYPES.map((t) => <SelectItem key={t} value={t}>{OUTCOME_LABELS[t]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-20">
+              <label className="text-[11px] font-medium text-muted-foreground">Count</label>
+              <Input type="number" min={1} max={999} value={count} onChange={e => setCount(e.target.value)} data-testid="lso-count" />
+            </div>
+            <div className="min-w-[140px] flex-1">
+              <label className="text-[11px] font-medium text-muted-foreground">Notes (optional)</label>
+              <Input value={notes} onChange={e => setNotes(e.target.value)} maxLength={500} placeholder="Context…" data-testid="lso-notes" />
+            </div>
+            <Button
+              onClick={() => logMut.mutate()}
+              disabled={logMut.isPending}
+              data-testid="lso-log"
+            >
+              <Plus className="w-4 h-4 mr-1" />Log
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No lead sources are scheduled for today.</p>
+        )}
+        {logged.length > 0 && (
+          <div className="divide-y rounded-lg border">
+            {logged.map((r: any) => (
+              <div key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-sm" data-testid={`lso-row-${r.id}`}>
+                <Badge variant="outline" className="font-normal">{r.sourceName}</Badge>
+                <span className="font-medium">{r.count}× {OUTCOME_LABELS[r.outcomeType] ?? r.outcomeType}</span>
+                {r.notes && <span className="text-muted-foreground truncate">· {r.notes}</span>}
+                <span className="ml-auto text-xs text-muted-foreground">{r.assistantName}</span>
+                {(user?.id === r.assistantId || user?.role === "admin" || (user as any)?.isManager) && (
+                  <button className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive" title="Remove" onClick={() => delMut.mutate(r.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Outcomes() {
   const { toast } = useToast();
   const { user: authUser } = useAuth();
@@ -1305,6 +1416,9 @@ export default function Outcomes() {
           </HelpIcon>
         </div>
       </div>
+
+      {/* Lead source results — log outcomes for today's lead sources */}
+      <LeadSourceResults />
 
       {/* Summary badges */}
       {filtered.length > 0 && (

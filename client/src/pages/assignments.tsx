@@ -479,6 +479,7 @@ interface AssistantGroupProps {
   reassignTargets?: ReassignTarget[];
   onReassign?: (assignmentId: number, assistantId: number) => void;
   nextLoaByLo?: Record<number, { fullName: string; daysSinceLastTransfer: number | null }>;
+  leadSources?: { id: number; name: string; notes: string }[];
 }
 
 function AssistantGroup({
@@ -495,6 +496,7 @@ function AssistantGroup({
   reassignTargets,
   onReassign,
   nextLoaByLo,
+  leadSources,
 }: AssistantGroupProps) {
   const worked = assignments.filter(a => a.status === "worked").length;
   const total = assignments.length;
@@ -535,6 +537,21 @@ function AssistantGroup({
         </div>
       </CardHeader>
       <CardContent className="p-0 mt-2">
+        {/* Lead sources for today — prioritized above the LO list; each is a
+            standing instruction this CLR works and logs in Input Results. */}
+        {(leadSources?.length ?? 0) > 0 && (
+          <div className="border-b bg-violet-50/60 dark:bg-violet-950/20 px-4 py-2.5 space-y-1.5">
+            {leadSources!.map((s) => (
+              <div key={s.id} className="flex items-start gap-2" data-testid={`group-source-${s.id}`}>
+                <ArrowRightLeft className="w-3.5 h-3.5 mt-0.5 text-violet-600 dark:text-violet-400 shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-sm font-semibold text-violet-900 dark:text-violet-200">{s.name}</span>
+                  {s.notes && <span className="text-xs text-violet-800/90 dark:text-violet-300/90"> — {s.notes}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {(() => {
           // First unworked row gets the "Start here" highlight
           const firstUnworkedId = assignments.find(a => a.status === "recommended")?.id;
@@ -1442,22 +1459,6 @@ export default function Assignments() {
         </div>
       )}
 
-      {/* Lead-source instructions for this date — set on the Lead Sources page */}
-      {(sourceCards?.sources?.length ?? 0) > 0 && (
-        <div className="space-y-2">
-          {sourceCards!.sources.map((s) => (
-            <div
-              key={s.id}
-              className="rounded-lg border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-800 px-4 py-3"
-              data-testid={`source-card-${s.id}`}
-            >
-              <p className="text-sm font-semibold text-violet-900 dark:text-violet-200">{s.name}</p>
-              {s.notes && <p className="text-[13px] text-violet-800/90 dark:text-violet-300/90 mt-0.5 whitespace-pre-wrap">{s.notes}</p>}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Content */}
       {isLoading ? (
         <div className="space-y-4">
@@ -1507,6 +1508,7 @@ export default function Assignments() {
                 reassignTargets={canReassign ? reassignTargets : undefined}
                 onReassign={canReassign ? handleRowReassign : undefined}
                 nextLoaByLo={nextLoaByLo}
+                leadSources={sourceCards?.sources}
               />
             );
           })}

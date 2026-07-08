@@ -1921,6 +1921,21 @@ function runNewMigrations() {
   // Appearance percentage replaced the relative weight: 0–100 chance the
   // source's LOs are part of a given day's assignment generation.
   try { sqlite.exec(`ALTER TABLE lead_sources ADD COLUMN appearance_pct INTEGER NOT NULL DEFAULT 100`); } catch {}
+  // Results a CLR logs against a lead source they worked (Input Results). Kept
+  // separate from lead_outcomes (which is strictly LO-keyed) so a source is a
+  // first-class thing you can work and log, without destabilizing LO stats.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS lead_source_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    date TEXT NOT NULL,
+    assistant_id INTEGER NOT NULL,
+    lead_source_id INTEGER NOT NULL,
+    outcome_type TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_lso_date ON lead_source_outcomes(org_id, date)`); } catch {}
 
   // Morning check-ins: one row per CLR per business day recording when they
   // checked in, whether that was on time (vs the configured start + grace),
@@ -4469,6 +4484,37 @@ export function deleteLeadSource(id: number): void {
   // LOs fall back to the General bucket rather than dangling.
   sqlite.prepare(`UPDATE loan_officers SET lead_source_id = NULL WHERE lead_source_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM lead_sources WHERE id = ?`).run(id);
+}
+
+// ── Lead-source results (logged in Input Results) ────────────────────────────
+export function createLeadSourceOutcome(data: {
+  orgId: number; date: string; assistantId: number; leadSourceId: number;
+  outcomeType: string; count: number; notes: string | null;
+}): any {
+  const info = sqlite.prepare(`
+    INSERT INTO lead_source_outcomes (org_id, date, assistant_id, lead_source_id, outcome_type, count, notes)
+    VALUES (@orgId, @date, @assistantId, @leadSourceId, @outcomeType, @count, @notes)
+  `).run(data);
+  return sqlite.prepare(`SELECT * FROM lead_source_outcomes WHERE id = ?`).get(info.lastInsertRowid);
+}
+export function getLeadSourceOutcomes(opts: { orgId: number; date?: string; assistantId?: number; startDate?: string; endDate?: string }): any[] {
+  const where: string[] = ["org_id = @orgId"];
+  if (opts.date) where.push("date = @date");
+  if (opts.startDate) where.push("date >= @startDate");
+  if (opts.endDate) where.push("date <= @endDate");
+  if (opts.assistantId) where.push("assistant_id = @assistantId");
+  return sqlite.prepare(`
+    SELECT o.*, s.name AS source_name
+    FROM lead_source_outcomes o LEFT JOIN lead_sources s ON s.id = o.lead_source_id
+    WHERE ${where.join(" AND ")} ORDER BY o.created_at DESC
+  `).all(opts) as any[];
+}
+export function deleteLeadSourceOutcome(id: number, assistantId: number, isManager: boolean): boolean {
+  const row = sqlite.prepare(`SELECT * FROM lead_source_outcomes WHERE id = ?`).get(id) as any;
+  if (!row) return false;
+  if (!isManager && row.assistant_id !== assistantId) return false;
+  sqlite.prepare(`DELETE FROM lead_source_outcomes WHERE id = ?`).run(id);
+  return true;
 }
 
 // ── Morning check-ins ────────────────────────────────────────────────────────
