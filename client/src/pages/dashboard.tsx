@@ -958,6 +958,70 @@ function ScopeSelector({ value, onChange }: { value: ScopeKey; onChange: (s: Sco
 }
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
+// ── Morning check-in card ─────────────────────────────────────────────────────
+// Renders only while the org has check-ins enabled. Grabs browser geolocation
+// (optional — the check-in still records the time if location is denied) and
+// posts once; the first check-in of the business day wins.
+function MorningCheckInCard() {
+  const [locating, setLocating] = useState(false);
+  const { data, refetch } = useQuery<any>({ queryKey: ["/api/checkin"] });
+  const checkinMut = useMutation({
+    mutationFn: (body: any) => apiRequest("POST", "/api/checkin", body),
+    onSuccess: () => refetch(),
+  });
+
+  if (!data?.enabled) return null;
+  const mine = data.mine;
+
+  function doCheckin() {
+    setLocating(true);
+    const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
+    if (!navigator.geolocation) return submit({});
+    navigator.geolocation.getCurrentPosition(
+      (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
+      () => submit({}), // denied/unavailable — still record the time
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    );
+  }
+
+  if (mine) {
+    const t = new Date(mine.checked_in_at ?? mine.checkedInAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const onTime = (mine.on_time ?? mine.onTime) === 1;
+    const inArea = mine.in_area ?? mine.inArea;
+    const dist = mine.distance_m ?? mine.distanceM;
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+        <span className="flex items-center gap-1.5 font-medium text-emerald-900 dark:text-emerald-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Checked in at {t}
+        </span>
+        <span className={onTime ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-400 font-medium"}>
+          {onTime ? "On time" : "Late"}
+        </span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <MapPin className="w-3.5 h-3.5" />
+          {inArea === 1 ? "In office area" : inArea === 0 ? `Outside area${dist != null ? ` (${dist >= 1000 ? (dist / 1000).toFixed(1) + " km" : dist + " m"} away)` : ""}` : "No location shared"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2 text-[13px] text-amber-900 dark:text-amber-200">
+        <Clock className="w-4 h-4 shrink-0" />
+        <span>
+          <strong>Morning check-in</strong> — you haven't checked in today. Start time is {data.start}
+          {data.graceMin ? ` (+${data.graceMin} min grace)` : ""}.
+        </span>
+      </div>
+      <Button size="sm" className="gap-1.5" onClick={doCheckin} disabled={locating || checkinMut.isPending} data-testid="button-checkin">
+        <MapPin className="w-3.5 h-3.5" />
+        {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
+      </Button>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user: _authUser } = useAuth();
   // Admins see the manager view at Home; CLRs (and other roles) see the
@@ -1037,6 +1101,8 @@ function ClrDashboard() {
       </div>
 
       {sampleMode && <SampleDataBanner />}
+
+      <MorningCheckInCard />
 
       {/* KPI Row — always visible */}
       {isLoading ? (

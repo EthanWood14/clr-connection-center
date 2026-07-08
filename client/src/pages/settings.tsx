@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, MapPin } from "lucide-react";
 import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
@@ -353,6 +353,119 @@ function BulkTexterCard() {
 }
 
 // ── Email Reports Card ────────────────────────────────────────────────────────
+// ── Morning Check-In Card ─────────────────────────────────────────────────────
+// Org config for the CLR morning check-in: on/off, start time + grace, and the
+// office location + radius used to judge whether a check-in was "in area".
+function MorningCheckInSettingsCard() {
+  const { toast } = useToast();
+  const { data: adminCfg, refetch } = useQuery<any>({
+    queryKey: ["/api/checkin/admin-config"],
+    queryFn: () => apiRequest("GET", "/api/checkin/admin"),
+  });
+  const [start, setStart] = useState("08:00");
+  const [grace, setGrace] = useState("5");
+  const [radius, setRadius] = useState("400");
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [locating, setLocating] = useState(false);
+
+  useEffect(() => {
+    const c = adminCfg?.config;
+    if (!c) return;
+    setStart(c.start ?? "08:00");
+    setGrace(String(c.graceMin ?? 5));
+    setRadius(String(c.radiusM ?? 400));
+    setLat(c.lat != null ? String(c.lat) : "");
+    setLng(c.lng != null ? String(c.lng) : "");
+  }, [adminCfg]);
+
+  const save = useMutation({
+    mutationFn: (body: any) => apiRequest("POST", "/api/checkin/settings", body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      refetch();
+      toast({ title: "Check-in settings saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to save", description: e?.message, variant: "destructive" }),
+  });
+
+  const enabled = !!adminCfg?.config?.enabled;
+  function useMyLocation() {
+    if (!navigator.geolocation) return toast({ title: "Geolocation unavailable in this browser", variant: "destructive" });
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setLocating(false); setLat(pos.coords.latitude.toFixed(6)); setLng(pos.coords.longitude.toFixed(6)); },
+      () => { setLocating(false); toast({ title: "Couldn't get location", variant: "destructive" }); },
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  }
+  function saveAll() {
+    save.mutate({
+      start,
+      graceMin: parseInt(grace) || 0,
+      radiusM: parseInt(radius) || 400,
+      lat: lat.trim() === "" ? null : parseFloat(lat),
+      lng: lng.trim() === "" ? null : parseFloat(lng),
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-primary" />
+          Morning Check-In
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          CLRs check in from their dashboard each morning. C3 records the time (on-time vs the start below)
+          and whether their location is within the office radius. Set the office point while standing at the office
+          with "Use my location".
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm font-medium">Enable morning check-in</p>
+          <Switch checked={enabled} onCheckedChange={(v) => save.mutate({ enabled: v })} disabled={save.isPending} data-testid="toggle-checkin" />
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Start time</label>
+            <Input type="time" value={start} onChange={e => setStart(e.target.value)} className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Grace (min)</label>
+            <Input type="number" min={0} max={120} value={grace} onChange={e => setGrace(e.target.value)} className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Radius (m)</label>
+            <Input type="number" min={25} max={50000} value={radius} onChange={e => setRadius(e.target.value)} className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Office point</label>
+            <Button size="sm" variant="outline" className="h-8 w-full gap-1" onClick={useMyLocation} disabled={locating}>
+              <MapPin className="w-3 h-3" /> {locating ? "Locating…" : "Use my location"}
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Latitude</label>
+            <Input value={lat} onChange={e => setLat(e.target.value)} placeholder="33.6595" className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Longitude</label>
+            <Input value={lng} onChange={e => setLng(e.target.value)} placeholder="-117.9988" className="h-8 text-sm" />
+          </div>
+        </div>
+        <Button size="sm" onClick={saveAll} disabled={save.isPending} className="gap-1.5">
+          <Save className="w-3.5 h-3.5" />
+          {save.isPending ? "Saving…" : "Save Check-In Settings"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── NMLS Schedule Card ───────────────────────────────────────────────────────
 function NmlsScheduleCard() {
   const { toast } = useToast();
@@ -2891,6 +3004,7 @@ export default function Settings() {
     <div className="space-y-6">
       <PushNotificationsCard />
       {isAdmin && <BulkTexterCard />}
+      {isAdmin && <MorningCheckInSettingsCard />}
       {isAdmin && <NmlsScheduleCard />}
       {isAdmin && (
         <div className="space-y-4">
