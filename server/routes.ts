@@ -5201,6 +5201,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         internalStatus: lo.internalStatus ?? lo.internal_status ?? "active",
         boostScore: lo.boostScore ?? lo.boost_score ?? 0,
         priorityTier: lo.priorityTier ?? lo.priority_tier ?? 2,
+        leadSourceId: lo.leadSourceId ?? lo.lead_source_id ?? null,
         snoozeUntil: lo.snoozeUntil ?? lo.snooze_until ?? null,
         snoozeReason: lo.snoozeReason ?? lo.snooze_reason ?? null,
         lastWorkedDate: lo.lastWorkedDate ?? lo.last_worked_date ?? null,
@@ -5300,6 +5301,42 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const lo = storage.updateLoanOfficer(id, body);
     if (lo) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(body) });
     res.json(lo);
+  });
+
+  // ── Lead sources ────────────────────────────────────────────────────────────
+  // Labeled buckets LOs belong to. Weight = relative share of daily
+  // assignments; notes surface on each assignment card. Reads are open to any
+  // signed-in user (the assignments page shows them); writes are admin-only.
+  app.get("/api/lead-sources", requireAuth, (_req, res) => {
+    res.json(storageExtra.getLeadSources());
+  });
+  app.post("/api/lead-sources", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
+    if (!name) return res.status(400).json({ error: "A source name is required." });
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.slice(0, 1000) : "";
+    const weight = Math.min(Math.max(Math.round(Number(req.body?.weight)) || 1, 1), 100);
+    res.json(storageExtra.createLeadSource({ name, notes, weight }));
+  });
+  app.patch("/api/lead-sources/:id", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const id = parseInt(req.params.id, 10);
+    const patch: any = {};
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name).trim().slice(0, 80);
+      if (!name) return res.status(400).json({ error: "A source name is required." });
+      patch.name = name;
+    }
+    if (req.body?.notes !== undefined) patch.notes = String(req.body.notes).slice(0, 1000);
+    if (req.body?.weight !== undefined) patch.weight = Math.min(Math.max(Math.round(Number(req.body.weight)) || 1, 1), 100);
+    const updated = storageExtra.updateLeadSource(id, patch);
+    if (!updated) return res.status(404).json({ error: "Source not found" });
+    res.json(updated);
+  });
+  app.delete("/api/lead-sources/:id", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    storageExtra.deleteLeadSource(parseInt(req.params.id, 10));
+    res.json({ ok: true });
   });
 
   // Anyone authed can update an LO's unified "Notes & Requests" (collaborative
@@ -6851,12 +6888,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     priorityTier: l.priorityTier ?? l.priority_tier ?? null,
     boostScore: l.boostScore ?? l.boost_score ?? null,
     licensedStates: l.licensedStates ?? l.licensed_states ?? null,
+    leadSourceId: l.leadSourceId ?? l.lead_source_id ?? null,
   });
+  // Source name + notes shown on each assignment card (build once per request).
+  const leadSourceMap = () => new Map<number, any>(
+    storageExtra.getLeadSources().map((s: any) => [s.id, { id: s.id, name: s.name, notes: s.notes }]),
+  );
   app.get("/api/assignments", (req, res) => {
     const date = (req.query.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     const assignments = storage.getDailyAssignments(date);
     const los = storage.getLoanOfficers();
     const users = storage.getUsers();
+    const srcById = leadSourceMap();
     const loById = new Map<number, any>();
     for (const l of los as any[]) loById.set(l.id, normalizeLo(l));
     const userById = new Map<number, any>();
@@ -6864,6 +6907,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const enriched = (assignments as any[]).map(a => {
       const loIdVal = a.loId ?? a.lo_id;
       const assistantIdVal = a.assistantId ?? a.assistant_id;
+      const lo = loIdVal != null ? loById.get(loIdVal) : undefined;
       return {
         ...a,
         loId: loIdVal,
@@ -6872,7 +6916,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         globalRank: a.globalRank ?? a.global_rank,
         assistantRank: a.assistantRank ?? a.assistant_rank,
         manuallyConfigured: !!(a.manuallyConfigured ?? a.manually_configured),
-        lo: loIdVal != null ? loById.get(loIdVal) : undefined,
+        lo,
+        leadSource: lo?.leadSourceId ? srcById.get(lo.leadSourceId) : undefined,
         assistant: assistantIdVal != null ? userById.get(assistantIdVal) : undefined,
       };
     });
@@ -6900,11 +6945,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       a => (a.assistantId ?? a.assistant_id) === userId,
     );
     const los = storage.getLoanOfficers();
+    const srcById = leadSourceMap();
     const loById = new Map<number, any>();
     for (const l of los as any[]) loById.set(l.id, normalizeLo(l));
     const enriched = assignments.map(a => {
       const loIdVal = a.loId ?? a.lo_id;
       const assistantIdVal = a.assistantId ?? a.assistant_id;
+      const lo = loIdVal != null ? loById.get(loIdVal) : undefined;
       return {
         ...a,
         loId: loIdVal,
@@ -6912,7 +6959,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assignmentDate: a.assignmentDate ?? a.assignment_date,
         globalRank: a.globalRank ?? a.global_rank,
         assistantRank: a.assistantRank ?? a.assistant_rank,
-        lo: loIdVal != null ? loById.get(loIdVal) : undefined,
+        lo,
+        leadSource: lo?.leadSourceId ? srcById.get(lo.leadSourceId) : undefined,
       };
     });
     const visible = enriched.filter((a: any) => {
@@ -7033,7 +7081,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const ranked = generateRankings(eligibleLOs, settings, date, recentTransferCounts);
     const maxTotal = settings.maxLosPerAssistant * assistants.length;
-    const topRanked = ranked.slice(0, maxTotal);
+
+    // ── Weighted lead-source mix ────────────────────────────────────────────────
+    // Each lead source has a relative weight; today's pool is filled in
+    // proportion (LOs with no source form the built-in "General" bucket,
+    // weight 1). A source without enough LOs gives its unused slots back to
+    // the rest by global rank, so the list never comes up short.
+    const leadSources = storageExtra.getLeadSources();
+    const sourceWeight = new Map<number, number>([[0, 1]]);
+    for (const s of leadSources) sourceWeight.set(s.id, Math.max(1, Number(s.weight) || 1));
+    const bySource = new Map<number, any[]>();
+    for (const r of ranked) {
+      const sid = Number(r.lo.leadSourceId ?? r.lo.lead_source_id ?? 0) || 0;
+      if (!bySource.has(sid)) bySource.set(sid, []);
+      bySource.get(sid)!.push(r);
+    }
+    let topRanked: any[];
+    if (bySource.size <= 1) {
+      topRanked = ranked.slice(0, maxTotal);
+    } else {
+      const buckets = Array.from(bySource.keys());
+      const totalWeight = buckets.reduce((sum, b) => sum + (sourceWeight.get(b) ?? 1), 0);
+      const chosen = new Set<any>();
+      for (const b of buckets) {
+        const share = Math.floor(maxTotal * (sourceWeight.get(b) ?? 1) / totalWeight);
+        for (const r of bySource.get(b)!.slice(0, share)) chosen.add(r);
+      }
+      // Fill remaining slots (rounding leftovers / short buckets) by global rank.
+      for (const r of ranked) {
+        if (chosen.size >= maxTotal) break;
+        chosen.add(r);
+      }
+      topRanked = ranked.filter(r => chosen.has(r)); // keeps global rank order
+    }
 
     // Clear existing recommended assignments for today
     storage.clearDailyAssignments(date);

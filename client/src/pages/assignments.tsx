@@ -328,6 +328,15 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
           {assignment.lo?.priorityTier === 1 && (
             <span className="text-[10px] px-1 py-0 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>
           )}
+          {assignment.leadSource && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300 font-medium"
+              title={assignment.leadSource.notes || `Lead source: ${assignment.leadSource.name}`}
+              data-testid={`lead-source-${assignment.id}`}
+            >
+              {assignment.leadSource.name}
+            </span>
+          )}
           {pref?.isPinned && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 font-semibold flex items-center gap-1" title="Pinned to top of your list">
               <Star className="w-3 h-3 fill-current" />Pinned
@@ -376,6 +385,17 @@ function AssignmentRow({ assignment, onLogStatus, isSelected, onToggle, isTopUnw
           >
             <StickyNote className="w-3 h-3 mt-0.5 flex-shrink-0" />
             <span className="line-clamp-2">{notesText}</span>
+          </div>
+        )}
+        {/* Lead-source notes: per-source calling context set on the Lead Sources page */}
+        {assignment.leadSource?.notes && (
+          <div
+            className="text-xs text-violet-700 dark:text-violet-300 flex items-start gap-1 mt-0.5"
+            title={assignment.leadSource.notes}
+            data-testid={`text-lead-source-notes-${assignment.id}`}
+          >
+            <StickyNote className="w-3 h-3 mt-0.5 flex-shrink-0" />
+            <span className="line-clamp-2">{assignment.leadSource.name}: {assignment.leadSource.notes}</span>
           </div>
         )}
         {/* Shared LO Notes & Requests. Short ones show inline; big chunks of

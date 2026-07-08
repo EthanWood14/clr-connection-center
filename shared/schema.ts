@@ -110,6 +110,10 @@ export const loanOfficers = sqliteTable("loan_officers", {
   reducedOdds: integer("reduced_odds", { mode: "boolean" }).notNull().default(false),
   snoozeUntil: text("snooze_until"), // ISO date string or null
   snoozeReason: text("snooze_reason"),
+  // Which lead source this LO came from (lead_sources.id, null = General).
+  // Sources carry a weight that controls their share of daily assignments,
+  // plus notes that surface on each assignment card.
+  leadSourceId: integer("lead_source_id"),
   lastWorkedDate: text("last_worked_date"),
   totalTimesWorked: integer("total_times_worked").notNull().default(0),
   nmlsStatus: text("nmls_status"), // Active | Inactive | Expired | Unknown | null

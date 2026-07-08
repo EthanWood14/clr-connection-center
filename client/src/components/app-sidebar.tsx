@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -200,6 +200,7 @@ const toolItems: NavItem[] = [
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Shark Tank",      url: "/shark-tank",     icon: Fish },
   { title: "LO Directory",    url: "/directory",      icon: Users,        help: help.directory },
+  { title: "Lead Sources",    url: "/lead-sources",   icon: ListFilter },
   { title: "LO Stats",        url: "/lo-performance", icon: TrendingUp,   help: help.loStats },
   { title: "Fall-Throughs",   url: "/fall-throughs",  icon: TrendingDown },
   { title: "LO Vacation",     url: "/snooze",         icon: BedDouble,    help: help.loVacation },

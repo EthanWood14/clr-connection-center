@@ -638,6 +638,7 @@ const loFormSchema = z.object({
   personalPreferences: z.string().optional(),
   boostScore: z.coerce.number().min(0).max(10).default(0),
   priorityTier: z.coerce.number().min(1).max(3).default(2),
+  leadSourceId: z.coerce.number().default(0), // 0 = General (no source)
   reducedOdds: z.boolean().default(false),
   internalStatus: z.string().default("active"),
   snoozeUntil: z.string().optional(),
@@ -687,12 +688,15 @@ function LOFormDialog({
       personalPreferences: (initialValues as any)?.personalPreferences ?? "",
       boostScore: initialValues?.boostScore ?? 0,
       priorityTier: initialValues?.priorityTier ?? 2,
+      leadSourceId: (initialValues as any)?.leadSourceId ?? 0,
       reducedOdds: !!initialValues?.reducedOdds,
       internalStatus: initialValues?.internalStatus ?? "active",
       snoozeUntil: initialValues?.snoozeUntil ?? "",
       snoozeReason: initialValues?.snoozeReason ?? "",
     },
   });
+
+  const { data: leadSources = [] } = useQuery<any[]>({ queryKey: ["/api/lead-sources"] });
 
   // Reset form + states whenever the dialog opens with new data
   useEffect(() => {
@@ -713,6 +717,7 @@ function LOFormDialog({
         personalPreferences: (initialValues as any)?.personalPreferences ?? "",
         boostScore: initialValues?.boostScore ?? 0,
         priorityTier: initialValues?.priorityTier ?? 2,
+        leadSourceId: (initialValues as any)?.leadSourceId ?? 0,
         reducedOdds: !!initialValues?.reducedOdds,
         internalStatus: initialValues?.internalStatus ?? "active",
         snoozeUntil: initialValues?.snoozeUntil ?? "",
@@ -722,7 +727,12 @@ function LOFormDialog({
   }, [open, initialValues]);
 
   const handleSubmit = (values: LoFormValues) => {
-    onSubmit({ ...values, licensedStates: JSON.stringify(statesSelected) as unknown as string });
+    onSubmit({
+      ...values,
+      licensedStates: JSON.stringify(statesSelected) as unknown as string,
+      // 0 is the "General" sentinel in the form; store as NULL.
+      leadSourceId: (values.leadSourceId ? Number(values.leadSourceId) : null) as any,
+    });
   };
 
   return (
@@ -815,6 +825,20 @@ function LOFormDialog({
                   <FormLabel>Boost Score (0–10)</FormLabel>
                   <FormControl><Input type="number" min={0} max={10} step={0.5} {...field} data-testid="input-boost-score" /></FormControl>
                   <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="leadSourceId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Lead Source</FormLabel>
+                  <Select value={String(field.value ?? 0)} onValueChange={v => field.onChange(Number(v))}>
+                    <FormControl><SelectTrigger data-testid="select-lead-source"><SelectValue /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="0">General (no source)</SelectItem>
+                      {leadSources.map((s: any) => (
+                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </FormItem>
               )} />
               <FormField control={form.control} name="reducedOdds" render={({ field }) => (

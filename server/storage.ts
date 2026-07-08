@@ -1052,6 +1052,7 @@ function normalizeLoanOfficer(row: any): any {
     nmls_last_checked: "nmlsLastChecked",
     nmls_license_expiration: "nmlsLicenseExpiration",
     internal_status: "internalStatus",
+    lead_source_id: "leadSourceId",
     total_times_worked: "totalTimesWorked",
     last_assigned_date: "lastAssignedDate",
     snooze_until: "snoozeUntil",
@@ -1906,6 +1907,18 @@ function runNewMigrations() {
   if (!nmlsCols.find(c => c.name === 'interval_months')) {
     sqlite.exec(`ALTER TABLE nmls_schedule ADD COLUMN interval_months INTEGER NOT NULL DEFAULT 2`);
   }
+  // Lead sources: labeled buckets LOs belong to. Weight controls the share of
+  // daily assignments drawn from each source; notes surface on assignment cards.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS lead_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    weight INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN lead_source_id INTEGER`); } catch {}
+
   // Rolling-interval scheduling: checks fire every interval_days from the last
   // round (next_run_at), instead of on fixed odd-month calendar dates.
   // current_period_key names the active round (the trigger date).
@@ -4390,4 +4403,39 @@ export function setSharkTankSyncMeta(meta: { status: string; error?: string | nu
 // ── Per-user pay rate override ───────────────────────────────────────────────
 export function setUserHourlyRate(userId: number, rateCents: number | null): void {
   sqlite.prepare(`UPDATE users SET hourly_rate_cents=? WHERE id=?`).run(rateCents, userId);
+}
+
+// ── Lead sources ─────────────────────────────────────────────────────────────
+// A lead source is a labeled bucket LOs belong to: its weight controls the
+// share of daily assignments drawn from it, and its notes surface on each
+// assignment card. LOs with no source form the built-in "General" bucket.
+export function getLeadSources(): any[] {
+  return sqlite.prepare(`
+    SELECT s.id, s.name, s.notes, s.weight,
+           (SELECT COUNT(*) FROM loan_officers lo WHERE lo.lead_source_id = s.id) AS loCount
+    FROM lead_sources s ORDER BY s.name COLLATE NOCASE
+  `).all() as any[];
+}
+export function createLeadSource(data: { name: string; notes?: string; weight?: number }): any {
+  const now = new Date().toISOString();
+  const info = sqlite.prepare(`INSERT INTO lead_sources (name, notes, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
+    .run(data.name, data.notes ?? "", data.weight ?? 1, now, now);
+  return sqlite.prepare(`SELECT * FROM lead_sources WHERE id = ?`).get(info.lastInsertRowid);
+}
+export function updateLeadSource(id: number, data: { name?: string; notes?: string; weight?: number }): any {
+  const fields: string[] = [];
+  const vals: any[] = [];
+  if (data.name !== undefined) { fields.push("name=?"); vals.push(data.name); }
+  if (data.notes !== undefined) { fields.push("notes=?"); vals.push(data.notes); }
+  if (data.weight !== undefined) { fields.push("weight=?"); vals.push(data.weight); }
+  if (fields.length) {
+    fields.push("updated_at=?"); vals.push(new Date().toISOString(), id);
+    sqlite.prepare(`UPDATE lead_sources SET ${fields.join(",")} WHERE id=?`).run(...vals);
+  }
+  return sqlite.prepare(`SELECT * FROM lead_sources WHERE id = ?`).get(id);
+}
+export function deleteLeadSource(id: number): void {
+  // LOs fall back to the General bucket rather than dangling.
+  sqlite.prepare(`UPDATE loan_officers SET lead_source_id = NULL WHERE lead_source_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM lead_sources WHERE id = ?`).run(id);
 }
