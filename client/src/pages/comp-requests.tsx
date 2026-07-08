@@ -35,6 +35,7 @@ interface CompItem {
   isPaid: boolean;
   isProcessing: boolean;
   isReceived: boolean;
+  isReimbursement: boolean;
   receivedAt: string | null;
   processingAt: string | null;
   reviewedBy: number | null;
@@ -657,6 +658,7 @@ export default function CompRequests() {
   const [category, setCategory] = useState("transfers");
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
+  const [isReimbursement, setIsReimbursement] = useState(false);
 
   // Prefill handed over from another page (e.g. the Time Clock's "file a comp
   // request for these hours" button). One-shot: consumed and cleared on mount.
@@ -706,7 +708,7 @@ export default function CompRequests() {
   const createMutation = useMutation({
     mutationFn: async () => {
       const created: any = await apiRequest("POST", "/api/comp", {
-        description, category, expenseDate: expenseDate || undefined, note,
+        description, category, expenseDate: expenseDate || undefined, note, isReimbursement,
         amountCents: Math.round(parseFloat(amount || "0") * 100),
         onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
       });
@@ -730,7 +732,7 @@ export default function CompRequests() {
           + (pendingFiles.length ? " with " + pendingFiles.length + " receipt(s)" : "")
           + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
       });
-      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]);
+      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false);
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -768,6 +770,7 @@ export default function CompRequests() {
   const [editCategory, setEditCategory] = useState("transfers");
   const [editDate, setEditDate] = useState("");
   const [editNote, setEditNote] = useState("");
+  const [editReimbursement, setEditReimbursement] = useState(false);
   function openEdit(r: CompItem) {
     setEditTarget(r);
     setEditDesc(r.description ?? "");
@@ -778,6 +781,7 @@ export default function CompRequests() {
     setEditCategory(cat);
     setEditDate(r.expenseDate ?? "");
     setEditNote(r.note ?? "");
+    setEditReimbursement(!!r.isReimbursement);
   }
   const editMutation = useMutation({
     mutationFn: (v: { id: number; body: any }) => apiRequest("PATCH", "/api/comp/" + v.id, v.body),
@@ -797,7 +801,7 @@ export default function CompRequests() {
     const amountCents = Math.round(parseFloat(editAmount || "0") * 100);
     if (!editDesc.trim()) { toast({ title: "Description required", variant: "destructive" }); return; }
     if (!(amountCents > 0)) { toast({ title: "Enter an amount greater than 0", variant: "destructive" }); return; }
-    editMutation.mutate({ id: editTarget.id, body: { description: editDesc.trim(), category: editCategory, amountCents, expenseDate: editDate || undefined, note: editNote } });
+    editMutation.mutate({ id: editTarget.id, body: { description: editDesc.trim(), category: editCategory, amountCents, expenseDate: editDate || undefined, note: editNote, isReimbursement: editReimbursement } });
   }
 
   // ── Deny an already-approved request (reverse approval) ────────────────────
@@ -1001,6 +1005,17 @@ export default function CompRequests() {
             <Input
               value={description} onChange={e => setDescription(e.target.value)}
               maxLength={300} placeholder="What did you spend on?" data-testid="input-comp-description"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Is this a reimbursement?</p>
+              <p className="text-xs text-muted-foreground">On if you paid out of pocket and need it back. Off for earned comp (transfers, hours, bonus). Tracked separately on the payout sheet.</p>
+            </div>
+            <Switch
+              checked={isReimbursement}
+              onCheckedChange={setIsReimbursement}
+              data-testid="toggle-comp-reimbursement"
             />
           </div>
           <div>
@@ -1484,6 +1499,13 @@ export default function CompRequests() {
             <div>
               <label className="text-xs font-medium text-muted-foreground">Description</label>
               <Input value={editDesc} onChange={e => setEditDesc(e.target.value)} maxLength={300} placeholder="What did you spend on?" data-testid="edit-comp-description" />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">Is this a reimbursement?</p>
+                <p className="text-xs text-muted-foreground">On for out-of-pocket money owed back; off for earned comp.</p>
+              </div>
+              <Switch checked={editReimbursement} onCheckedChange={setEditReimbursement} data-testid="edit-toggle-reimbursement" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>

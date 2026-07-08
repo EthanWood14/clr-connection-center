@@ -3144,6 +3144,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // worked through for payout (sits between Approved and Paid in the tracker).
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_processing INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN processing_at TEXT`); } catch {}
+  // Reimbursement flag: whether this request is money the team member paid out
+  // of pocket and needs back (vs. earned comp like transfers/hours/bonus). The
+  // payout sheet totals the two groups separately. Independent of category.
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_reimbursement INTEGER NOT NULL DEFAULT 0`); } catch {}
 
   // One-time: any comp requests that CLRs had saved as drafts are promoted to
   // "pending" (sent for approval) so they surface in the approval queue instead
@@ -5337,6 +5341,51 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       .map((s: any) => ({ id: s.id, name: s.name, notes: s.notes }));
     res.json({ date, sources });
   });
+
+  // ── Lead-source results (Input Results) ─────────────────────────────────────
+  // A CLR logs what they got from working a lead source (e.g. Cold Lead Barrell
+  // → 2 transfers). Own logs for CLRs; managers see/act on everyone's.
+  const LSO_TYPES = new Set(["transfer", "appointment", "fell_through", "no_answer", "callback_requested", "deferral", "future_contact", "not_interested", "wrong_number", "other"]);
+  app.get("/api/lead-source-outcomes", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId);
+    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date
+      : businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const mgr = isCompManager(userId) || !!(storage.getUserById(userId) as any)?.isManager;
+    const rows = storageExtra.getLeadSourceOutcomes({ orgId, date, assistantId: mgr ? undefined : userId });
+    const nameById = compNameMap();
+    res.json(rows.map((r: any) => ({
+      id: r.id, date: r.date, assistantId: r.assistant_id, assistantName: nameById.get(r.assistant_id) ?? ("User #" + r.assistant_id),
+      leadSourceId: r.lead_source_id, sourceName: r.source_name ?? "(deleted source)",
+      outcomeType: r.outcome_type, count: r.count, notes: r.notes ?? "",
+    })));
+  });
+  app.post("/api/lead-source-outcomes", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId);
+    const b = req.body ?? {};
+    const leadSourceId = Number(b.leadSourceId);
+    if (!Number.isFinite(leadSourceId) || !storageExtra.getLeadSources().some((s: any) => s.id === leadSourceId)) {
+      return res.status(400).json({ error: "Pick a lead source." });
+    }
+    const outcomeType = LSO_TYPES.has(b.outcomeType) ? b.outcomeType : "other";
+    const count = Math.min(Math.max(Math.round(Number(b.count)) || 1, 1), 999);
+    const notes = typeof b.notes === "string" ? b.notes.slice(0, 500) : null;
+    // Managers may log on behalf of a CLR; everyone else logs for themselves.
+    const mgr = isCompManager(userId) || !!(storage.getUserById(userId) as any)?.isManager;
+    const assistantId = (mgr && Number(b.assistantId) && storage.getUserById(Number(b.assistantId))) ? Number(b.assistantId) : userId;
+    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const row = storageExtra.createLeadSourceOutcome({ orgId, date, assistantId, leadSourceId, outcomeType, count, notes });
+    res.json({ ok: true, id: row?.id });
+  });
+  app.delete("/api/lead-source-outcomes/:id", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const mgr = isCompManager(userId) || !!(storage.getUserById(userId) as any)?.isManager;
+    const ok = storageExtra.deleteLeadSourceOutcome(parseInt(req.params.id, 10), userId, mgr);
+    if (!ok) return res.status(403).json({ error: "Can't remove that entry." });
+    res.json({ ok: true });
+  });
   app.post("/api/lead-sources", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
     const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
@@ -6014,6 +6063,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       isPaid: !!r.is_paid,
       isProcessing: !!r.is_processing,
       isReceived: !!r.is_received,
+      isReimbursement: !!r.is_reimbursement,
       receivedAt: r.received_at ?? null,
       processingAt: r.processing_at ?? null,
       reviewedBy: r.reviewed_by ?? null,
@@ -6162,6 +6212,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const amountCents = Math.round(Number(body.amountCents));
     const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : null;
     const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
+    const isReimbursement = (body.isReimbursement === true || body.isReimbursement === 1 || body.isReimbursement === "1") ? 1 : 0;
     if (!description) return res.status(400).json({ error: "A description is required." });
     if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
     // Managers/admins can file a comp request ON BEHALF of a CLR. When they do, it
@@ -6179,7 +6230,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // the request is for the submitter themselves.
       const targetId = forClr || sessUserId;
       const token = crypto.randomBytes(24).toString("hex");
-      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, token, nowIso, nowIso, nowIso);
+      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, token, nowIso, nowIso, nowIso);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === targetId);
       const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
@@ -6225,13 +6276,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const amountCents = body.amountCents !== undefined ? Math.round(Number(body.amountCents)) : existing.amount_cents;
       const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : existing.expense_date;
       const note = typeof body.note === "string" ? body.note.slice(0, 1000) : existing.note;
+      const isReimbursement = body.isReimbursement === undefined
+        ? existing.is_reimbursement
+        : ((body.isReimbursement === true || body.isReimbursement === 1 || body.isReimbursement === "1") ? 1 : 0);
       if (!description) return res.status(400).json({ error: "A description is required." });
       if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
       const nowIso = new Date().toISOString();
 
       if (existing.status === "draft") {
         // Draft: just update the fields in place (stays a draft).
-        db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, nowIso, id);
+        db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, is_reimbursement=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, isReimbursement, nowIso, id);
         const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
         return res.json(mapComp(row, compNameMap()));
       }
@@ -6241,12 +6295,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // fresh approval token is issued, and the approver is re-emailed.
       const token = crypto.randomBytes(24).toString("hex");
       db.prepare(`UPDATE comp_requests SET
-          description=?, category=?, amount_cents=?, expense_date=?, note=?,
+          description=?, category=?, amount_cents=?, expense_date=?, note=?, is_reimbursement=?,
           status='pending', reviewer_note='', reviewed_by=NULL, reviewed_at=NULL,
           is_paid=0, paid_at=NULL, is_processing=0, processing_at=NULL,
           is_received=0, received_at=NULL,
           approval_token=?, requested_at=?, updated_at=?
-        WHERE id=?`).run(description, category, amountCents, expenseDate, note, token, nowIso, nowIso, id);
+        WHERE id=?`).run(description, category, amountCents, expenseDate, note, isReimbursement, token, nowIso, nowIso, id);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
       const nameById = compNameMap();
       const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
@@ -6643,6 +6697,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       const rows: Array<[string, string]> = [
         ["Team member", esc(c.userName)],
+        ["Type", c.isReimbursement ? "Reimbursement (out of pocket)" : "Earned comp"],
         ["Category", esc(CAT_LABELS[c.category] || c.category)],
         ["Amount", "<strong>" + money(c.amountCents) + "</strong>"],
         ["Date of expense", esc(fmtDate(c.expenseDate))],
@@ -6767,22 +6822,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
       const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
       const grandTotal = items.reduce((s, i) => s + (i.amountCents || 0), 0);
+      // Split by reimbursement flag — out-of-pocket money owed back vs. earned comp.
+      const reimbTotal = items.reduce((s, i) => s + (i.isReimbursement ? (i.amountCents || 0) : 0), 0);
+      const earnedTotal = grandTotal - reimbTotal;
+      const reimbCount = items.filter((i) => i.isReimbursement).length;
 
-      // 1) "Who gets paid" — one simple row per person: name → amount.
+      // 1) "Who gets paid" — per person, split into reimbursement vs earned so
+      // the two totals are clear at a glance.
       const byPerson = new Map<string, any[]>();
       for (const i of items) { const k = i.userName; if (!byPerson.has(k)) byPerson.set(k, []); byPerson.get(k)!.push(i); }
       let whoRows = "";
       for (const [person, list] of byPerson) {
-        const sub = list.reduce((s, i) => s + (i.amountCents || 0), 0);
-        whoRows += `<tr><td class="who-name">${esc(person)}</td><td class="who-count">${list.length} item${list.length === 1 ? "" : "s"}</td><td class="num who-amt">${money(sub)}</td></tr>`;
+        const rSub = list.reduce((s: number, i: any) => s + (i.isReimbursement ? (i.amountCents || 0) : 0), 0);
+        const eSub = list.reduce((s: number, i: any) => s + (!i.isReimbursement ? (i.amountCents || 0) : 0), 0);
+        const sub = rSub + eSub;
+        whoRows += `<tr><td class="who-name">${esc(person)}</td>` +
+          `<td class="who-count">${list.length} item${list.length === 1 ? "" : "s"}</td>` +
+          `<td class="num">${eSub ? money(eSub) : "—"}</td>` +
+          `<td class="num">${rSub ? money(rSub) : "—"}</td>` +
+          `<td class="num who-amt">${money(sub)}</td></tr>`;
       }
-      whoRows += `<tr class="who-total"><td>Total payout</td><td></td><td class="num">${money(grandTotal)}</td></tr>`;
+      whoRows += `<tr class="who-total"><td>Total payout</td><td></td>` +
+        `<td class="num">${money(earnedTotal)}</td>` +
+        `<td class="num">${money(reimbTotal)}</td>` +
+        `<td class="num">${money(grandTotal)}</td></tr>`;
 
-      // 2) "What it's for" — itemized detail grouped by person.
+      // 2) "What it's for" — itemized detail grouped by person, tagged with
+      // whether each line is a reimbursement or earned comp.
       let summaryRows = "";
       for (const [person, list] of byPerson) {
         for (const i of list) {
-          summaryRows += `<tr><td>${esc(person)}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
+          summaryRows += `<tr><td>${esc(person)}</td><td>${i.isReimbursement ? "Reimbursement" : "Earned"}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
         }
       }
 
@@ -6823,6 +6893,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         'table.sum td{font-size:13px;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}' +
         'table.sum td.num,table.sum th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}' +
         'table.who{width:100%;border-collapse:collapse;margin-bottom:6px}' +
+        'table.who th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:6px 12px;border-bottom:2px solid var(--line)}' +
+        'table.who th.num{text-align:right}' +
         'table.who td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:15px}' +
         'td.who-name{font-weight:700}td.who-count{color:var(--muted);font-size:12px}' +
         'table.who td.num{text-align:right;white-space:nowrap}' +
@@ -6850,9 +6922,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         (items.length === 0
           ? '<p class="hint">Nothing is awaiting payout. 🎉</p>'
           : '<h2 class="first">Who gets paid</h2>' +
-            '<table class="who"><tbody>' + whoRows + '</tbody></table>' +
+            '<p class="hint">Earned comp ' + money(earnedTotal) + ' · reimbursements ' + money(reimbTotal) + ' (' + reimbCount + ' item' + (reimbCount === 1 ? "" : "s") + ').</p>' +
+            '<table class="who"><thead><tr><th>Team member</th><th></th><th class="num">Earned</th><th class="num">Reimbursement</th><th class="num">Total</th></tr></thead><tbody>' + whoRows + '</tbody></table>' +
             '<h2>What it&rsquo;s for</h2>' +
-            '<table class="sum"><thead><tr><th>Team member</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
+            '<table class="sum"><thead><tr><th>Team member</th><th>Type</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
             '<h2>Receipts &amp; attachments</h2>' +
             (receiptsHtml
               ? (pdfCount ? '<p class="hint">PDF receipts are embedded for on-screen review; when saving this page as one PDF they may need to be attached separately via their "open" links. Image receipts print inline automatically.</p>' : '') + receiptsHtml
