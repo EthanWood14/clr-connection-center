@@ -9153,9 +9153,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!key) return res.json({ enabled: false, items: [] });
     try {
       const q = String(req.query.q ?? "").trim();
+      // Paginate so the picker can browse deep into the most-popular modern
+      // memes/GIFs (empty q = Giphy trending). 50 is Giphy's per-page max;
+      // offset+limit must stay under 5000, so clamp offset to 4900.
+      const limit = 50;
+      const offset = Math.min(Math.max(parseInt(String(req.query.offset ?? "0"), 10) || 0, 0), 4900);
       const base = q
-        ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13&bundle=messaging_non_clips`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(key)}&limit=24&rating=pg-13&bundle=messaging_non_clips`;
+        ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}&rating=pg-13&bundle=messaging_non_clips`
+        : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(key)}&limit=${limit}&offset=${offset}&rating=pg-13&bundle=messaging_non_clips`;
       const r = await fetch(base);
       if (!r.ok) return res.json({ enabled: true, items: [], error: "giphy " + r.status });
       const j = await r.json() as any;
@@ -9165,7 +9170,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         preview: g?.images?.fixed_width?.url || g?.images?.downsized?.url || g?.images?.original?.url || "",
         full: g?.images?.downsized_medium?.url || g?.images?.original?.url || "",
       })).filter((g: any) => g.preview && g.full);
-      res.json({ enabled: true, items });
+      const totalCount = Number(j?.pagination?.total_count) || undefined;
+      res.json({ enabled: true, items, offset, limit, totalCount });
     } catch (e: any) {
       res.json({ enabled: true, items: [], error: e?.message ?? "search failed" });
     }

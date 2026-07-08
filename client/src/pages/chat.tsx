@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -183,13 +183,35 @@ export default function Chat() {
     const t = setTimeout(() => setGifQuery(memeSearch.trim()), 350);
     return () => clearTimeout(t);
   }, [memeSearch]);
-  const { data: gifData, isFetching: gifsLoading } = useQuery<{ enabled: boolean; items: GifItem[] }>({
+  // Page through Giphy (50/page, empty query = trending) so the picker can
+  // browse deep into the most-popular modern memes/GIFs — up to ~1500 via
+  // "Load more" — instead of stopping at one page.
+  const GIF_PAGE = 50;
+  const GIF_MAX = 1500;
+  const {
+    data: gifPages, isFetching: gifsLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useInfiniteQuery<{ enabled: boolean; items: GifItem[] }>({
     queryKey: ["/api/memes/gif-search", gifQuery],
-    queryFn: () => apiRequest("GET", "/api/memes/gif-search" + (gifQuery ? "?q=" + encodeURIComponent(gifQuery) : "")),
+    queryFn: ({ pageParam = 0 }) =>
+      apiRequest("GET", `/api/memes/gif-search?offset=${pageParam}` + (gifQuery ? "&q=" + encodeURIComponent(gifQuery) : "")),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.length * GIF_PAGE;
+      if ((lastPage?.items?.length ?? 0) < GIF_PAGE || loaded >= GIF_MAX) return undefined;
+      return loaded;
+    },
+    initialPageParam: 0,
     enabled: memeOpen && memeMode === "gifs" && gifEnabled,
     staleTime: 60 * 1000,
   });
-  const gifs = gifData?.items ?? [];
+  // Flatten pages, de-duping by id (Giphy trending can repeat across offsets).
+  const gifs = useMemo(() => {
+    const seen = new Set<string>();
+    const out: GifItem[] = [];
+    for (const p of gifPages?.pages ?? []) for (const g of p.items ?? []) {
+      if (!seen.has(g.id)) { seen.add(g.id); out.push(g); }
+    }
+    return out;
+  }, [gifPages]);
   const sendGif = useMutation({
     mutationFn: (url: string) => apiRequest("POST", "/api/chat/gif", { url }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/chat"] }); setMemeOpen(false); setMemeSearch(""); setAutoScroll(true); },
@@ -473,28 +495,41 @@ export default function Chat() {
           </div>
           <div className="max-h-[38vh] overflow-y-auto">
             {memeMode === "gifs" ? (
-              gifsLoading ? (
+              gifsLoading && gifs.length === 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="aspect-video rounded-lg" />)}
                 </div>
               ) : gifs.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-6">{memeSearch.trim() ? `No GIFs match "${memeSearch}".` : "Type to search Giphy…"}</p>
+                <p className="text-xs text-muted-foreground text-center py-6">{memeSearch.trim() ? `No GIFs match "${memeSearch}".` : "No trending GIFs right now."}</p>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {gifs.map(g => (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {gifs.map(g => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        title={g.title || "GIF"}
+                        onClick={() => sendGif.mutate(g.full)}
+                        disabled={sendGif.isPending}
+                        className="group relative rounded-lg overflow-hidden border bg-muted/30 hover:ring-2 hover:ring-primary transition disabled:opacity-50"
+                        data-testid={`gif-${g.id}`}
+                      >
+                        <img src={g.preview} alt={g.title || "GIF"} loading="lazy" className="w-full aspect-video object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                  {hasNextPage && (
                     <button
-                      key={g.id}
                       type="button"
-                      title={g.title || "GIF"}
-                      onClick={() => sendGif.mutate(g.full)}
-                      disabled={sendGif.isPending}
-                      className="group relative rounded-lg overflow-hidden border bg-muted/30 hover:ring-2 hover:ring-primary transition disabled:opacity-50"
-                      data-testid={`gif-${g.id}`}
+                      onClick={() => fetchNextPage()}
+                      disabled={isFetchingNextPage}
+                      className="mt-2 w-full rounded-md border py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/40 transition disabled:opacity-50"
+                      data-testid="gif-load-more"
                     >
-                      <img src={g.preview} alt={g.title || "GIF"} loading="lazy" className="w-full aspect-video object-cover" />
+                      {isFetchingNextPage ? "Loading…" : `Load more (${gifs.length} shown)`}
                     </button>
-                  ))}
-                </div>
+                  )}
+                </>
               )
             ) : memesLoading ? (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
