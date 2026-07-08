@@ -5303,6 +5303,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(lo);
   });
 
+  // ── Seating map ─────────────────────────────────────────────────────────────
+  // The static seating-chart page ships in the client build (dist/public), but
+  // it embeds employee names, so this authed route intercepts it BEFORE the
+  // public static middleware (registerRoutes mounts first — see server/index.ts).
+  app.get("/seating-chart.html", requireAuth, (_req: any, res) => {
+    const built = path.resolve(__dirname, "public", "seating-chart.html");
+    const dev = path.resolve(__dirname, "..", "client", "public", "seating-chart.html");
+    const file = fs.existsSync(built) ? built : dev;
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.sendFile(file);
+  });
+
   // ── Lead sources ────────────────────────────────────────────────────────────
   // Labeled buckets LOs belong to. Weight = relative share of daily
   // assignments; notes surface on each assignment card. Reads are open to any

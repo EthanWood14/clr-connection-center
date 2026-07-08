@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seating Chart</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#129681;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #EDEFF4; font-family: 'Space Grotesk', sans-serif; overflow: hidden; }
+  a { color: #2F55D4; } a:hover { color: #1E3AA8; }
+  input, button { font-family: 'Space Grotesk', sans-serif; }
+
+  .toolbar {
+    position: fixed; left: 0; top: 0; right: 0; height: 76px; background: #FFFFFF;
+    border-bottom: 1px solid #E2E5EC; display: flex; align-items: center; gap: 14px;
+    padding: 0 24px; z-index: 50; box-sizing: border-box;
+    box-shadow: 0 2px 14px rgba(20,22,31,.05);
+  }
+  .toolbar .title { font-weight: 700; font-size: 17px; color: #14161F; white-space: nowrap; }
+  .toolbar .divider { width: 1px; height: 32px; background: #E2E5EC; flex: 0 0 auto; }
+  .toolbar .sel-label { font-size: 13px; font-weight: 500; color: #8A90A0; white-space: nowrap; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .count { font-size: 14px; font-weight: 600; color: #5A6072; white-space: nowrap; }
+
+  #nameInput {
+    width: 220px; height: 42px; border: 2px solid #D6DAE3; border-radius: 9px; padding: 0 12px;
+    font-size: 15px; font-weight: 600; color: #14161F; outline: none; box-sizing: border-box;
+  }
+  #nameInput:focus { border-color: #14161F; }
+  #searchInput {
+    width: 210px; height: 42px; border: 2px solid #D6DAE3; border-radius: 9px; padding: 0 12px;
+    font-size: 15px; font-weight: 500; color: #14161F; outline: none; box-sizing: border-box;
+  }
+  #searchInput:focus { border-color: #F2B705; }
+
+  .btn {
+    height: 42px; padding: 0 16px; border-radius: 9px; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+  }
+  .btn-dark { background: #14161F; color: #fff; border: none; }
+  .btn-light { background: #FFFFFF; color: #5A6072; border: 1px solid #D6DAE3; }
+  .btn-danger { background: #FFFFFF; color: #B4392E; border: 1px solid #E5C9C6; }
+  .btn:disabled, input:disabled { opacity: 0.45; cursor: default; }
+
+  #roleSelect {
+    height: 42px; border: 2px solid #D6DAE3; border-radius: 9px; padding: 0 10px;
+    font-size: 14px; font-weight: 600; color: #14161F; outline: none;
+    box-sizing: border-box; background: #FFFFFF; cursor: pointer;
+  }
+  #roleSelect:focus { border-color: #14161F; }
+
+  .viewport {
+    position: fixed; left: 0; right: 0; top: 76px; bottom: 0; overflow: hidden;
+  }
+  .canvas {
+    position: absolute; background-color: #F4F5F8;
+    background-image: radial-gradient(#E2E5EE 2px, transparent 2px);
+    background-size: 30px 30px;
+    overflow: hidden; transform-origin: top left;
+    border-radius: 20px; border: 1px solid #E2E5EC;
+    box-shadow: 0 18px 50px rgba(20,22,31,.08);
+  }
+  .room-shift { position: absolute; }
+  .gym {
+    position: absolute; left: 36px; top: 28px; width: 296px; height: 296px; background: #14161F;
+    border-radius: 14px; display: flex; align-items: center; justify-content: center;
+  }
+  .gym div {
+    writing-mode: vertical-rl; color: #F4F5F8; font-size: 72px; font-weight: 700;
+    letter-spacing: 0.28em;
+  }
+  .legend { position: absolute; left: 36px; top: 668px; display: flex; flex-direction: column; gap: 12px; }
+  .legend-grid { display: grid; grid-template-columns: auto auto; gap: 9px 24px; }
+  .legend .row { display: flex; align-items: center; gap: 9px; }
+  .legend .swatch { width: 17px; height: 17px; border-radius: 5px; flex: 0 0 auto; }
+  .legend .row div:last-child { font-size: 14px; font-weight: 600; color: #14161F; white-space: nowrap; }
+  .legend .row.muted div:last-child { color: #A2A8B8; font-weight: 500; }
+  .legend .hint { font-size: 13px; font-weight: 500; color: #A2A8B8; max-width: 300px; }
+
+  .windows-strip {
+    position: absolute; left: 1075px; top: 363px; width: 840px; height: 154px;
+    transform: rotate(45deg); display: flex; flex-direction: column; gap: 4px;
+  }
+  .windows-row { display: flex; gap: 4px; height: 86px; }
+  .windows-bar {
+    height: 60px; background: #DCE9F2; color: #4A6B84; font-size: 15px; font-weight: 600;
+    letter-spacing: 0.35em; text-transform: uppercase; display: flex; align-items: center;
+    justify-content: center; border-radius: 8px;
+  }
+  .angled-col {
+    position: absolute; top: 716px; width: 122px; height: 572px; transform: rotate(13deg);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+
+  .seat {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    cursor: pointer; user-select: none; box-sizing: border-box; padding: 0 6px;
+    line-height: 1.15; touch-action: none;
+    transition: box-shadow 120ms, transform 150ms, background-color 250ms, opacity 150ms;
+    animation: seat-in 400ms cubic-bezier(.34, 1.56, .64, 1) backwards;
+    animation-delay: calc(var(--i, 0) * 3ms);
+  }
+  .seat:hover { transform: translateY(-2px) scale(1.04); }
+  .seat.occupied {
+    color: #fff; font-weight: 600; cursor: grab;
+    background-image: linear-gradient(180deg, rgba(255,255,255,.14), rgba(0,0,0,.08));
+    box-shadow: 0 2px 6px rgba(20,22,31,.18);
+  }
+  .seat.empty { background-color: #E7E9F0; color: #A6ACBB; font-weight: 500; letter-spacing: 0.04em; }
+  .seat.selected { box-shadow: 0 0 0 3px #F4F5F8, 0 0 0 6px #14161F; }
+  .seat.match { box-shadow: 0 0 0 3px #F4F5F8, 0 0 0 6px #F2B705; }
+  .seat.drag-source { opacity: .35; }
+  .seat.drop-target {
+    box-shadow: 0 0 0 3px #F4F5F8, 0 0 0 6px var(--accent, #2F55D4);
+    transform: scale(1.1);
+  }
+  .seat.pop { animation: seat-pop 320ms cubic-bezier(.34, 1.56, .64, 1); }
+  @keyframes seat-in { from { opacity: 0; transform: scale(.5); } }
+  @keyframes seat-pop { 0% { transform: scale(.8); } 55% { transform: scale(1.12); } 100% { transform: scale(1); } }
+  body.dragging, body.dragging .seat { cursor: grabbing !important; }
+
+  #dragGhost {
+    position: fixed; z-index: 100; pointer-events: none; display: none;
+    padding: 10px 16px; background: var(--accent, #2F55D4); color: #fff;
+    font-weight: 600; font-size: 14px; border-radius: 10px;
+    box-shadow: 0 14px 34px rgba(20,22,31,.35);
+    transform: translate(-50%, -130%) rotate(-4deg);
+  }
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; z-index: 90; pointer-events: none;
+    transform: translateX(-50%) translateY(16px);
+    background: #14161F; color: #fff; padding: 12px 20px; border-radius: 12px;
+    font-size: 14px; font-weight: 600; opacity: 0;
+    transition: opacity 200ms, transform 200ms;
+    box-shadow: 0 10px 30px rgba(20,22,31,.3);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="title">Seating Chart</div>
+  <div class="divider"></div>
+  <div class="sel-label" id="selLabel">Click a seat to edit</div>
+  <input id="nameInput" placeholder="Type a name&#8230;" disabled>
+  <select id="roleSelect" disabled>
+    <option value="">No role</option>
+    <option value="1099">1099</option>
+    <option value="w2">W2 LO</option>
+    <option value="loa">LOA</option>
+    <option value="clr">CLR</option>
+  </select>
+  <button id="clearBtn" class="btn btn-dark" disabled>Clear seat</button>
+  <button id="doneBtn" class="btn btn-light" disabled>Done</button>
+  <div class="spacer"></div>
+  <input id="searchInput" placeholder="Search people&#8230;">
+  <div class="count" id="countLabel"></div>
+  <button id="resetBtn" class="btn btn-danger">Reset all</button>
+</div>
+
+<div class="viewport">
+<div class="canvas">
+<div class="room-shift">
+  <div class="gym"><div>GYM</div></div>
+
+  <div class="legend">
+    <div class="legend-grid">
+      <div class="row"><div class="swatch" style="background: #2F55D4;"></div><div>1099</div></div>
+      <div class="row"><div class="swatch" style="background: #E4572E;"></div><div>W2 LO</div></div>
+      <div class="row"><div class="swatch" style="background: #7048C8;"></div><div>LOA</div></div>
+      <div class="row"><div class="swatch" style="background: #0F8A5F;"></div><div>CLR</div></div>
+      <div class="row muted"><div class="swatch" style="background: #5A6072;"></div><div>No role</div></div>
+      <div class="row muted"><div class="swatch" style="background: #E7E9F0;"></div><div>Empty</div></div>
+    </div>
+    <div class="hint">Click a seat to edit it &#183; drag a person to move or swap seats</div>
+  </div>
+
+  <div id="flatSeats"></div>
+
+  <div class="windows-strip">
+    <div class="windows-row" id="windowSeats"></div>
+    <div class="windows-bar">Windows</div>
+  </div>
+
+  <div id="angledCols"></div>
+</div>
+</div>
+</div>
+
+<div id="dragGhost"></div>
+<div id="toast"></div>
+
+<script>
+(() => {
+  const STORAGE_KEY = 'seating-chart-overrides-v1';
+  const ROLES_KEY = 'seating-chart-roles-v1';
+  const ROLE_COLORS = { '1099': '#2F55D4', 'w2': '#E4572E', 'loa': '#7048C8', 'clr': '#0F8A5F' };
+  const NO_ROLE_COLOR = '#5A6072';
+  const SHOW_EMPTY_LABELS = true;
+
+  function buildDefs() {
+    const d = [];
+    // Left singles
+    d.push({ id: 'L1', name: 'Nate Cruz', left: 36, top: 360, w: 140, h: 56, fs: 16 });
+    d.push({ id: 'L2', name: 'Cole Fairon', left: 192, top: 360, w: 140, h: 56, fs: 16 });
+    // Left pairs
+    d.push({ id: 'P1a', name: 'Mateo Tedeschi', left: 36, top: 472, w: 140, h: 62, fs: 15 });
+    d.push({ id: 'P1b', name: 'Scott Petrie', left: 36, top: 538, w: 140, h: 62, fs: 15 });
+    d.push({ id: 'P2a', name: 'Chris Redoble', left: 192, top: 472, w: 140, h: 62, fs: 15 });
+    d.push({ id: 'P2b', name: 'John Hernandez', left: 192, top: 538, w: 140, h: 62, fs: 15 });
+    // Center grid: 3 rows x 3 pair-desks
+    const gridNames = [
+      [['', 'Nathan Coutino'], ['Justin Vazquez', 'Dan Baker'], ['Erik Wenning', '']],
+      [['Ryan Andrade', ''], ['Derek Bullen', 'Kurt Christman'], ['Ian Militello', 'Mark Gomez']],
+      [['', 'Sean Murphy'], ['', ''], ['John Hernandez', '']]
+    ];
+    const colX = [620, 800, 980], rowY = [28, 250, 472];
+    gridNames.forEach((row, r) => row.forEach((pair, c) => pair.forEach((name, i) => {
+      d.push({ id: 'G' + r + c + i, name, left: colX[c], top: rowY[r] + i * 76, w: 150, h: 72, fs: 16 });
+    })));
+    // Windows (flex cells, no abs position)
+    ['Omar Moreno', 'Tommy Le', 'Linda Vuong', 'Ethan Wood', 'Matt Rosas', 'Matt Lane', 'Jordon Chang']
+      .forEach((name, i) => d.push({ id: 'W' + i, name, win: true, fs: 14 }));
+    // Angled columns
+    const patternB = ['Erik Wenning', '', 'Ian Militello', 'Mark Gomez', 'John Hernandez', '',
+      'Erik Wenning', '', 'Ian Militello', 'Mark Gomez', 'John Hernandez', ''];
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 12; j++) {
+        d.push({ id: 'C' + i + 'S' + j, name: i === 0 ? '' : patternB[j], col: i, fs: 13 });
+      }
+    }
+    return d;
+  }
+
+  const defs = buildDefs();
+
+  const state = {
+    overrides: loadJSON(STORAGE_KEY, {}),
+    roles: loadJSON(ROLES_KEY, {}),
+    sel: null,
+    query: ''
+  };
+
+  function loadJSON(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key)) || fallback; }
+    catch (e) { return fallback; }
+  }
+  function persistOverrides() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.overrides)); } catch (e) {}
+  }
+  function persistRoles() {
+    try { localStorage.setItem(ROLES_KEY, JSON.stringify(state.roles)); } catch (e) {}
+  }
+
+  function nameOf(def) {
+    return Object.prototype.hasOwnProperty.call(state.overrides, def.id)
+      ? state.overrides[def.id] : def.name;
+  }
+  function roleOf(id) {
+    return state.roles[id] || '';
+  }
+  function seatColor(id) {
+    return ROLE_COLORS[roleOf(id)] || NO_ROLE_COLOR;
+  }
+
+  // --- Build seat elements once ---
+  const flatRoot = document.getElementById('flatSeats');
+  const windowRoot = document.getElementById('windowSeats');
+  const angledRoot = document.getElementById('angledCols');
+  const seatEls = new Map();
+  const elToDef = new Map();
+
+  const angledColEls = [];
+  for (let i = 0; i < 8; i++) {
+    const col = document.createElement('div');
+    col.className = 'angled-col';
+    col.style.left = (150 + i * 182) + 'px';
+    angledRoot.appendChild(col);
+    angledColEls.push(col);
+  }
+
+  defs.forEach((def, idx) => {
+    const el = document.createElement('div');
+    el.className = 'seat';
+    el.style.fontSize = def.fs + 'px';
+    el.style.setProperty('--i', idx);
+    if (def.win) {
+      el.style.flex = '1 1 0';
+      el.style.borderRadius = '8px';
+      windowRoot.appendChild(el);
+    } else if (def.col != null) {
+      el.style.flex = '0 0 44px';
+      el.style.borderRadius = '6px';
+      angledColEls[def.col].appendChild(el);
+    } else {
+      el.style.position = 'absolute';
+      el.style.borderRadius = '8px';
+      el.style.left = def.left + 'px';
+      el.style.top = def.top + 'px';
+      el.style.width = def.w + 'px';
+      el.style.height = def.h + 'px';
+      flatRoot.appendChild(el);
+    }
+    el.addEventListener('click', () => {
+      if (suppressClick) { suppressClick = false; return; }
+      select(def.id);
+    });
+    el.addEventListener('pointerdown', e => {
+      if (nameOf(def) === '') return;
+      drag = { def, el, startX: e.clientX, startY: e.clientY, active: false, over: null };
+      e.preventDefault();
+    });
+    seatEls.set(def.id, el);
+    elToDef.set(el, def);
+  });
+
+  // --- Toolbar elements ---
+  const nameInput = document.getElementById('nameInput');
+  const searchInput = document.getElementById('searchInput');
+  const clearBtn = document.getElementById('clearBtn');
+  const doneBtn = document.getElementById('doneBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const selLabel = document.getElementById('selLabel');
+  const countLabel = document.getElementById('countLabel');
+  const roleSelect = document.getElementById('roleSelect');
+
+  roleSelect.addEventListener('change', () => {
+    if (!state.sel) return;
+    const roles = Object.assign({}, state.roles);
+    if (roleSelect.value) roles[state.sel] = roleSelect.value;
+    else delete roles[state.sel];
+    state.roles = roles;
+    persistRoles();
+    update();
+  });
+
+  function select(id) {
+    state.sel = id;
+    const def = defs.find(x => x.id === id);
+    nameInput.value = nameOf(def);
+    roleSelect.value = roleOf(id);
+    update();
+    nameInput.focus();
+  }
+
+  function setName(id, v) {
+    state.overrides = Object.assign({}, state.overrides, { [id]: v });
+    persistOverrides();
+  }
+
+  nameInput.addEventListener('input', () => {
+    if (state.sel) { setName(state.sel, nameInput.value.trim()); update(); }
+  });
+  clearBtn.addEventListener('click', () => {
+    if (state.sel) {
+      setName(state.sel, '');
+      const roles = Object.assign({}, state.roles);
+      delete roles[state.sel];
+      state.roles = roles;
+      persistRoles();
+      nameInput.value = '';
+      roleSelect.value = '';
+      update();
+    }
+  });
+  doneBtn.addEventListener('click', () => {
+    state.sel = null;
+    nameInput.value = '';
+    roleSelect.value = '';
+    update();
+  });
+  searchInput.addEventListener('input', () => {
+    state.query = searchInput.value;
+    update();
+  });
+  resetBtn.addEventListener('click', () => {
+    if (confirm('Reset every seat to the original chart?')) {
+      state.overrides = {};
+      state.roles = {};
+      persistOverrides();
+      persistRoles();
+      state.sel = null;
+      nameInput.value = '';
+      roleSelect.value = '';
+      update();
+    }
+  });
+
+  function update() {
+    const q = state.query.trim().toLowerCase();
+    let filled = 0;
+
+    defs.forEach(def => {
+      const el = seatEls.get(def.id);
+      const name = nameOf(def);
+      const occupied = name !== '';
+      if (occupied) filled++;
+
+      el.classList.toggle('occupied', occupied);
+      el.classList.toggle('empty', !occupied);
+      el.style.backgroundColor = occupied ? seatColor(def.id) : '';
+      el.classList.toggle('selected', state.sel === def.id);
+      el.classList.toggle('match', state.sel !== def.id && !!q && name.toLowerCase().includes(q));
+
+      const label = occupied ? name : (SHOW_EMPTY_LABELS ? 'Empty' : '');
+      el.textContent = label;
+      el.title = label;
+    });
+
+    const hasSel = state.sel !== null;
+    selLabel.textContent = hasSel ? 'Editing seat' : 'Click a seat to edit';
+    nameInput.disabled = !hasSel;
+    roleSelect.disabled = !hasSel;
+    clearBtn.disabled = !hasSel;
+    doneBtn.disabled = !hasSel;
+    countLabel.textContent = filled + ' / ' + defs.length + ' filled';
+  }
+
+  // --- Drag & drop: move or swap people between seats ---
+  let drag = null;
+  let suppressClick = false;
+  const ghost = document.getElementById('dragGhost');
+
+  function seatUnder(x, y) {
+    const hit = document.elementFromPoint(x, y);
+    return hit && elToDef.has(hit) ? hit : null;
+  }
+
+  window.addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (!drag.active) {
+      if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 6) return;
+      drag.active = true;
+      drag.el.classList.add('drag-source');
+      ghost.textContent = nameOf(drag.def);
+      ghost.style.display = 'block';
+      document.documentElement.style.setProperty('--accent', seatColor(drag.def.id));
+      document.body.classList.add('dragging');
+    }
+    ghost.style.left = e.clientX + 'px';
+    ghost.style.top = e.clientY + 'px';
+    const t = seatUnder(e.clientX, e.clientY);
+    const over = (t && t !== drag.el) ? t : null;
+    if (drag.over && drag.over !== over) drag.over.classList.remove('drop-target');
+    if (over) over.classList.add('drop-target');
+    drag.over = over;
+  });
+
+  function endDrag(e, commit) {
+    const d = drag;
+    drag = null;
+    if (!d || !d.active) return;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
+    d.el.classList.remove('drag-source');
+    if (d.over) d.over.classList.remove('drop-target');
+    ghost.style.display = 'none';
+    document.body.classList.remove('dragging');
+    if (!commit) return;
+    const targetEl = seatUnder(e.clientX, e.clientY);
+    if (targetEl && targetEl !== d.el) swapSeats(d.def, elToDef.get(targetEl));
+  }
+  window.addEventListener('pointerup', e => endDrag(e, true));
+  window.addEventListener('pointercancel', e => endDrag(e, false));
+
+  function swapSeats(defA, defB) {
+    const nameA = nameOf(defA), nameB = nameOf(defB);
+    state.overrides = Object.assign({}, state.overrides, { [defA.id]: nameB, [defB.id]: nameA });
+    persistOverrides();
+    const roleA = roleOf(defA.id), roleB = roleOf(defB.id);
+    const roles = Object.assign({}, state.roles);
+    if (roleB) roles[defA.id] = roleB; else delete roles[defA.id];
+    if (roleA) roles[defB.id] = roleA; else delete roles[defB.id];
+    state.roles = roles;
+    persistRoles();
+    if (state.sel === defA.id) { nameInput.value = nameB; roleSelect.value = roleB; }
+    if (state.sel === defB.id) { nameInput.value = nameA; roleSelect.value = roleA; }
+    update();
+    [defA.id, defB.id].forEach(id => {
+      const el = seatEls.get(id);
+      el.classList.remove('pop');
+      void el.offsetWidth;
+      el.classList.add('pop');
+      setTimeout(() => el.classList.remove('pop'), 360);
+    });
+    toast(nameB !== '' ? nameA + ' ⇄ ' + nameB : 'Moved ' + nameA);
+  }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+  }
+
+  // --- Fit the room (sized to its actual contents) centered in the window ---
+  const viewport = document.querySelector('.viewport');
+  const canvasEl = document.querySelector('.canvas');
+  const roomShift = document.querySelector('.room-shift');
+
+  function contentBounds() {
+    // [x, y, w, h, rotation degrees] of every piece of the floor plan
+    const rects = [
+      [36, 28, 296, 296, 0],       // GYM block
+      [36, 668, 320, 140, 0],      // legend
+      [1075, 363, 840, 154, 45],   // windows strip
+    ];
+    defs.forEach(def => {
+      if (def.win || def.col != null) return;
+      rects.push([def.left, def.top, def.w, def.h, 0]);
+    });
+    for (let i = 0; i < 8; i++) rects.push([150 + i * 182, 716, 122, 572, 13]);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    rects.forEach(([x, y, w, h, deg]) => {
+      const rad = deg * Math.PI / 180;
+      const bw = Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad));
+      const bh = Math.abs(h * Math.cos(rad)) + Math.abs(w * Math.sin(rad));
+      const cx = x + w / 2, cy = y + h / 2;
+      minX = Math.min(minX, cx - bw / 2); maxX = Math.max(maxX, cx + bw / 2);
+      minY = Math.min(minY, cy - bh / 2); maxY = Math.max(maxY, cy + bh / 2);
+    });
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  const PAD = 32;
+  const B = contentBounds();
+  const ROOM_W = B.w + PAD * 2, ROOM_H = B.h + PAD * 2;
+  canvasEl.style.width = ROOM_W + 'px';
+  canvasEl.style.height = ROOM_H + 'px';
+  roomShift.style.left = (PAD - B.x) + 'px';
+  roomShift.style.top = (PAD - B.y) + 'px';
+
+  const MARGIN = 14; // breathing room around the floor card
+  function fit() {
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    const scale = Math.min((vw - MARGIN * 2) / ROOM_W, (vh - MARGIN * 2) / ROOM_H);
+    canvasEl.style.transform = 'scale(' + scale + ')';
+    canvasEl.style.left = (vw - ROOM_W * scale) / 2 + 'px';
+    canvasEl.style.top = (vh - ROOM_H * scale) / 2 + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  update();
+})();
+</script>
+</body>
+</html>

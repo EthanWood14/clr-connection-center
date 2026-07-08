@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -192,6 +192,7 @@ const teamItems: NavItem[] = [
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
   { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
+  { title: "Seating Map",           url: "/seating-map",   icon: Armchair },
 ];
 
 const toolItems: NavItem[] = [
