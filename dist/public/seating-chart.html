@@ -249,12 +249,49 @@
     try { return JSON.parse(localStorage.getItem(key)) || fallback; }
     catch (e) { return fallback; }
   }
-  function persistOverrides() {
+
+  // ── Server sync ─────────────────────────────────────────────────────────────
+  // The map (names + role colors) lives in C3's database so every device sees
+  // the same chart. localStorage is only a warm-start cache — the server copy
+  // wins. Saves are debounced; remote edits are pulled every 20s (last write
+  // wins). Endpoints are same-origin and session-authed.
+  let serverVersion = null;
+  let saveTimer = null;
+  function persistLocal() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.overrides)); } catch (e) {}
-  }
-  function persistRoles() {
     try { localStorage.setItem(ROLES_KEY, JSON.stringify(state.roles)); } catch (e) {}
   }
+  function pushState() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      fetch('/api/seating-chart/state', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overrides: state.overrides, roles: state.roles })
+      }).then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (d) { if (d && d.updatedAt) serverVersion = d.updatedAt; })
+        .catch(function () {});
+    }, 600);
+  }
+  function pullState() {
+    fetch('/api/seating-chart/state', { credentials: 'include' })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (d) {
+        if (!d || !d.updatedAt || d.updatedAt === serverVersion) return;
+        serverVersion = d.updatedAt;
+        state.overrides = (d.data && d.data.overrides) || {};
+        state.roles = (d.data && d.data.roles) || {};
+        persistLocal();
+        update();
+      })
+      .catch(function () {});
+  }
+  pullState();
+  setInterval(pullState, 20000);
+
+  function persistOverrides() { persistLocal(); pushState(); }
+  function persistRoles() { persistLocal(); pushState(); }
 
   function nameOf(def) {
     return Object.prototype.hasOwnProperty.call(state.overrides, def.id)
