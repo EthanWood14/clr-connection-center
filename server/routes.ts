@@ -1622,36 +1622,57 @@ function runNmlsRoundIfDue(trigger: string) {
   if (new Date(schedule.next_run_at).getTime() <= Date.now()) startNmlsRound(trigger);
 }
 
+function shuffled<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Same pool as daily assignment generation: CLRs who actually take assignments.
+function nmlsAssigneePool(): any[] {
+  return storage.getUsers().filter((u: any) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+}
+
+function notifyNmlsAssignment(assigneeId: number, lo: any) {
+  // Notify the assigned CLR (in-app + push). The notification bell and push
+  // both deep-link to /nmls-checks (the NMLS Tracker tab).
+  storage.createNotification({
+    userId: assigneeId,
+    type: "nmls_check",
+    title: "NMLS License Check Due",
+    message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Open the NMLS Tracker to confirm.`,
+    isRead: false,
+  });
+  sendPushToUser(assigneeId, {
+    title: "NMLS License Check Due",
+    body: `Verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) — tap to open NMLS Tracker.`,
+    url: "/nmls-checks",
+  }).catch(() => {});
+}
+
 function triggerNmlsChecks() {
   const periodKey = getNmlsPeriodKey();
   const activeLos = storage.getLoanOfficers().filter((lo: any) => lo.internalStatus === "active" && lo.nmlsId);
-  const assistants = storage.getUsers().filter((u: any) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+  const assistants = nmlsAssigneePool();
   if (!assistants.length) return;
 
-  for (const lo of activeLos) {
-    // Skip if already exists for this period
-    const existing = storageExtra.getNmlsCheckForLo(lo.id, periodKey);
-    if (existing) continue;
+  // Skip LOs that already have a check for this period
+  const needing = activeLos.filter((lo: any) => !storageExtra.getNmlsCheckForLo(lo.id, periodKey));
+  if (!needing.length) return;
 
-    // Assign a random CLR
-    const assignee = assistants[Math.floor(Math.random() * assistants.length)];
+  // Deal LOs round-robin over shuffled lists so every CLR in the pool carries
+  // an even share (counts differ by at most one) and nobody is skipped or
+  // overloaded by luck of the draw.
+  const los = shuffled(needing);
+  const pool = shuffled(assistants);
+  los.forEach((lo: any, i: number) => {
+    const assignee = pool[i % pool.length];
     storageExtra.createNmlsCheck({ loId: lo.id, assignedTo: assignee.id, periodKey });
-
-    // Notify the assigned CLR (in-app + push). The notification bell and push
-    // both deep-link to /nmls-checks (the NMLS Tracker tab).
-    storage.createNotification({
-      userId: assignee.id,
-      type: "nmls_check",
-      title: "NMLS License Check Due",
-      message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Open the NMLS Tracker to confirm.`,
-      isRead: false,
-    });
-    sendPushToUser(assignee.id, {
-      title: "NMLS License Check Due",
-      body: `Verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) — tap to open NMLS Tracker.`,
-      url: "/nmls-checks",
-    }).catch(() => {});
-  }
+    notifyNmlsAssignment(assignee.id, lo);
+  });
 }
 
 function runNmlsEscalations() {
@@ -1699,7 +1720,57 @@ cron.schedule("*/30 * * * *", () => {
 });
 setTimeout(() => {
   try { runWithOrg({ orgId: 1, superAdmin: false }, () => runNmlsRoundIfDue("boot")); } catch (e) { console.error("NMLS boot check error:", e); }
+  try { runWithOrg({ orgId: 1, superAdmin: false }, () => rebalanceNmlsRoundOnce()); } catch (e) { console.error("NMLS rebalance error:", e); }
 }, 20_000);
+
+// One-shot: the 2026-07-06 round went out under the old pick-a-random-CLR
+// logic (5/4/3/1 across four people, two eligible CLRs got none). Rebalance the
+// round's PENDING checks across the current assignee pool with minimal moves —
+// members keep what they have up to their fair share; only the overflow moves
+// to whoever is under target. Confirmed checks are never touched.
+function rebalanceNmlsRoundOnce() {
+  const db = storageExtra.getRawSqlite();
+  db.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  if (db.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'nmls_rebalance_even_v1'`).get()) return;
+
+  const periodKey = getNmlsPeriodKey();
+  const pool = nmlsAssigneePool();
+  const pending = storageExtra.getNmlsChecksForPeriod(periodKey).filter((c: any) => c.status === "pending");
+  if (pool.length && pending.length) {
+    const base = Math.floor(pending.length / pool.length);
+    let extras = pending.length % pool.length;
+    const byOwner = new Map<number, any[]>(pool.map((u: any) => [u.id, []] as [number, any[]]));
+    const pile: any[] = [];
+    for (const c of pending) {
+      const list = byOwner.get(c.assigned_to);
+      if (list) list.push(c); else pile.push(c); // owner left the pool → reassign
+    }
+    // Hand the +1 slots to the members holding the most, so fewer checks move.
+    const members = pool.slice().sort((a: any, b: any) => (byOwner.get(b.id)!.length - byOwner.get(a.id)!.length));
+    const targets = new Map<number, number>();
+    for (const u of members) targets.set(u.id, base + (extras-- > 0 ? 1 : 0));
+    for (const u of members) {
+      const list = byOwner.get(u.id)!;
+      while (list.length > targets.get(u.id)!) pile.push(list.pop());
+    }
+    const los = storage.getLoanOfficers();
+    const moved = new Map<number, number>(); // gaining userId → count
+    for (const c of shuffled(pile)) {
+      const under = members.find((u: any) => byOwner.get(u.id)!.length < targets.get(u.id)!);
+      if (!under) break;
+      byOwner.get(under.id)!.push(c);
+      db.prepare(`UPDATE nmls_check_logs SET assigned_to = ? WHERE id = ?`).run(under.id, c.id);
+      moved.set(under.id, (moved.get(under.id) ?? 0) + 1);
+      const lo = los.find((l: any) => l.id === c.lo_id);
+      if (lo) notifyNmlsAssignment(under.id, lo);
+    }
+    if (moved.size) {
+      console.log(`[nmls] rebalanced round ${periodKey}: moved ${Array.from(moved.values()).reduce((a, b) => a + b, 0)} checks to ${moved.size} CLR(s)`);
+    }
+  }
+  db.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+    .run("nmls_rebalance_even_v1", new Date().toISOString());
+}
 
 // Check for escalations every morning at 9am (same org-1 scoping as the trigger)
 cron.schedule("0 9 * * *", () => {
