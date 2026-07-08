@@ -5322,13 +5322,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/lead-sources", requireAuth, (_req, res) => {
     res.json(storageExtra.getLeadSources());
   });
+  // Clamp to 0–100; 0 is a valid "never appears" value.
+  const clampPct = (v: any) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(Math.max(n, 0), 100) : 100;
+  };
   app.post("/api/lead-sources", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
     const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
     if (!name) return res.status(400).json({ error: "A source name is required." });
     const notes = typeof req.body?.notes === "string" ? req.body.notes.slice(0, 1000) : "";
-    const weight = Math.min(Math.max(Math.round(Number(req.body?.weight)) || 1, 1), 100);
-    res.json(storageExtra.createLeadSource({ name, notes, weight }));
+    const appearancePct = req.body?.appearancePct !== undefined ? clampPct(req.body.appearancePct) : 100;
+    res.json(storageExtra.createLeadSource({ name, notes, appearancePct }));
   });
   app.patch("/api/lead-sources/:id", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
@@ -5340,7 +5345,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       patch.name = name;
     }
     if (req.body?.notes !== undefined) patch.notes = String(req.body.notes).slice(0, 1000);
-    if (req.body?.weight !== undefined) patch.weight = Math.min(Math.max(Math.round(Number(req.body.weight)) || 1, 1), 100);
+    if (req.body?.appearancePct !== undefined) patch.appearancePct = clampPct(req.body.appearancePct);
     const updated = storageExtra.updateLeadSource(id, patch);
     if (!updated) return res.status(404).json({ error: "Source not found" });
     res.json(updated);
@@ -7094,38 +7099,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const ranked = generateRankings(eligibleLOs, settings, date, recentTransferCounts);
     const maxTotal = settings.maxLosPerAssistant * assistants.length;
 
-    // ── Weighted lead-source mix ────────────────────────────────────────────────
-    // Each lead source has a relative weight; today's pool is filled in
-    // proportion (LOs with no source form the built-in "General" bucket,
-    // weight 1). A source without enough LOs gives its unused slots back to
-    // the rest by global rank, so the list never comes up short.
+    // ── Lead-source appearance roll ─────────────────────────────────────────────
+    // Each lead source has an appearance percentage (0–100): the chance the
+    // whole source is part of TODAY's generation. 100 (the default, and the
+    // built-in General bucket for unsourced LOs) always appears; 0 never does;
+    // 30 shows up in roughly 3 of 10 generations. Rolled once per source per
+    // generation — the day's list is locked after, so the roll sticks all day.
     const leadSources = storageExtra.getLeadSources();
-    const sourceWeight = new Map<number, number>([[0, 1]]);
-    for (const s of leadSources) sourceWeight.set(s.id, Math.max(1, Number(s.weight) || 1));
-    const bySource = new Map<number, any[]>();
-    for (const r of ranked) {
+    const sourceAppears = new Map<number, boolean>([[0, true]]);
+    for (const s of leadSources) {
+      const pct = Math.min(Math.max(Number(s.appearancePct ?? 100), 0), 100);
+      sourceAppears.set(s.id, pct >= 100 ? true : pct <= 0 ? false : Math.random() * 100 < pct);
+    }
+    const throttled = ranked.filter(r => {
       const sid = Number(r.lo.leadSourceId ?? r.lo.lead_source_id ?? 0) || 0;
-      if (!bySource.has(sid)) bySource.set(sid, []);
-      bySource.get(sid)!.push(r);
-    }
-    let topRanked: any[];
-    if (bySource.size <= 1) {
-      topRanked = ranked.slice(0, maxTotal);
-    } else {
-      const buckets = Array.from(bySource.keys());
-      const totalWeight = buckets.reduce((sum, b) => sum + (sourceWeight.get(b) ?? 1), 0);
-      const chosen = new Set<any>();
-      for (const b of buckets) {
-        const share = Math.floor(maxTotal * (sourceWeight.get(b) ?? 1) / totalWeight);
-        for (const r of bySource.get(b)!.slice(0, share)) chosen.add(r);
-      }
-      // Fill remaining slots (rounding leftovers / short buckets) by global rank.
-      for (const r of ranked) {
-        if (chosen.size >= maxTotal) break;
-        chosen.add(r);
-      }
-      topRanked = ranked.filter(r => chosen.has(r)); // keeps global rank order
-    }
+      return sourceAppears.get(sid) ?? true;
+    });
+    const topRanked = throttled.slice(0, maxTotal);
 
     // Clear existing recommended assignments for today
     storage.clearDailyAssignments(date);
@@ -9341,6 +9331,117 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
     const s = storageExtra.getEmailSettings() as any;
     res.json({ payRateCents: Number(s?.pay_rate_cents ?? 1690) || 1690, seRate: Number(s?.se_reimb_rate ?? 0.0765) });
+  });
+
+  // ── Morning check-in ────────────────────────────────────────────────────────
+  // One check-in per CLR per business day. Records the time, whether it was on
+  // time (configured start + grace, evaluated in the user's timezone), and
+  // whether the browser-reported location is inside the office radius.
+  function checkinConfig() {
+    const s = storageExtra.getEmailSettings() as any;
+    return {
+      enabled: !!s?.checkin_enabled,
+      lat: s?.checkin_lat != null ? Number(s.checkin_lat) : null,
+      lng: s?.checkin_lng != null ? Number(s.checkin_lng) : null,
+      radiusM: Number(s?.checkin_radius_m ?? 400) || 400,
+      start: typeof s?.checkin_start === "string" && /^\d{2}:\d{2}$/.test(s.checkin_start) ? s.checkin_start : "08:00",
+      graceMin: Number(s?.checkin_grace_min ?? 5) || 0,
+    };
+  }
+  function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+  }
+  // Current wall-clock minutes-since-midnight in the user's timezone.
+  function wallClockMinutes(tz: string): number {
+    const hm = new Date().toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+    const [h, m] = hm.split(":").map((x) => parseInt(x, 10));
+    return h * 60 + m;
+  }
+
+  app.get("/api/checkin", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const cfg = checkinConfig();
+    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const mine = storageExtra.getCheckinForUserDate(userId, date);
+    res.json({
+      enabled: cfg.enabled,
+      start: cfg.start,
+      graceMin: cfg.graceMin,
+      officeSet: cfg.lat != null && cfg.lng != null,
+      radiusM: cfg.radiusM,
+      date,
+      mine,
+    });
+  });
+
+  app.post("/api/checkin", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const cfg = checkinConfig();
+    if (!cfg.enabled) return res.status(400).json({ error: "Morning check-in is not enabled." });
+    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const existing = storageExtra.getCheckinForUserDate(userId, date);
+    if (existing) return res.json({ checkin: existing, already: true });
+
+    const lat = Number.isFinite(Number(req.body?.lat)) ? Number(req.body.lat) : null;
+    const lng = Number.isFinite(Number(req.body?.lng)) ? Number(req.body.lng) : null;
+    const accuracyM = Number.isFinite(Number(req.body?.accuracyM)) ? Math.round(Number(req.body.accuracyM)) : null;
+    let distanceM: number | null = null;
+    let inArea: number | null = null;
+    if (lat != null && lng != null && cfg.lat != null && cfg.lng != null) {
+      distanceM = haversineM(lat, lng, cfg.lat, cfg.lng);
+      inArea = distanceM <= cfg.radiusM ? 1 : 0;
+    }
+    const me = storage.getUserById(userId) as any;
+    const tz = (me?.timezone as string) || BUSINESS_DAY_DEFAULT_TZ;
+    const [sh, sm] = cfg.start.split(":").map((x: string) => parseInt(x, 10));
+    const onTime = wallClockMinutes(tz) <= sh * 60 + sm + cfg.graceMin ? 1 : 0;
+
+    const checkin = storageExtra.saveCheckin({
+      orgId, userId, date, checkedInAt: new Date().toISOString(),
+      lat, lng, accuracyM, distanceM, inArea, onTime,
+    });
+    audit({
+      userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
+      entityLabel: `${me?.name ?? "User"} morning check-in`,
+      details: JSON.stringify({ date, onTime: !!onTime, inArea: inArea == null ? null : !!inArea, distanceM }),
+    });
+    res.json({ checkin });
+  });
+
+  // Admin/manager: everyone's check-in status for a date (missing = no row).
+  app.get("/api/checkin/admin", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date
+      : businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const rows = storageExtra.getCheckinsForDate(orgId, date);
+    const byUser = new Map<number, any>(rows.map((r: any) => [r.user_id, r]));
+    const clrs = (storage.getUsers() as any[])
+      .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .map((u) => ({ userId: u.id, name: u.name, checkin: byUser.get(u.id) ?? null }));
+    res.json({ date, config: checkinConfig(), clrs });
+  });
+
+  // Admin: check-in configuration (office point, radius, start time, on/off).
+  app.post("/api/checkin/settings", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const b = req.body ?? {};
+    const patch: any = {};
+    if (b.enabled !== undefined) patch.checkinEnabled = b.enabled ? 1 : 0;
+    if (b.lat !== undefined) patch.checkinLat = Number.isFinite(Number(b.lat)) ? Number(b.lat) : null;
+    if (b.lng !== undefined) patch.checkinLng = Number.isFinite(Number(b.lng)) ? Number(b.lng) : null;
+    if (b.radiusM !== undefined) { const r = Math.round(Number(b.radiusM)); if (Number.isFinite(r) && r >= 25 && r <= 50000) patch.checkinRadiusM = r; }
+    if (b.start !== undefined && /^\d{2}:\d{2}$/.test(String(b.start))) patch.checkinStart = String(b.start);
+    if (b.graceMin !== undefined) { const g = Math.round(Number(b.graceMin)); if (Number.isFinite(g) && g >= 0 && g <= 120) patch.checkinGraceMin = g; }
+    if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
+    res.json(checkinConfig());
   });
 
   // Per-user pay rates. Managers can view; only comp admins can change. Changing

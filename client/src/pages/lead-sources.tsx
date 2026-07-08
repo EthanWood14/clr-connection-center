@@ -16,7 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { ListFilter, Plus, Pencil, Trash2, Users } from "lucide-react";
 
-type LeadSource = { id: number; name: string; notes: string; weight: number; loCount: number };
+type LeadSource = { id: number; name: string; notes: string; appearancePct: number; loCount: number };
 
 export default function LeadSources() {
   const { user } = useAuth();
@@ -28,16 +28,17 @@ export default function LeadSources() {
   const [editTarget, setEditTarget] = useState<LeadSource | "new" | null>(null);
   const [fName, setFName] = useState("");
   const [fNotes, setFNotes] = useState("");
-  const [fWeight, setFWeight] = useState("1");
+  const [fPct, setFPct] = useState("100");
   const [deleteTarget, setDeleteTarget] = useState<LeadSource | null>(null);
 
-  function openNew() { setEditTarget("new"); setFName(""); setFNotes(""); setFWeight("1"); }
-  function openEdit(s: LeadSource) { setEditTarget(s); setFName(s.name); setFNotes(s.notes ?? ""); setFWeight(String(s.weight ?? 1)); }
+  function openNew() { setEditTarget("new"); setFName(""); setFNotes(""); setFPct("100"); }
+  function openEdit(s: LeadSource) { setEditTarget(s); setFName(s.name); setFNotes(s.notes ?? ""); setFPct(String(s.appearancePct ?? 100)); }
   function refresh() { queryClient.invalidateQueries({ queryKey: ["/api/lead-sources"] }); }
 
   const saveMut = useMutation({
     mutationFn: () => {
-      const body = { name: fName.trim(), notes: fNotes, weight: Math.max(1, parseInt(fWeight) || 1) };
+      const pct = Math.min(Math.max(parseInt(fPct) || 0, 0), 100);
+      const body = { name: fName.trim(), notes: fNotes, appearancePct: pct };
       return editTarget === "new"
         ? apiRequest("POST", "/api/lead-sources", body)
         : apiRequest("PATCH", `/api/lead-sources/${(editTarget as LeadSource).id}`, body);
@@ -51,8 +52,6 @@ export default function LeadSources() {
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
   });
 
-  const totalWeight = sources.reduce((s, x) => s + Math.max(1, x.weight || 1), 0) + 1; // +1 for General
-
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-3xl mx-auto">
       {/* Header */}
@@ -65,7 +64,7 @@ export default function LeadSources() {
           <div>
             <h1 className="text-2xl font-bold text-white">Lead Sources</h1>
             <p className="text-sm text-white/60">
-              Group LOs by where they came from. Weight controls each source's share of daily assignments; notes show on every assignment card.
+              Group LOs by where they came from. The percentage is the chance a source appears in a day's assignments; notes show on every assignment card.
             </p>
           </div>
         </div>
@@ -100,8 +99,8 @@ export default function LeadSources() {
                     <Badge variant="outline" className="gap-1 font-normal text-[11px]">
                       <Users className="w-3 h-3" /> {s.loCount} LO{s.loCount === 1 ? "" : "s"}
                     </Badge>
-                    <Badge variant="outline" className="font-normal text-[11px]">
-                      weight {s.weight} · ~{Math.round((Math.max(1, s.weight || 1) / totalWeight) * 100)}% of daily lists
+                    <Badge variant="outline" className={"font-normal text-[11px]" + ((s.appearancePct ?? 100) === 0 ? " text-red-600 dark:text-red-400 border-red-300 dark:border-red-800" : "")}>
+                      {(s.appearancePct ?? 100) >= 100 ? "always in assignments" : (s.appearancePct ?? 100) <= 0 ? "never in assignments" : `appears ${s.appearancePct}% of days`}
                     </Badge>
                   </div>
                   {s.notes && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.notes}</p>}
@@ -128,7 +127,7 @@ export default function LeadSources() {
           <DialogHeader>
             <DialogTitle>{editTarget === "new" ? "Add lead source" : "Edit lead source"}</DialogTitle>
             <DialogDescription>
-              Weight is relative: a source with weight 2 gets twice the daily-assignment share of a weight-1 source.
+              The percentage is the chance this source is included when a day's assignments generate: 100 = always, 0 = never, 30 = roughly 3 of every 10 days.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
@@ -137,8 +136,11 @@ export default function LeadSources() {
               <Input value={fName} onChange={e => setFName(e.target.value)} maxLength={80} placeholder="e.g. NMLS List, Referrals…" data-testid="source-name" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Weight</label>
-              <Input type="number" min={1} max={100} value={fWeight} onChange={e => setFWeight(e.target.value)} data-testid="source-weight" />
+              <label className="text-xs font-medium text-muted-foreground">Appears in daily assignments (%)</label>
+              <div className="relative">
+                <Input type="number" min={0} max={100} value={fPct} onChange={e => setFPct(e.target.value)} className="pr-7" data-testid="source-pct" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Notes <span className="font-normal">(shown on each assignment from this source)</span></label>

@@ -1918,6 +1918,36 @@ function runNewMigrations() {
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN lead_source_id INTEGER`); } catch {}
+  // Appearance percentage replaced the relative weight: 0–100 chance the
+  // source's LOs are part of a given day's assignment generation.
+  try { sqlite.exec(`ALTER TABLE lead_sources ADD COLUMN appearance_pct INTEGER NOT NULL DEFAULT 100`); } catch {}
+
+  // Morning check-ins: one row per CLR per business day recording when they
+  // checked in, whether that was on time (vs the configured start + grace),
+  // and whether their browser location fell inside the office radius.
+  // in_area/on_time are NULL when undeterminable (no office set / no location).
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS morning_checkins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    checked_in_at TEXT NOT NULL,
+    lat REAL,
+    lng REAL,
+    accuracy_m REAL,
+    distance_m REAL,
+    in_area INTEGER,
+    on_time INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, date)
+  )`);
+  // Check-in config lives with the other org settings on email_settings.
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lng REAL`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_radius_m INTEGER NOT NULL DEFAULT 400`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_start TEXT NOT NULL DEFAULT '08:00'`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_grace_min INTEGER NOT NULL DEFAULT 5`); } catch {}
 
   // Rolling-interval scheduling: checks fire every interval_days from the last
   // round (next_run_at), instead of on fixed odd-month calendar dates.
@@ -4406,28 +4436,29 @@ export function setUserHourlyRate(userId: number, rateCents: number | null): voi
 }
 
 // ── Lead sources ─────────────────────────────────────────────────────────────
-// A lead source is a labeled bucket LOs belong to: its weight controls the
-// share of daily assignments drawn from it, and its notes surface on each
-// assignment card. LOs with no source form the built-in "General" bucket.
+// A lead source is a labeled bucket LOs belong to: its appearance percentage
+// (0–100) is the chance the source is part of a given day's assignment
+// generation, and its notes surface on each assignment card. LOs with no
+// source form the built-in "General" bucket (always appears).
 export function getLeadSources(): any[] {
   return sqlite.prepare(`
-    SELECT s.id, s.name, s.notes, s.weight,
+    SELECT s.id, s.name, s.notes, s.appearance_pct AS appearancePct,
            (SELECT COUNT(*) FROM loan_officers lo WHERE lo.lead_source_id = s.id) AS loCount
     FROM lead_sources s ORDER BY s.name COLLATE NOCASE
   `).all() as any[];
 }
-export function createLeadSource(data: { name: string; notes?: string; weight?: number }): any {
+export function createLeadSource(data: { name: string; notes?: string; appearancePct?: number }): any {
   const now = new Date().toISOString();
-  const info = sqlite.prepare(`INSERT INTO lead_sources (name, notes, weight, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
-    .run(data.name, data.notes ?? "", data.weight ?? 1, now, now);
+  const info = sqlite.prepare(`INSERT INTO lead_sources (name, notes, appearance_pct, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
+    .run(data.name, data.notes ?? "", data.appearancePct ?? 100, now, now);
   return sqlite.prepare(`SELECT * FROM lead_sources WHERE id = ?`).get(info.lastInsertRowid);
 }
-export function updateLeadSource(id: number, data: { name?: string; notes?: string; weight?: number }): any {
+export function updateLeadSource(id: number, data: { name?: string; notes?: string; appearancePct?: number }): any {
   const fields: string[] = [];
   const vals: any[] = [];
   if (data.name !== undefined) { fields.push("name=?"); vals.push(data.name); }
   if (data.notes !== undefined) { fields.push("notes=?"); vals.push(data.notes); }
-  if (data.weight !== undefined) { fields.push("weight=?"); vals.push(data.weight); }
+  if (data.appearancePct !== undefined) { fields.push("appearance_pct=?"); vals.push(data.appearancePct); }
   if (fields.length) {
     fields.push("updated_at=?"); vals.push(new Date().toISOString(), id);
     sqlite.prepare(`UPDATE lead_sources SET ${fields.join(",")} WHERE id=?`).run(...vals);
@@ -4438,4 +4469,25 @@ export function deleteLeadSource(id: number): void {
   // LOs fall back to the General bucket rather than dangling.
   sqlite.prepare(`UPDATE loan_officers SET lead_source_id = NULL WHERE lead_source_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM lead_sources WHERE id = ?`).run(id);
+}
+
+// ── Morning check-ins ────────────────────────────────────────────────────────
+export function getCheckinForUserDate(userId: number, date: string): any {
+  return sqlite.prepare(`SELECT * FROM morning_checkins WHERE user_id = ? AND date = ?`).get(userId, date) ?? null;
+}
+export function getCheckinsForDate(orgId: number, date: string): any[] {
+  return sqlite.prepare(`SELECT * FROM morning_checkins WHERE org_id = ? AND date = ? ORDER BY checked_in_at`).all(orgId, date) as any[];
+}
+export function saveCheckin(data: {
+  orgId: number; userId: number; date: string; checkedInAt: string;
+  lat: number | null; lng: number | null; accuracyM: number | null;
+  distanceM: number | null; inArea: number | null; onTime: number | null;
+}): any {
+  // First check-in of the day wins — re-submits don't overwrite the original time.
+  sqlite.prepare(`
+    INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time)
+    VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime)
+    ON CONFLICT(user_id, date) DO NOTHING
+  `).run(data);
+  return getCheckinForUserDate(data.userId, data.date);
 }
