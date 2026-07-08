@@ -5330,16 +5330,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
     return h % 100 < pct;
   }
-  // The sources that appear on a date — rendered as instruction cards at the
-  // top of Your Call List.
+  // The sources that appear on a date, each OWNED by one CLR that day —
+  // distributed like the LOs (one owner per source, rotating day to day so it
+  // spreads evenly). Owner = clrs[(dayNumber + sourceIndex) % clrCount] over
+  // the same active-CLR pool that receives LO assignments.
+  function ownedSourcesForDate(date: string): { id: number; name: string; notes: string; ownerId: number | null; ownerName: string | null }[] {
+    const appearing = storageExtra.getLeadSources()
+      .filter((s: any) => sourceAppearsOn(s.id, clampPct(s.appearancePct ?? 100), date))
+      .sort((a: any, b: any) => a.id - b.id);
+    const clrs = (storage.getUsers() as any[])
+      .filter((u) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .sort((a, b) => a.id - b.id);
+    const dayNum = Math.floor(new Date(date + "T00:00:00Z").getTime() / 86400000);
+    return appearing.map((s: any, i: number) => {
+      const owner = clrs.length ? clrs[(((dayNum + i) % clrs.length) + clrs.length) % clrs.length] : null;
+      return { id: s.id, name: s.name, notes: s.notes, ownerId: owner?.id ?? null, ownerName: owner?.name ?? null };
+    });
+  }
   app.get("/api/lead-sources/today", requireAuth, (req: any, res) => {
     const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
       ? req.query.date
       : businessTodayForRequest(req, storageExtra.getRawSqlite());
-    const sources = storageExtra.getLeadSources()
-      .filter((s: any) => sourceAppearsOn(s.id, clampPct(s.appearancePct ?? 100), date))
-      .map((s: any) => ({ id: s.id, name: s.name, notes: s.notes }));
-    res.json({ date, sources });
+    res.json({ date, sources: ownedSourcesForDate(date) });
   });
 
   // ── Lead-source results (Input Results) ─────────────────────────────────────

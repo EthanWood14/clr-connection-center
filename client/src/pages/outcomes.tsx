@@ -1199,7 +1199,7 @@ function LeadSourceResults() {
   const [count, setCount] = useState("1");
   const [notes, setNotes] = useState("");
 
-  const { data: today } = useQuery<{ sources: { id: number; name: string; notes: string }[] }>({
+  const { data: today } = useQuery<{ sources: { id: number; name: string; notes: string; ownerId: number | null }[] }>({
     queryKey: ["/api/lead-sources/today"],
     queryFn: () => apiRequest("GET", "/api/lead-sources/today"),
   });
@@ -1207,7 +1207,9 @@ function LeadSourceResults() {
     queryKey: ["/api/lead-source-outcomes"],
     queryFn: () => apiRequest("GET", "/api/lead-source-outcomes"),
   });
-  const sources = today?.sources ?? [];
+  // Only the source(s) assigned to this CLR today are theirs to log — sources
+  // are distributed one owner per day, like LOs.
+  const sources = (today?.sources ?? []).filter((s) => s.ownerId === user?.id);
 
   const logMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/lead-source-outcomes", {
@@ -1275,7 +1277,7 @@ function LeadSourceResults() {
             </Button>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No lead sources are scheduled for today.</p>
+          <p className="text-xs text-muted-foreground">No lead source is assigned to you today.</p>
         )}
         {logged.length > 0 && (
           <div className="divide-y rounded-lg border">

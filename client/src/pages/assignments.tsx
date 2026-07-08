@@ -479,7 +479,7 @@ interface AssistantGroupProps {
   reassignTargets?: ReassignTarget[];
   onReassign?: (assignmentId: number, assistantId: number) => void;
   nextLoaByLo?: Record<number, { fullName: string; daysSinceLastTransfer: number | null }>;
-  leadSources?: { id: number; name: string; notes: string }[];
+  leadSources?: { id: number; name: string; notes: string; ownerId?: number | null }[];
 }
 
 function AssistantGroup({
@@ -537,8 +537,8 @@ function AssistantGroup({
         </div>
       </CardHeader>
       <CardContent className="p-0 mt-2">
-        {/* Lead sources for today — prioritized above the LO list; each is a
-            standing instruction this CLR works and logs in Input Results. */}
+        {/* Lead sources this CLR owns today — prioritized above their LO list;
+            a standing instruction they work and log in Input Results. */}
         {(leadSources?.length ?? 0) > 0 && (
           <div className="border-b bg-violet-50/60 dark:bg-violet-950/20 px-4 py-2.5 space-y-1.5">
             {leadSources!.map((s) => (
@@ -1027,7 +1027,7 @@ export default function Assignments() {
 
   // Lead-source instruction cards for the selected date (deterministic per
   // day — a 33% source shows on the same ~1/3 of days for everyone).
-  const { data: sourceCards } = useQuery<{ date: string; sources: { id: number; name: string; notes: string }[] }>({
+  const { data: sourceCards } = useQuery<{ date: string; sources: { id: number; name: string; notes: string; ownerId: number | null }[] }>({
     queryKey: ["/api/lead-sources/today", currentDate],
     queryFn: () => apiRequest("GET", `/api/lead-sources/today?date=${currentDate}`),
   });
@@ -1508,7 +1508,7 @@ export default function Assignments() {
                 reassignTargets={canReassign ? reassignTargets : undefined}
                 onReassign={canReassign ? handleRowReassign : undefined}
                 nextLoaByLo={nextLoaByLo}
-                leadSources={sourceCards?.sources}
+                leadSources={sourceCards?.sources?.filter((s: any) => s.ownerId === user.id)}
               />
             );
           })}
