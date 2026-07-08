@@ -144,7 +144,17 @@ export default function Chat() {
     onError: (e: any) => toast({ title: "Couldn't send meme", description: e.message, variant: "destructive" }),
   });
   // Pin well-known templates to the top of the un-searched grid.
-  const MEME_POPULAR = ["drake", "fine", "db", "gru", "success", "doge", "mordor", "oprah", "grumpycat", "spongebob", "disastergirl", "rollsafe", "yodawg", "stonks", "ds", "exit", "ll"];
+  // Quick-pick order (before search): a modern set up front, classics behind.
+  // Every id is a real memegen.link template; the full library is still
+  // searchable below.
+  const MEME_POPULAR = [
+    // modern
+    "drake", "cheems", "stonks", "panik-kalm-panik", "midwit", "cmm", "woman-cat",
+    "handshake", "spiderman", "pigeon", "khaby-lame", "saltbae", "bongo", "kombucha",
+    // classics
+    "fine", "db", "gru", "success", "doge", "mordor", "oprah", "grumpycat",
+    "spongebob", "disastergirl", "rollsafe", "yodawg", "ds", "exit", "ll",
+  ];
   const memes = useMemo(() => {
     const all = memeData?.items ?? [];
     const q = memeSearch.trim().toLowerCase();
@@ -455,7 +465,7 @@ export default function Chat() {
             <Input
               value={memeSearch}
               onChange={e => setMemeSearch(e.target.value)}
-              placeholder={memeMode === "gifs" ? "Search GIFs on Giphy…" : "Search memes… (drake, this is fine, gru, stonks…)"}
+              placeholder={memeMode === "gifs" ? "Search GIFs on Giphy…" : "Search memes… (cheems, panik, midwit, change my mind…)"}
               className="h-8 pl-8 text-sm"
               autoFocus
               data-testid="meme-search"

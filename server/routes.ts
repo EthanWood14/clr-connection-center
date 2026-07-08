@@ -9074,8 +9074,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Meme picker catalog — proxied from memegen.link (no API key). Cached 6h.
-  const MEME_FALLBACK = ["drake","fine","db","gru","success","doge","mordor","oprah","grumpycat","spongebob","disastergirl","rollsafe","yodawg","stonks","ds","exit","ll"]
-    .map(id => ({ id, name: id, blank: `https://api.memegen.link/images/${id}.png`, keywords: [] as string[] }));
+  // Offline fallback shown only if the memegen catalog fetch fails. Names are
+  // spelled out here (the live catalog supplies proper names normally) and the
+  // list leads with modern templates. Every id is a real memegen.link template.
+  const MEME_FALLBACK = ([
+    ["drake", "Drakeposting"], ["cheems", "Cheems"], ["stonks", "Stonks"],
+    ["panik-kalm-panik", "Panik Kalm Panik"], ["midwit", "Midwit"], ["cmm", "Change My Mind"],
+    ["woman-cat", "Woman Yelling at a Cat"], ["handshake", "Epic Handshake"],
+    ["spiderman", "Spider-Man Pointing"], ["pigeon", "Is This a Pigeon?"],
+    ["khaby-lame", "Khaby Lame Shrug"], ["saltbae", "Salt Bae"], ["bongo", "Bongo Cat"],
+    ["kombucha", "Kombucha Girl"],
+    ["fine", "This Is Fine"], ["db", "Distracted Boyfriend"], ["gru", "Gru's Plan"],
+    ["success", "Success Kid"], ["doge", "Doge"], ["mordor", "One Does Not Simply"],
+    ["oprah", "Oprah You Get A"], ["grumpycat", "Grumpy Cat"], ["spongebob", "Mocking SpongeBob"],
+    ["disastergirl", "Disaster Girl"], ["rollsafe", "Roll Safe"], ["yodawg", "Xzibit Yo Dawg"],
+    ["ds", "Daily Struggle"], ["exit", "Left Exit 12 Off Ramp"], ["ll", "Laughing Lizard"],
+  ] as [string, string][])
+    .map(([id, name]) => ({ id, name, blank: `https://api.memegen.link/images/${id}.png`, keywords: [] as string[] }));
   let _memeCatalog: { at: number; items: any[] } | null = null;
   app.get("/api/memes/catalog", requireAuth, async (_req: any, res) => {
     try {
