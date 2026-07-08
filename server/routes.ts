@@ -5303,34 +5303,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(lo);
   });
 
-  // ── Seating map ─────────────────────────────────────────────────────────────
-  // The static seating-chart page ships in the client build (dist/public), but
-  // it embeds employee names, so this authed route intercepts it BEFORE the
-  // public static middleware (registerRoutes mounts first — see server/index.ts).
-  app.get("/seating-chart.html", requireAuth, (_req: any, res) => {
-    const built = path.resolve(__dirname, "public", "seating-chart.html");
-    const dev = path.resolve(__dirname, "..", "client", "public", "seating-chart.html");
-    const file = fs.existsSync(built) ? built : dev;
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.sendFile(file);
-  });
-  // Shared chart state (name overrides + role colors) — one map for everyone,
-  // last write wins. Any signed-in user can edit, matching the page itself.
-  app.get("/api/seating-chart/state", requireAuth, (_req: any, res) => {
-    res.json(storageExtra.getSeatingChartState() ?? { data: null, updatedAt: null });
-  });
-  app.put("/api/seating-chart/state", requireAuth, (req: any, res) => {
-    const overrides = req.body?.overrides;
-    const roles = req.body?.roles;
-    if (typeof overrides !== "object" || overrides === null || typeof roles !== "object" || roles === null) {
-      return res.status(400).json({ error: "Body must include overrides and roles objects." });
-    }
-    const payload = { overrides, roles };
-    if (JSON.stringify(payload).length > 200_000) return res.status(413).json({ error: "State too large." });
-    const updatedAt = storageExtra.setSeatingChartState(payload);
-    res.json({ ok: true, updatedAt });
-  });
-
   // ── Lead sources ────────────────────────────────────────────────────────────
   // Labeled buckets LOs belong to. Weight = relative share of daily
   // assignments; notes surface on each assignment card. Reads are open to any

@@ -65,7 +65,6 @@ import MojoImport from "@/pages/mojo-import";
 import Forum from "@/pages/forum";
 import SharkTank from "@/pages/shark-tank";
 import LeadSources from "@/pages/lead-sources";
-import SeatingMap from "@/pages/seating-map";
 import CheckIns from "@/pages/check-ins";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
@@ -134,7 +133,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/forum":            "Forum",
   "/shark-tank":       "Shark Tank",
   "/lead-sources":     "Lead Sources",
-  "/seating-map":      "Seating Map",
   "/check-ins":        "Morning Check-Ins",
 };
 
@@ -190,7 +188,6 @@ function AppRouter() {
       <Route path="/forum" component={Forum} />
       <Route path="/shark-tank" component={SharkTank} />
       <Route path="/lead-sources" component={LeadSources} />
-      <Route path="/seating-map" component={SeatingMap} />
       <Route path="/check-ins" component={CheckIns} />
       <Route path="/super-admin" component={SuperAdmin} />
       <Route path="/intro-video" component={IntroVideo} />

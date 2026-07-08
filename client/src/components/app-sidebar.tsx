@@ -25,6 +25,7 @@ interface NavItem {
   icon: any;
   badge?: string;
   help?: { summary: string; features: string[] };
+  external?: boolean; // opens in a new tab (e.g. the seating chart site)
 }
 
 const help = {
@@ -192,7 +193,7 @@ const teamItems: NavItem[] = [
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
   { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
-  { title: "Seating Map",           url: "/seating-map",   icon: Armchair },
+  { title: "Seating Map",           url: "https://seating-chart-production-1287.up.railway.app", icon: Armchair, external: true },
 ];
 
 const toolItems: NavItem[] = [
@@ -343,13 +344,9 @@ export function AppSidebar() {
   function renderItems(items: NavItem[]) {
     return items.map((item) => {
       const count = getBadgeCount(item.badge);
-      const active = isActive(item.url);
-      const link = (
-        <Link
-          href={item.url}
-          data-testid={`nav-${item.title.toLowerCase().replace(/ /g, "-")}`}
-          className="flex items-center justify-between w-full"
-        >
+      const active = !item.external && isActive(item.url);
+      const inner = (
+        <>
           <span className="flex items-center gap-2">
             <item.icon className="w-3.5 h-3.5 shrink-0" />
             <span className={active ? "font-bold" : ""}>{item.title}</span>
@@ -359,6 +356,25 @@ export function AppSidebar() {
               {count > 99 ? "99+" : count}
             </Badge>
           )}
+        </>
+      );
+      const link = item.external ? (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          data-testid={`nav-${item.title.toLowerCase().replace(/ /g, "-")}`}
+          className="flex items-center justify-between w-full"
+        >
+          {inner}
+        </a>
+      ) : (
+        <Link
+          href={item.url}
+          data-testid={`nav-${item.title.toLowerCase().replace(/ /g, "-")}`}
+          className="flex items-center justify-between w-full"
+        >
+          {inner}
         </Link>
       );
 

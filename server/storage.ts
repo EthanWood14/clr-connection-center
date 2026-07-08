@@ -1941,14 +1941,6 @@ function runNewMigrations() {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, date)
   )`);
-  // Shared seating-chart state: one JSON blob (name overrides + role colors)
-  // so every device sees the same office map. Single row, last write wins.
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS seating_chart_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    data TEXT NOT NULL DEFAULT '{}',
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
   // Check-in config lives with the other org settings on email_settings.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
@@ -4477,23 +4469,6 @@ export function deleteLeadSource(id: number): void {
   // LOs fall back to the General bucket rather than dangling.
   sqlite.prepare(`UPDATE loan_officers SET lead_source_id = NULL WHERE lead_source_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM lead_sources WHERE id = ?`).run(id);
-}
-
-// ── Seating chart shared state ───────────────────────────────────────────────
-export function getSeatingChartState(): { data: any; updatedAt: string } | null {
-  const row = sqlite.prepare(`SELECT data, updated_at FROM seating_chart_state WHERE id = 1`).get() as any;
-  if (!row) return null;
-  let data: any = {};
-  try { data = JSON.parse(row.data); } catch {}
-  return { data, updatedAt: row.updated_at };
-}
-export function setSeatingChartState(data: any): string {
-  const now = new Date().toISOString();
-  sqlite.prepare(`
-    INSERT INTO seating_chart_state (id, data, updated_at) VALUES (1, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-  `).run(JSON.stringify(data), now);
-  return now;
 }
 
 // ── Morning check-ins ────────────────────────────────────────────────────────
