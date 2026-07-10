@@ -296,7 +296,7 @@ export default function TimeClock() {
               try {
                 sessionStorage.setItem("comp.prefill", JSON.stringify({
                   description: `Hours worked — ${label} (${totals.hours.toFixed(2)} hrs @ ${money(rate.rateCents)}/hr + ${(rate.seRate * 100).toFixed(2)}% SE)`,
-                  category: "hours",
+                  category: "time",
                   amountCents: totals.total,
                 }));
               } catch {}

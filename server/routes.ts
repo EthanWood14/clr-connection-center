@@ -6052,14 +6052,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Users log expenses (draft), bundle them into a comp request (pending),
   // managers approve/deny, then the requester marks each as reimbursed (paid).
   // "leads" is kept as a legacy alias for older requests filed before the rename to "transfers".
-  // Current categories reflect what comp requests are actually filed for:
-  // monthly transfer comp, appointment comp, hours/time adjustments, bonuses,
-  // and expense reimbursements. The old expense-shop set (equipment/software/
-  // marketing/travel/office) plus "leads" stay accepted so historical records
-  // and old clients keep working; they display as Reimbursement / Transfers.
+  // Current categories: software, transfers, time, bonus, training, other.
+  // Every key from earlier sets stays ACCEPTED so historical records and old
+  // clients keep working; legacy values display under the closest current
+  // category (leads/appointments → Transfers, hours → Time, the old
+  // expense-shop set → Other).
   const COMP_CATEGORIES = new Set([
-    "transfers", "appointments", "hours", "bonus", "reimbursement", "other",
-    "leads", "equipment", "software", "marketing", "travel", "office",
+    "software", "transfers", "time", "bonus", "training", "other",
+    "leads", "appointments", "hours", "reimbursement", "equipment", "marketing", "travel", "office",
   ]);
   function mapComp(r: any, nameById: Map<number, string>) {
     return {
@@ -6690,7 +6690,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const c = mapComp(item, nameById);
       const atts = db.prepare("SELECT id, filename, mime, size_bytes, data_base64 FROM comp_attachments WHERE comp_id=? AND org_id=? ORDER BY id ASC").all(compId, orgId) as any[];
 
-      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", appointments: "Appointments", hours: "Hours", bonus: "Bonus / Spiff", reimbursement: "Reimbursement", software: "Reimbursement", travel: "Reimbursement", marketing: "Reimbursement", equipment: "Reimbursement", office: "Reimbursement", other: "Other" };
+      const CAT_LABELS: Record<string, string> = { software: "Software", transfers: "Transfers", time: "Time", bonus: "Bonus", training: "Training", other: "Other", leads: "Transfers", appointments: "Transfers", hours: "Time", reimbursement: "Other", equipment: "Other", marketing: "Other", travel: "Other", office: "Other" };
       const STATUS_LABELS: Record<string, string> = { draft: "Draft (unsent)", pending: "Pending approval", approved: "Approved", denied: "Denied" };
       const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
       const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -6824,7 +6824,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         rows = db.prepare("SELECT * FROM comp_requests WHERE org_id=? AND status='approved' AND is_paid=0 ORDER BY user_id ASC, id ASC").all(orgId) as any[];
       }
       const items = rows.map(r => mapComp(r, nameById));
-      const CAT_LABELS: Record<string, string> = { transfers: "Transfers", leads: "Transfers", appointments: "Appointments", hours: "Hours", bonus: "Bonus / Spiff", reimbursement: "Reimbursement", software: "Reimbursement", travel: "Reimbursement", marketing: "Reimbursement", equipment: "Reimbursement", office: "Reimbursement", other: "Other" };
+      const CAT_LABELS: Record<string, string> = { software: "Software", transfers: "Transfers", time: "Time", bonus: "Bonus", training: "Training", other: "Other", leads: "Transfers", appointments: "Transfers", hours: "Time", reimbursement: "Other", equipment: "Other", marketing: "Other", travel: "Other", office: "Other" };
       const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch] || ch));
       const money = (cents: number) => "$" + (Number(cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const fmtDate = (d: any) => {

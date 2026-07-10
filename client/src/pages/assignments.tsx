@@ -1019,7 +1019,7 @@ function TransferLullsCard() {
   });
   const los = data?.los ?? [];
   if (los.length === 0) return null;
-  const inline = los.slice(0, 6);
+  const inline = los.slice(0, 5);
 
   return (
     <Card className="border-sky-200 dark:border-sky-800">

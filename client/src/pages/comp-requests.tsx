@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, PhoneForwarded, Timer, Award,
+  CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, Timer, Award, Laptop, BookOpen,
 } from "lucide-react";
 
 interface CompItem {
@@ -48,30 +48,35 @@ interface CompItem {
   attachmentCount?: number;
 }
 
-// Categories mirror what comp requests are actually filed for: the monthly
-// transfer request, appointment comp, hour/time-clock adjustments, bonuses and
-// spiffs, and the occasional expense reimbursement.
-const REIMB_CLS = "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300";
+// Current category set: software, transfers, time, bonus, training, other.
+// (Reimbursement is a separate yes/no flag on the request, not a category.)
+const TRANSFER_CLS = "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300";
+const TIME_CLS = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+const OTHER_CLS = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
 const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
-  transfers:     { label: "Transfers",     icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
-  appointments:  { label: "Appointments",  icon: PhoneForwarded, cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
-  hours:         { label: "Hours",         icon: Timer,          cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
-  bonus:         { label: "Bonus / Spiff", icon: Award,          cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
-  reimbursement: { label: "Reimbursement", icon: Receipt,        cls: REIMB_CLS },
-  other:         { label: "Other",         icon: Tag,            cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
-  // Legacy aliases: "leads" predates the rename to "transfers"; the old
-  // expense-shop categories all fold into "Reimbursement" for display.
-  leads:     { label: "Transfers",     icon: ArrowLeftRight, cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300" },
-  equipment: { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
-  software:  { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
-  marketing: { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
-  travel:    { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
-  office:    { label: "Reimbursement", icon: Receipt, cls: REIMB_CLS },
+  software:  { label: "Software",  icon: Laptop,         cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  transfers: { label: "Transfers", icon: ArrowLeftRight, cls: TRANSFER_CLS },
+  time:      { label: "Time",      icon: Timer,          cls: TIME_CLS },
+  bonus:     { label: "Bonus",     icon: Award,          cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
+  training:  { label: "Training",  icon: BookOpen,       cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
+  other:     { label: "Other",     icon: Tag,            cls: OTHER_CLS },
+  // Legacy aliases from earlier category sets — display under the closest
+  // current category so old records still read cleanly.
+  leads:         { label: "Transfers", icon: ArrowLeftRight, cls: TRANSFER_CLS },
+  appointments:  { label: "Transfers", icon: ArrowLeftRight, cls: TRANSFER_CLS },
+  hours:         { label: "Time",      icon: Timer,          cls: TIME_CLS },
+  reimbursement: { label: "Other",     icon: Tag,            cls: OTHER_CLS },
+  equipment:     { label: "Other",     icon: Tag,            cls: OTHER_CLS },
+  marketing:     { label: "Other",     icon: Tag,            cls: OTHER_CLS },
+  travel:        { label: "Other",     icon: Tag,            cls: OTHER_CLS },
+  office:        { label: "Other",     icon: Tag,            cls: OTHER_CLS },
 };
 // Keys shown in the category dropdown (excludes the legacy aliases).
-const CATEGORY_KEYS = ["transfers", "appointments", "hours", "bonus", "reimbursement", "other"];
-// Legacy keys that display/filter as Reimbursement.
-const LEGACY_REIMB = new Set(["equipment", "software", "marketing", "travel", "office"]);
+const CATEGORY_KEYS = ["software", "transfers", "time", "bonus", "training", "other"];
+// Legacy keys folded into current ones for filtering / edit-dialog mapping.
+const LEGACY_TRANSFERS = new Set(["leads", "appointments"]);
+const LEGACY_TIME = new Set(["hours"]);
+const LEGACY_OTHER = new Set(["reimbursement", "equipment", "marketing", "travel", "office"]);
 
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -511,8 +516,9 @@ function matchesStage(r: CompItem, f: StageFilter): boolean {
 
 function matchesCat(r: CompItem, cat: string): boolean {
   if (cat === "all") return true;
-  if (cat === "transfers") return r.category === "transfers" || r.category === "leads";
-  if (cat === "reimbursement") return r.category === "reimbursement" || LEGACY_REIMB.has(r.category);
+  if (cat === "transfers") return r.category === "transfers" || LEGACY_TRANSFERS.has(r.category);
+  if (cat === "time") return r.category === "time" || LEGACY_TIME.has(r.category);
+  if (cat === "other") return r.category === "other" || LEGACY_OTHER.has(r.category);
   return r.category === cat;
 }
 
@@ -777,7 +783,10 @@ export default function CompRequests() {
     setEditAmount(((r.amountCents ?? 0) / 100).toString());
     // Map legacy categories to their current equivalents so the dropdown
     // always shows a selectable value.
-    const cat = r.category === "leads" ? "transfers" : LEGACY_REIMB.has(r.category) ? "reimbursement" : (r.category || "transfers");
+    const cat = LEGACY_TRANSFERS.has(r.category) ? "transfers"
+      : LEGACY_TIME.has(r.category) ? "time"
+      : LEGACY_OTHER.has(r.category) ? "other"
+      : (r.category || "transfers");
     setEditCategory(cat);
     setEditDate(r.expenseDate ?? "");
     setEditNote(r.note ?? "");
@@ -953,7 +962,7 @@ export default function CompRequests() {
           <HoursStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
             forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
-            onUse={(text, amountCents) => { setDescription(text); setCategory("hours"); setAmount((amountCents / 100).toFixed(2)); }}
+            onUse={(text, amountCents) => { setDescription(text); setCategory("time"); setAmount((amountCents / 100).toFixed(2)); }}
           />
           {isManager && (
             <div>
