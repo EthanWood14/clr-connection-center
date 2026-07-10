@@ -1008,8 +1008,9 @@ function PreConfigureDialog({ open, date, existing, assistants, onClose, onSucce
   );
 }
 
-// Collapsible section: active LOs with the FEWEST transfers over the last 5
-// working days (least first) — who the team should push transfers toward.
+// One-line strip: active LOs with the FEWEST transfers over the last 5
+// working days (least first). Collapsed it's a single row with the coldest
+// names inline; clicking expands the full chip grid.
 function TransferLullsCard() {
   const [open, setOpen] = useState(false);
   const { data } = useQuery<{ days: number; window: string[]; los: { id: number; name: string; transfers: number; priorityTier: number | null }[] }>({
@@ -1018,41 +1019,46 @@ function TransferLullsCard() {
   });
   const los = data?.los ?? [];
   if (los.length === 0) return null;
-  // Show the neediest first; cap the collapsed view but let it expand fully.
-  const shown = open ? los : los.slice(0, 12);
+  const inline = los.slice(0, 6);
 
   return (
     <Card className="border-sky-200 dark:border-sky-800">
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-4 py-3 text-left"
+        className="w-full flex items-center gap-2 px-4 py-2 text-left overflow-hidden"
         data-testid="transfer-lulls-toggle"
         aria-expanded={open}
+        title="Fewest transfers over the last 5 working days — push transfers toward these LOs"
       >
         <TrendingDown className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
-        <span className="text-sm font-semibold">Fewest transfers · last 5 working days</span>
-        <span className="text-xs text-muted-foreground">— push transfers toward these LOs</span>
-        <ChevronDown className={`w-4 h-4 ml-auto text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      <CardContent className="pt-0 pb-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
-          {shown.map((lo) => (
-            <div key={lo.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5" data-testid={`lull-lo-${lo.id}`}>
-              <span className="text-sm truncate flex-1">{lo.name}</span>
-              {lo.priorityTier === 1 && <span className="text-[9px] px-1 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>}
-              <Badge variant="outline" className={`font-normal tabular-nums ${lo.transfers === 0 ? "text-red-600 dark:text-red-400 border-red-300 dark:border-red-800" : ""}`}>
-                {lo.transfers} transfer{lo.transfers === 1 ? "" : "s"}
-              </Badge>
-            </div>
+        <span className="text-sm font-semibold shrink-0">Cold LOs (5d):</span>
+        <span className="text-sm text-muted-foreground truncate min-w-0">
+          {inline.map((lo, i) => (
+            <span key={lo.id}>
+              {i > 0 && " · "}
+              {lo.name} <span className={`tabular-nums font-medium ${lo.transfers === 0 ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>{lo.transfers}</span>
+            </span>
           ))}
-        </div>
-        {!open && los.length > 12 && (
-          <button type="button" onClick={() => setOpen(true)} className="mt-2 text-xs font-medium text-primary hover:underline" data-testid="transfer-lulls-showall">
-            Show all {los.length}
-          </button>
-        )}
-      </CardContent>
+          {los.length > inline.length && ` · +${los.length - inline.length} more`}
+        </span>
+        <ChevronDown className={`w-4 h-4 ml-auto shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <CardContent className="pt-0 pb-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+            {los.map((lo) => (
+              <div key={lo.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5" data-testid={`lull-lo-${lo.id}`}>
+                <span className="text-sm truncate flex-1">{lo.name}</span>
+                {lo.priorityTier === 1 && <span className="text-[9px] px-1 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>}
+                <Badge variant="outline" className={`font-normal tabular-nums ${lo.transfers === 0 ? "text-red-600 dark:text-red-400 border-red-300 dark:border-red-800" : ""}`}>
+                  {lo.transfers} transfer{lo.transfers === 1 ? "" : "s"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      )}
     </Card>
   );
 }
