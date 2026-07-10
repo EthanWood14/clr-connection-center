@@ -17,7 +17,8 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, CheckCircle2, XCircle,
   PhoneOutgoing, AlertCircle, Users, Calendar, Phone, Save,
   Check, ArrowRight, X, MinusCircle, Lock, ShieldAlert, TriangleAlert, Sparkles,
-  Star, StickyNote, Sunrise, Sun, Sunset, Clock, GitBranch, ArrowRightLeft
+  Star, StickyNote, Sunrise, Sun, Sunset, Clock, GitBranch, ArrowRightLeft,
+  TrendingDown, ChevronDown
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { HelpIcon, markStep } from "@/components/onboarding";
@@ -1007,6 +1008,55 @@ function PreConfigureDialog({ open, date, existing, assistants, onClose, onSucce
   );
 }
 
+// Collapsible section: active LOs with the FEWEST transfers over the last 5
+// working days (least first) — who the team should push transfers toward.
+function TransferLullsCard() {
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery<{ days: number; window: string[]; los: { id: number; name: string; transfers: number; priorityTier: number | null }[] }>({
+    queryKey: ["/api/assignments/transfer-lulls"],
+    queryFn: () => apiRequest("GET", "/api/assignments/transfer-lulls?days=5"),
+  });
+  const los = data?.los ?? [];
+  if (los.length === 0) return null;
+  // Show the neediest first; cap the collapsed view but let it expand fully.
+  const shown = open ? los : los.slice(0, 12);
+
+  return (
+    <Card className="border-sky-200 dark:border-sky-800">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left"
+        data-testid="transfer-lulls-toggle"
+        aria-expanded={open}
+      >
+        <TrendingDown className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+        <span className="text-sm font-semibold">Fewest transfers · last 5 working days</span>
+        <span className="text-xs text-muted-foreground">— push transfers toward these LOs</span>
+        <ChevronDown className={`w-4 h-4 ml-auto text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <CardContent className="pt-0 pb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+          {shown.map((lo) => (
+            <div key={lo.id} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5" data-testid={`lull-lo-${lo.id}`}>
+              <span className="text-sm truncate flex-1">{lo.name}</span>
+              {lo.priorityTier === 1 && <span className="text-[9px] px-1 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">VIP</span>}
+              <Badge variant="outline" className={`font-normal tabular-nums ${lo.transfers === 0 ? "text-red-600 dark:text-red-400 border-red-300 dark:border-red-800" : ""}`}>
+                {lo.transfers} transfer{lo.transfers === 1 ? "" : "s"}
+              </Badge>
+            </div>
+          ))}
+        </div>
+        {!open && los.length > 12 && (
+          <button type="button" onClick={() => setOpen(true)} className="mt-2 text-xs font-medium text-primary hover:underline" data-testid="transfer-lulls-showall">
+            Show all {los.length}
+          </button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Assignments() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -1458,6 +1508,9 @@ export default function Assignments() {
           </p>
         </div>
       )}
+
+      {/* Fewest transfers over the last 5 working days */}
+      <TransferLullsCard />
 
       {/* Content */}
       {isLoading ? (

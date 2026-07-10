@@ -7087,6 +7087,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(visible);
   });
 
+  // Active LOs ranked by FEWEST transfers over the last N working days (weekdays,
+  // default 5) — zeros included, least first. Surfaces LOs the team should push
+  // transfers toward. Read-only; any signed-in user.
+  app.get("/api/assignments/transfer-lulls", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const days = Math.min(Math.max(parseInt(String(req.query.days ?? "5"), 10) || 5, 1), 20);
+    // The N most recent weekdays ending at (or before) today.
+    const window: string[] = [];
+    let d = today, guard = 0;
+    while (window.length < days && guard++ < 60) {
+      const dow = new Date(d + "T12:00:00Z").getUTCDay(); // 0=Sun … 6=Sat
+      if (dow !== 0 && dow !== 6) window.push(d);
+      d = addIsoDays(d, -1);
+    }
+    const db = storageExtra.getRawSqlite();
+    const ph = window.map(() => "?").join(",");
+    const los = db.prepare(`
+      SELECT lo.id AS id, lo.full_name AS name, lo.priority_tier AS priorityTier,
+             lo.last_worked_date AS lastWorkedDate,
+             (SELECT COUNT(*) FROM lead_outcomes o
+              WHERE o.lo_id = lo.id AND o.outcome_type = 'transfer'
+                AND o.org_id = ? AND o.date IN (${ph})) AS transfers
+      FROM loan_officers lo
+      WHERE lo.org_id = ? AND lower(coalesce(lo.internal_status,'active')) = 'active'
+        AND (lo.snooze_until IS NULL OR substr(lo.snooze_until,1,10) <= ?)
+      ORDER BY transfers ASC, lo.full_name COLLATE NOCASE
+    `).all(orgId, ...window, orgId, today) as any[];
+    res.json({ days, window, los });
+  });
+
   app.post("/api/assignments/generate", requireAuth, (req: any, res: any) => {
     const date = (req.body.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
