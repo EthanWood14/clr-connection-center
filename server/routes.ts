@@ -22,6 +22,7 @@ import { npaToState } from "./npa-state";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee } from "./bonzo";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -7728,6 +7729,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           }).catch(() => {});
         }
       } catch {}
+      // Appointment → Bonzo: task for the LO + note on the matched prospect
+      // (fire-and-forget; the lookup never creates prospects).
+      if (outcome.outcomeType === "appointment") {
+        setImmediate(() => syncAppointmentToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-appt] sync failed:", e?.message ?? e)));
+      }
       res.json(outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -7859,6 +7865,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         broadcastTransferCelebration(outcome.assistantId, lo?.fullName ?? null, outcome.borrowerName ?? null);
       } catch {}
     }
+    // Appointment → Bonzo follow-up notes (fire-and-forget). Fires only for
+    // outcomes that were mirrored to Bonzo when the appointment was set.
+    try {
+      if (existing.outcome_type === "appointment") {
+        if (body.outcomeType === "transfer") {
+          setImmediate(() => syncAppointmentResultToBonzo(id, "transferred").catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+        } else if (body.outcomeType === "fell_through") {
+          setImmediate(() => syncAppointmentResultToBonzo(id, "fell_through").catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+        } else if (body.rescheduled === 1 || ("rescheduleDatetime" in body && body.rescheduleDatetime) || ("appointmentDatetime" in body && body.appointmentDatetime)) {
+          const newDt = body.rescheduleDatetime || body.appointmentDatetime || null;
+          setImmediate(() => syncAppointmentResultToBonzo(id, "rescheduled", newDt).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+        }
+      }
+    } catch {}
     // If the appointment time changed (reschedule, edit, etc.), clear the
     // 30-minute reminder flag so the cron can fire a fresh reminder against
     // the new scheduled time. We check whether either field that the cron
@@ -13048,7 +13068,134 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // ── Appointment → Bonzo sync ────────────────────────────────────────────────
+  // When a CLR logs an appointment, mirror it into Bonzo: look UP the prospect
+  // by phone (NEVER create one), schedule a task for the prospect's assigned
+  // Bonzo user (checked against the C3 form's LO), and leave a note. When the
+  // appointment is later completed — transferred / fell through / rescheduled —
+  // post the follow-up note; reschedules also move the task to the new time.
+  async function syncAppointmentToBonzo(outcomeId: number): Promise<void> {
+    if (!bonzoConfigured()) return;
+    const db = storageExtra.getRawSqlite();
+    const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
+    if (!o || o.outcome_type !== "appointment") return;
+    if (!o.phone_number) { console.log(`[bonzo-appt] outcome=${outcomeId}: no phone — skipped`); return; }
+    const lo = o.lo_id ? (storage.getLoanOfficerById(o.lo_id) as any) : null;
+    const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
+    const prospect = await findProspectByPhone(o.phone_number, lo?.fullName ?? null);
+    if (!prospect) { console.log(`[bonzo-appt] outcome=${outcomeId}: no Bonzo prospect for that phone — skipped (lookup never creates)`); return; }
+    const when = o.appointment_datetime || o.follow_up_date;
+    const dt = when ? wallClockToBonzo(String(when)) : null;
+    const whenLabel = dt ? `${dt.date} at ${dt.time}` : (when || "unscheduled");
+    const mismatch = lo?.fullName && !prospect.loMatches
+      ? `\n⚠️ Heads up: this prospect's Bonzo assignee (${prospect.assignedUserName ?? "unknown"}) differs from the C3 LO (${lo.fullName}).`
+      : "";
+    let taskId: number | null = null;
+    if (dt && prospect.assignedTo) {
+      const t = await createProspectTask({
+        prospectId: prospect.id,
+        assigneeId: prospect.assignedTo,
+        title: `Appointment: ${o.borrower_name || prospect.name} (${dt.time})`,
+        details:
+          `Set in C3 by ${clr?.name ?? "a CLR"} for LO ${lo?.fullName ?? "?"}.` +
+          (o.prequalification_notes ? `\nPre-qual: ${o.prequalification_notes}` : "") +
+          (o.notes ? `\nNotes: ${o.notes}` : ""),
+        date: dt.date,
+        time: dt.time,
+      });
+      if (t.ok) taskId = t.id;
+      else console.error(`[bonzo-appt] outcome=${outcomeId}: task create failed: ${t.error}`);
+    }
+    const note = await addProspectNote(
+      prospect.id,
+      `📅 Appointment scheduled for ${whenLabel} — set in C3 by ${clr?.name ?? "a CLR"} (LO: ${lo?.fullName ?? "?"}).` +
+      (o.notes ? `\n${o.notes}` : "") + mismatch,
+    );
+    if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: note failed: ${note.error}`);
+    db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_task_id=?, bonzo_synced_at=? WHERE id=?`)
+      .run(prospect.id, taskId, new Date().toISOString(), outcomeId);
+    console.log(`[bonzo-appt] outcome=${outcomeId} → prospect=${prospect.id} task=${taskId ?? "none"} assignee=${prospect.assignedUserName ?? "?"}`);
+  }
+
+  async function syncAppointmentResultToBonzo(outcomeId: number, result: "transferred" | "fell_through" | "rescheduled", newDatetime?: string | null): Promise<void> {
+    if (!bonzoConfigured()) return;
+    const db = storageExtra.getRawSqlite();
+    const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
+    if (!o?.bonzo_prospect_id) return; // this appointment was never mirrored
+    const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
+    const by = clr?.name ?? "a CLR";
+    let msg: string;
+    if (result === "transferred") {
+      msg = `✅ Appointment result: TRANSFERRED — logged in C3 by ${by}.`;
+    } else if (result === "fell_through") {
+      msg = `❌ Appointment result: FELL THROUGH — logged in C3 by ${by}.` + (o.missed_reason ? ` Reason: ${o.missed_reason}` : "");
+      // Drop the now-moot task so the LO isn't nagged about a dead appointment.
+      if (o.bonzo_task_id) {
+        try { await deleteTask(o.bonzo_task_id); } catch {}
+        db.prepare(`UPDATE lead_outcomes SET bonzo_task_id=NULL WHERE id=?`).run(outcomeId);
+      }
+    } else {
+      const dt = newDatetime ? wallClockToBonzo(String(newDatetime)) : null;
+      msg = `🔁 Appointment RESCHEDULED${dt ? ` to ${dt.date} at ${dt.time}` : ""} — logged in C3 by ${by}.`;
+      // Move the task: delete the old one and recreate at the new time.
+      if (dt) {
+        if (o.bonzo_task_id) await deleteTask(o.bonzo_task_id);
+        const assignee = await getProspectAssignee(o.bonzo_prospect_id);
+        let newTaskId: number | null = null;
+        if (assignee) {
+          const t = await createProspectTask({
+            prospectId: o.bonzo_prospect_id,
+            assigneeId: assignee,
+            title: `Appointment: ${o.borrower_name || "prospect"} (${dt.time})`,
+            details: `Rescheduled in C3 by ${by}.`,
+            date: dt.date,
+            time: dt.time,
+          });
+          if (t.ok) newTaskId = t.id;
+          else console.error(`[bonzo-appt] outcome=${outcomeId}: reschedule task failed: ${t.error}`);
+        }
+        db.prepare(`UPDATE lead_outcomes SET bonzo_task_id=? WHERE id=?`).run(newTaskId, outcomeId);
+      }
+    }
+    const note = await addProspectNote(o.bonzo_prospect_id, msg);
+    if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: result note failed: ${note.error}`);
+    console.log(`[bonzo-appt] outcome=${outcomeId} result=${result} noted on prospect=${o.bonzo_prospect_id}`);
+  }
+
+  // Admin-only live wiring test: looks up a phone, creates a clearly-labeled
+  // task + note on the matched prospect, then deletes both — proves the whole
+  // path against the real API without leaving anything behind.
+  app.post("/api/bonzo/test-appointment", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    if (!bonzoConfigured()) return res.status(400).json({ error: "No Bonzo API token configured." });
+    const phone = String(req.body?.phone ?? "");
+    const loName = req.body?.loName ? String(req.body.loName) : null;
+    const steps: any = {};
+    const prospect = await findProspectByPhone(phone, loName);
+    steps.prospect = prospect ? { id: prospect.id, name: prospect.name, assignee: prospect.assignedUserName, loMatches: prospect.loMatches } : null;
+    if (!prospect) return res.json({ ok: false, steps, error: "No Bonzo prospect found for that phone (lookup never creates)." });
+    if (prospect.assignedTo) {
+      const t = await createProspectTask({
+        prospectId: prospect.id, assigneeId: prospect.assignedTo,
+        title: "C3 wiring test — safe to ignore (auto-deleted)", details: "Created and deleted by the C3 integration test.",
+        date: "2099-01-01", time: "9:00 am",
+      });
+      steps.taskCreate = t;
+      if (t.ok && t.id) steps.taskDelete = await deleteTask(t.id);
+    } else {
+      steps.taskCreate = { skipped: "prospect has no assigned user" };
+    }
+    const n = await addProspectNote(prospect.id, "C3 wiring test note — safe to ignore (auto-deleted).");
+    steps.noteCreate = n;
+    if (n.ok && n.id) steps.noteDelete = await deleteProspectNote(prospect.id, n.id);
+    const ok = !!(steps.taskCreate?.ok !== false && n.ok);
+    res.json({ ok, steps });
+  });
+
   async function pushOutcomeToBonzo(outcome: any): Promise<{ attempted: boolean; ok: boolean; reason?: string }> {
+    // Appointments are owned by the richer syncAppointmentToBonzo path
+    // (task + note + completion follow-up) — don't double-post here.
+    if (outcome?.outcomeType === "appointment") return { attempted: false, ok: false, reason: "handled_by_appointment_sync" };
     const settings = storageExtra.getWebhookSettings();
     const token = settings.bonzo_api_token?.trim();
     if (!token) return { attempted: false, ok: false, reason: 'no_token' };

@@ -313,6 +313,12 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN phone_number TEXT`); } c
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verification_status TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verification_reason TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verified_at TEXT`); } catch {}
+// 2026-07-13: appointment → Bonzo sync. Which Bonzo prospect/task an
+// appointment outcome was mirrored to, so the completion (transfer /
+// fell-through / reschedule) can post the follow-up note and move the task.
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_prospect_id INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_task_id INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_synced_at TEXT`); } catch {}
 
 // ── Migration: manually_configured flag on daily_assignments ──────────
 try { sqlite.exec(`ALTER TABLE daily_assignments ADD COLUMN manually_configured INTEGER NOT NULL DEFAULT 0`); } catch {}
