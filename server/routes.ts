@@ -3454,6 +3454,37 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  // Read-only LO roster for external automations (e.g. Bonzo DNC/opt-out sweeps):
+  // the definitive list of which loan officers are active, without needing a
+  // session. Token-auth like GET /api/transfers (X-Api-Token = TRANSFER_API_TOKEN).
+  // ?status=active (default) | inactive | archived | all. Credential fields are
+  // never included.
+  app.get("/api/loan-officers/roster", (req: any, res: any) => {
+    const token = req.headers["x-api-token"] || req.headers["x-bootstrap-token"];
+    const expected = process.env.TRANSFER_API_TOKEN || "";
+    if (!expected || token !== expected) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const status = typeof req.query.status === "string" ? req.query.status : "active";
+      const all = storage.getLoanOfficers() as any[];
+      const rows = all.filter((l) => status === "all" || (l.internalStatus ?? l.internal_status ?? "active") === status);
+      const roster = rows.map((l) => ({
+        id: l.id,
+        fullName: l.fullName ?? l.full_name ?? null,
+        email: l.email ?? null,
+        phone: l.phone ?? null,
+        nmlsId: l.nmlsId ?? l.nmls_id ?? null,
+        bonzoUsername: l.bonzoUsername ?? l.bonzo_username ?? null,
+        internalStatus: l.internalStatus ?? l.internal_status ?? "active",
+        licensedStates: l.licensedStates ?? l.licensed_states ?? "[]",
+        priorityTier: l.priorityTier ?? l.priority_tier ?? null,
+        snoozeUntil: l.snoozeUntil ?? l.snooze_until ?? null,
+      }));
+      res.json({ roster, count: roster.length, status, generatedAt: new Date().toISOString() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "roster_failed" });
+    }
+  });
+
   // Auth: either authenticated admin OR a request bearing the Railway project ID
   // in X-Bootstrap-Token (so the import can be triggered without a session).
   app.post("/api/admin/import-ethan-outcomes", async (req: any, res: any) => {
