@@ -109,7 +109,9 @@ export async function findProspectByPhone(phone: string, preferLoName?: string |
   return detailed.find(p => p.loMatches) ?? detailed[0];
 }
 
-// "YYYY-MM-DDTHH:MM[..]" wall clock → Bonzo's {date, time("h:mm am")}.
+// "YYYY-MM-DDTHH:MM[..]" wall clock → Bonzo's {date, time}. Bonzo validates
+// time as Laravel "h:i a" — 12-hour WITH a leading zero ("09:00 am"; a bare
+// "9:00 am" is rejected with a 422 — caught by the live pressure test).
 export function wallClockToBonzo(dt: string): { date: string; time: string } | null {
   const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})/.exec(String(dt ?? "").trim());
   if (!m) return null;
@@ -117,7 +119,7 @@ export function wallClockToBonzo(dt: string): { date: string; time: string } | n
   let h = parseInt(hh, 10);
   const ap = h >= 12 ? "pm" : "am";
   h = h % 12 || 12;
-  return { date, time: `${h}:${mm} ${ap}` };
+  return { date, time: `${String(h).padStart(2, "0")}:${mm} ${ap}` };
 }
 
 export async function createProspectTask(opts: {

@@ -13178,7 +13178,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const t = await createProspectTask({
         prospectId: prospect.id, assigneeId: prospect.assignedTo,
         title: "C3 wiring test — safe to ignore (auto-deleted)", details: "Created and deleted by the C3 integration test.",
-        date: "2099-01-01", time: "9:00 am",
+        date: "2099-01-01", time: "09:00 am",
       });
       steps.taskCreate = t;
       if (t.ok && t.id) steps.taskDelete = await deleteTask(t.id);
