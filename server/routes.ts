@@ -1881,20 +1881,31 @@ cron.schedule("0 5 * * *", async () => {
     const nowMs = Date.now();
     const DAY = 86400000;
     const nowIso = new Date().toISOString();
+    // Collect everything due THIS run first, so multiple due requests combine
+    // into one digest email instead of one email per request.
+    const dueGroups: { token: string; items: any[]; requesterName: string; days: number }[] = [];
     for (const [token, group] of groups) {
       const anchorMs = Math.min(...group.map(g => new Date(g.requested_at || g.created_at || nowIso).getTime()));
       const lastMs = group.map(g => g.last_reminder_at ? new Date(g.last_reminder_at).getTime() : 0).reduce((a, b) => Math.max(a, b), 0);
       const due = lastMs ? (nowMs - lastMs) >= 6 * DAY : (nowMs - anchorMs) >= 3 * DAY;
       if (!due) continue;
-      const daysWaiting = Math.max(0, Math.floor((nowMs - anchorMs) / DAY));
-      const requesterName = nameById.get(group[0].user_id) ?? "a team member";
-      try {
-        const { subject, html } = buildCompApprovalEmail(group, token, requesterName, { days: daysWaiting });
-        await sendEmail({ to: approverEmail, subject, html });
-        db.prepare("UPDATE comp_requests SET last_reminder_at=? WHERE approval_token=? AND (status='pending' OR (status='approved' AND is_paid=0))").run(nowIso, token);
-        console.log("[comp-reminder] reminded " + approverEmail + " (" + group.length + " items, " + daysWaiting + "d)");
-      } catch (e: any) { console.error("[comp-reminder] send failed:", e?.message ?? e); }
+      dueGroups.push({
+        token,
+        items: group,
+        requesterName: nameById.get(group[0].user_id) ?? "a team member",
+        days: Math.max(0, Math.floor((nowMs - anchorMs) / DAY)),
+      });
     }
+    if (!dueGroups.length) return;
+    try {
+      const { subject, html } = dueGroups.length === 1
+        ? buildCompApprovalEmail(dueGroups[0].items, dueGroups[0].token, dueGroups[0].requesterName, { days: dueGroups[0].days })
+        : buildCompReminderDigestEmail(dueGroups);
+      await sendEmail({ to: approverEmail, subject, html });
+      const stamp = db.prepare("UPDATE comp_requests SET last_reminder_at=? WHERE approval_token=? AND (status='pending' OR (status='approved' AND is_paid=0))");
+      for (const g of dueGroups) stamp.run(nowIso, g.token);
+      console.log("[comp-reminder] reminded " + approverEmail + " (" + dueGroups.length + " request(s) in one email)");
+    } catch (e: any) { console.error("[comp-reminder] send failed:", e?.message ?? e); }
   } catch (e: any) { console.error("[comp-reminder] cron error:", e?.message ?? e); }
 });
 
@@ -2948,6 +2959,41 @@ function buildCompApprovalEmail(
     <p style="margin:18px 0 0;font-size:12px;color:#94a3b8">These actions apply to all items in this request. "Mark Paid" approves it (if needed) and records it as reimbursed. You can also manage requests in the app under Comp Requests.</p>`;
   const subject = (reminder ? "Reminder: " : "") + "Comp request from " + requesterName + " — " + fmt(totalCents);
   return { subject, html: buildEmail({ subject: reminder ? "Comp Request Reminder" : "Comp Request Approval", preheader: fmt(totalCents) + " from " + requesterName, body }) };
+}
+
+// Combined reminder digest: when several comp requests come due for a reminder
+// on the same cron run, the approver gets ONE email listing all of them (each
+// with its own Approve / Deny / Mark Paid links) instead of one email apiece.
+function buildCompReminderDigestEmail(
+  dueGroups: { token: string; items: any[]; requesterName: string; days: number }[],
+): { subject: string; html: string } {
+  const fmt = (c: number) => "$" + ((c || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const grandTotal = dueGroups.reduce((s, g) => s + g.items.reduce((a, r) => a + (r.amount_cents || 0), 0), 0);
+  const sections = dueGroups.map((g) => {
+    const total = g.items.reduce((a, r) => a + (r.amount_cents || 0), 0);
+    const rows = g.items.map((r) => {
+      const dateTag = r.expense_date ? ` <span style="color:#94a3b8">(${r.expense_date})</span>` : "";
+      const stateTag = r.status === "approved" ? ` <span style="color:#0284c7;font-size:12px">approved, awaiting payment</span>` : "";
+      return `<tr><td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#1e293b">${eodActivityEsc(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
+    }).join("");
+    const approveUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${g.token}&action=approve`;
+    const denyUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${g.token}&action=deny`;
+    const paidUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${g.token}&action=paid`;
+    return `<div style="margin:0 0 22px">
+      <p style="margin:0 0 8px;font-size:14px;color:#1e293b"><strong>${eodActivityEsc(g.requesterName)}</strong> — ${fmt(total)} · waiting ${g.days} day(s)</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;margin:0 0 8px;border-collapse:collapse">${rows}</table>
+      <p style="margin:0;font-size:13px">
+        <a href="${approveUrl}" style="color:#16a34a;font-weight:600;text-decoration:none">Approve</a>
+        &nbsp;·&nbsp; <a href="${denyUrl}" style="color:#dc2626;font-weight:600;text-decoration:none">Deny</a>
+        &nbsp;·&nbsp; <a href="${paidUrl}" style="color:#0284c7;font-weight:600;text-decoration:none">Mark Paid</a>
+      </p>
+    </div>`;
+  }).join("");
+  const body = `<p style="margin:0 0 16px;font-size:15px;color:#1e293b"><strong>Reminder:</strong> ${dueGroups.length} comp requests totaling <strong>${fmt(grandTotal)}</strong> are still waiting for approval or payout.</p>
+    ${sections}
+    <p style="margin:6px 0 0;font-size:12px;color:#94a3b8">Each request's links act on that request only. You can also manage everything in the app under Comp Requests.</p>`;
+  const subject = `Reminder: ${dueGroups.length} comp requests awaiting action — ${fmt(grandTotal)}`;
+  return { subject, html: buildEmail({ subject: "Comp Request Reminders", preheader: dueGroups.length + " requests · " + fmt(grandTotal), body }) };
 }
 
 // ── Time-off approval email builder ───────────────────────────────────────────
