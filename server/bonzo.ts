@@ -169,3 +169,23 @@ export async function getProspectAssignee(prospectId: number): Promise<number | 
   const d = r.json?.data ?? r.json;
   return r.ok && d?.assigned_to != null ? Number(d.assigned_to) : null;
 }
+
+// Names + current tags — what the transfer sync needs before renaming/tagging.
+export async function getProspectSnapshot(prospectId: number): Promise<{ firstName: string; lastName: string; tags: string[] } | null> {
+  const r = await req("GET", `/prospects/${prospectId}`);
+  const d = r.json?.data ?? r.json;
+  if (!r.ok || !d?.id) return null;
+  return {
+    firstName: String(d.first_name ?? ""),
+    lastName: String(d.last_name ?? ""),
+    tags: (Array.isArray(d.tags) ? d.tags : []).map((t: any) => String(t?.name ?? t)).filter(Boolean),
+  };
+}
+
+// PUT /prospects/{id} — partial update with FLAT keys (PATCH is rejected).
+// ⚠️ `tags` REPLACES the prospect's whole tag set (verified live) — callers
+// must merge with the existing tags, never send just the new one.
+export async function updateProspect(prospectId: number, payload: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
+  const r = await req("PUT", `/prospects/${prospectId}`, payload);
+  return r.ok ? { ok: true } : { ok: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };
+}

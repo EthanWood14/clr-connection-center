@@ -22,7 +22,7 @@ import { npaToState } from "./npa-state";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect } from "./bonzo";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -7734,6 +7734,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (outcome.outcomeType === "appointment") {
         setImmediate(() => syncAppointmentToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-appt] sync failed:", e?.message ?? e)));
       }
+      // Transfer → Bonzo: attribution suffix on the last name + clrtransfer tag.
+      if (outcome.outcomeType === "transfer") {
+        setImmediate(() => syncTransferToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-transfer] sync failed:", e?.message ?? e)));
+      }
       res.json(outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -7868,6 +7872,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Appointment → Bonzo follow-up notes (fire-and-forget). Fires only for
     // outcomes that were mirrored to Bonzo when the appointment was set.
     try {
+      // Anything becoming a transfer gets the rename + clrtransfer tag.
+      if (body.outcomeType === "transfer" && existing.outcome_type !== "transfer") {
+        setImmediate(() => syncTransferToBonzo(id).catch((e: any) => console.error("[bonzo-transfer]", e?.message ?? e)));
+      }
       if (existing.outcome_type === "appointment") {
         if (body.outcomeType === "transfer") {
           setImmediate(() => syncAppointmentResultToBonzo(id, "transferred").catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
@@ -13161,6 +13169,86 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: result note failed: ${note.error}`);
     console.log(`[bonzo-appt] outcome=${outcomeId} result=${result} noted on prospect=${o.bonzo_prospect_id}`);
   }
+
+  // ── Transfer → Bonzo sync ───────────────────────────────────────────────────
+  // When a transfer is logged, mark the Bonzo prospect: append the attribution
+  // suffix to the last name and add the "clrtransfer" tag. Suffix format:
+  //   normal LO:          "(CLR {clr first name})"
+  //   Chris Redoble LOs:  "({loa first name} I {clr first name})"  (falls back
+  //                       to the CLR format when the outcome has no LOA)
+  // Both writes are idempotent: the suffix is skipped if already present, and
+  // tags are MERGED because Bonzo's PUT replaces the whole tag set.
+  async function syncTransferToBonzo(outcomeId: number): Promise<void> {
+    if (!bonzoConfigured()) return;
+    const db = storageExtra.getRawSqlite();
+    const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
+    if (!o || o.outcome_type !== "transfer") return;
+    const lo = o.lo_id ? (storage.getLoanOfficerById(o.lo_id) as any) : null;
+    const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
+    // Prefer the prospect this outcome was already mirrored to (appointment →
+    // transfer keeps its bonzo_prospect_id); else look up by phone (never create).
+    let prospectId: number | null = o.bonzo_prospect_id ?? null;
+    if (!prospectId) {
+      if (!o.phone_number) { console.log(`[bonzo-transfer] outcome=${outcomeId}: no phone — skipped`); return; }
+      const p = await findProspectByPhone(o.phone_number, lo?.fullName ?? null);
+      if (!p) { console.log(`[bonzo-transfer] outcome=${outcomeId}: no Bonzo prospect — skipped (lookup never creates)`); return; }
+      prospectId = p.id;
+    }
+    const snap = await getProspectSnapshot(prospectId);
+    if (!snap) { console.error(`[bonzo-transfer] outcome=${outcomeId}: prospect ${prospectId} unreadable`); return; }
+    const firstName = (s: any) => String(s ?? "").trim().split(/\s+/)[0] || "";
+    const clrFirst = firstName(clr?.name);
+    const isChris = /chris\s+redoble/i.test(String(lo?.fullName ?? ""));
+    let loaFirst = "";
+    if (isChris && o.loa_id) {
+      try { loaFirst = firstName((storageExtra.getLoanOfficerAssistant(o.loa_id) as any)?.fullName); } catch {}
+    }
+    const suffix = isChris && loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
+    const updates: Record<string, any> = {};
+    if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
+    if (!snap.tags.some(t => t.toLowerCase() === "clrtransfer")) updates.tags = [...snap.tags, "clrtransfer"];
+    if (Object.keys(updates).length) {
+      const r = await updateProspect(prospectId, updates);
+      if (!r.ok) { console.error(`[bonzo-transfer] outcome=${outcomeId}: update failed: ${r.error}`); return; }
+    }
+    db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
+      .run(prospectId, new Date().toISOString(), outcomeId);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" renamed=${"last_name" in updates} tagged=${"tags" in updates}`);
+  }
+
+  // Admin-only live wiring test for the transfer sync: applies the rename+tag
+  // to the matched prospect, verifies, then restores the original name and
+  // tags — proves the path against the real API with zero residue.
+  app.post("/api/bonzo/test-transfer", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    if (!bonzoConfigured()) return res.status(400).json({ error: "No Bonzo API token configured." });
+    const phone = String(req.body?.phone ?? "");
+    const clrFirst = String(req.body?.clrName ?? "WireTest").split(/\s+/)[0];
+    const loaFirst = req.body?.loaName ? String(req.body.loaName).split(/\s+/)[0] : null;
+    const suffix = loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
+    const steps: any = { suffix };
+    const p = await findProspectByPhone(phone);
+    steps.prospect = p ? { id: p.id, name: p.name } : null;
+    if (!p) return res.json({ ok: false, steps, error: "No Bonzo prospect found for that phone." });
+    const before = await getProspectSnapshot(p.id);
+    if (!before) return res.json({ ok: false, steps, error: "Could not read prospect." });
+    steps.before = before;
+    const upd = await updateProspect(p.id, {
+      last_name: `${before.lastName} ${suffix}`.trim(),
+      tags: [...before.tags, "clrtransfer"],
+    });
+    steps.update = upd;
+    steps.after = await getProspectSnapshot(p.id);
+    // Restore original state
+    const restore = await updateProspect(p.id, { last_name: before.lastName, tags: before.tags });
+    steps.restore = restore;
+    steps.restored = await getProspectSnapshot(p.id);
+    const ok = upd.ok && restore.ok
+      && steps.after?.lastName === `${before.lastName} ${suffix}`.trim()
+      && (steps.after?.tags ?? []).map((t: string) => t.toLowerCase()).includes("clrtransfer")
+      && steps.restored?.lastName === before.lastName;
+    res.json({ ok, steps });
+  });
 
   // Admin-only live wiring test: looks up a phone, creates a clearly-labeled
   // task + note on the matched prospect, then deletes both — proves the whole
