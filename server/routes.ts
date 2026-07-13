@@ -13174,8 +13174,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // When a transfer is logged, mark the Bonzo prospect: append the attribution
   // suffix to the last name and add the "clrtransfer" tag. Suffix format:
   //   normal LO:          "(CLR {clr first name})"
-  //   Chris Redoble LOs:  "({loa first name} I {clr first name})"  (falls back
-  //                       to the CLR format when the outcome has no LOA)
+  //   Chris Redoble LOs:  "({loa first name} l {clr first name})"  (lowercase
+  //                       L separator; falls back to the CLR format when the
+  //                       outcome has no LOA)
   // Both writes are idempotent: the suffix is skipped if already present, and
   // tags are MERGED because Bonzo's PUT replaces the whole tag set.
   async function syncTransferToBonzo(outcomeId: number): Promise<void> {
@@ -13203,7 +13204,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (isChris && o.loa_id) {
       try { loaFirst = firstName((storageExtra.getLoanOfficerAssistant(o.loa_id) as any)?.fullName); } catch {}
     }
-    const suffix = isChris && loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
+    const suffix = isChris && loaFirst ? `(${loaFirst} l ${clrFirst})` : `(CLR ${clrFirst})`;
     const updates: Record<string, any> = {};
     if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
     if (!snap.tags.some(t => t.toLowerCase() === "clrtransfer")) updates.tags = [...snap.tags, "clrtransfer"];
@@ -13225,7 +13226,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const phone = String(req.body?.phone ?? "");
     const clrFirst = String(req.body?.clrName ?? "WireTest").split(/\s+/)[0];
     const loaFirst = req.body?.loaName ? String(req.body.loaName).split(/\s+/)[0] : null;
-    const suffix = loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
+    const suffix = loaFirst ? `(${loaFirst} l ${clrFirst})` : `(CLR ${clrFirst})`;
     const steps: any = { suffix };
     const p = await findProspectByPhone(phone);
     steps.prospect = p ? { id: p.id, name: p.name } : null;
