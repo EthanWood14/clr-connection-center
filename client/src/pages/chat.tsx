@@ -115,6 +115,14 @@ export default function Chat() {
       qc.invalidateQueries({ queryKey: ["/api/chat"] });
     },
   });
+  const releaseMsg = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/chat/${id}/release`, {}),
+    onSuccess: () => {
+      toast({ title: "Released", description: "The lead is back up for grabs." });
+      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't release", description: e.message, variant: "destructive" }),
+  });
 
   // Read an image file (from paste or the picker) into a pending attachment.
   function ingestImageFile(file: File | null | undefined) {
@@ -424,14 +432,27 @@ export default function Chat() {
                           )}
                           {!!m.grab_it && (
                             m.claimed_by ? (
-                              <div className={`mt-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
-                                m.claimed_by === user?.id
-                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                                  : "bg-muted text-muted-foreground"
-                              }`} data-testid={`grab-claimed-${m.id}`}>
-                                <Check className="w-3.5 h-3.5" />
-                                Claimed by {m.claimed_by === user?.id ? "you" : m.claimed_by_name}
-                                {m.claimed_at ? ` · ${formatTime(m.claimed_at)}` : ""} — calling this lead
+                              <div className="mt-2 space-y-1.5">
+                                <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                                  m.claimed_by === user?.id
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                                    : "bg-muted text-muted-foreground"
+                                }`} data-testid={`grab-claimed-${m.id}`}>
+                                  <Check className="w-3.5 h-3.5" />
+                                  Claimed by {m.claimed_by === user?.id ? "you" : m.claimed_by_name}
+                                  {m.claimed_at ? ` · ${formatTime(m.claimed_at)}` : ""} — calling this lead
+                                </div>
+                                {(m.claimed_by === user?.id || user?.role === "admin") && (
+                                  <button
+                                    type="button"
+                                    onClick={() => releaseMsg.mutate(m.id)}
+                                    disabled={releaseMsg.isPending}
+                                    className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-60"
+                                    data-testid={`grab-release-${m.id}`}
+                                  >
+                                    {releaseMsg.isPending ? "Releasing…" : m.claimed_by === user?.id ? "↩ Release — I can't take this one" : "↩ Release (admin)"}
+                                  </button>
+                                )}
                               </div>
                             ) : (
                               <button

@@ -7201,7 +7201,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Check if the calling user is a CLR (assistant or admin+isClr)
     const callerIsClr = callingUser.role === "assistant" || (callingUser.role === "admin" && (callingUser as any).isClr);
 
-    if (callerIsClr) {
+    // EOD gate applies only when generating TODAY's list — generating ahead
+    // for a future date (e.g. tomorrow) is a look-ahead action and shouldn't be
+    // blocked by the caller's own pending EOD.
+    if (callerIsClr && date === today) {
       const myEod = sqlite.prepare(
         `SELECT 1 FROM eod_reports WHERE assistant_id = ? AND report_date = ?`
       ).get(callingUser.userId, prevWeekday) as any;
@@ -9163,7 +9166,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
     const messages = storageExtra.getChatMessages(limit, beforeId).reverse();
     const myId = req.session_user?.userId;
-    const isAdmin = req.session_user?.role === "admin";
     const ids = messages.map((m: any) => m.id);
     const reactions = storageExtra.getChatReactionsForMessages(ids);
     const byMsg = new Map<number, Map<string, { count: number; mine: boolean }>>();
@@ -9176,9 +9178,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       em.set(r.emoji, cur);
     }
     const withReactions = messages.map((m: any) => {
-      // Once a Grab It lead is claimed, its content (text + image) is hidden
-      // from everyone except the claimer (and admins) so nobody else works it.
-      const hideLead = !!m.grab_it && m.claimed_by != null && m.claimed_by !== myId && !isAdmin;
+      // Once a Grab It lead is claimed, its content (text + image) vanishes for
+      // EVERYONE except the person who claimed it — admins included — so a
+      // claimed lead can't be seen or worked by anyone else.
+      const hideLead = !!m.grab_it && m.claimed_by != null && m.claimed_by !== myId;
       const base = hideLead ? { ...m, message: "", image_mime: null, hidden: true } : m;
       return {
         ...base,
@@ -9195,7 +9198,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id);
     try {
       const meta = storageExtra.getRawSqlite().prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=?`).get(id) as any;
-      if (meta?.grab_it && meta.claimed_by != null && meta.claimed_by !== req.session_user?.userId && req.session_user?.role !== "admin") {
+      if (meta?.grab_it && meta.claimed_by != null && meta.claimed_by !== req.session_user?.userId) {
         return res.status(404).send("Not found");
       }
     } catch {}
@@ -9484,6 +9487,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "chat", entityId: id, entityLabel: "Grab It claim", details: JSON.stringify({ messageId: id }) });
     res.json({ ok: true, message: row });
+  });
+
+  // Release a claimed Grab It lead — the claimer (or an admin) puts it back up
+  // for grabs; its content becomes visible again for everyone.
+  app.post("/api/chat/:id/release", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id, 10);
+    const userId = Number(req.session_user?.userId);
+    const isAdmin = req.session_user?.role === "admin";
+    const { released, reason } = storageExtra.releaseChatMessage(id, userId, isAdmin);
+    if (!released) {
+      const msg = reason === "not_yours" ? "Only the person who claimed it (or an admin) can release it."
+        : reason === "not_claimed" ? "This lead isn't claimed."
+        : "Not a Grab It post.";
+      return res.status(reason === "not_yours" ? 403 : 400).json({ error: msg });
+    }
+    const me = storage.getUserById(userId) as any;
+    audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "chat", entityId: id, entityLabel: "Grab It release", details: JSON.stringify({ messageId: id }) });
+    res.json({ ok: true });
   });
 
   app.delete("/api/chat/:id", requireAuth, (req, res) => {

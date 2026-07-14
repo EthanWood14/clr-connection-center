@@ -1422,6 +1422,18 @@ export default function Assignments() {
             </div>
           ) : isFutureDate && isAdmin ? (
             <div className="flex items-center gap-2">
+              {assignments.length === 0 && (
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => generateMutation.mutate()}
+                  disabled={generateMutation.isPending}
+                  data-testid="button-generate-future-header"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${generateMutation.isPending ? "animate-spin" : ""}`} />
+                  Generate
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -1534,10 +1546,16 @@ export default function Assignments() {
             </Button>
           )}
           {isFutureDate && isAdmin && (
-            <Button onClick={() => setShowPreConfigureDialog(true)} data-testid="button-pre-configure-empty">
-              <ShieldAlert className="w-4 h-4 mr-2" />
-              Pre-configure {dateLabel(currentDate)}
-            </Button>
+            <div className="flex items-center justify-center gap-2 flex-wrap">
+              <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending} data-testid="button-generate-future">
+                <RefreshCw className={`w-4 h-4 mr-2 ${generateMutation.isPending ? "animate-spin" : ""}`} />
+                Generate {dateLabel(currentDate)}
+              </Button>
+              <Button variant="outline" onClick={() => setShowPreConfigureDialog(true)} data-testid="button-pre-configure-empty">
+                <ShieldAlert className="w-4 h-4 mr-2" />
+                Pre-configure instead
+              </Button>
+            </div>
           )}
         </div>
       ) : (

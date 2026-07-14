@@ -2883,6 +2883,16 @@ export function claimChatMessage(id: number, userId: number, userName: string): 
   const row = sqlite.prepare(`SELECT id, user_id, user_name, message, grab_it, claimed_by, claimed_by_name, claimed_at FROM chat_messages WHERE id=?`).get(id) as any;
   return { claimed: r.changes > 0, row };
 }
+// Release a claim — the claimer (or an admin) hands the lead back so it's up
+// for grabs again and its content becomes visible to everyone once more.
+export function releaseChatMessage(id: number, userId: number, isAdmin: boolean): { released: boolean; reason?: string } {
+  const row = sqlite.prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=?`).get(id) as any;
+  if (!row || !row.grab_it) return { released: false, reason: "not_grab_it" };
+  if (row.claimed_by == null) return { released: false, reason: "not_claimed" };
+  if (row.claimed_by !== userId && !isAdmin) return { released: false, reason: "not_yours" };
+  sqlite.prepare(`UPDATE chat_messages SET claimed_by=NULL, claimed_by_name=NULL, claimed_at=NULL WHERE id=?`).run(id);
+  return { released: true };
+}
 export function getChatImage(id: number): { image_data: string | null; image_mime: string | null } | undefined {
   return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=?`).get(id) as any;
 }
