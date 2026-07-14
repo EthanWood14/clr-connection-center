@@ -9146,6 +9146,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
     const messages = storageExtra.getChatMessages(limit, beforeId).reverse();
     const myId = req.session_user?.userId;
+    const isAdmin = req.session_user?.role === "admin";
     const ids = messages.map((m: any) => m.id);
     const reactions = storageExtra.getChatReactionsForMessages(ids);
     const byMsg = new Map<number, Map<string, { count: number; mine: boolean }>>();
@@ -9157,17 +9158,30 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (r.user_id === myId) cur.mine = true;
       em.set(r.emoji, cur);
     }
-    const withReactions = messages.map((m: any) => ({
-      ...m,
-      reactions: Array.from((byMsg.get(m.id) ?? new Map()).entries()).map((e: any) => ({ emoji: e[0], count: e[1].count, mine: e[1].mine })),
-    }));
+    const withReactions = messages.map((m: any) => {
+      // Once a Grab It lead is claimed, its content (text + image) is hidden
+      // from everyone except the claimer (and admins) so nobody else works it.
+      const hideLead = !!m.grab_it && m.claimed_by != null && m.claimed_by !== myId && !isAdmin;
+      const base = hideLead ? { ...m, message: "", image_mime: null, hidden: true } : m;
+      return {
+        ...base,
+        reactions: Array.from((byMsg.get(m.id) ?? new Map()).entries()).map((e: any) => ({ emoji: e[0], count: e[1].count, mine: e[1].mine })),
+      };
+    });
     res.json({ messages: withReactions });
   });
 
   // Serve a chat message's image blob (lazy-loaded by the client so the polled
-  // message list stays light). Auth-gated like the rest of chat.
+  // message list stays light). Auth-gated like the rest of chat; a claimed Grab
+  // It image is only served to its claimer (or an admin).
   app.get("/api/chat/:id/image", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
+    try {
+      const meta = storageExtra.getRawSqlite().prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=?`).get(id) as any;
+      if (meta?.grab_it && meta.claimed_by != null && meta.claimed_by !== req.session_user?.userId && req.session_user?.role !== "admin") {
+        return res.status(404).send("Not found");
+      }
+    } catch {}
     const row = storageExtra.getChatImage(id);
     if (!row || !row.image_data || !row.image_mime) return res.status(404).send("Not found");
     try {

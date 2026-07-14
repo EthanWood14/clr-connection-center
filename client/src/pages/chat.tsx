@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search, Target, Check } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search, Target, Check, EyeOff } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -402,7 +402,7 @@ export default function Chat() {
                         }`}>
                           {!!m.grab_it && (
                             <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                              <Target className="w-3.5 h-3.5" /> Grab it — first to claim calls this lead
+                              <Target className="w-3.5 h-3.5" /> {m.claimed_by ? "Grab it lead" : "Grab it — first to claim calls this lead"}
                             </div>
                           )}
                           {m.image_mime && (
@@ -416,6 +416,12 @@ export default function Chat() {
                             </a>
                           )}
                           {m.message}
+                          {/* Content hidden once someone else claimed the lead */}
+                          {m.hidden && (
+                            <div className="flex items-center gap-1.5 text-xs italic text-muted-foreground">
+                              <EyeOff className="w-3.5 h-3.5" /> Lead hidden — already claimed
+                            </div>
+                          )}
                           {!!m.grab_it && (
                             m.claimed_by ? (
                               <div className={`mt-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
