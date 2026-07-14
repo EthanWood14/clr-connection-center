@@ -4154,6 +4154,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
       res.json({ ok: true, muted });
     } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
   });
+  // Opt in/out of team transfer-celebration alerts (off by default).
+  app.patch("/api/users/me/transfer-notifications", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const enabled = !!req.body?.enabled;
+    try {
+      (require("./storage").getRawSqlite() as any).prepare(`UPDATE users SET transfer_notifications_enabled = ? WHERE id = ?`).run(enabled ? 1 : 0, userId);
+      res.json({ ok: true, enabled });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
+  });
 
   // ── Public marketing landing page ──────────────────────────────────────────
   app.get("/landing", (_req, res) => {
@@ -4270,7 +4280,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -7615,8 +7625,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function broadcastTransferCelebration(assistantId: number, loName: string | null, borrowerName: string | null) {
     const clr = storage.getUserById(assistantId) as any;
     const clrOrg = Number(clr?.orgId ?? clr?.org_id ?? 1) || 1;
+    // Transfer celebrations are opt-in (transfer_notifications_enabled) — off
+    // for everyone by default, on for the owner. Only push to opted-in users.
     const users = (storage.getUsers() as any[]).filter((u: any) =>
       (u.isActive ?? u.is_active) && (Number(u.orgId ?? u.org_id ?? 1) || 1) === clrOrg
+      && (u.transferNotificationsEnabled ?? u.transfer_notifications_enabled)
     );
     const clrName = clr?.name ?? "A CLR";
     const detail = [borrowerName, loName ? "→ " + loName : null].filter(Boolean).join(" ");
@@ -7624,7 +7637,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const message = (detail ? detail + " — " : "") + "Keep the momentum going!";
     recentCelebrations.push({ id: ++celebSeq, orgId: clrOrg, title, message, createdAt: new Date().toISOString() });
     if (recentCelebrations.length > 100) recentCelebrations.splice(0, recentCelebrations.length - 100);
-    sendPushToUsers(users.map((u: any) => u.id), { title, body: message, url: "/#/leaderboard" }).catch(() => {});
+    if (users.length) sendPushToUsers(users.map((u: any) => u.id), { title, body: message, url: "/#/leaderboard" }).catch(() => {});
   }
 
   // Ephemeral celebration feed (org-scoped). Returns recent celebrations and the
@@ -7633,7 +7646,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/transfer-celebrations", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const since = Number(req.query.since ?? 0) || 0;
-    const items = recentCelebrations.filter((c) => c.orgId === orgId && c.id > since);
+    // In-app toast is opt-in too: users who haven't enabled transfer
+    // notifications get no items (but still a cursor so they don't backfill).
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    const optedIn = !!(me?.transferNotificationsEnabled ?? me?.transfer_notifications_enabled);
+    const items = optedIn ? recentCelebrations.filter((c) => c.orgId === orgId && c.id > since) : [];
     res.json({ items, latestId: celebSeq });
   });
 

@@ -64,6 +64,8 @@ export const users = sqliteTable("users", {
   smsRemindersEnabled: integer("sms_reminders_enabled", { mode: "boolean" }).notNull().default(false),
   muteChatNotifications: integer("mute_chat_notifications", { mode: "boolean" }).notNull().default(false),
   muteForumNotifications: integer("mute_forum_notifications", { mode: "boolean" }).notNull().default(false),
+  // Team "🎉 got a transfer!" celebration alerts — OFF by default (opt-in).
+  transferNotificationsEnabled: integer("transfer_notifications_enabled", { mode: "boolean" }).notNull().default(false),
   timezone: text("timezone").notNull().default("America/Los_Angeles"),
   orgId: integer("org_id").notNull().default(1),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),

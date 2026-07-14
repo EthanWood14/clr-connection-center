@@ -1491,6 +1491,7 @@ function NotificationsCard() {
   const [runningNow, setRunningNow] = useState(false);
   const [chatOn, setChatOn] = useState<boolean>(true);
   const [forumOn, setForumOn] = useState<boolean>(true);
+  const [transferOn, setTransferOn] = useState<boolean>(false);
 
   useEffect(() => {
     if (authUser) {
@@ -1498,8 +1499,9 @@ function NotificationsCard() {
       setSmsEnabled(!!authUser.smsRemindersEnabled);
       setChatOn(!authUser.muteChatNotifications);
       setForumOn(!authUser.muteForumNotifications);
+      setTransferOn(!!(authUser as any).transferNotificationsEnabled);
     }
-  }, [authUser?.reminderEmailEnabled, authUser?.smsRemindersEnabled, authUser?.muteChatNotifications, authUser?.muteForumNotifications]);
+  }, [authUser?.reminderEmailEnabled, authUser?.smsRemindersEnabled, authUser?.muteChatNotifications, authUser?.muteForumNotifications, (authUser as any)?.transferNotificationsEnabled]);
 
   useEffect(() => {
     fetch("/api/settings/reminders", { credentials: "include" })
@@ -1544,6 +1546,22 @@ function NotificationsCard() {
       await refetchUser();
     } catch (e: any) {
       setUserEnabled(!enabled);
+      toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
+    }
+  }
+
+  async function saveTransfer(on: boolean) {
+    setTransferOn(on);
+    try {
+      const r = await fetch("/api/users/me/transfer-notifications", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ enabled: on }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      toast({ title: on ? "Transfer notifications on" : "Transfer notifications off" });
+      await refetchUser();
+    } catch (e: any) {
+      setTransferOn(!on);
       toast({ title: "Failed to update", description: e?.message, variant: "destructive" });
     }
   }
@@ -1650,6 +1668,15 @@ function NotificationsCard() {
             <p className="text-xs text-muted-foreground">Alerts for new forum questions and answers. Turn off to mute forum notifications.</p>
           </div>
           <Switch checked={forumOn} onCheckedChange={(v) => saveMute("forum", v)} data-testid="toggle-forum-notifications" />
+        </div>
+
+        <Separator />
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Transfer Notifications</p>
+            <p className="text-xs text-muted-foreground">The team "🎉 got a transfer!" celebration alerts (in-app + push). Off by default — turn on if you want to celebrate every transfer.</p>
+          </div>
+          <Switch checked={transferOn} onCheckedChange={saveTransfer} data-testid="toggle-transfer-notifications" />
         </div>
 
         {isAdmin && (

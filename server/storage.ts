@@ -81,6 +81,17 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_chat_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_forum_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
+// Transfer-celebration alerts: OFF by default (opt-in). One-shot seed turns
+// them ON for user #1 (Ethan) so the owner keeps getting them.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN transfer_notifications_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+  const seeded = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'transfer_notif_seed_owner_v1'`).get();
+  if (!seeded) {
+    sqlite.prepare(`UPDATE users SET transfer_notifications_enabled = 1 WHERE id = 1`).run();
+    sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("transfer_notif_seed_owner_v1", new Date().toISOString());
+  }
+} catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}

@@ -19,12 +19,15 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
-// Bumped key suffix — want previously-dismissed users to see the new
-// one-click flow once. Old keys are left in localStorage harmlessly.
-const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed_v2";
-const SNOOZE_KEY        = "clr_push_nudge_snoozed_until_v2";
-const FIRST_SHOWN_KEY   = "clr_push_first_shown_v2";
-const BIWEEKLY_MS       = 14 * 24 * 60 * 60 * 1000; // 14 days
+// Bumped key suffix (v3) — re-surface the (now stronger) prompt once for
+// everyone, including users who previously clicked "Don't ask again". Old keys
+// are left in localStorage harmlessly.
+const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed_v3";
+const SNOOZE_KEY        = "clr_push_nudge_snoozed_until_v3";
+const FIRST_SHOWN_KEY   = "clr_push_first_shown_v3";
+// Re-nudge every 3 days after a "Later" — notifications are how leads, grab-it
+// posts, and reminders reach the team, so we prompt persistently until on.
+const SNOOZE_MS         = 3 * 24 * 60 * 60 * 1000;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -85,12 +88,9 @@ export function PushNudge() {
             firstTime = true;
           }
         } catch {}
-        if (firstTime) {
-          setVisible(true);
-        } else {
-          // Small delay so the app settles before nudging
-          setTimeout(() => { if (!cancelled) setVisible(true); }, 3000);
-        }
+        // Show right away — a delayed nudge is easy to miss.
+        void firstTime;
+        setVisible(true);
       }
     }
 
@@ -99,7 +99,7 @@ export function PushNudge() {
   }, []);
 
   function snooze() {
-    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + BIWEEKLY_MS)); } catch {}
+    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS)); } catch {}
     setVisible(false);
   }
 
@@ -164,13 +164,13 @@ export function PushNudge() {
         <div className="p-4 space-y-3">
           {/* Header row */}
           <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Bell className="w-4 h-4 text-primary" />
+            <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 mt-0.5 animate-pulse">
+              <Bell className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground leading-tight">Enable Push Notifications</p>
+              <p className="text-sm font-bold text-foreground leading-tight">🔔 Turn on notifications</p>
               <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                Get instant alerts for goal hits, appointment reminders, and team announcements — even when the app is closed.
+                <strong className="text-foreground">Don't miss a lead.</strong> Notifications are how grab-it leads, appointment reminders, and team alerts reach you — even when C3 is closed. It takes one tap.
               </p>
             </div>
             <button
@@ -186,15 +186,15 @@ export function PushNudge() {
           <div className="flex items-center gap-2 pt-0.5">
             <Button
               size="sm"
-              className="h-8 text-xs gap-1.5 flex-1"
+              className="h-9 text-sm font-semibold gap-1.5 flex-1"
               onClick={enableNow}
               disabled={busy}
               data-testid="button-push-nudge-enable"
             >
               {busy ? (
-                <>Enabling… <Loader2 className="w-3 h-3 animate-spin" /></>
+                <>Enabling… <Loader2 className="w-3.5 h-3.5 animate-spin" /></>
               ) : (
-                <>Enable now <ArrowRight className="w-3 h-3" /></>
+                <>Turn on notifications <ArrowRight className="w-3.5 h-3.5" /></>
               )}
             </Button>
             <Button
