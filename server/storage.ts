@@ -2025,6 +2025,12 @@ function runNewMigrations() {
   // separate column so it can be excluded from the polled message list.
   try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN image_data TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN image_mime TEXT`); } catch {}
+  // "Grab It" lead posts: a chat message someone can claim (= they'll call
+  // that lead). First-come-first-served; claimer denormalized for display.
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN grab_it INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_by INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_by_name TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_at TEXT`); } catch {}
   // Emoji reactions on chat messages (one row per user+emoji+message).
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2840,7 +2846,7 @@ export function escalateNmlsCheck(id: number) {
 export function getChatMessages(limit = 100, beforeId?: number): any[] {
   // Exclude the heavy image_data blob from the polled list — the client loads
   // images lazily via GET /api/chat/:id/image. image_mime flags that one exists.
-  const cols = `id, user_id, user_name, message, image_mime, created_at`;
+  const cols = `id, user_id, user_name, message, image_mime, created_at, grab_it, claimed_by, claimed_by_name, claimed_at`;
   if (beforeId) {
     return sqlite.prepare(
       `SELECT ${cols} FROM chat_messages WHERE id < ? ORDER BY id DESC LIMIT ?`
@@ -2850,12 +2856,21 @@ export function getChatMessages(limit = 100, beforeId?: number): any[] {
     `SELECT ${cols} FROM chat_messages ORDER BY id DESC LIMIT ?`
   ).all(limit) as any[];
 }
-export function postChatMessage(userId: number, userName: string, message: string, imageData?: string | null, imageMime?: string | null): any {
+export function postChatMessage(userId: number, userName: string, message: string, imageData?: string | null, imageMime?: string | null, grabIt?: boolean): any {
   const result = sqlite.prepare(
-    `INSERT INTO chat_messages (user_id, user_name, message, image_data, image_mime) VALUES (?, ?, ?, ?, ?)`
-  ).run(userId, userName, message, imageData ?? null, imageMime ?? null);
+    `INSERT INTO chat_messages (user_id, user_name, message, image_data, image_mime, grab_it) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(userId, userName, message, imageData ?? null, imageMime ?? null, grabIt ? 1 : 0);
   // Return the row WITHOUT the blob (client fetches the image via its endpoint).
-  return sqlite.prepare(`SELECT id, user_id, user_name, message, image_mime, created_at FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+  return sqlite.prepare(`SELECT id, user_id, user_name, message, image_mime, created_at, grab_it FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+}
+// First-come-first-served claim of a Grab It lead. The UPDATE only lands when
+// nobody has claimed yet, so two simultaneous grabs can't both win.
+export function claimChatMessage(id: number, userId: number, userName: string): { claimed: boolean; row: any } {
+  const r = sqlite.prepare(
+    `UPDATE chat_messages SET claimed_by=?, claimed_by_name=?, claimed_at=? WHERE id=? AND grab_it=1 AND claimed_by IS NULL`
+  ).run(userId, userName, new Date().toISOString(), id);
+  const row = sqlite.prepare(`SELECT id, user_id, user_name, message, grab_it, claimed_by, claimed_by_name, claimed_at FROM chat_messages WHERE id=?`).get(id) as any;
+  return { claimed: r.changes > 0, row };
 }
 export function getChatImage(id: number): { image_data: string | null; image_mime: string | null } | undefined {
   return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=?`).get(id) as any;

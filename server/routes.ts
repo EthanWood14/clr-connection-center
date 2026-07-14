@@ -9353,20 +9353,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     if (!text && !imgData) return res.status(400).json({ error: "Message cannot be empty" });
     if (text.length > 1000) return res.status(400).json({ error: "Message too long (max 1000 chars)" });
+    const grabIt = req.body?.grabIt === true || req.body?.grabIt === 1 || req.body?.grabIt === "1";
     const user = storage.getUserById(req.session_user!.userId) as any;
-    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime);
+    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime, grabIt);
 
-    // Push + in-app notify all other active users in the org
+    // Push + in-app notify all other active users in the org. Grab It leads
+    // are urgent (first to claim calls it) so they bypass chat-mute and get a
+    // louder title.
     try {
       const orgId = req.session_user!.orgId ?? 1;
       const senderName = user?.name ?? "Someone";
       const allUsers = storage.getUsers().filter((u: any) =>
         u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
-        && !(u.muteChatNotifications ?? u.mute_chat_notifications)
+        && (grabIt || !(u.muteChatNotifications ?? u.mute_chat_notifications))
       );
       const trimmed = text || (imgData ? "📷 Photo" : "");
       const preview = trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
-      const pushPayload = {
+      const pushPayload = grabIt ? {
+        title: `🎯 Lead up for grabs — ${senderName}`,
+        body: `First to claim calls it. ${preview}`.trim(),
+        url: `/#/chat`,
+      } : {
         title: `💬 ${senderName}`,
         body: preview,
         url: `/#/chat`,
@@ -9412,6 +9419,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (e) { console.error("chat notify failed:", e); }
 
     res.json({ message: msg });
+  });
+
+  // Claim a "Grab It" lead — first come, first served (atomic in storage).
+  // The claimer commits to calling the lead; the poster gets notified.
+  app.post("/api/chat/:id/claim", requireAuth, (req: any, res) => {
+    const id = parseInt(req.params.id, 10);
+    const userId = Number(req.session_user?.userId);
+    const me = storage.getUserById(userId) as any;
+    const { claimed, row } = storageExtra.claimChatMessage(id, userId, me?.name ?? "Unknown");
+    if (!row || !row.grab_it) return res.status(404).json({ error: "Not a Grab It post." });
+    if (!claimed) {
+      return res.status(409).json({
+        error: row.claimed_by === userId ? "You already claimed this one." : `Already claimed by ${row.claimed_by_name ?? "someone"}.`,
+        message: row,
+      });
+    }
+    // Tell the poster their lead was grabbed (in-app + push).
+    if (row.user_id && row.user_id !== userId) {
+      try {
+        storage.createNotification({
+          userId: row.user_id, type: "chat",
+          title: `🎯 ${me?.name ?? "Someone"} grabbed your lead`,
+          message: `They're calling: ${String(row.message || "").slice(0, 80) || "(image lead)"}`,
+          isRead: false,
+        });
+        sendPushToUser(row.user_id, {
+          title: `🎯 ${me?.name ?? "Someone"} grabbed your lead`,
+          body: "They're on it — check chat for details.",
+          url: "/#/chat",
+        }).catch(() => {});
+      } catch {}
+    }
+    audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "chat", entityId: id, entityLabel: "Grab It claim", details: JSON.stringify({ messageId: id }) });
+    res.json({ ok: true, message: row });
   });
 
   app.delete("/api/chat/:id", requireAuth, (req, res) => {

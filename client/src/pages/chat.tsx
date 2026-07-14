@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search, Target, Check } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -87,17 +87,33 @@ export default function Chat() {
     }
   }, [messages.length, autoScroll]);
 
+  // "Grab It" mode: the next message posts as a claimable lead — the first
+  // teammate to hit Grab commits to calling it.
+  const [grabIt, setGrabIt] = useState(false);
   const sendMsg = useMutation({
-    mutationFn: (payload: { message: string; image: { base64: string; mime: string } | null }) =>
-      apiRequest("POST", "/api/chat", { message: payload.message, imageBase64: payload.image?.base64, imageMime: payload.image?.mime }),
+    mutationFn: (payload: { message: string; image: { base64: string; mime: string } | null; grabIt?: boolean }) =>
+      apiRequest("POST", "/api/chat", { message: payload.message, imageBase64: payload.image?.base64, imageMime: payload.image?.mime, grabIt: !!payload.grabIt }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/chat"] });
       setDraft("");
       setPendingImage(null);
+      setGrabIt(false);
       setAutoScroll(true);
       setTimeout(() => inputRef.current?.focus(), 50);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const claimMsg = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/chat/${id}/claim`, {}),
+    onSuccess: () => {
+      toast({ title: "🎯 It's yours", description: "You claimed this lead — go call it!" });
+      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Too slow", description: e.message, variant: "destructive" });
+      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+    },
   });
 
   // Read an image file (from paste or the picker) into a pending attachment.
@@ -236,7 +252,7 @@ export default function Chat() {
     e?.preventDefault();
     const text = draft.trim();
     if ((!text && !pendingImage) || sendMsg.isPending) return;
-    sendMsg.mutate({ message: text, image: pendingImage ? { base64: pendingImage.base64, mime: pendingImage.mime } : null });
+    sendMsg.mutate({ message: text, image: pendingImage ? { base64: pendingImage.base64, mime: pendingImage.mime } : null, grabIt });
   }
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -378,10 +394,17 @@ export default function Chat() {
                       )}
                       <div className={`relative flex items-center gap-1.5 ${isMe ? "flex-row-reverse" : ""}`}>
                         <div className={`px-3 py-2 rounded-2xl text-sm leading-snug break-words whitespace-pre-wrap ${
-                          isMe
+                          m.grab_it
+                            ? "bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 text-foreground shadow-sm"
+                            : isMe
                             ? "bg-primary text-primary-foreground rounded-tr-sm"
                             : "bg-white dark:bg-zinc-800 border rounded-tl-sm shadow-sm"
                         }`}>
+                          {!!m.grab_it && (
+                            <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                              <Target className="w-3.5 h-3.5" /> Grab it — first to claim calls this lead
+                            </div>
+                          )}
                           {m.image_mime && (
                             <a href={`/api/chat/${m.id}/image`} target="_blank" rel="noreferrer" className="block">
                               <img
@@ -393,6 +416,30 @@ export default function Chat() {
                             </a>
                           )}
                           {m.message}
+                          {!!m.grab_it && (
+                            m.claimed_by ? (
+                              <div className={`mt-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                                m.claimed_by === user?.id
+                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                                  : "bg-muted text-muted-foreground"
+                              }`} data-testid={`grab-claimed-${m.id}`}>
+                                <Check className="w-3.5 h-3.5" />
+                                Claimed by {m.claimed_by === user?.id ? "you" : m.claimed_by_name}
+                                {m.claimed_at ? ` · ${formatTime(m.claimed_at)}` : ""} — calling this lead
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => claimMsg.mutate(m.id)}
+                                disabled={claimMsg.isPending}
+                                className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-3 py-2 transition-colors disabled:opacity-60"
+                                data-testid={`grab-claim-${m.id}`}
+                              >
+                                <Target className="w-4 h-4" />
+                                {claimMsg.isPending ? "Grabbing…" : "Grab it — I'll call this lead"}
+                              </button>
+                            )
+                          )}
                         </div>
                         {/* React button + picker */}
                         <div className="relative">
@@ -614,13 +661,26 @@ export default function Chat() {
           >
             <ImageIcon className="w-4 h-4" />
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className={`rounded-full w-10 h-10 shrink-0 ${grabIt ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-500" : ""}`}
+            onClick={() => setGrabIt(g => !g)}
+            title={grabIt ? "Grab It mode ON — this message posts as a claimable lead" : "Post as a Grab It lead (first to claim calls it)"}
+            aria-label="Toggle Grab It mode"
+            aria-pressed={grabIt}
+            data-testid="chat-grabit-toggle"
+          >
+            <Target className="w-4 h-4" />
+          </Button>
           <Input
             ref={inputRef}
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onPaste={handlePaste}
-            placeholder="Message the team… (paste a screenshot too)"
-            className="flex-1 rounded-full px-4"
+            placeholder={grabIt ? "🎯 Post a lead for grabs — first to claim calls it…" : "Message the team… (paste a screenshot too)"}
+            className={`flex-1 rounded-full px-4 ${grabIt ? "ring-2 ring-amber-400 border-amber-400" : ""}`}
             maxLength={1000}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             autoFocus
