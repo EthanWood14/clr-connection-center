@@ -2070,6 +2070,10 @@ function runNewMigrations() {
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_timeclock_user ON time_clock_entries(user_id, clock_in)`); } catch {}
   // Per-user hourly rate override (cents). NULL = use the org default rate.
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN hourly_rate_cents INTEGER`); } catch {}
+  // Per-user flat transfer comp ($/transfer, cents). NULL = no flat rate (the
+  // CLR enters their monthly transfer request amount manually). When set, the
+  // monthly transfer comp = transfer count × this rate, filled automatically.
+  try { sqlite.exec(`ALTER TABLE users ADD COLUMN transfer_comp_cents INTEGER`); } catch {}
   // Org-level pay settings (defaults: $16.90/hr, +7.65% self-employment reimbursement).
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN pay_rate_cents INTEGER NOT NULL DEFAULT 1690`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN se_reimb_rate REAL NOT NULL DEFAULT 0.0765`); } catch {}
@@ -4490,6 +4494,15 @@ export function setSharkTankSyncMeta(meta: { status: string; error?: string | nu
 // ── Per-user pay rate override ───────────────────────────────────────────────
 export function setUserHourlyRate(userId: number, rateCents: number | null): void {
   sqlite.prepare(`UPDATE users SET hourly_rate_cents=? WHERE id=?`).run(rateCents, userId);
+}
+// Per-user flat transfer comp ($/transfer). NULL = none (manual amount).
+export function setUserTransferRate(userId: number, rateCents: number | null): void {
+  sqlite.prepare(`UPDATE users SET transfer_comp_cents=? WHERE id=?`).run(rateCents, userId);
+}
+export function getUserTransferRate(userId: number): number | null {
+  const r = sqlite.prepare(`SELECT transfer_comp_cents FROM users WHERE id=?`).get(userId) as any;
+  const v = r?.transfer_comp_cents;
+  return v != null && Number(v) > 0 ? Number(v) : null;
 }
 
 // ── Lead sources ─────────────────────────────────────────────────────────────

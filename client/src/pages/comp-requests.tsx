@@ -199,7 +199,7 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
 
 // Shows the CLR how many transfers they logged last month (the basis for the
 // monthly transfer comp request), so they don't have to dig through reporting.
-function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string) => void }) {
+function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string, amountCents?: number) => void }) {
   const qs = forUserId ? "?userId=" + forUserId : "";
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/comp/transfer-stats", forUserId ?? "me"],
@@ -207,6 +207,10 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
   });
   const prev = data?.previous;
   const cur = data?.current;
+  // Flat $/transfer rate for this CLR (null = none). When set, comp auto-fills
+  // to count × rate.
+  const rateCents: number | null = data?.transferRateCents ?? null;
+  const useLabel = (p: any) => "Monthly transfer request — " + p.month + " (" + p.transfers + " transfer" + (p.transfers === 1 ? "" : "s") + (rateCents != null ? " @ " + money(rateCents) : "") + ")";
   const plural = (n: number) => (n === 1 ? "" : "s");
   // Label whose transfers these are — when filing on behalf of another CLR the
   // numbers are THEIRS, not the viewer's, so don't call it "Your transfers".
@@ -228,19 +232,24 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
             </div>
             <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
               {prev?.direct ?? 0} direct · {prev?.appointment ?? 0} appointment
+              {rateCents != null && prev != null && <> · <span className="font-semibold">= {money(prev.amountCents ?? 0)}</span></>}
             </div>
           </div>
           <div className="text-xs text-muted-foreground">
             <span className="tabular-nums font-semibold text-foreground">{cur?.transfers ?? 0}</span> so far in {cur?.month ?? "this month"}
+            {rateCents != null && cur != null && <> · <span className="font-semibold text-foreground">{money(cur.amountCents ?? 0)}</span></>}
           </div>
         </div>
+      )}
+      {rateCents != null && (
+        <p className="mt-1.5 text-[11px] text-emerald-700/80 dark:text-emerald-400/80">Flat rate {money(rateCents)}/transfer — comp auto-fills to count × rate.</p>
       )}
       {onUse && (prev || cur) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
           {prev && (
             <button
               type="button"
-              onClick={() => onUse("Monthly transfer request — " + prev.month + " (" + prev.transfers + " transfer" + plural(prev.transfers) + ")")}
+              onClick={() => onUse(useLabel(prev), rateCents != null ? (prev.amountCents ?? 0) : undefined)}
               className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
               data-testid="button-use-transfers"
             >
@@ -250,7 +259,7 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
           {cur && (
             <button
               type="button"
-              onClick={() => onUse("Monthly transfer request — " + cur.month + " (" + cur.transfers + " transfer" + plural(cur.transfers) + ")")}
+              onClick={() => onUse(useLabel(cur), rateCents != null ? (cur.amountCents ?? 0) : undefined)}
               className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300 hover:underline"
               data-testid="button-use-transfers-current"
             >
@@ -957,7 +966,7 @@ export default function CompRequests() {
           <TransferStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
             forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
-            onUse={(text) => { setDescription(text); setCategory("transfers"); }}
+            onUse={(text, amountCents) => { setDescription(text); setCategory("transfers"); if (amountCents != null) setAmount((amountCents / 100).toFixed(2)); }}
           />
           <HoursStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}

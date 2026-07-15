@@ -6205,20 +6205,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       };
       const py = tm === 1 ? ty - 1 : ty;
       const pm = tm === 1 ? 12 : tm - 1;
+      // Flat per-transfer comp rate for this CLR (null = none; enters amount manually).
+      const transferRateCents = storageExtra.getUserTransferRate(targetId);
       const build = (y: number, m: number) => {
         const { startDate, endDate } = monthRange(y, m);
         const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: targetId }) as any[]);
         const transfersList = outcomes.filter(o => (o.outcomeType ?? o.outcome_type) === "transfer");
         const tt = (o: any) => o.transferType ?? o.transfer_type;
+        const transfers = transfersList.length;
         return {
           month: monthName(y, m),
           startDate, endDate,
-          transfers: transfersList.length,
+          transfers,
           direct: transfersList.filter(o => tt(o) === "direct").length,
           appointment: transfersList.filter(o => tt(o) === "appointment").length,
+          // Auto-computed comp when a flat rate is set for this CLR.
+          amountCents: transferRateCents != null ? transfers * transferRateCents : null,
         };
       };
-      res.json({ userId: targetId, previous: build(py, pm), current: build(ty, tm) });
+      res.json({ userId: targetId, transferRateCents, previous: build(py, pm), current: build(ty, tm) });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load transfer stats" });
     }
@@ -9763,7 +9768,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/timeclock/rates", requireAuth, (req: any, res) => {
     if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers only" });
     const db = storageExtra.getRawSqlite();
-    const rows = db.prepare(`SELECT id, name, role, hourly_rate_cents FROM users WHERE is_active = 1 AND role != 'viewer' ORDER BY name COLLATE NOCASE`).all() as any[];
+    const rows = db.prepare(`SELECT id, name, role, hourly_rate_cents, transfer_comp_cents FROM users WHERE is_active = 1 AND role != 'viewer' ORDER BY name COLLATE NOCASE`).all() as any[];
     res.json({
       defaultRateCents: storageExtra.resolvePayRate().rateCents,
       users: rows.map((r) => ({
@@ -9772,6 +9777,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         role: r.role,
         overrideCents: r.hourly_rate_cents != null && Number(r.hourly_rate_cents) > 0 ? Number(r.hourly_rate_cents) : null,
         effectiveCents: storageExtra.resolvePayRate(r.id).rateCents,
+        transferCents: r.transfer_comp_cents != null && Number(r.transfer_comp_cents) > 0 ? Number(r.transfer_comp_cents) : null,
       })),
     });
   });
@@ -9781,20 +9787,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const targetId = parseInt(req.params.userId, 10);
     const target = storage.getUserById(targetId) as any;
     if (!target) return res.status(404).json({ error: "User not found" });
-    let cents: number | null = null;
-    if (req.body?.rateCents !== undefined && req.body.rateCents !== null && req.body.rateCents !== "") {
-      const c = Math.round(Number(req.body.rateCents));
-      if (!Number.isFinite(c) || c <= 0) return res.status(400).json({ error: "Enter a rate greater than 0, or clear it to use the default." });
-      cents = c;
-    }
-    storageExtra.setUserHourlyRate(targetId, cents);
+    // Body may set the hourly rate, the flat transfer rate, or both. A field
+    // that's present but blank/null clears that rate.
+    const parseRate = (v: any): { set: boolean; cents: number | null; bad: boolean } => {
+      if (v === undefined) return { set: false, cents: null, bad: false };
+      if (v === null || v === "") return { set: true, cents: null, bad: false };
+      const c = Math.round(Number(v));
+      return Number.isFinite(c) && c > 0 ? { set: true, cents: c, bad: false } : { set: true, cents: null, bad: true };
+    };
+    const hourly = parseRate(req.body?.rateCents);
+    const transfer = parseRate(req.body?.transferCents);
+    if (hourly.bad || transfer.bad) return res.status(400).json({ error: "Enter a rate greater than 0, or clear it." });
     const submitter = storage.getUserById(uid) as any;
-    audit({
-      userId: uid, userName: submitter?.name ?? "Unknown", action: "update",
-      entityType: "user", entityId: targetId, entityLabel: (target.name ?? "User") + " pay rate",
-      details: cents != null ? `Hourly rate set to $${(cents / 100).toFixed(2)}` : "Hourly rate override cleared (uses org default)",
+    if (hourly.set) {
+      storageExtra.setUserHourlyRate(targetId, hourly.cents);
+      audit({ userId: uid, userName: submitter?.name ?? "Unknown", action: "update", entityType: "user", entityId: targetId, entityLabel: (target.name ?? "User") + " pay rate",
+        details: hourly.cents != null ? `Hourly rate set to $${(hourly.cents / 100).toFixed(2)}` : "Hourly rate override cleared (uses org default)" });
+    }
+    if (transfer.set) {
+      storageExtra.setUserTransferRate(targetId, transfer.cents);
+      audit({ userId: uid, userName: submitter?.name ?? "Unknown", action: "update", entityType: "user", entityId: targetId, entityLabel: (target.name ?? "User") + " transfer rate",
+        details: transfer.cents != null ? `Flat transfer comp set to $${(transfer.cents / 100).toFixed(2)}/transfer` : "Flat transfer comp cleared (manual amount)" });
+    }
+    res.json({
+      userId: targetId,
+      effectiveCents: storageExtra.resolvePayRate(targetId).rateCents,
+      transferCents: storageExtra.getUserTransferRate(targetId),
     });
-    res.json({ userId: targetId, overrideCents: cents, effectiveCents: storageExtra.resolvePayRate(targetId).rateCents });
   });
 
   app.get("/api/audit-logs", (req, res) => {

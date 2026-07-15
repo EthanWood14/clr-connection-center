@@ -163,13 +163,14 @@ export default function TimeClock() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [seInput, setSeInput] = useState("");
   const [rateDrafts, setRateDrafts] = useState<Record<number, string>>({});
+  const [transferDrafts, setTransferDrafts] = useState<Record<number, string>>({});
   const settingsMut = useMutation({
     mutationFn: (body: any) => apiRequest("POST", "/api/timeclock/settings", body),
     onSuccess: () => { toast({ title: "Pay settings saved" }); setSettingsOpen(false); refresh(); },
     onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
   });
 
-  type RateRow = { userId: number; name: string; role: string; overrideCents: number | null; effectiveCents: number };
+  type RateRow = { userId: number; name: string; role: string; overrideCents: number | null; effectiveCents: number; transferCents: number | null };
   const { data: ratesData } = useQuery<{ defaultRateCents: number; users: RateRow[] }>({
     queryKey: ["/api/timeclock/rates"],
     queryFn: () => apiRequest("GET", "/api/timeclock/rates"),
@@ -186,12 +187,29 @@ export default function TimeClock() {
     },
     onError: (e: any) => toast({ title: "Couldn't update rate", description: e?.message, variant: "destructive" }),
   });
+  const transferMut = useMutation({
+    mutationFn: (v: { userId: number; transferCents: number | null }) =>
+      apiRequest("POST", `/api/timeclock/rates/${v.userId}`, { transferCents: v.transferCents }),
+    onSuccess: (_d: any, v) => {
+      toast({ title: v.transferCents != null ? "Transfer rate set" : "Flat transfer rate cleared" });
+      setTransferDrafts(d => { const n = { ...d }; delete n[v.userId]; return n; });
+      qc.invalidateQueries({ queryKey: ["/api/timeclock/rates"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't update transfer rate", description: e?.message, variant: "destructive" }),
+  });
   function saveUserRate(row: RateRow) {
     const draft = (rateDrafts[row.userId] ?? "").trim();
     if (!draft) { rateMut.mutate({ userId: row.userId, rateCents: null }); return; }
     const cents = Math.round(parseFloat(draft) * 100);
     if (!Number.isFinite(cents) || cents <= 0) { toast({ title: "Enter a valid rate", variant: "destructive" }); return; }
     rateMut.mutate({ userId: row.userId, rateCents: cents });
+  }
+  function saveUserTransfer(row: RateRow) {
+    const draft = (transferDrafts[row.userId] ?? "").trim();
+    if (!draft) { transferMut.mutate({ userId: row.userId, transferCents: null }); return; }
+    const cents = Math.round(parseFloat(draft) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) { toast({ title: "Enter a valid rate", variant: "destructive" }); return; }
+    transferMut.mutate({ userId: row.userId, transferCents: cents });
   }
 
   return (
@@ -257,7 +275,7 @@ export default function TimeClock() {
             </div>
           )}
           {isAdmin && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setSeInput((rate.seRate * 100).toFixed(2)); setRateDrafts({}); setSettingsOpen(true); }}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setSeInput((rate.seRate * 100).toFixed(2)); setRateDrafts({}); setTransferDrafts({}); setSettingsOpen(true); }}>
               <Settings2 className="w-3.5 h-3.5" /> Pay rates
             </Button>
           )}
@@ -457,6 +475,43 @@ export default function TimeClock() {
                 {!ratesData && <p className="px-3 py-4 text-sm text-muted-foreground">Loading…</p>}
               </div>
               <p className="text-[11px] text-muted-foreground mt-1.5">Clear a rate and save to put that person back on the default.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Flat transfer comp ($ per transfer)</label>
+              <p className="text-[11px] text-muted-foreground mb-1">Set a fixed rate and their monthly transfer request auto-fills to count × rate. Leave blank for a manual amount.</p>
+              <div className="mt-1 max-h-64 overflow-y-auto rounded-md border divide-y">
+                {(ratesData?.users ?? []).map((row) => {
+                  const draft = transferDrafts[row.userId];
+                  const shown = draft !== undefined ? draft : (row.transferCents != null ? (row.transferCents / 100).toFixed(2) : "");
+                  const dirty = draft !== undefined;
+                  return (
+                    <div key={row.userId} className="flex items-center gap-2 px-2.5 py-1.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{row.name}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {row.transferCents != null ? `Flat ${money(row.transferCents)}/transfer` : "Manual amount"}
+                        </p>
+                      </div>
+                      <div className="relative w-24">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">$</span>
+                        <Input
+                          type="number" step="0.01" min="0"
+                          className="pl-5 h-8 text-sm"
+                          placeholder="—"
+                          value={shown}
+                          onChange={e => setTransferDrafts(d => ({ ...d, [row.userId]: e.target.value }))}
+                          data-testid={`transfer-rate-input-${row.userId}`}
+                        />
+                      </div>
+                      <Button size="sm" variant={dirty ? "default" : "outline"} className="h-8"
+                        onClick={() => saveUserTransfer(row)} disabled={!dirty || transferMut.isPending}>
+                        Save
+                      </Button>
+                    </div>
+                  );
+                })}
+                {!ratesData && <p className="px-3 py-4 text-sm text-muted-foreground">Loading…</p>}
+              </div>
             </div>
           </div>
           <DialogFooter>
