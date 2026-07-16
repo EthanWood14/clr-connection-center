@@ -7828,6 +7828,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         ...o,
         loId: loIdVal,
         assistantId: assistantIdVal,
+        loaId: o.loaId ?? o.loa_id ?? null,
         outcomeType: o.outcomeType ?? o.outcome_type,
         transferType: o.transferType ?? o.transfer_type ?? null,
         bulkTexter: (o.bulkTexter ?? o.bulk_texter) == null ? null : !!(o.bulkTexter ?? o.bulk_texter),

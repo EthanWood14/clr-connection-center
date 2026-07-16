@@ -143,6 +143,12 @@ const OUTCOME_COLORS: Record<string, string> = {
 const TRANSFER_TYPES = ["direct", "appointment"] as const;
 type TransferType = typeof TRANSFER_TYPES[number];
 
+// Chris Redoble transfers are expected to be attributed to one of his LOAs (that
+// drives the Bonzo "(LOA l CLR)" name suffix + LOA credit). A transfer logged for
+// him with no LOA is flagged "(LOA missing)" so it can be caught and fixed.
+const CHRIS_REDOBLE_RE = /chris\s+redoble/i;
+const isChrisRedoble = (name?: string | null) => CHRIS_REDOBLE_RE.test(String(name ?? ""));
+
 // Format an ISO-ish follow-up value (either "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM")
 // for compact display, showing time only when present.
 function formatFollowUp(value: string): string {
@@ -637,6 +643,11 @@ function OutcomeFormDialog({
               <FormItem>
                 <FormLabel>Loan Officer Assistant (optional)</FormLabel>
                 <LoaPicker loId={form.watch("loId")} value={field.value ?? null} onChange={field.onChange} />
+                {isTransfer && field.value == null && isChrisRedoble(los.find((lo: any) => lo.id === form.watch("loId"))?.fullName) && (
+                  <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1" data-testid="loa-missing-hint">
+                    (LOA missing) — pick which assistant took this transfer, or it'll be attributed to Chris directly.
+                  </p>
+                )}
                 <FormMessage />
               </FormItem>
             )} />
@@ -1538,6 +1549,15 @@ export default function Outcomes() {
                       data-testid={`badge-transfer-type-${o.id}`}
                     >
                       {o.transferType === "direct" ? "Direct" : "Appt/Callback"}
+                    </Badge>
+                  )}
+                  {o.outcomeType === "transfer" && o.loaId == null && isChrisRedoble(o.lo?.fullName) && (
+                    <Badge
+                      className="text-[10px] w-fit px-1.5 py-0 bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300"
+                      title="Logged for Chris Redoble without an LOA — attribution defaulted to (CLR …). Edit to tag the assistant."
+                      data-testid={`badge-loa-missing-${o.id}`}
+                    >
+                      (LOA missing)
                     </Badge>
                   )}
                   {o.verificationStatus && (
