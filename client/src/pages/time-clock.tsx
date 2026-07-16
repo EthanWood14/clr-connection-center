@@ -312,10 +312,20 @@ export default function TimeClock() {
             data-testid="tc-file-comp"
             onClick={() => {
               try {
+                // Hand over the exact shifts (IDs + a dates/times snapshot). The
+                // server prices only the still-unclaimed ones, so filing here can't
+                // double-count hours already requested via the hint or a prior file.
+                const closed = entries.filter(e => e.clockOut).slice().sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+                const t = (iso: string) => { try { return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); } catch { return "?"; } };
+                const d = (iso: string) => { try { return new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }); } catch { return "?"; } };
+                const hoursDetail = closed.map(e => `${d(e.clockIn)}: ${t(e.clockIn)}–${t(e.clockOut as string)} (${e.hours}h)`).join("\n");
                 sessionStorage.setItem("comp.prefill", JSON.stringify({
                   description: `Hours worked — ${label} (${totals.hours.toFixed(2)} hrs @ ${money(rate.rateCents)}/hr + ${(rate.seRate * 100).toFixed(2)}% SE)`,
                   category: "time",
-                  amountCents: totals.total,
+                  amountCents: totals.total, // preview only — server prices the unclaimed shifts
+                  hoursEntryIds: closed.map(e => e.id),
+                  hoursPeriod: start.slice(0, 7),
+                  hoursDetail,
                 }));
               } catch {}
               navigate("/comp-requests");

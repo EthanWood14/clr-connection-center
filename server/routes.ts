@@ -482,6 +482,54 @@ function maybeCancelCompApprovalEmail(token: string | null | undefined): void {
   }
 }
 
+// ── Hours (time-clock) comp dedup helpers ─────────────────────────────────────
+// An hours comp request records the exact time_clock_entries it covers; a shift
+// can only be claimed by one non-denied request, so the same worked hours can't
+// be paid twice regardless of which entry point (hint / Time Clock button) files
+// them or how the request is later edited.
+
+// Time-clock entry IDs already claimed by a non-denied comp request for this
+// user. Category-independent (keyed on hours_entry_ids, not category) so that
+// recategorizing a time request still keeps its shifts claimed. excludeReqId
+// skips one row — used when editing so a request doesn't count against itself.
+function compClaimedShiftIds(userId: number, orgId: number, excludeReqId?: number): Set<number> {
+  const db = storageExtra.getRawSqlite();
+  // A shift is claimed while its request is live (pending/approved) OR has been
+  // paid/received — a denied request frees its shifts to re-file, BUT a request
+  // that was already paid keeps them claimed even if it's later denied, so paid
+  // hours can never be re-filed and paid again.
+  const rows = db.prepare(
+    "SELECT id, hours_entry_ids FROM comp_requests WHERE user_id=? AND org_id=? AND hours_entry_ids IS NOT NULL AND (status NOT IN ('draft','denied') OR is_paid=1 OR is_received=1)"
+  ).all(userId, orgId) as any[];
+  const s = new Set<number>();
+  for (const r of rows) {
+    if (excludeReqId && Number(r.id) === Number(excludeReqId)) continue;
+    try { for (const id of JSON.parse(r.hours_entry_ids)) { const n = Number(id); if (Number.isFinite(n)) s.add(n); } } catch {}
+  }
+  return s;
+}
+
+// Hours for a single closed shift (0 for open/invalid).
+function compShiftHours(e: any): number {
+  if (!e?.clock_out) return 0;
+  const inMs = new Date(e.clock_in).getTime();
+  const outMs = new Date(e.clock_out).getTime();
+  return (Number.isFinite(inMs) && Number.isFinite(outMs) && outMs > inMs) ? (outMs - inMs) / 3600000 : 0;
+}
+
+// Server-authoritative "dates & times worked" snapshot for a set of shift rows,
+// formatted in the business timezone (so it always matches the shifts actually
+// priced — never trust the client's text, which may overstate the month).
+function compShiftDetail(entries: any[]): string {
+  const tz = BUSINESS_DAY_DEFAULT_TZ;
+  const t = (iso: string) => { try { return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz }); } catch { return "?"; } };
+  const d = (iso: string) => { try { return new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz }); } catch { return "?"; } };
+  return entries.slice()
+    .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+    .map(e => `${d(e.clock_in)}: ${t(e.clock_in)}–${t(e.clock_out)} (${Math.round(compShiftHours(e) * 100) / 100}h)`)
+    .join("\n");
+}
+
 // Fire everything still queued right now (best-effort) — e.g. on shutdown so a
 // deploy/restart mid-window doesn't silently drop mail. Returns the in-flight
 // send promises so the caller can await them before exiting.
@@ -3037,7 +3085,13 @@ function buildCompApprovalEmail(
   const rows = items.map((r) => {
     const dateTag = r.expense_date ? ` <span style=\"color:#94a3b8\">(${r.expense_date})</span>` : "";
     const stateTag = r.status === "approved" ? ` <span style=\"color:#0284c7;font-size:12px\">approved, awaiting payment</span>` : "";
-    return `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${eodActivityEsc(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
+    const main = `<tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b">${eodActivityEsc(r.description || "Expense")}${dateTag}${stateTag}</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:14px;color:#1e293b;text-align:right;font-weight:600">${fmt(r.amount_cents || 0)}</td></tr>`;
+    // Hours requests carry the exact dates/times worked — show them so the approver
+    // can see what's being paid.
+    const detail = r.hours_detail
+      ? `<tr><td colspan="2" style="padding:2px 10px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#64748b;white-space:pre-line">${eodActivityEsc(r.hours_detail)}</td></tr>`
+      : "";
+    return main + detail;
   }).join("");
   const approveUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=approve`;
   const denyUrl = `${COMP_APP_URL}/api/comp/email-decision?token=${token}&action=deny`;
@@ -3293,6 +3347,19 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // of pocket and needs back (vs. earned comp like transfers/hours/bonus). The
   // payout sheet totals the two groups separately. Independent of category.
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_reimbursement INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+  // For "time" (hours-worked) comp requests filed from the Time Clock hint:
+  //   hours_entry_ids  JSON array of the exact time_clock_entries this request
+  //                    covers — the dedup source of truth (a shift can only be
+  //                    claimed by one non-denied request).
+  //   hours_covered    sum of those shifts' hours (server-computed).
+  //   hours_period     the calendar month "YYYY-MM" they fall in.
+  //   hours_detail     a human-readable snapshot of the dates/times worked, shown
+  //                    on the request so payroll can see exactly which shifts.
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_covered REAL`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_period TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_entry_ids TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_detail TEXT`); } catch {}
 
   // One-time: any comp requests that CLRs had saved as drafts are promoted to
   // "pending" (sent for approval) so they surface in the approval queue instead
@@ -6240,6 +6307,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       reviewedAt: r.reviewed_at ?? null,
       paidAt: r.paid_at ?? null,
       createdAt: r.created_at ?? null,
+      // Hours (time-clock) requests: the covered hours + a dates/times snapshot of
+      // the shifts, shown on the request so payroll sees exactly what's being paid.
+      hoursCovered: r.hours_covered ?? null,
+      hoursDetail: r.hours_detail ?? "",
+      hoursBacked: !!r.hours_entry_ids,
     };
   }
   function compNameMap() {
@@ -6348,22 +6420,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const pad = (n: number) => String(n).padStart(2, "0");
       const monthName = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
       const rate = storageExtra.resolvePayRate(targetId);
+      // Shifts already claimed by a non-denied comp request (any month).
+      const claimed = compClaimedShiftIds(targetId, orgId);
+      const round2 = (n: number) => Math.round(n * 100) / 100;
       const build = (y: number, m: number) => {
         const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
         const startDate = `${y}-${pad(m)}-01`;
         const endDate = `${y}-${pad(m)}-${pad(lastDay)}`;
-        const entries = storageExtra.getTimeClockEntries({ orgId, userId: targetId, startDate, endDate }) as any[];
-        let hours = 0;
+        const period = `${y}-${pad(m)}`;
+        const entries = (storageExtra.getTimeClockEntries({ orgId, userId: targetId, startDate, endDate }) as any[])
+          .filter(e => e.clock_out) // closed shifts only
+          .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
+        let worked = 0, requested = 0;
+        // UNCLAIMED shifts become what's available to request; each carries its
+        // raw ISO times so the client can render dates/times in the user's tz and
+        // hand the exact entry IDs back when filing.
+        const shifts: any[] = [];
         for (const e of entries) {
-          if (!e.clock_out) continue; // open shifts don't count yet
-          const inMs = new Date(e.clock_in).getTime();
-          const outMs = new Date(e.clock_out).getTime();
-          if (Number.isFinite(inMs) && Number.isFinite(outMs) && outMs > inMs) hours += (outMs - inMs) / 3600000;
+          const h = round2(compShiftHours(e));
+          if (h <= 0) continue;
+          worked += h;
+          if (claimed.has(Number(e.id))) { requested += h; continue; }
+          shifts.push({ id: e.id, date: String(e.clock_in).slice(0, 10), clockIn: e.clock_in, clockOut: e.clock_out, hours: h });
         }
-        hours = Math.round(hours * 100) / 100;
+        worked = round2(worked); requested = round2(requested);
+        const hours = round2(shifts.reduce((a, s) => a + s.hours, 0));
         const baseCents = Math.round(hours * rate.rateCents);
         const seCents = Math.round(baseCents * rate.seRate);
-        return { month: monthName(y, m), startDate, endDate, hours, baseCents, seCents, totalCents: baseCents + seCents };
+        return {
+          month: monthName(y, m), startDate, endDate, period,
+          hours, workedHours: worked, requestedHours: requested,
+          entryIds: shifts.map(s => s.id), shifts,
+          baseCents, seCents, totalCents: baseCents + seCents,
+        };
       };
       const py = tm === 1 ? ty - 1 : ty;
       const pm = tm === 1 ? 12 : tm - 1;
@@ -6381,12 +6470,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const body = req.body ?? {};
     const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
     const category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
-    const amountCents = Math.round(Number(body.amountCents));
+    let amountCents = Math.round(Number(body.amountCents));
     const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : null;
     const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
     const isReimbursement = (body.isReimbursement === true || body.isReimbursement === 1 || body.isReimbursement === "1") ? 1 : 0;
+    // For "time" comp requests filed from the Time Clock: the exact shift IDs this
+    // request covers + a snapshot of their dates/times. The hours and $ amount are
+    // recomputed server-side from those shifts (never trusted from the client), and
+    // already-claimed shifts are dropped, so the same hours can't be paid twice.
+    const rawEntryIds: number[] = Array.isArray(body.hoursEntryIds)
+      ? Array.from(new Set(body.hoursEntryIds.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)))
+      : [];
     if (!description) return res.status(400).json({ error: "A description is required." });
-    if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
     // Managers/admins can file a comp request ON BEHALF of a CLR. When they do, it
     // is created as a pending request (not a draft) under that CLR and emailed to
     // the approver. Everyone else just saves a draft for themselves.
@@ -6394,15 +6489,42 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const isMgr = !!(meRow && (meRow.role === "admin" || (meRow.isManager ?? meRow.is_manager) || (meRow.superAdmin ?? meRow.super_admin)));
     const onBehalf = Number(body.onBehalfOf) || 0;
     const forClr = (isMgr && onBehalf && onBehalf !== sessUserId && storage.getUserById(onBehalf)) ? onBehalf : 0;
+    const targetId = forClr || sessUserId;
     const nowIso = new Date().toISOString();
+    // Shift-mode: an hours request backed by specific, still-unclaimed time-clock
+    // shifts. Everything about the hours (count, $, month) is derived from the
+    // shifts the target user actually owns — the client's numbers are ignored.
+    let hoursCovered: number | null = null, hoursPeriod: string | null = null;
+    let hoursEntryIdsJson: string | null = null, hoursDetail: string | null = null;
+    if (category === "time" && rawEntryIds.length) {
+      const claimed = compClaimedShiftIds(targetId, orgId);
+      const subset = rawEntryIds
+        .map(eid => storageExtra.getTimeClockEntryById(eid))
+        .filter((e: any) => e && Number(e.user_id) === targetId && Number(e.org_id) === orgId && e.clock_out && compShiftHours(e) > 0 && !claimed.has(Number(e.id)));
+      if (!subset.length) return res.status(400).json({ error: "Those hours were already requested (or aren't valid shifts)." });
+      const rate = storageExtra.resolvePayRate(targetId);
+      const hrs = Math.round(subset.reduce((a: number, e: any) => a + compShiftHours(e), 0) * 100) / 100;
+      const baseC = Math.round(hrs * rate.rateCents);
+      amountCents = baseC + Math.round(baseC * rate.seRate); // server-authoritative for time requests
+      hoursCovered = hrs;
+      hoursPeriod = String(subset.slice().sort((a: any, b: any) => String(a.clock_in).localeCompare(String(b.clock_in)))[0].clock_in).slice(0, 7);
+      hoursEntryIdsJson = JSON.stringify(subset.map((e: any) => Number(e.id)));
+      hoursDetail = compShiftDetail(subset); // rebuilt from the priced subset, not the client text
+    }
+    // A "time" request must be shift-backed — otherwise its hours are invisible to
+    // the ledger and the same hours could be claimed again from the Time Clock.
+    // Untracked hours should be filed under another category.
+    if (category === "time" && !hoursEntryIdsJson) {
+      return res.status(400).json({ error: "Hours requests must be filed from your Time Clock hours (use the hours box above)." });
+    }
+    if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
     try {
       const db = storageExtra.getRawSqlite();
       // Every saved expense is submitted for approval immediately — no draft
       // step. Managers may still file on behalf of a CLR (forClr); otherwise
       // the request is for the submitter themselves.
-      const targetId = forClr || sessUserId;
       const token = crypto.randomBytes(24).toString("hex");
-      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, token, nowIso, nowIso, nowIso);
+      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, token, nowIso, nowIso, nowIso);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === targetId);
       const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
@@ -6452,12 +6574,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         ? existing.is_reimbursement
         : ((body.isReimbursement === true || body.isReimbursement === 1 || body.isReimbursement === "1") ? 1 : 0);
       if (!description) return res.status(400).json({ error: "A description is required." });
-      if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
+      // A shift-backed hours request stays locked to its shifts on edit: category
+      // remains "time" and its $ amount is ALWAYS recomputed from the covered hours
+      // (never a client value), so an edit can't desync pay from the hours ledger.
+      // And because editing resubmits it to pending, its shifts must still be free
+      // of any OTHER live claim — otherwise a denied row could be resurrected onto
+      // hours that were already re-filed and paid elsewhere.
+      const shiftBacked = !!existing.hours_entry_ids;
+      let effCategory = category, effAmount = amountCents;
+      if (shiftBacked) {
+        effCategory = "time";
+        const rate = storageExtra.resolvePayRate(existing.user_id);
+        const baseC = Math.round((Number(existing.hours_covered) || 0) * rate.rateCents);
+        effAmount = baseC + Math.round(baseC * rate.seRate);
+        if (existing.status !== "draft") {
+          const claimed = compClaimedShiftIds(existing.user_id, orgId, id);
+          let ids: any[] = [];
+          try { ids = JSON.parse(existing.hours_entry_ids); } catch {}
+          if (ids.some((x: any) => claimed.has(Number(x)))) {
+            return res.status(400).json({ error: "Those hours are already on another request — this one can't be resubmitted." });
+          }
+        }
+      } else if (category === "time" && existing.category !== "time" && existing.category !== "hours") {
+        // Can't hand-convert a non-shift request into an hours request. Legacy
+        // pre-migration rows already under "time" (or its old alias "hours") may
+        // stay/normalize to "time" even without shifts.
+        return res.status(400).json({ error: "Hours requests must be filed from your Time Clock hours." });
+      }
+      if (!Number.isFinite(effAmount) || effAmount <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
       const nowIso = new Date().toISOString();
 
       if (existing.status === "draft") {
         // Draft: just update the fields in place (stays a draft).
-        db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, is_reimbursement=?, updated_at=? WHERE id=?").run(description, category, amountCents, expenseDate, note, isReimbursement, nowIso, id);
+        db.prepare("UPDATE comp_requests SET description=?, category=?, amount_cents=?, expense_date=?, note=?, is_reimbursement=?, updated_at=? WHERE id=?").run(description, effCategory, effAmount, expenseDate, note, isReimbursement, nowIso, id);
         const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
         return res.json(mapComp(row, compNameMap()));
       }
@@ -6472,7 +6621,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           is_paid=0, paid_at=NULL, is_processing=0, processing_at=NULL,
           is_received=0, received_at=NULL,
           approval_token=?, requested_at=?, updated_at=?
-        WHERE id=?`).run(description, category, amountCents, expenseDate, note, isReimbursement, token, nowIso, nowIso, id);
+        WHERE id=?`).run(description, effCategory, effAmount, expenseDate, note, isReimbursement, token, nowIso, nowIso, id);
       // This row now carries the NEW token; if the OLD token's queued email has no
       // remaining pending items (i.e. this wasn't a batch, or siblings are done),
       // cancel it so its now-dead links don't get delivered. Runs after the update
@@ -6485,12 +6634,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         userId, userName: actor?.name ?? "Unknown", action: "update",
         entityType: "comp_request", entityId: id,
         entityLabel: (nameById.get(existing.user_id) ?? "User") + " comp request edited & resubmitted",
-        details: JSON.stringify({ amountCents, from: existing.status }),
+        details: JSON.stringify({ amountCents: effAmount, from: existing.status }),
       });
       // Notify the requester that their edited request is pending again.
       try {
         if (!isOwner) {
-          const dollars = "$" + (amountCents / 100).toFixed(2);
+          const dollars = "$" + (effAmount / 100).toFixed(2);
           (storage as any).createNotification?.({
             userId: existing.user_id, type: "comp_request", title: "Comp request updated",
             message: "Your comp request was edited to " + dollars + " (" + description + ") and resubmitted for approval.",
@@ -6611,6 +6760,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // A manager can't approve/deny their own comp request (admins/super-admins can).
       if (existing.user_id === reviewerId && !isCompAdmin(reviewerId)) {
         return res.status(403).json({ error: "You can't approve or deny your own comp request." });
+      }
+      // Bringing a shift-backed request (back) to 'approved' — e.g. approving a
+      // previously-denied one — must not re-claim shifts that were re-filed onto
+      // another live request in the meantime. Same guard the edit/resubmit path uses.
+      if (status === "approved" && existing.hours_entry_ids) {
+        const claimed = compClaimedShiftIds(existing.user_id, orgId, id);
+        let ids: any[] = [];
+        try { ids = JSON.parse(existing.hours_entry_ids); } catch {}
+        if (ids.some((x: any) => claimed.has(Number(x)))) {
+          return res.status(400).json({ error: "Those hours are already on another request — approve that one instead." });
+        }
       }
       db.prepare("UPDATE comp_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
       // Resolved in-app during the send window? Drop the approver's now-pointless

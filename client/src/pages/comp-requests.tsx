@@ -46,6 +46,9 @@ interface CompItem {
   paidAt: string | null;
   createdAt: string | null;
   attachmentCount?: number;
+  hoursCovered?: number | null;
+  hoursDetail?: string;
+  hoursBacked?: boolean;
 }
 
 // Current category set: software, transfers, time, bonus, training, other.
@@ -73,6 +76,10 @@ const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
 };
 // Keys shown in the category dropdown (excludes the legacy aliases).
 const CATEGORY_KEYS = ["software", "transfers", "time", "bonus", "training", "other"];
+// "time" is only ever set by filing your Time Clock hours (which attaches the exact
+// shifts) — it can't be picked by hand, so untracked hours can't masquerade as
+// verified time and get double-claimed. It's excluded from the manual pickers.
+const MANUAL_CATEGORY_KEYS = CATEGORY_KEYS.filter(k => k !== "time");
 // Legacy keys folded into current ones for filtering / edit-dialog mapping.
 const LEGACY_TRANSFERS = new Set(["leads", "appointments"]);
 const LEGACY_TIME = new Set(["hours"]);
@@ -86,6 +93,15 @@ function fmtDate(d: string | null) {
   if (!d) return "";
   try { return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
   catch { return d; }
+}
+
+// Turn the hours-stats "shifts" array into the readable dates/times snapshot that
+// travels with an hours comp request (one line per shift, in the viewer's tz).
+function buildShiftDetail(shifts: Array<{ clockIn: string; clockOut: string; hours: number }> | undefined): string {
+  if (!Array.isArray(shifts) || !shifts.length) return "";
+  const t = (iso: string) => { try { return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); } catch { return "?"; } };
+  const d = (iso: string) => { try { return new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }); } catch { return "?"; } };
+  return shifts.map(s => `${d(s.clockIn)}: ${t(s.clockIn)}–${t(s.clockOut)} (${s.hours}h)`).join("\n");
 }
 
 function CatChip({ category }: { category: string }) {
@@ -275,7 +291,7 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
 // Shows the CLR their time-clock hours for last/this month priced at their
 // rate — the Time Clock twin of TransferStatsHint, so an hours comp request
 // can be filed with the description AND amount prefilled.
-function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string, amountCents: number) => void }) {
+function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number; forUserName?: string | null; onUse?: (text: string, amountCents: number, meta?: { entryIds: number[]; hoursPeriod: string; hoursDetail: string }) => void }) {
   const qs = forUserId ? "?userId=" + forUserId : "";
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/comp/hours-stats", forUserId ?? "me"],
@@ -284,8 +300,18 @@ function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number;
   const prev = data?.previous;
   const cur = data?.current;
   const whoLabel = forUserName ? `${forUserName}'s hours` : "Your hours";
+  // Hours here are REMAINING (worked − already requested). The description + amount
+  // reflect only the still-unclaimed shifts, and we hand the server their exact IDs
+  // so it can price them and mark them claimed.
   const useText = (p: any) =>
     "Hours worked — " + p.month + " (" + p.hours + " hrs @ " + money(data.rateCents) + "/hr + " + (data.seRate * 100).toFixed(2) + "% SE)";
+  const useMeta = (p: any) => ({ entryIds: p.entryIds ?? [], hoursPeriod: p.period, hoursDetail: buildShiftDetail(p.shifts) });
+  // Sub-line: once some hours have been requested for a month, show the breakdown
+  // so a small "remaining" number isn't confusing.
+  const subLine = (p: any) => (p?.requestedHours ?? 0) > 0
+    ? `of ${p.workedHours} worked · ${p.requestedHours} already requested`
+    : `≈ ${money(p?.totalCents ?? 0)} incl. SE reimbursement`;
+  const hrsWord = (p: any) => (p?.requestedHours ?? 0) > 0 ? "hrs left in" : "hrs in";
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3">
       <div className="flex items-center gap-2 mb-2">
@@ -299,14 +325,15 @@ function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number;
           <div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-3xl font-bold tabular-nums text-amber-700 dark:text-amber-300" data-testid="prev-hours-count">{prev?.hours ?? 0}</span>
-              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">hrs in {prev?.month ?? "last month"}</span>
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">{hrsWord(prev)} {prev?.month ?? "last month"}</span>
             </div>
             <div className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
-              ≈ {money(prev?.totalCents ?? 0)} incl. SE reimbursement
+              {subLine(prev)}
             </div>
           </div>
           <div className="text-xs text-muted-foreground">
-            <span className="tabular-nums font-semibold text-foreground">{cur?.hours ?? 0}</span> hrs so far in {cur?.month ?? "this month"}
+            <span className="tabular-nums font-semibold text-foreground">{cur?.hours ?? 0}</span> {(cur?.requestedHours ?? 0) > 0 ? "hrs left in" : "hrs so far in"} {cur?.month ?? "this month"}
+            {(cur?.requestedHours ?? 0) > 0 && <span className="text-[11px]"> ({cur.requestedHours} requested)</span>}
           </div>
         </div>
       )}
@@ -315,7 +342,7 @@ function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number;
           {prev?.hours > 0 && (
             <button
               type="button"
-              onClick={() => onUse(useText(prev), prev.totalCents)}
+              onClick={() => onUse(useText(prev), prev.totalCents, useMeta(prev))}
               className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
               data-testid="button-use-hours"
             >
@@ -325,7 +352,7 @@ function HoursStatsHint({ forUserId, forUserName, onUse }: { forUserId?: number;
           {cur?.hours > 0 && (
             <button
               type="button"
-              onClick={() => onUse(useText(cur), cur.totalCents)}
+              onClick={() => onUse(useText(cur), cur.totalCents, useMeta(cur))}
               className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
               data-testid="button-use-hours-current"
             >
@@ -674,6 +701,11 @@ export default function CompRequests() {
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
   const [isReimbursement, setIsReimbursement] = useState(false);
+  // Set when an hours comp request is filled from the Time Clock hint / button: the
+  // exact shift IDs it covers, the month, and a dates/times snapshot. Sent with the
+  // request so the server prices those shifts and marks them claimed. Only
+  // meaningful while category === "time".
+  const [hoursMeta, setHoursMeta] = useState<{ entryIds: number[]; hoursPeriod: string; hoursDetail: string } | null>(null);
 
   // Prefill handed over from another page (e.g. the Time Clock's "file a comp
   // request for these hours" button). One-shot: consumed and cleared on mount.
@@ -686,6 +718,11 @@ export default function CompRequests() {
       if (typeof p.description === "string") setDescription(p.description);
       if (typeof p.category === "string") setCategory(p.category);
       if (Number.isFinite(p.amountCents) && p.amountCents > 0) setAmount((p.amountCents / 100).toFixed(2));
+      // Carry the exact shifts through from the Time Clock so this request is
+      // shift-backed (priced + deduped server-side, already-claimed shifts dropped).
+      if (p.category === "time" && Array.isArray(p.hoursEntryIds) && p.hoursEntryIds.length && /^\d{4}-\d{2}$/.test(p.hoursPeriod ?? "")) {
+        setHoursMeta({ entryIds: p.hoursEntryIds.map(Number), hoursPeriod: p.hoursPeriod, hoursDetail: typeof p.hoursDetail === "string" ? p.hoursDetail : "" });
+      }
     } catch {}
   }, []);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -726,6 +763,9 @@ export default function CompRequests() {
         description, category, expenseDate: expenseDate || undefined, note, isReimbursement,
         amountCents: Math.round(parseFloat(amount || "0") * 100),
         onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
+        // Only send shift metadata for a time request filled from the hint/Time Clock.
+        // The server prices these shifts itself; the amount above is just a preview.
+        ...(category === "time" && hoursMeta ? { hoursEntryIds: hoursMeta.entryIds, hoursPeriod: hoursMeta.hoursPeriod, hoursDetail: hoursMeta.hoursDetail } : {}),
       });
       // Upload any receipts attached on the form to the new item.
       const newId = created?.id;
@@ -747,7 +787,7 @@ export default function CompRequests() {
           + (pendingFiles.length ? " with " + pendingFiles.length + " receipt(s)" : "")
           + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
       });
-      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false);
+      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false); setHoursMeta(null); setCategory("transfers");
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -966,19 +1006,31 @@ export default function CompRequests() {
           <TransferStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
             forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
-            onUse={(text, amountCents) => { setDescription(text); setCategory("transfers"); if (amountCents != null) setAmount((amountCents / 100).toFixed(2)); }}
+            onUse={(text, amountCents) => { setDescription(text); setCategory("transfers"); if (amountCents != null) setAmount((amountCents / 100).toFixed(2)); setHoursMeta(null); }}
           />
           <HoursStatsHint
             forUserId={compForUserId ? Number(compForUserId) : undefined}
             forUserName={compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? null) : null}
-            onUse={(text, amountCents) => { setDescription(text); setCategory("time"); setAmount((amountCents / 100).toFixed(2)); }}
+            onUse={(text, amountCents, meta) => { setDescription(text); setCategory("time"); setAmount((amountCents / 100).toFixed(2)); setHoursMeta(meta ?? null); }}
           />
+          {hoursMeta && hoursMeta.hoursDetail && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2">
+              <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200 mb-1">Shifts on this request ({hoursMeta.entryIds.length}) — dates &amp; times worked</p>
+              <pre className="text-[11px] text-amber-800 dark:text-amber-300/90 whitespace-pre-wrap font-sans leading-snug max-h-32 overflow-y-auto m-0">{hoursMeta.hoursDetail}</pre>
+              <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 mt-1">Amount is calculated from these shifts. Any already-requested shifts are skipped automatically.</p>
+            </div>
+          )}
           {isManager && (
             <div>
               <label className="text-xs font-medium text-muted-foreground">Submit for</label>
               <select
                 value={compForUserId}
-                onChange={e => setCompForUserId(e.target.value)}
+                onChange={e => {
+                  setCompForUserId(e.target.value);
+                  // The hours hint is per-CLR; if fields were filled from it, drop
+                  // them so one CLR's shifts/amount can't be filed against another.
+                  if (hoursMeta) { setHoursMeta(null); setDescription(""); setAmount(""); setNote(""); setCategory("transfers"); }
+                }}
                 className="h-9 mt-1 rounded-md border bg-background px-2 text-sm w-full"
                 data-testid="select-comp-for"
               >
@@ -1004,14 +1056,21 @@ export default function CompRequests() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Category</label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger data-testid="select-comp-category"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORY_KEYS.map((key) => (
-                    <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {hoursMeta ? (
+                // Filled from the Time Clock hours — category is locked to "time" and
+                // the amount is priced from the shifts, so it can't be edited into a
+                // different category or amount here.
+                <div className="h-9 mt-1 flex items-center px-2"><CatChip category="time" /></div>
+              ) : (
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger data-testid="select-comp-category"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MANUAL_CATEGORY_KEYS.map((key) => (
+                      <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Date spent</label>
@@ -1254,6 +1313,12 @@ export default function CompRequests() {
                           {r.expenseDate ? fmtDate(r.expenseDate) : ""}{r.expenseDate && r.note ? " · " : ""}{r.note}
                         </p>
                       )}
+                      {r.hoursDetail && (
+                        <details className="mt-0.5">
+                          <summary className="text-[11px] text-amber-700 dark:text-amber-400 cursor-pointer select-none">Dates &amp; times worked{typeof r.hoursCovered === "number" ? ` · ${r.hoursCovered}h` : ""}</summary>
+                          <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-sans leading-snug mt-1 m-0">{r.hoursDetail}</pre>
+                        </details>
+                      )}
                       {r.status !== "pending" && r.reviewerName && (
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {r.status === "approved" ? "Approved" : "Denied"} by {r.reviewerName}
@@ -1405,6 +1470,12 @@ export default function CompRequests() {
                       <StatusBadge status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5 truncate">{r.description}</p>
+                    {r.hoursDetail && (
+                      <details className="mt-0.5">
+                        <summary className="text-[11px] text-amber-700 dark:text-amber-400 cursor-pointer select-none">Dates &amp; times worked{typeof r.hoursCovered === "number" ? ` · ${r.hoursCovered}h` : ""}</summary>
+                        <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-sans leading-snug mt-1 m-0">{r.hoursDetail}</pre>
+                      </details>
+                    )}
                     {r.status !== "pending" && r.reviewerName && (
                       <p className="text-[11px] text-muted-foreground mt-1">
                         {r.status === "approved" ? "Approved" : "Denied"} by {r.reviewerName}
@@ -1497,17 +1568,24 @@ export default function CompRequests() {
                 <label className="text-xs font-medium text-muted-foreground">Amount (USD)</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-                  <Input type="number" min="0" step="0.01" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} placeholder="0.00" className="pl-6" data-testid="edit-comp-amount" />
+                  <Input type="number" min="0" step="0.01" inputMode="decimal" value={editAmount} onChange={e => setEditAmount(e.target.value)} placeholder="0.00" className="pl-6" data-testid="edit-comp-amount" disabled={!!editTarget?.hoursBacked} />
                 </div>
+                {editTarget?.hoursBacked && <p className="text-[10px] text-muted-foreground mt-0.5">Priced from the shifts.</p>}
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Category</label>
-                <Select value={editCategory} onValueChange={setEditCategory}>
-                  <SelectTrigger data-testid="edit-comp-category"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {CATEGORY_KEYS.map((key) => <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                {editCategory === "time" ? (
+                  // "time" is shift-locked; a legacy time row stays time too. Either
+                  // way it can't be re-picked as a manual category here.
+                  <div className="h-9 mt-1 flex items-center"><CatChip category="time" /></div>
+                ) : (
+                  <Select value={editCategory} onValueChange={setEditCategory}>
+                    <SelectTrigger data-testid="edit-comp-category"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {MANUAL_CATEGORY_KEYS.map((key) => <SelectItem key={key} value={key}>{CATEGORIES[key].label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Date spent</label>
