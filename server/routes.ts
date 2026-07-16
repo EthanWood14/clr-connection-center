@@ -430,7 +430,99 @@ function buildEmail(opts: {
 const DEFAULT_RESEND_KEY = process.env.RESEND_API_KEY || "";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
-async function sendEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }): Promise<string> {
+type EmailPayload = { to: string | string[]; subject: string; html: string };
+
+// ── Deferred email dispatch ───────────────────────────────────────────────────
+// Every outbound email is held for EMAIL_SEND_DELAY_MS before it actually goes
+// out. That short buffer is a cancellation window: if the reason for an email is
+// resolved during it — e.g. a comp request is approved or denied in-app within
+// 30s of being filed — the queued email is dropped and never sent (see
+// cancelPendingEmails). The approver's one-click Approve/Deny links live INSIDE
+// the email, so they can't act before it's delivered; that means an in-app
+// action is the only thing that can win the race, which is exactly what we want
+// to suppress the now-pointless email. Set EMAIL_SEND_DELAY_MS=0 to send
+// immediately (tests/local).
+const EMAIL_SEND_DELAY_MS = (() => {
+  const raw = Number(process.env.EMAIL_SEND_DELAY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
+})();
+type PendingEmail = { timer: NodeJS.Timeout; cancelKey?: string; payload: EmailPayload };
+const pendingEmails = new Map<number, PendingEmail>();
+let pendingEmailSeq = 0;
+
+// Drop any not-yet-sent emails tagged with this key; returns how many were
+// canceled. Callers tag an email with a per-reason key (e.g. "comp:<token>") and
+// call this when that reason is resolved during the delay window.
+function cancelPendingEmails(cancelKey: string): number {
+  let canceled = 0;
+  for (const [id, p] of Array.from(pendingEmails.entries())) {
+    if (p.cancelKey === cancelKey) {
+      clearTimeout(p.timer);
+      pendingEmails.delete(id);
+      canceled++;
+      console.log(`[sendEmail] canceled queued #${id} (${JSON.stringify(p.payload.subject)}) key=${cancelKey}`);
+    }
+  }
+  return canceled;
+}
+
+// Cancel a comp request's queued approval email, but ONLY once nothing under its
+// token is still pending. One submission can bundle several expense rows under a
+// single approval_token into one email whose one-click Approve/Deny links cover
+// them all, so resolving just one item in-app must not drop the email the still-
+// pending siblings depend on. Call this AFTER the row's status/token has changed.
+function maybeCancelCompApprovalEmail(token: string | null | undefined): void {
+  if (!token) return;
+  try {
+    const db = storageExtra.getRawSqlite();
+    const row = db.prepare("SELECT COUNT(*) AS n FROM comp_requests WHERE approval_token=? AND status='pending'").get(token) as any;
+    if (Number(row?.n ?? 0) === 0) cancelPendingEmails("comp:" + token);
+  } catch (e: any) {
+    console.error("[comp] approval-email cancel check failed:", e?.message ?? e);
+  }
+}
+
+// Fire everything still queued right now (best-effort) — e.g. on shutdown so a
+// deploy/restart mid-window doesn't silently drop mail. Returns the in-flight
+// send promises so the caller can await them before exiting.
+export function flushPendingEmails(): Promise<unknown>[] {
+  const sends: Promise<unknown>[] = [];
+  for (const [id, p] of Array.from(pendingEmails.entries())) {
+    clearTimeout(p.timer);
+    pendingEmails.delete(id);
+    sends.push(dispatchEmailNow(p.payload).catch((err) => console.error(`[sendEmail] flush send #${id} failed:`, err?.message ?? err)));
+  }
+  if (sends.length) console.log(`[sendEmail] flushing ${sends.length} queued email(s)`);
+  return sends;
+}
+
+// Public entry point for all app email. By default it queues the send behind the
+// delay window and returns a synthetic "queued:<n>" id immediately — the real
+// send happens later and any failure is logged, not thrown. Pass
+// { immediate: true } to send right now and get the real Resend id back (the
+// admin test-email needs this). Pass { cancelKey } to make the email cancelable.
+async function sendEmail(payload: EmailPayload, meta?: { cancelKey?: string; immediate?: boolean }): Promise<string> {
+  if (meta?.immediate || EMAIL_SEND_DELAY_MS <= 0) {
+    return dispatchEmailNow(payload);
+  }
+  const id = ++pendingEmailSeq;
+  const timer = setTimeout(() => {
+    pendingEmails.delete(id);
+    dispatchEmailNow(payload).catch((err) =>
+      console.error(`[sendEmail] deferred send #${id} failed (${JSON.stringify(payload.subject)}):`, err?.message ?? err));
+  }, EMAIL_SEND_DELAY_MS);
+  // A queued email shouldn't keep the event loop alive on its own; flush-on-exit
+  // (flushPendingEmails) is the mechanism for not losing it on shutdown.
+  if (typeof (timer as any).unref === "function") (timer as any).unref();
+  pendingEmails.set(id, { timer, cancelKey: meta?.cancelKey, payload });
+  const toArr = Array.isArray(payload.to) ? payload.to : [payload.to];
+  console.log(`[sendEmail] queued #${id} to=${JSON.stringify(toArr)} subject=${JSON.stringify(payload.subject)} delayMs=${EMAIL_SEND_DELAY_MS}${meta?.cancelKey ? ` key=${meta.cancelKey}` : ""}`);
+  return `queued:${id}`;
+}
+
+// Low-level immediate send (the actual Resend call). Prefer sendEmail(); this is
+// what fires after the delay window, and directly for { immediate: true } sends.
+async function dispatchEmailNow({ to, subject, html }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
   // Old installs sometimes have a non-empty but revoked key in the DB, which
@@ -1902,7 +1994,11 @@ cron.schedule("0 5 * * *", async () => {
       const { subject, html } = dueGroups.length === 1
         ? buildCompApprovalEmail(dueGroups[0].items, dueGroups[0].token, dueGroups[0].requesterName, { days: dueGroups[0].days })
         : buildCompReminderDigestEmail(dueGroups);
-      await sendEmail({ to: approverEmail, subject, html });
+      // Reminders send immediately, NOT through the delay window: they're a daily
+      // cron nudge with no approval race to suppress, and last_reminder_at below
+      // must only be stamped on a real send — deferring would swallow a Resend
+      // failure and wrongly skip the next-day retry.
+      await sendEmail({ to: approverEmail, subject, html }, { immediate: true });
       const stamp = db.prepare("UPDATE comp_requests SET last_reminder_at=? WHERE approval_token=? AND (status='pending' OR (status='approved' AND is_paid=0))");
       for (const g of dueGroups) stamp.run(nowIso, g.token);
       console.log("[comp-reminder] reminded " + approverEmail + " (" + dueGroups.length + " request(s) in one email)");
@@ -2728,7 +2824,9 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
           : `⚠️ Overdue EOD Report — ${reportDate} (${sendCount}th reminder)`;
 
         try {
-          await sendEmail({ to: toEmail, subject, html });
+          // Immediate (not deferred): the eod_reminder_log upsert below must only
+          // record a real send, and this cron nudge has nothing to cancel.
+          await sendEmail({ to: toEmail, subject, html }, { immediate: true });
           console.log(`[eod-reminder] sent to ${toEmail} for ${clr.name} date=${reportDate} count=${sendCount}`);
 
           // Upsert log row
@@ -6322,7 +6420,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         if (approverEmail) {
           const { subject, html } = buildCompApprovalEmail([row], token, requester?.name ?? "A team member");
-          await sendEmail({ to: approverEmail, subject, html });
+          await sendEmail({ to: approverEmail, subject, html }, { cancelKey: "comp:" + token });
           emailedTo = approverEmail;
         }
       } catch (e: any) { console.error("[comp] approval email failed:", e?.message ?? e); }
@@ -6375,6 +6473,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           is_received=0, received_at=NULL,
           approval_token=?, requested_at=?, updated_at=?
         WHERE id=?`).run(description, category, amountCents, expenseDate, note, isReimbursement, token, nowIso, nowIso, id);
+      // This row now carries the NEW token; if the OLD token's queued email has no
+      // remaining pending items (i.e. this wasn't a batch, or siblings are done),
+      // cancel it so its now-dead links don't get delivered. Runs after the update
+      // so the sibling count reflects the moved row.
+      maybeCancelCompApprovalEmail(existing.approval_token);
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
       const nameById = compNameMap();
       const actor = (storage.getUsers() as any[]).find(u => u.id === userId);
@@ -6402,7 +6505,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
         if (approverEmail) {
           const { subject, html } = buildCompApprovalEmail([row], token, nameById.get(existing.user_id) ?? "A team member");
-          await sendEmail({ to: approverEmail, subject, html });
+          await sendEmail({ to: approverEmail, subject, html }, { cancelKey: "comp:" + token });
         }
       } catch (e: any) { console.error("[comp] resubmit approver email failed:", e?.message ?? e); }
       res.json(mapComp(row, compNameMap()));
@@ -6443,7 +6546,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const items = db.prepare("SELECT * FROM comp_requests WHERE approval_token=? AND status='pending'").all(token) as any[];
         if (approverEmail && items.length) {
           const { subject, html } = buildCompApprovalEmail(items, token, actor?.name ?? "a team member");
-          await sendEmail({ to: approverEmail, subject, html });
+          await sendEmail({ to: approverEmail, subject, html }, { cancelKey: "comp:" + token });
           emailedTo = approverEmail;
         }
       } catch (e: any) { console.error("[comp] approver email failed:", e?.message ?? e); }
@@ -6510,6 +6613,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return res.status(403).json({ error: "You can't approve or deny your own comp request." });
       }
       db.prepare("UPDATE comp_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
+      // Resolved in-app during the send window? Drop the approver's now-pointless
+      // email — but only if no sibling items under the same token are still
+      // pending (a batch submission shares one email for all its items).
+      maybeCancelCompApprovalEmail(existing.approval_token);
       const nameById = compNameMap();
       const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(id) as any;
       const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
@@ -6621,6 +6728,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const canDelete = isCompAdmin(userId) || (isOwner && (existing.status === "draft" || existing.status === "pending"));
       if (!canDelete) return res.status(403).json({ error: "You can only remove your own draft or pending items." });
       db.prepare("DELETE FROM comp_requests WHERE id=? AND org_id=?").run(id, orgId);
+      // If it's removed before its approval email has gone out, drop the email —
+      // unless sibling items share the token and are still pending.
+      maybeCancelCompApprovalEmail(existing.approval_token);
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to remove item" });
@@ -10481,7 +10591,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             </div>
           `,
         }),
-      });
+      }, { immediate: true }); // diagnostic — must actually send now and surface a real delivery failure
       res.json({ ok: true });
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
@@ -10649,7 +10759,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         html: `<p>This is a test email from the CLR Connection Center.</p>
                <p>If you received this, Resend delivery is working.</p>
                <p style="color:#64748b;font-size:12px">Sent at ${new Date().toISOString()}</p>`,
-      });
+      }, { immediate: true }); // diagnostic — send now and return the real Resend id, don't defer
       const s = storageExtra.getEmailSettings() as any;
       const dbKey = String(s.resend_api_key || "").trim();
       const keySource = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey) ? "db" : "default";

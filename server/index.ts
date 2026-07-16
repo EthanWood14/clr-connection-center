@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { registerRoutes } from "./routes";
+import { registerRoutes, flushPendingEmails } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
@@ -182,4 +182,31 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // Graceful shutdown: emails are held for a short delay window before sending
+  // (see sendEmail in routes.ts). On a deploy/restart, flush anything still
+  // queued so it isn't silently dropped, then exit. Registering these handlers
+  // means WE own the exit, so always call process.exit after flushing.
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log(`received ${signal} — flushing queued emails and shutting down`, "shutdown");
+    try {
+      const sends = flushPendingEmails();
+      // Bound the wait so we never hang past the platform's grace period.
+      await Promise.race([
+        Promise.allSettled(sends),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+    } catch (e: any) {
+      console.error("[shutdown] flush failed:", e?.message ?? e);
+    } finally {
+      httpServer.close(() => process.exit(0));
+      // Fallback in case close() hangs on lingering connections.
+      setTimeout(() => process.exit(0), 3000).unref();
+    }
+  };
+  process.once("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+  process.once("SIGINT", () => void gracefulShutdown("SIGINT"));
 })();
