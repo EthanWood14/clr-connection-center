@@ -10497,23 +10497,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ checks: enriched, periodKey });
   });
 
-  // My pending NMLS checks (for current user)
+  // My pending NMLS checks (for current user) + the shared "overdue" pool that
+  // ANYONE may clear (escalated checks assigned to other people that haven't been
+  // done). Confirming is already open to any signed-in user, so overdue checks
+  // don't stay stuck on one person who's out or behind.
   app.get("/api/nmls-checks/my-pending", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const periodKey = getNmlsPeriodKey();
     const allChecks = storageExtra.getNmlsChecksForPeriod(periodKey);
     const los = storage.getLoanOfficers();
+    const users = storage.getUsers();
     const schedule = storageExtra.getNmlsSchedule();
+    const escalationDays = schedule.escalation_days ?? 7;
+    const daysOverdueOf = (c: any) => Math.floor((Date.now() - new Date(c.assigned_at).getTime()) / 86400000);
     const pending = allChecks
       .filter((c: any) => c.assigned_to === userId && c.status === "pending")
-      .map((c: any) => {
-        const lo = los.find((l: any) => l.id === c.lo_id);
-        const assignedAt = new Date(c.assigned_at);
-        const daysOverdue = Math.floor((Date.now() - assignedAt.getTime()) / 86400000);
-        return { ...c, lo, daysOverdue };
-      });
-    res.json({ checks: pending, periodKey, escalationDays: schedule.escalation_days ?? 7, nextCheckAt: schedule.next_run_at ?? null });
+      .map((c: any) => ({ ...c, lo: los.find((l: any) => l.id === c.lo_id), daysOverdue: daysOverdueOf(c) }));
+    // Escalated checks belonging to someone else — a shared pool anyone can clear.
+    const overdue = allChecks
+      .filter((c: any) => c.status === "pending" && c.assigned_to !== userId)
+      .map((c: any) => ({
+        ...c,
+        lo: los.find((l: any) => l.id === c.lo_id),
+        assignedTo: users.find((u: any) => u.id === c.assigned_to),
+        daysOverdue: daysOverdueOf(c),
+      }))
+      .filter((c: any) => c.daysOverdue >= escalationDays)
+      .sort((a: any, b: any) => b.daysOverdue - a.daysOverdue);
+    res.json({ checks: pending, overdue, periodKey, escalationDays, nextCheckAt: schedule.next_run_at ?? null });
   });
 
   // Confirm NMLS check for an LO

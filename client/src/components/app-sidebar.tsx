@@ -321,6 +321,14 @@ export function AppSidebar() {
     }
   }, [location, latestChatId, storageKey]);
 
+  // ── NMLS badge: my pending checks + the shared overdue pool anyone can clear ──
+  const { data: nmlsData } = useQuery<{ checks: any[]; overdue: any[] }>({
+    queryKey: ["/api/nmls-checks/my-pending"],
+    refetchInterval: 60000,
+    enabled: !!user,
+  });
+  const nmlsCount = (nmlsData?.checks?.length ?? 0) + (nmlsData?.overdue?.length ?? 0);
+
   // ── Helpers ────────────────────────────────────────────────────────────────
   const initials = user
     ? user.name.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
@@ -338,6 +346,7 @@ export function AppSidebar() {
   function getBadgeCount(badge?: string) {
     if (badge === "appointments") return appointmentCount;
     if (badge === "chat") return unreadChatCount;
+    if (badge === "nmls") return nmlsCount;
     return 0;
   }
 

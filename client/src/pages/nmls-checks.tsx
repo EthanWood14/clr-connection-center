@@ -10,6 +10,61 @@ import { formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { parseDbTimestamp } from "@/lib/utils";
 
+// One NMLS check card. `assignedToName` is set for the shared "overdue" pool so
+// you can see whose check you're helping clear.
+function NmlsCheckCard({ check, escalationDays, onConfirm, confirming, assignedToName }: {
+  check: any; escalationDays: number; onConfirm: (loId: number) => void; confirming: boolean; assignedToName?: string | null;
+}) {
+  const lo = check.lo;
+  const daysOverdue = check.daysOverdue ?? 0;
+  const isEscalating = daysOverdue >= escalationDays - 2;
+  const isUrgent = daysOverdue >= escalationDays;
+  let states: string[] = [];
+  try { states = JSON.parse(lo?.licensedStates || "[]"); } catch { states = []; }
+  return (
+    <Card className={`border-l-4 ${isUrgent ? "border-l-destructive" : isEscalating ? "border-l-yellow-500" : "border-l-primary"}`}>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold">{lo?.fullName ?? `LO #${check.lo_id}`}</span>
+              {lo?.nmlsId && <Badge variant="outline" className="font-mono text-xs">NMLS #{lo.nmlsId}</Badge>}
+              {isUrgent ? (
+                <Badge variant="destructive" className="text-xs gap-1"><AlertTriangle className="w-3 h-3" />Escalated</Badge>
+              ) : isEscalating ? (
+                <Badge className="text-xs bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">Escalating soon</Badge>
+              ) : null}
+            </div>
+            {states.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {states.map((s) => (
+                  <span key={s} className="text-xs px-1.5 py-0.5 rounded font-mono bg-muted text-muted-foreground">{s.trim().toUpperCase()}</span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
+              <Clock className="w-3 h-3" />
+              <span>
+                {assignedToName ? <>Assigned to <span className="font-medium text-foreground">{assignedToName}</span> </> : "Assigned "}
+                {formatDistanceToNow(parseDbTimestamp(check.assigned_at) ?? new Date(), { addSuffix: true })}
+                {daysOverdue > 0 && (
+                  <span className={isUrgent ? " text-destructive font-semibold" : " text-yellow-600 dark:text-yellow-400"}>
+                    {" "}· {daysOverdue} day{daysOverdue !== 1 ? "s" : ""} overdue
+                  </span>
+                )}
+              </span>
+            </div>
+          </div>
+          <Button size="sm" onClick={() => onConfirm(check.lo_id)} disabled={confirming} className="shrink-0 gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {confirming ? "Confirming…" : "Confirm Verified"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function NmlsChecks() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -34,6 +89,7 @@ export default function NmlsChecks() {
   });
 
   const checks: any[] = data?.checks ?? [];
+  const overdue: any[] = data?.overdue ?? [];
   const escalationDays: number = data?.escalationDays ?? 7;
   const nextCheckAt: string | null = data?.nextCheckAt ?? null;
 
@@ -96,95 +152,45 @@ export default function NmlsChecks() {
             </Card>
           ))}
         </div>
-      ) : checks.length === 0 ? (
+      ) : checks.length === 0 && overdue.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center">
             <CheckCircle2 className="w-10 h-10 mx-auto text-green-500/70 mb-3" />
             <p className="font-medium text-sm">All clear!</p>
             <p className="text-xs text-muted-foreground mt-1">
-              You have no pending NMLS checks assigned to you right now.
+              No pending NMLS checks assigned to you, and nothing overdue to help with.
             </p>
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-            {checks.length} pending check{checks.length !== 1 ? "s" : ""} assigned to you
-          </p>
-          {checks.map((check) => {
-            const lo = check.lo;
-            const daysOverdue = check.daysOverdue ?? 0;
-            const isEscalating = daysOverdue >= escalationDays - 2;
-            const isUrgent = daysOverdue >= escalationDays;
-            return (
-              <Card
-                key={check.id}
-                className={`border-l-4 ${isUrgent ? "border-l-destructive" : isEscalating ? "border-l-yellow-500" : "border-l-primary"}`}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold">{lo?.fullName ?? `LO #${check.lo_id}`}</span>
-                        {lo?.nmlsId && (
-                          <Badge variant="outline" className="font-mono text-xs">
-                            NMLS #{lo.nmlsId}
-                          </Badge>
-                        )}
-                        {isUrgent ? (
-                          <Badge variant="destructive" className="text-xs gap-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            Escalated
-                          </Badge>
-                        ) : isEscalating ? (
-                          <Badge className="text-xs bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-                            Escalating soon
-                          </Badge>
-                        ) : null}
-                      </div>
+        <div className="space-y-6">
+          {checks.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                {checks.length} pending check{checks.length !== 1 ? "s" : ""} assigned to you
+              </p>
+              {checks.map((check) => (
+                <NmlsCheckCard key={check.id} check={check} escalationDays={escalationDays} onConfirm={confirm.mutate} confirming={confirm.isPending} />
+              ))}
+            </div>
+          )}
 
-                      {lo?.licensedStates && (() => {
-                        try {
-                          const states: string[] = JSON.parse(lo.licensedStates || "[]");
-                          return states.length > 0 ? (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {states.map((s) => (
-                                <span key={s} className="text-xs px-1.5 py-0.5 rounded font-mono bg-muted text-muted-foreground">
-                                  {s.trim().toUpperCase()}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null;
-                        } catch { return null; }
-                      })()}
-
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
-                        <Clock className="w-3 h-3" />
-                        <span>
-                          Assigned {formatDistanceToNow(parseDbTimestamp(check.assigned_at) ?? new Date(), { addSuffix: true })}
-                          {daysOverdue > 0 && (
-                            <span className={isUrgent ? " text-destructive font-semibold" : " text-yellow-600 dark:text-yellow-400"}>
-                              {" "}· {daysOverdue} day{daysOverdue !== 1 ? "s" : ""} overdue
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      onClick={() => confirm.mutate(check.lo_id)}
-                      disabled={confirm.isPending}
-                      className="shrink-0 gap-1.5"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      {confirm.isPending ? "Confirming…" : "Confirm Verified"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+          {overdue.length > 0 && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {overdue.length} overdue — anyone can help
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  These are assigned to someone else but are past due. Verify and confirm any of them to clear the backlog.
+                </p>
+              </div>
+              {overdue.map((check) => (
+                <NmlsCheckCard key={check.id} check={check} escalationDays={escalationDays} onConfirm={confirm.mutate} confirming={confirm.isPending} assignedToName={check.assignedTo?.name ?? null} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
