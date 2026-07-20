@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
-  CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, Timer, Award, Laptop, BookOpen,
+  CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, Timer, Award, Laptop, BookOpen, Repeat,
 } from "lucide-react";
 
 interface CompItem {
@@ -447,6 +447,62 @@ function submittedRangeLabel(items: CompItem[]): string {
 
 // Admin-only panel to see who can approve comp requests and mark people as
 // managers inline (managers are the approvers in the comp pipeline).
+// Recurring monthly comp requests — templates created via the composer's
+// "repeat monthly" toggle. Each auto-files a normal pending request on the 1st
+// of every month until paused or deleted. Everyone sees their own; managers see
+// the whole org's.
+function RecurringPanel() {
+  const { toast } = useToast();
+  const { data } = useQuery<{ isManager: boolean; templates: any[] }>({
+    queryKey: ["/api/comp/recurring"],
+    queryFn: () => apiRequest("GET", "/api/comp/recurring"),
+  });
+  const templates = data?.templates ?? [];
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/comp/recurring"] });
+  const toggleMut = useMutation({
+    mutationFn: (v: { id: number; active: boolean }) => apiRequest("PATCH", `/api/comp/recurring/${v.id}`, { active: v.active }),
+    onSuccess: (_d: any, v) => { toast({ title: v.active ? "Recurring resumed" : "Recurring paused" }); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/comp/recurring/${id}`),
+    onSuccess: () => { toast({ title: "Recurring request deleted" }); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
+  });
+  if (!templates.length) return null;
+  const active = templates.filter(t => t.active);
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Repeat className="w-4 h-4 text-indigo-500" /> Recurring monthly requests
+          {active.length > 0 && <Badge className="ml-1 bg-indigo-600 text-white text-[10px] px-1.5">{active.length} active</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">These auto-file for approval on the <strong>1st of each month</strong>. Pause to skip upcoming months; delete to stop for good. Set one up with the "repeat monthly" toggle when logging an expense.</p>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-md border divide-y">
+          {templates.map((t) => (
+            <div key={t.id} className={`flex items-center gap-2 px-3 py-2 text-sm flex-wrap ${t.active ? "" : "opacity-60"}`} data-testid={"recurring-" + t.id}>
+              {data?.isManager && <span className="font-medium shrink-0">{t.userName}</span>}
+              <span className="min-w-0 truncate flex-1">{t.description}</span>
+              <CatChip category={t.category} />
+              <span className="tabular-nums font-semibold">{money(t.amountCents)}/mo</span>
+              {!t.active && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Paused</Badge>}
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => toggleMut.mutate({ id: t.id, active: !t.active })} disabled={toggleMut.isPending} data-testid={"recurring-toggle-" + t.id}>
+                {t.active ? "Pause" : "Resume"}
+              </Button>
+              <button type="button" onClick={() => delMut.mutate(t.id)} disabled={delMut.isPending} className="text-muted-foreground hover:text-red-600 p-1 disabled:opacity-50" aria-label="Delete recurring request" data-testid={"recurring-del-" + t.id}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Draws: advances a manager records against a person. While OPEN, a draw is
 // deducted from that person's NET on the payout sheet. Settle/delete once applied.
 function DrawsPanel() {
@@ -810,6 +866,10 @@ export default function CompRequests() {
   const [expenseDate, setExpenseDate] = useState("");
   const [note, setNote] = useState("");
   const [isReimbursement, setIsReimbursement] = useState(false);
+  // "Repeat monthly": also saves a recurring template — the same request is then
+  // auto-filed on the 1st of every month until paused/deleted. Not for hours
+  // (shift-backed) requests.
+  const [recurringMonthly, setRecurringMonthly] = useState(false);
   // Set when an hours comp request is filled from the Time Clock hint / button: the
   // exact shift IDs it covers, the month, and a dates/times snapshot. Sent with the
   // request so the server prices those shifts and marks them claimed. Only
@@ -872,6 +932,7 @@ export default function CompRequests() {
         description, category, expenseDate: expenseDate || undefined, note, isReimbursement,
         amountCents: Math.round(parseFloat(amount || "0") * 100),
         onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
+        recurringMonthly: recurringMonthly && category !== "time",
         // Only send shift metadata for a time request filled from the hint/Time Clock.
         // The server prices these shifts itself; the amount above is just a preview.
         ...(category === "time" && hoursMeta ? { hoursEntryIds: hoursMeta.entryIds, hoursPeriod: hoursMeta.hoursPeriod, hoursDetail: hoursMeta.hoursDetail } : {}),
@@ -896,7 +957,8 @@ export default function CompRequests() {
           + (pendingFiles.length ? " with " + pendingFiles.length + " receipt(s)" : "")
           + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
       });
-      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false); setHoursMeta(null); setCategory("transfers");
+      setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false); setHoursMeta(null); setCategory("transfers"); setRecurringMonthly(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/comp/recurring"] });
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not save", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -1213,6 +1275,19 @@ export default function CompRequests() {
               data-testid="toggle-comp-reimbursement"
             />
           </div>
+          {!hoursMeta && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium flex items-center gap-1.5"><Repeat className="w-3.5 h-3.5 text-indigo-500" /> Repeat this request monthly?</p>
+                <p className="text-xs text-muted-foreground">On = the same request auto-files for approval on the 1st of every month (e.g. a subscription) until you pause or delete it below.</p>
+              </div>
+              <Switch
+                checked={recurringMonthly}
+                onCheckedChange={setRecurringMonthly}
+                data-testid="toggle-comp-recurring"
+              />
+            </div>
+          )}
           <div>
             <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>
             <Textarea
@@ -1266,6 +1341,9 @@ export default function CompRequests() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Recurring monthly requests — hidden until you have one */}
+      <RecurringPanel />
 
       {/* Manager management — see + mark who can approve (admins only) */}
       {isAdmin && <ManagersPanel />}

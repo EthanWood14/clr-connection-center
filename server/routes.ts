@@ -2054,6 +2054,75 @@ cron.schedule("0 5 * * *", async () => {
   } catch (e: any) { console.error("[comp-reminder] cron error:", e?.message ?? e); }
 });
 
+// ── Recurring comp requests: auto-file once per calendar month ───────────────
+// Every 6 hours (guard-based, so it's idempotent and self-catches-up after
+// downtime): each active template whose last_filed_period differs from the
+// current business-tz month files a normal pending comp request — same token,
+// approval email, and reminder flow as a manual submission.
+async function processRecurringComp(): Promise<void> {
+  const db = storageExtra.getRawSqlite();
+  const todayStr = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ); // "YYYY-MM-DD"
+  const period = todayStr.slice(0, 7);
+  const monthLabel = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1))
+    .toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  const due = db.prepare("SELECT * FROM comp_recurring WHERE active=1 AND (last_filed_period IS NULL OR last_filed_period != ?)").all(period) as any[];
+  if (!due.length) return;
+  const users = storage.getUsers() as any[];
+  const userById = new Map<number, any>(users.map((u: any) => [u.id, u]));
+  const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
+  const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
+  const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+  const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+  for (const t of due) {
+    try {
+      const owner = userById.get(Number(t.user_id));
+      // Deactivated user → pause the template rather than filing into the void.
+      if (!owner || !(owner.isActive ?? owner.is_active)) {
+        db.prepare("UPDATE comp_recurring SET active=0, updated_at=? WHERE id=?").run(new Date().toISOString(), t.id);
+        try { storage.createAuditLog({ userId: 0, userName: "System", action: "update", entityType: "comp_recurring", entityId: Number(t.id), entityLabel: "Recurring comp template auto-paused (owner inactive)", details: JSON.stringify({ userId: t.user_id }) } as any); } catch {}
+        console.log(`[comp-recurring] template #${t.id} paused — owner inactive`);
+        continue;
+      }
+      const nowIso = new Date().toISOString();
+      const token = crypto.randomBytes(24).toString("hex");
+      const description = `${t.description} — ${monthLabel} (recurring)`.slice(0, 300);
+      // Claim + INSERT run in ONE transaction: the once-per-month stamp only
+      // sticks if the request row was actually created, so a failed INSERT rolls
+      // the claim back and the next 6h tick retries instead of silently losing
+      // the month. (The claim's WHERE guard still makes concurrent ticks no-ops.)
+      const fileOne = db.transaction((): number | null => {
+        const claimed = db.prepare("UPDATE comp_recurring SET last_filed_period=?, updated_at=? WHERE id=? AND active=1 AND (last_filed_period IS NULL OR last_filed_period != ?)")
+          .run(period, nowIso, t.id, period);
+        if (claimed.changes !== 1) return null;
+        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'pending', ?, ?, ?, ?)")
+          .run(t.org_id, t.user_id, description, (t.category === "time" || t.category === "hours") ? "other" : t.category, t.amount_cents, t.note ?? "", t.is_reimbursement ?? 0, token, nowIso, nowIso, nowIso);
+        return Number(info.lastInsertRowid);
+      });
+      const newId = fileOne();
+      if (newId == null) continue;
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(newId) as any;
+      try { storage.createAuditLog({ userId: Number(t.user_id), userName: owner.name ?? "User", action: "create", entityType: "comp_request", entityId: newId, entityLabel: (owner.name ?? "User") + " recurring comp auto-filed", details: JSON.stringify({ templateId: t.id, period, amountCents: t.amount_cents }) } as any); } catch {}
+      try {
+        (storage as any).createNotification?.({
+          userId: Number(t.user_id), type: "comp_request", title: "Recurring comp request filed",
+          message: `Your monthly request "${t.description}" ($${(t.amount_cents / 100).toFixed(2)}) was auto-filed for ${monthLabel} and sent for approval.`,
+        });
+      } catch {}
+      if (approverEmail) {
+        try {
+          const { subject, html } = buildCompApprovalEmail([row], token, owner.name ?? "A team member");
+          await sendEmail({ to: approverEmail, subject, html }, { cancelKey: "comp:" + token });
+        } catch (e: any) { console.error(`[comp-recurring] approver email failed for template #${t.id}:`, e?.message ?? e); }
+      }
+      console.log(`[comp-recurring] filed template #${t.id} (${owner.name}, $${(t.amount_cents / 100).toFixed(2)}) for ${period}`);
+    } catch (e: any) { console.error(`[comp-recurring] template #${t.id} failed:`, e?.message ?? e); }
+  }
+}
+cron.schedule("0 */6 * * *", () => { processRecurringComp().catch((e) => console.error("[comp-recurring] cron error:", e?.message ?? e)); });
+// Boot catch-up (after migrations settle) so a redeploy spanning the month
+// boundary doesn't wait up to 6h to file.
+setTimeout(() => { processRecurringComp().catch((e) => console.error("[comp-recurring] boot error:", e?.message ?? e)); }, 60_000);
+
 // ── Weekly auto-adjust CLR goals (Mondays 6am) ──────────────────────────────
 cron.schedule("0 6 * * 1", () => {
   try { runGoalAutoAdjust(); } catch (e) { console.error("Goal auto-adjust error:", e); }
@@ -3438,6 +3507,32 @@ export function registerRoutes(httpServer: Server, app: Express) {
       )
     `);
     storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_draws_user ON comp_draws(org_id, user_id, settled)`);
+  } catch {}
+
+  // Recurring comp requests: a template that auto-files a pending comp request
+  // (same approval flow as a manual one) once per calendar month. Created from
+  // the composer's "repeat monthly" toggle; last_filed_period ("YYYY-MM") is the
+  // once-per-month guard. "time" is never allowed here — hours requests must be
+  // shift-backed, so they can't recur on a fixed amount.
+  try {
+    storageExtra.getRawSqlite().exec(`
+      CREATE TABLE IF NOT EXISTS comp_recurring (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        description TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'other',
+        amount_cents INTEGER NOT NULL,
+        note TEXT DEFAULT '',
+        is_reimbursement INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_filed_period TEXT,
+        created_by INTEGER,
+        created_at TEXT,
+        updated_at TEXT
+      )
+    `);
+    storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_recurring_active ON comp_recurring(org_id, active)`);
   } catch {}
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
@@ -6491,7 +6586,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
     const body = req.body ?? {};
     const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
-    const category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
+    let category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
+    // Normalize the legacy "hours" alias to "time" at intake so every time-request
+    // invariant (shift-backed only, never recurring) applies — a crafted "hours"
+    // submission must not slip past the ledger as unbacked time comp.
+    if (category === "hours") category = "time";
     let amountCents = Math.round(Number(body.amountCents));
     const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : null;
     const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
@@ -6510,7 +6609,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const meRow = storage.getUserById(sessUserId) as any;
     const isMgr = !!(meRow && (meRow.role === "admin" || (meRow.isManager ?? meRow.is_manager) || (meRow.superAdmin ?? meRow.super_admin)));
     const onBehalf = Number(body.onBehalfOf) || 0;
-    const forClr = (isMgr && onBehalf && onBehalf !== sessUserId && storage.getUserById(onBehalf)) ? onBehalf : 0;
+    // getUserById isn't org-scoped — verify the on-behalf target is in THIS org
+    // (same guard as draws), else fall back to filing for the submitter.
+    const onBehalfUser = (isMgr && onBehalf && onBehalf !== sessUserId) ? (storage.getUserById(onBehalf) as any) : null;
+    const onBehalfOrg = Number(onBehalfUser?.orgId ?? onBehalfUser?.org_id);
+    const forClr = (onBehalfUser && (!Number.isFinite(onBehalfOrg) || onBehalfOrg === orgId)) ? onBehalf : 0;
     const targetId = forClr || sessUserId;
     const nowIso = new Date().toISOString();
     // Shift-mode: an hours request backed by specific, still-unclaimed time-clock
@@ -6546,8 +6649,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // step. Managers may still file on behalf of a CLR (forClr); otherwise
       // the request is for the submitter themselves.
       const token = crypto.randomBytes(24).toString("hex");
-      const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, token, nowIso, nowIso, nowIso);
-      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(info.lastInsertRowid) as any;
+      // "Repeat monthly" saves a recurring template ATOMICALLY with the request —
+      // a failure rolls both back (no request without its template or vice versa).
+      // The stamp uses the plain business-tz CALENDAR month (not the 23:00
+      // business-day rollover: a template created 11pm on the 31st belongs to THIS
+      // month, so next month's auto-file isn't silently skipped). An identical
+      // active template is reused instead of duplicated — two templates would
+      // auto-file the same expense twice every month. Never for "time" (hours are
+      // shift-backed and can't recur on a fixed amount).
+      const wantsRecurring = (body.recurringMonthly === true || body.recurringMonthly === 1 || body.recurringMonthly === "1") && category !== "time";
+      let recurringId: number | null = null;
+      let recurringReused = false;
+      const createAll = db.transaction(() => {
+        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, token, nowIso, nowIso, nowIso);
+        if (wantsRecurring) {
+          const period = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ }).slice(0, 7);
+          const dup = db.prepare("SELECT id FROM comp_recurring WHERE org_id=? AND user_id=? AND description=? AND amount_cents=? AND active=1").get(orgId, targetId, description, amountCents) as any;
+          if (dup) { recurringId = Number(dup.id); recurringReused = true; }
+          else {
+            const rInfo = db.prepare("INSERT INTO comp_recurring (org_id, user_id, description, category, amount_cents, note, is_reimbursement, active, last_filed_period, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)")
+              .run(orgId, targetId, description, category, amountCents, note, isReimbursement, period, sessUserId, nowIso, nowIso);
+            recurringId = Number(rInfo.lastInsertRowid);
+          }
+        }
+        return Number(info.lastInsertRowid);
+      });
+      const newRequestId = createAll();
+      const row = db.prepare("SELECT * FROM comp_requests WHERE id=?").get(newRequestId) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === targetId);
       const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
       audit({
@@ -6556,6 +6684,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityLabel: (requester?.name ?? "CLR") + " comp request" + (forClr ? " (submitted by " + (submitter?.name ?? "manager") + ")" : ""),
         details: JSON.stringify({ amountCents, onBehalfOf: forClr || undefined }),
       });
+      if (recurringId != null && !recurringReused) {
+        audit({
+          userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
+          entityType: "comp_recurring", entityId: recurringId,
+          entityLabel: (requester?.name ?? "CLR") + " recurring comp template",
+          details: JSON.stringify({ amountCents, category }),
+        });
+      }
       let emailedTo: string | null = null;
       try {
         const settings = storageExtra.getEmailSettings() as any;
@@ -6568,7 +6704,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           emailedTo = approverEmail;
         }
       } catch (e: any) { console.error("[comp] approval email failed:", e?.message ?? e); }
-      return res.json({ ...mapComp(row, compNameMap()), emailedTo, requested: 1 });
+      return res.json({ ...mapComp(row, compNameMap()), emailedTo, requested: 1, recurringId });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save expense" });
     }
@@ -6588,7 +6724,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your expense." });
       const body = req.body ?? {};
       const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : existing.description;
-      const category = COMP_CATEGORIES.has(body.category) ? body.category : existing.category;
+      let category = COMP_CATEGORIES.has(body.category) ? body.category : existing.category;
+      // Same alias normalization as POST: an incoming "hours" is time and must
+      // face the time-request guards (existing legacy "hours" rows are handled
+      // separately below and may stay).
+      if (category === "hours") category = "time";
       const amountCents = body.amountCents !== undefined ? Math.round(Number(body.amountCents)) : existing.amount_cents;
       const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : existing.expense_date;
       const note = typeof body.note === "string" ? body.note.slice(0, 1000) : existing.note;
@@ -7423,6 +7563,67 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const id = parseInt(req.params.id, 10);
     storageExtra.getRawSqlite().prepare("DELETE FROM comp_draws WHERE id=? AND org_id=?").run(id, orgId);
+    res.json({ ok: true });
+  });
+
+  // ── Recurring comp templates ─────────────────────────────────────────────────
+  // Own templates for everyone; managers see the whole org's. Pause/resume and
+  // delete are owner-or-manager. Templates are only CREATED via POST /api/comp's
+  // recurringMonthly flag (so the first month is always a real, reviewed request).
+  app.get("/api/comp/recurring", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!uid) return res.status(401).json({ error: "Unauthorized" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const db = storageExtra.getRawSqlite();
+    const nameById = compNameMap();
+    const mgr = isCompManager(uid);
+    const rows = (mgr
+      ? db.prepare("SELECT * FROM comp_recurring WHERE org_id=? ORDER BY active DESC, id DESC").all(orgId)
+      : db.prepare("SELECT * FROM comp_recurring WHERE org_id=? AND user_id=? ORDER BY active DESC, id DESC").all(orgId, uid)) as any[];
+    res.json({
+      isManager: mgr,
+      templates: rows.map(r => ({
+        id: r.id, userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
+        description: r.description, category: r.category, amountCents: r.amount_cents,
+        isReimbursement: !!r.is_reimbursement, active: !!r.active,
+        lastFiledPeriod: r.last_filed_period ?? null, createdAt: r.created_at ?? null,
+      })),
+    });
+  });
+  app.patch("/api/comp/recurring/:id", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    const db = storageExtra.getRawSqlite();
+    const existing = db.prepare("SELECT * FROM comp_recurring WHERE id=? AND org_id=?").get(id, orgId) as any;
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (existing.user_id !== uid && !isCompManager(uid)) return res.status(403).json({ error: "Not yours." });
+    if (req.body?.active === undefined) return res.status(400).json({ error: "Nothing to change." });
+    const active = (req.body.active === true || req.body.active === 1 || req.body.active === "1") ? 1 : 0;
+    // Resuming (0 → 1) also stamps the CURRENT month as filed, so "pause to skip
+    // months" holds: a mid-month resume starts on the next 1st instead of
+    // immediately auto-filing a month the owner may have filed manually.
+    if (active && !existing.active) {
+      const period = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ }).slice(0, 7);
+      db.prepare("UPDATE comp_recurring SET active=1, last_filed_period=?, updated_at=? WHERE id=? AND org_id=?").run(period, new Date().toISOString(), id, orgId);
+    } else {
+      db.prepare("UPDATE comp_recurring SET active=?, updated_at=? WHERE id=? AND org_id=?").run(active, new Date().toISOString(), id, orgId);
+    }
+    const actorP = storage.getUserById(uid) as any;
+    audit({ userId: uid, userName: actorP?.name ?? "Unknown", action: "update", entityType: "comp_recurring", entityId: id, entityLabel: "Recurring comp template " + (active ? "resumed" : "paused"), details: JSON.stringify({ ownerId: existing.user_id, amountCents: existing.amount_cents }) });
+    res.json({ ok: true, active: !!active });
+  });
+  app.delete("/api/comp/recurring/:id", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    const db = storageExtra.getRawSqlite();
+    const existing = db.prepare("SELECT * FROM comp_recurring WHERE id=? AND org_id=?").get(id, orgId) as any;
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (existing.user_id !== uid && !isCompManager(uid)) return res.status(403).json({ error: "Not yours." });
+    db.prepare("DELETE FROM comp_recurring WHERE id=? AND org_id=?").run(id, orgId);
+    const actorD = storage.getUserById(uid) as any;
+    audit({ userId: uid, userName: actorD?.name ?? "Unknown", action: "delete", entityType: "comp_recurring", entityId: id, entityLabel: "Recurring comp template deleted", details: JSON.stringify({ ownerId: existing.user_id, description: existing.description, amountCents: existing.amount_cents }) });
     res.json({ ok: true });
   });
 
