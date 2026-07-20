@@ -71,8 +71,7 @@ Your app will be live at that URL within 1–2 minutes.
 
 ## Login credentials
 
-- **Email**: `ethan.anthony.wood@gmail.com`
-- **Password**: `WCL2026!`
+Credentials are stored in the Railway environment variables / password manager — never commit them to this repo.
 
 ---
 

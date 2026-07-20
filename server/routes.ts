@@ -10754,12 +10754,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       mojoApiKey: s.mojo_api_key ?? "",
       zapierWebhookUrl: s.zapier_webhook_url ?? "",
       zapierSecret: s.zapier_secret ?? "",
+      leadvaultReportingToken: s.leadvault_reporting_token ?? "",
     });
   });
 
   app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret } = req.body ?? {};
+    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret, leadvaultReportingToken } = req.body ?? {};
     const updated = storageExtra.updateWebhookSettings({
       mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
       bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
@@ -10767,6 +10768,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       mojoApiKey: typeof mojoApiKey === "string" ? mojoApiKey : undefined,
       zapierWebhookUrl: typeof zapierWebhookUrl === "string" ? zapierWebhookUrl : undefined,
       zapierSecret: typeof zapierSecret === "string" ? zapierSecret : undefined,
+      leadvaultReportingToken: typeof leadvaultReportingToken === "string" ? leadvaultReportingToken : undefined,
     });
     res.json({
       mojoSecret: updated.mojo_secret ?? "",
@@ -10775,7 +10777,68 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       mojoApiKey: updated.mojo_api_key ?? "",
       zapierWebhookUrl: updated.zapier_webhook_url ?? "",
       zapierSecret: updated.zapier_secret ?? "",
+      leadvaultReportingToken: updated.leadvault_reporting_token ?? "",
     });
+  });
+
+  // ── Outbound CLR Calls (admin) — proxied from LeadVault's reporting feed ────
+  // LeadVault aggregates Dialpad + Mojo call logs and exposes a token-auth
+  // summary at /api/clr/outbound-summary. Token: LEADVAULT_REPORTING_TOKEN env
+  // first, then webhook_settings.leadvault_reporting_token (Integrations page).
+  // The token travels in the x-api-token header only — never in the URL.
+  const OUTBOUND_CALLS_CACHE_TTL_MS = 5 * 60 * 1000;
+  const outboundCallsCache = new Map<number, { at: number; data: any }>();
+
+  function leadvaultReportingToken(): string {
+    const env = (process.env.LEADVAULT_REPORTING_TOKEN || "").trim();
+    if (env) return env;
+    try {
+      const s = storageExtra.getWebhookSettings() as any;
+      if (s?.leadvault_reporting_token) return String(s.leadvault_reporting_token).trim();
+    } catch {}
+    return "";
+  }
+
+  app.get("/api/outbound-calls", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const daysRaw = parseInt(String(req.query.days ?? "30"));
+    const days = [7, 30, 90].includes(daysRaw) ? daysRaw : 30;
+
+    const token = leadvaultReportingToken();
+    if (!token) return res.json({ configured: false, days });
+
+    const cached = outboundCallsCache.get(days);
+    if (cached && Date.now() - cached.at < OUTBOUND_CALLS_CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      const upstream = await fetch(`${base}/api/clr/outbound-summary?days=${days}`, {
+        headers: { "x-api-token": token, Accept: "application/json" },
+        signal: ctrl.signal,
+      });
+      if (!upstream.ok) {
+        console.error(`[outbound-calls] LeadVault upstream HTTP ${upstream.status}`);
+        return res.json({ configured: true, upstream_error: true, days });
+      }
+      let json: any = null;
+      try { json = await upstream.json(); } catch {}
+      if (!json || !Array.isArray(json.agents)) {
+        console.error("[outbound-calls] LeadVault returned an unexpected payload shape");
+        return res.json({ configured: true, upstream_error: true, days });
+      }
+      const data = { configured: true, ...json, days };
+      outboundCallsCache.set(days, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      console.error(`[outbound-calls] LeadVault fetch failed: ${String(e?.message ?? e).slice(0, 200)}`);
+      res.json({ configured: true, upstream_error: true, days });
+    } finally {
+      clearTimeout(t);
+    }
   });
 
   // ── Reporting period helper ───────────────────────────────────────────────────
