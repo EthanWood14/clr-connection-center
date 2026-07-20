@@ -3418,6 +3418,28 @@ export function registerRoutes(httpServer: Server, app: Express) {
     storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_attachments_comp ON comp_attachments(comp_id)`);
   } catch {}
 
+  // Draws: an advance/deduction a manager records against a person. While
+  // OUTSTANDING (settled=0) it reduces that person's net on the payout sheet /
+  // Payout Center. Marking it settled (or deleting it) stops the deduction — so
+  // a draw comes off exactly one payout, not every month.
+  try {
+    storageExtra.getRawSqlite().exec(`
+      CREATE TABLE IF NOT EXISTS comp_draws (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        note TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at TEXT,
+        settled INTEGER NOT NULL DEFAULT 0,
+        settled_at TEXT,
+        settled_by INTEGER
+      )
+    `);
+    storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_draws_user ON comp_draws(org_id, user_id, settled)`);
+  } catch {}
+
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
     try { storage.createAuditLog(data); } catch {}
@@ -7173,30 +7195,53 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       // 1) "Who gets paid" — per person, split into reimbursement vs earned so
       // the two totals are clear at a glance.
-      const byPerson = new Map<string, any[]>();
-      for (const i of items) { const k = i.userName; if (!byPerson.has(k)) byPerson.set(k, []); byPerson.get(k)!.push(i); }
-      let whoRows = "";
-      for (const [person, list] of byPerson) {
+      // Outstanding (unsettled) draws reduce each person's net payout — but ONLY on
+      // the full sheet (Export all). A per-batch export (?ids=) is a slice of one
+      // person's payout, so applying the whole draw to each slice would double-count
+      // it; draws are shown once, on the full sheet.
+      const applyDraws = idsParam.length === 0;
+      const drawRows = applyDraws
+        ? (db.prepare("SELECT user_id, COALESCE(SUM(amount_cents),0) AS c FROM comp_draws WHERE org_id=? AND settled=0 GROUP BY user_id").all(orgId) as any[])
+        : [];
+      const drawByUser = new Map<number, number>(drawRows.map((r: any) => [Number(r.user_id), Number(r.c) || 0]));
+      const byPerson = new Map<number, { name: string; list: any[] }>();
+      for (const i of items) { const k = i.userId; if (!byPerson.has(k)) byPerson.set(k, { name: i.userName, list: [] }); byPerson.get(k)!.list.push(i); }
+      // Per-person subtotals. A draw is recovered ONLY from earned comp (never from
+      // reimbursements, which are out-of-pocket money owed back) and only up to what
+      // this sheet actually pays — so a draw bigger than the payout nets to $0, never
+      // negative, and never understates the org total. The unrecovered remainder
+      // stays open in the Draws panel to come off a later payout.
+      const people = Array.from(byPerson.entries()).map(([pid, { name, list }]) => {
         const rSub = list.reduce((s: number, i: any) => s + (i.isReimbursement ? (i.amountCents || 0) : 0), 0);
         const eSub = list.reduce((s: number, i: any) => s + (!i.isReimbursement ? (i.amountCents || 0) : 0), 0);
-        const sub = rSub + eSub;
-        whoRows += `<tr><td class="who-name">${esc(person)}</td>` +
-          `<td class="who-count">${list.length} item${list.length === 1 ? "" : "s"}</td>` +
-          `<td class="num">${eSub ? money(eSub) : "—"}</td>` +
-          `<td class="num">${rSub ? money(rSub) : "—"}</td>` +
-          `<td class="num who-amt">${money(sub)}</td></tr>`;
+        const draw = drawByUser.get(pid) ?? 0;
+        const applied = Math.min(draw, eSub); // recoverable on this sheet
+        return { name, count: list.length, rSub, eSub, applied };
+      });
+      const drawApplied = people.reduce((s, p) => s + p.applied, 0);
+      const hasDraws = drawApplied > 0;
+      const netTotal = grandTotal - drawApplied;
+      let whoRows = "";
+      for (const p of people) {
+        whoRows += `<tr><td class="who-name">${esc(p.name)}</td>` +
+          `<td class="who-count">${p.count} item${p.count === 1 ? "" : "s"}</td>` +
+          `<td class="num">${p.eSub ? money(p.eSub) : "—"}</td>` +
+          `<td class="num">${p.rSub ? money(p.rSub) : "—"}</td>` +
+          (hasDraws ? `<td class="num">${p.applied ? "−" + money(p.applied) : "—"}</td>` : "") +
+          `<td class="num who-amt">${money(p.eSub + p.rSub - p.applied)}</td></tr>`;
       }
       whoRows += `<tr class="who-total"><td>Total payout</td><td></td>` +
         `<td class="num">${money(earnedTotal)}</td>` +
         `<td class="num">${money(reimbTotal)}</td>` +
-        `<td class="num">${money(grandTotal)}</td></tr>`;
+        (hasDraws ? `<td class="num">−${money(drawApplied)}</td>` : "") +
+        `<td class="num">${money(netTotal)}</td></tr>`;
 
       // 2) "What it's for" — itemized detail grouped by person, tagged with
       // whether each line is a reimbursement or earned comp.
       let summaryRows = "";
-      for (const [person, list] of byPerson) {
+      for (const [, { name, list }] of Array.from(byPerson.entries())) {
         for (const i of list) {
-          summaryRows += `<tr><td>${esc(person)}</td><td>${i.isReimbursement ? "Reimbursement" : "Earned"}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
+          summaryRows += `<tr><td>${esc(name)}</td><td>${i.isReimbursement ? "Reimbursement" : "Earned"}</td><td>${esc(CAT_LABELS[i.category] || i.category)}</td><td>${esc(i.description)}</td><td>${esc(fmtDate(i.expenseDate))}</td><td class="num">${money(i.amountCents)}</td></tr>`;
         }
       }
 
@@ -7266,8 +7311,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         (items.length === 0
           ? '<p class="hint">Nothing is awaiting payout. 🎉</p>'
           : '<h2 class="first">Who gets paid</h2>' +
-            '<p class="hint">Earned comp ' + money(earnedTotal) + ' · reimbursements ' + money(reimbTotal) + ' (' + reimbCount + ' item' + (reimbCount === 1 ? "" : "s") + ').</p>' +
-            '<table class="who"><thead><tr><th>Team member</th><th></th><th class="num">Earned</th><th class="num">Reimbursement</th><th class="num">Total</th></tr></thead><tbody>' + whoRows + '</tbody></table>' +
+            '<p class="hint">Earned comp ' + money(earnedTotal) + ' · reimbursements ' + money(reimbTotal) + ' (' + reimbCount + ' item' + (reimbCount === 1 ? "" : "s") + ')' + (hasDraws ? ' · draws −' + money(drawApplied) : '') + '.</p>' +
+            '<table class="who"><thead><tr><th>Team member</th><th></th><th class="num">Earned</th><th class="num">Reimbursement</th>' + (hasDraws ? '<th class="num">Draw</th>' : '') + '<th class="num">' + (hasDraws ? 'Net' : 'Total') + '</th></tr></thead><tbody>' + whoRows + '</tbody></table>' +
             '<h2>What it&rsquo;s for</h2>' +
             '<table class="sum"><thead><tr><th>Team member</th><th>Type</th><th>Category</th><th>Description</th><th>Date</th><th class="num">Amount</th></tr></thead><tbody>' + summaryRows + '</tbody></table>' +
             '<h2>Receipts &amp; attachments</h2>' +
@@ -7319,6 +7364,66 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to mark paid" });
     }
+  });
+
+  // ── Draws (advances that reduce someone's net payout) ────────────────────────
+  // Manager-only. An outstanding (unsettled) draw is deducted from that person's
+  // total on the payout sheet + Payout Center. Settle or delete it once applied.
+  app.get("/api/comp/draws", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!isCompManager(uid)) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const db = storageExtra.getRawSqlite();
+    const nameById = compNameMap();
+    const rows = db.prepare("SELECT * FROM comp_draws WHERE org_id=? ORDER BY settled ASC, created_at DESC").all(orgId) as any[];
+    const draws = rows.map(r => ({
+      id: r.id, userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
+      amountCents: r.amount_cents, note: r.note ?? "",
+      createdByName: r.created_by ? (nameById.get(r.created_by) ?? null) : null,
+      createdAt: r.created_at, settled: !!r.settled, settledAt: r.settled_at ?? null,
+    }));
+    const outstandingByUser: Record<number, number> = {};
+    for (const r of rows) if (!r.settled) outstandingByUser[r.user_id] = (outstandingByUser[r.user_id] ?? 0) + Number(r.amount_cents || 0);
+    res.json({ draws, outstandingByUser });
+  });
+  app.post("/api/comp/draws", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!isCompManager(uid)) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const targetId = Number(req.body?.userId) || 0;
+    const amountCents = Math.round(Number(req.body?.amountCents));
+    const note = typeof req.body?.note === "string" ? req.body.note.slice(0, 500) : "";
+    const target = targetId ? (storage.getUserById(targetId) as any) : null;
+    // getUserById isn't org-scoped — make sure the person is in this org.
+    const targetOrg = Number(target?.orgId ?? target?.org_id);
+    if (!target || (Number.isFinite(targetOrg) && targetOrg !== orgId)) return res.status(400).json({ error: "Pick who the draw is for." });
+    if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
+    const db = storageExtra.getRawSqlite();
+    const info = db.prepare("INSERT INTO comp_draws (org_id, user_id, amount_cents, note, created_by, created_at, settled) VALUES (?, ?, ?, ?, ?, ?, 0)").run(orgId, targetId, amountCents, note, uid, new Date().toISOString());
+    const submitter = storage.getUserById(uid) as any;
+    audit({ userId: uid, userName: submitter?.name ?? "Unknown", action: "create", entityType: "comp_draw", entityId: Number(info.lastInsertRowid), entityLabel: (target.name ?? "User") + " draw", details: JSON.stringify({ amountCents, note }) });
+    res.json({ ok: true, id: Number(info.lastInsertRowid) });
+  });
+  app.post("/api/comp/draws/:id/settle", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!isCompManager(uid)) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    const settle = req.body?.settled === false ? 0 : 1; // default settles; {settled:false} reopens
+    const db = storageExtra.getRawSqlite();
+    const existing = db.prepare("SELECT id FROM comp_draws WHERE id=? AND org_id=?").get(id, orgId) as any;
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    db.prepare("UPDATE comp_draws SET settled=?, settled_at=?, settled_by=? WHERE id=? AND org_id=?")
+      .run(settle, settle ? new Date().toISOString() : null, settle ? uid : null, id, orgId);
+    res.json({ ok: true, settled: !!settle });
+  });
+  app.delete("/api/comp/draws/:id", requireAuth, (req: any, res) => {
+    const uid = Number(req.session_user?.userId);
+    if (!isCompManager(uid)) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    storageExtra.getRawSqlite().prepare("DELETE FROM comp_draws WHERE id=? AND org_id=?").run(id, orgId);
+    res.json({ ok: true });
   });
 
   // ── Daily Assignments ────────────────────────────────────────────────────────

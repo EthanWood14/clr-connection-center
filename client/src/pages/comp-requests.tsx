@@ -447,6 +447,115 @@ function submittedRangeLabel(items: CompItem[]): string {
 
 // Admin-only panel to see who can approve comp requests and mark people as
 // managers inline (managers are the approvers in the comp pipeline).
+// Draws: advances a manager records against a person. While OPEN, a draw is
+// deducted from that person's NET on the payout sheet. Settle/delete once applied.
+function DrawsPanel() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [showSettled, setShowSettled] = useState(false);
+  const [drawUser, setDrawUser] = useState("");
+  const [drawAmount, setDrawAmount] = useState("");
+  const [drawNote, setDrawNote] = useState("");
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
+  const staff = useMemo(
+    () => (users ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .sort((a: any, b: any) => String(a.name ?? "").localeCompare(String(b.name ?? ""))),
+    [users]
+  );
+  const { data } = useQuery<{ draws: any[]; outstandingByUser: Record<number, number> }>({
+    queryKey: ["/api/comp/draws"],
+    queryFn: () => apiRequest("GET", "/api/comp/draws"),
+  });
+  const draws = data?.draws ?? [];
+  const outstanding = draws.filter((d) => !d.settled);
+  const settled = draws.filter((d) => d.settled);
+  const outstandingTotal = outstanding.reduce((s, d) => s + (d.amountCents || 0), 0);
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/comp/draws"] });
+  const addMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/comp/draws", { userId: Number(drawUser), amountCents: Math.round(parseFloat(drawAmount || "0") * 100), note: drawNote.trim() }),
+    onSuccess: () => { toast({ title: "Draw added" }); setDrawUser(""); setDrawAmount(""); setDrawNote(""); invalidate(); },
+    onError: (e: any) => toast({ title: "Couldn't add draw", description: e?.message, variant: "destructive" }),
+  });
+  const settleMut = useMutation({
+    mutationFn: (v: { id: number; settled: boolean }) => apiRequest("POST", `/api/comp/draws/${v.id}/settle`, { settled: v.settled }),
+    onSuccess: () => invalidate(),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/comp/draws/${id}`),
+    onSuccess: () => invalidate(),
+  });
+  const canAdd = !!drawUser && parseFloat(drawAmount || "0") > 0 && !addMut.isPending;
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between gap-2" data-testid="draws-toggle">
+          <CardTitle className="text-base flex items-center gap-2">
+            <BadgeDollarSign className="w-4 h-4 text-amber-600" /> Draws
+            {outstanding.length > 0 && <Badge className="ml-1 bg-amber-600 text-white text-[10px] px-1.5">{outstanding.length} open · −{money(outstandingTotal)}</Badge>}
+          </CardTitle>
+          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+        <p className="text-xs text-muted-foreground mt-1">An advance recorded against someone. While open, it's deducted from their <strong>net</strong> on the payout sheet. Settle or delete it once it's come off a payout so it doesn't keep reducing.</p>
+      </CardHeader>
+      {open && (
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[10rem]">
+              <label className="text-xs font-medium text-muted-foreground">Person</label>
+              <select value={drawUser} onChange={(e) => setDrawUser(e.target.value)} className="h-9 mt-1 rounded-md border bg-background px-2 text-sm w-full" data-testid="draw-user">
+                <option value="">Select…</option>
+                {staff.map((u: any) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Amount</label>
+              <div className="relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                <Input type="number" min="0" step="0.01" inputMode="decimal" value={drawAmount} onChange={(e) => setDrawAmount(e.target.value)} placeholder="0.00" className="pl-5 h-9 w-28" data-testid="draw-amount" /></div>
+            </div>
+            <div className="flex-1 min-w-[8rem]">
+              <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>
+              <Input value={drawNote} onChange={(e) => setDrawNote(e.target.value)} placeholder="e.g. advance on next payout" className="h-9" data-testid="draw-note" />
+            </div>
+            <Button size="sm" className="h-9 gap-1" onClick={() => addMut.mutate()} disabled={!canAdd} data-testid="draw-add"><Plus className="w-3.5 h-3.5" /> Add</Button>
+          </div>
+          {outstanding.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No open draws.</p>
+          ) : (
+            <div className="rounded-md border divide-y">
+              {outstanding.map((d) => (
+                <div key={d.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                  <span className="font-medium min-w-0 truncate flex-1">{d.userName}</span>
+                  {d.note && <span className="text-xs text-muted-foreground truncate max-w-[35%] hidden sm:block">{d.note}</span>}
+                  <span className="tabular-nums font-semibold text-amber-700 dark:text-amber-400">−{money(d.amountCents)}</span>
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => settleMut.mutate({ id: d.id, settled: true })} disabled={settleMut.isPending} data-testid={"draw-settle-" + d.id}><Check className="w-3 h-3" /> Settle</Button>
+                  <button type="button" onClick={() => delMut.mutate(d.id)} className="text-muted-foreground hover:text-red-600 p-1" aria-label="Delete draw" data-testid={"draw-del-" + d.id}><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          {settled.length > 0 && (
+            <div>
+              <button type="button" onClick={() => setShowSettled((s) => !s)} className="text-xs text-muted-foreground hover:underline">{showSettled ? "Hide" : "Show"} {settled.length} settled</button>
+              {showSettled && (
+                <div className="rounded-md border divide-y mt-1 opacity-70">
+                  {settled.map((d) => (
+                    <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                      <span className="min-w-0 truncate flex-1">{d.userName}</span>
+                      <span className="tabular-nums line-through">{money(d.amountCents)}</span>
+                      <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => settleMut.mutate({ id: d.id, settled: false })} data-testid={"draw-reopen-" + d.id}>Reopen</Button>
+                      <button type="button" onClick={() => delMut.mutate(d.id)} className="text-muted-foreground hover:text-red-600 p-1" aria-label="Delete draw"><Trash2 className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 function ManagersPanel() {
   const { toast } = useToast();
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
@@ -938,6 +1047,15 @@ export default function CompRequests() {
   const [myCat, setMyCat] = useState("all");
   const [mySort, setMySort] = useState("newest");
   const [myVisible, setMyVisible] = useState(PAGE_SIZE);
+  // Rows are compact by default; expanding one reveals its stage tracker,
+  // attachments, and secondary actions. Keyed by "<list>:<id>" so the same request
+  // shown in both the Team and My lists expands independently.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const toggleExpanded = (key: string) => setExpandedRows(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   const teamCounts = useMemo(() => stageCounts(team), [team]);
   const teamFiltered = useMemo(
@@ -1151,6 +1269,9 @@ export default function CompRequests() {
 
       {/* Manager management — see + mark who can approve (admins only) */}
       {isAdmin && <ManagersPanel />}
+
+      {/* Draws — advances that reduce a person's net payout (managers) */}
+      {isManager && <DrawsPanel />}
 
       {/* Payout Center — everything approved & awaiting payout, in one place */}
       {isManager && approvedUnpaid.length > 0 && (
@@ -1388,7 +1509,11 @@ export default function CompRequests() {
                         </Button>
                       </div>
                     )}
+                    <button type="button" onClick={() => toggleExpanded("team:" + r.id)} className="text-muted-foreground hover:text-foreground p-1 -mr-1 self-start" aria-expanded={expandedRows.has("team:" + r.id)} aria-label={expandedRows.has("team:" + r.id) ? "Collapse" : "Expand"} data-testid={"toggle-team-comp-" + r.id}>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${expandedRows.has("team:" + r.id) ? "rotate-180" : ""}`} />
+                    </button>
                   </div>
+                  {expandedRows.has("team:" + r.id) && (<>
                   <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                   <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={false} />
@@ -1424,6 +1549,7 @@ export default function CompRequests() {
                       <CompSheetButton compId={r.id} label="Full PDF for payout" />
                     </div>
                   </div>
+                  </>)}
                 </div>
                   ))
                 )}
@@ -1513,8 +1639,12 @@ export default function CompRequests() {
                         <Trash2 className="w-3.5 h-3.5" /> Cancel
                       </Button>
                     )}
+                    <button type="button" onClick={() => toggleExpanded("my:" + r.id)} className="text-muted-foreground hover:text-foreground p-1 -mr-1 self-start" aria-expanded={expandedRows.has("my:" + r.id)} aria-label={expandedRows.has("my:" + r.id) ? "Collapse" : "Expand"} data-testid={"toggle-my-comp-" + r.id}>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${expandedRows.has("my:" + r.id) ? "rotate-180" : ""}`} />
+                    </button>
                   </div>
                 </div>
+                {expandedRows.has("my:" + r.id) && (<>
                 <CompStageTracker status={r.status} isPaid={r.isPaid} isProcessing={r.isProcessing} isReceived={r.isReceived} />
                 <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                   <Attachments compId={r.id} count={r.attachmentCount ?? 0} canEdit={r.status === "pending"} />
@@ -1542,6 +1672,7 @@ export default function CompRequests() {
                     <CompSheetButton compId={r.id} />
                   </div>
                 </div>
+                </>)}
               </div>
                 ))
               )}
