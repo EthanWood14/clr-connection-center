@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, UserCheck,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, UserCheck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -218,6 +218,7 @@ const loManagementItems: NavItem[] = [
 
 const adminItems: NavItem[] = [
   { title: "Check-Ins",       url: "/check-ins",   icon: UserCheck },
+  { title: "Outbound Calls",  url: "/outbound-calls", icon: PhoneOutgoing },
   { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
   { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },
 ];

@@ -2196,6 +2196,8 @@ function runNewMigrations() {
   // webhook_settings: add integration API tokens
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN bonzo_api_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN mojo_api_key TEXT`); } catch {}
+  // webhook_settings: LeadVault reporting token (outbound call summary feed)
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN leadvault_reporting_token TEXT`); } catch {}
 
   // ── Bonzo integration tables ─────────────────────────────────────────────
   try {
@@ -3465,7 +3467,7 @@ export function getRecentWebhookEvents(limit = 50) {
 
 export function getWebhookSettings() {
   const row = sqlite.prepare(`SELECT * FROM webhook_settings WHERE id=1`).get() as any;
-  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null, zapier_webhook_url: null, zapier_secret: null };
+  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null, zapier_webhook_url: null, zapier_secret: null, leadvault_reporting_token: null };
 }
 
 export function updateWebhookSettings(data: {
@@ -3475,6 +3477,7 @@ export function updateWebhookSettings(data: {
   mojoApiKey?: string | null;
   zapierWebhookUrl?: string | null;
   zapierSecret?: string | null;
+  leadvaultReportingToken?: string | null;
 }) {
   const now = new Date().toISOString();
   const existing = getWebhookSettings();
@@ -3484,9 +3487,10 @@ export function updateWebhookSettings(data: {
   const mojoKey = data.mojoApiKey !== undefined ? (data.mojoApiKey || null) : existing.mojo_api_key;
   const zapUrl = data.zapierWebhookUrl !== undefined ? (data.zapierWebhookUrl || null) : existing.zapier_webhook_url;
   const zapSecret = data.zapierSecret !== undefined ? (data.zapierSecret || null) : existing.zapier_secret;
+  const lvToken = data.leadvaultReportingToken !== undefined ? (data.leadvaultReportingToken || null) : existing.leadvault_reporting_token;
   sqlite.prepare(
-    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, zapier_webhook_url=?, zapier_secret=?, updated_at=? WHERE id=1`
-  ).run(mojo, bonzo, bonzoToken, mojoKey, zapUrl, zapSecret, now);
+    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, zapier_webhook_url=?, zapier_secret=?, leadvault_reporting_token=?, updated_at=? WHERE id=1`
+  ).run(mojo, bonzo, bonzoToken, mojoKey, zapUrl, zapSecret, lvToken, now);
   return getWebhookSettings();
 }
 

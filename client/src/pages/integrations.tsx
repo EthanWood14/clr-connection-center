@@ -24,6 +24,7 @@ type Settings = {
   mojoApiKey: string;
   zapierWebhookUrl: string;
   zapierSecret: string;
+  leadvaultReportingToken: string;
 };
 
 type WebhookEvent = {
@@ -272,7 +273,7 @@ export default function IntegrationsPage() {
 
   const [local, setLocal] = useState<Settings>({
     mojoSecret: "", bonzoSecret: "", bonzoApiToken: "", mojoApiKey: "",
-    zapierWebhookUrl: "", zapierSecret: "",
+    zapierWebhookUrl: "", zapierSecret: "", leadvaultReportingToken: "",
   });
   useEffect(() => {
     if (settings) {
@@ -283,6 +284,7 @@ export default function IntegrationsPage() {
         mojoApiKey: settings.mojoApiKey ?? "",
         zapierWebhookUrl: settings.zapierWebhookUrl ?? "",
         zapierSecret: settings.zapierSecret ?? "",
+        leadvaultReportingToken: settings.leadvaultReportingToken ?? "",
       });
     }
   }, [settings]);
@@ -514,6 +516,47 @@ export default function IntegrationsPage() {
           </div>
           <div className="flex justify-end pt-2">
             <Button onClick={() => saveMutation.mutate({ zapierWebhookUrl: local.zapierWebhookUrl, zapierSecret: local.zapierSecret })} disabled={saveMutation.isPending}>
+              <Save className="w-3.5 h-3.5 mr-1.5" /> Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* LeadVault Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-md flex items-center justify-center text-white font-bold text-lg shrink-0 bg-teal-600">
+              L
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle className="text-base">LeadVault Reporting</CardTitle>
+                <StatusBadge status={local.leadvaultReportingToken?.trim() ? "connected" : "not_connected"} />
+              </div>
+              <CardDescription className="mt-1">
+                Pulls outbound call summaries (Dialpad + Mojo call logs) from LeadVault to power the
+                Outbound CLR Calls page. The LEADVAULT_REPORTING_TOKEN environment variable takes
+                precedence over the token saved here.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Reporting Token (sent as x-api-token to LeadVault)
+            </label>
+            <div className="mt-1.5">
+              <SecretInput
+                value={local.leadvaultReportingToken}
+                onChange={(v) => setLocal(p => ({ ...p, leadvaultReportingToken: v }))}
+                placeholder="Paste the LeadVault reporting token"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => saveMutation.mutate({ leadvaultReportingToken: local.leadvaultReportingToken })} disabled={saveMutation.isPending}>
               <Save className="w-3.5 h-3.5 mr-1.5" /> Save
             </Button>
           </div>
