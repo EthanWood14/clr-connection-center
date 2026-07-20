@@ -8065,6 +8065,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     let moved = 0;
     const skipped: number[] = [];
+    // Every (date, CLR) list touched by a move — source AND target — gets its
+    // ranks compacted afterward so the visible #1..#N numbering stays contiguous.
+    const touched = new Set<string>();
     for (const id of ids) {
       const existing = storage.getAssignmentById(id) as any;
       if (!existing) { skipped.push(id); continue; }
@@ -8078,6 +8081,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const row = storage.reassignAssignment(id, assistantId, nextRank);
       if (!row) { skipped.push(id); continue; }
       moved++;
+      if (fromId != null) touched.add(date + "|" + fromId);
+      touched.add(date + "|" + assistantId);
       const lo = storage.getLoanOfficerById(existing.loId ?? existing.lo_id);
       const fromUser = fromId != null ? storage.getUserById(fromId) : null;
       audit({
@@ -8089,6 +8094,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityLabel: lo?.fullName ?? `Assignment #${id}`,
         details: JSON.stringify({ date, from: fromUser?.name ?? fromId ?? null, to: (target as any).name }),
       });
+    }
+    // Renumber the affected lists to a contiguous #1..#N (keeping their order) so
+    // nobody's call list starts at #2 after a row is moved away.
+    if (touched.size) {
+      const db = storageExtra.getRawSqlite();
+      const compact = db.transaction(() => {
+        for (const key of Array.from(touched)) {
+          const [date, aid] = key.split("|");
+          const rows = db.prepare("SELECT id FROM daily_assignments WHERE assignment_date=? AND assistant_id=? ORDER BY assistant_rank, id").all(date, Number(aid)) as any[];
+          const upd = db.prepare("UPDATE daily_assignments SET assistant_rank=? WHERE id=?");
+          rows.forEach((r, i) => upd.run(i + 1, r.id));
+        }
+      });
+      compact();
     }
     res.json({ ok: true, moved, skipped });
   });
