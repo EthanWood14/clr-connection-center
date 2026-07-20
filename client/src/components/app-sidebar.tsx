@@ -24,6 +24,7 @@ interface NavItem {
   url: string;
   icon: any;
   badge?: string;
+  beta?: boolean;
   help?: { summary: string; features: string[] };
   external?: boolean; // opens in a new tab (e.g. the seating chart site)
 }
@@ -218,7 +219,7 @@ const loManagementItems: NavItem[] = [
 
 const adminItems: NavItem[] = [
   { title: "Check-Ins",       url: "/check-ins",   icon: UserCheck },
-  { title: "Outbound Calls",  url: "/outbound-calls", icon: PhoneOutgoing },
+  { title: "Outbound Calls", url: "/outbound-calls", icon: PhoneOutgoing, beta: true },
   { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
   { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },
 ];
@@ -360,6 +361,11 @@ export function AppSidebar() {
           <span className="flex items-center gap-2">
             <item.icon className="w-3.5 h-3.5 shrink-0" />
             <span className={active ? "font-bold" : ""}>{item.title}</span>
+            {item.beta && (
+              <span className="rounded border border-amber-500/30 bg-amber-500/15 px-1 py-0 text-[8px] font-semibold uppercase tracking-wide text-amber-600">
+                Beta
+              </span>
+            )}
           </span>
           {count > 0 && (
             <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">

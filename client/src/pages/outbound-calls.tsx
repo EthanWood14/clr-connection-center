@@ -76,7 +76,7 @@ export default function OutboundCallsPage() {
   const [days, setDays] = useState<number>(30);
 
   useEffect(() => {
-    document.title = "Outbound CLR Calls · WCLCC";
+    document.title = "Outbound CLR Calls [BETA] · WCLCC";
   }, []);
 
   useEffect(() => {
@@ -130,6 +130,14 @@ export default function OutboundCallsPage() {
           <div className="flex items-center gap-2">
             <PhoneOutgoing className="w-5 h-5 text-primary" />
             <h1 className="text-2xl font-bold tracking-tight">Outbound CLR Calls</h1>
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-amber-600">
+              Beta
+            </span>
+          </div>
+          <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-semibold text-amber-600">Beta testing — do not use yet.</span>{" "}
+            Numbers are for review only while the LeadVault feed is being validated; don&apos;t
+            base coaching or performance decisions on this page until it&apos;s signed off.
           </div>
           <p className="text-sm text-muted-foreground mt-1">
             Data source: LeadVault (Dialpad + Mojo call logs).
