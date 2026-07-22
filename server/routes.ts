@@ -10277,28 +10277,125 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return h * 60 + m;
   }
 
+  // ── Check-in policy: schedule-aligned start + 3 lates per rolling 90 days ────
+  const CHECKIN_LATE_ALLOWANCE = 3;   // lates permitted per window
+  const CHECKIN_LATE_WINDOW_DAYS = 90;
+
+  // Check-ins deliberately use the PLAIN calendar date in the user's timezone —
+  // NOT businessToday(), which rolls forward at 7pm. The rolled date would file an
+  // evening check-in under tomorrow and then score it against tomorrow's start
+  // (an ~11-hour "late"), while also consuming tomorrow's one-row-per-day slot so
+  // the real morning check-in silently vanished. Date and wall clock must come
+  // from the same instant.
+  function checkinToday(tz: string): string {
+    return new Date().toLocaleDateString("en-CA", { timeZone: tz });
+  }
+  function checkinTzFor(userId: number): string {
+    const u = storage.getUserById(userId) as any;
+    return (u?.timezone as string) || BUSINESS_DAY_DEFAULT_TZ;
+  }
+
+  // The time this person is expected to start on a given date. Uses their
+  // standing weekly schedule for that weekday (any status except denied); falls
+  // back to the org-wide check-in start on a Mon–Fri week when they have no
+  // schedule on file. Non-working days carry no expectation, so they can't be
+  // marked late on a day off.
+  function checkinExpectedStart(userId: number, orgId: number, date: string, fallbackStart: string):
+    { start: string; working: boolean; source: "schedule" | "default" } {
+    const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const dow = new Date(date + "T12:00:00Z").getUTCDay();
+    const key = dayKeys[dow];
+    try {
+      const row = storageExtra.getRawSqlite()
+        .prepare("SELECT days, status FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start='standing'")
+        .get(orgId, userId) as any;
+      // Any schedule the person has on file governs their hours EXCEPT an
+      // explicitly denied one. Requiring 'approved' would silently revert them to
+      // the org default the moment they resubmit (PUT /api/schedule flips the row
+      // back to 'pending'), erasing their days off and manufacturing lates.
+      if (row && row.status !== "denied") {
+        const days = JSON.parse(row.days || "{}");
+        const d = days?.[key];
+        if (d && typeof d === "object") {
+          const start = (typeof d.start === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.start)) ? d.start : fallbackStart;
+          return { start, working: !!d.working, source: "schedule" };
+        }
+      }
+    } catch { /* fall through to the org default */ }
+    // No schedule on file: assume a Mon–Fri week at the org start. Never claim
+    // someone works all 7 days, or weekends would read as missed check-ins.
+    return { start: fallbackStart, working: dow >= 1 && dow <= 5, source: "default" };
+  }
+
+  // Rolling-window late history for one person (newest first) + the policy.
+  function checkinLateStats(userId: number, asOfDate: string) {
+    const from = addIsoDays(asOfDate, -(CHECKIN_LATE_WINDOW_DAYS - 1));
+    const rows = storageExtra.getLateCheckins(userId, from, asOfDate) as any[];
+    return {
+      allowance: CHECKIN_LATE_ALLOWANCE,
+      windowDays: CHECKIN_LATE_WINDOW_DAYS,
+      windowStart: from,
+      count: rows.length,
+      remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - rows.length),
+      overLimit: rows.length > CHECKIN_LATE_ALLOWANCE,
+      lates: rows.map((r) => ({
+        date: r.date,
+        checkedInAt: r.checked_in_at,
+        minutesLate: r.minutes_late ?? null,
+        expectedStart: r.expected_start ?? null,
+      })),
+    };
+  }
+
+  // Everyone who should hear about a policy breach: the configured manager list
+  // plus every active manager/admin with an email.
+  function checkinManagerEmails(): string[] {
+    const out = new Set<string>();
+    try {
+      const s = storageExtra.getEmailSettings() as any;
+      for (const e of JSON.parse(s?.manager_emails || "[]")) {
+        const t = String(e || "").trim();
+        if (t.includes("@")) out.add(t);
+      }
+    } catch { /* ignore a malformed list */ }
+    for (const u of storage.getUsers() as any[]) {
+      const active = u.isActive ?? u.is_active;
+      const mgr = (u.isManager ?? u.is_manager) || u.role === "admin";
+      if (active && mgr && String(u.email || "").includes("@")) out.add(String(u.email));
+    }
+    return Array.from(out);
+  }
+
   app.get("/api/checkin", requireAuth, (req: any, res) => {
     const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const cfg = checkinConfig();
-    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const date = checkinToday(checkinTzFor(userId));
     const mine = storageExtra.getCheckinForUserDate(userId, date);
+    const exp = checkinExpectedStart(userId, orgId, date, cfg.start);
     res.json({
       enabled: cfg.enabled,
-      start: cfg.start,
+      start: exp.start,            // schedule-aligned expected start for today
+      startSource: exp.source,     // "schedule" | "default"
+      working: exp.working,        // false on a scheduled day off (never late)
+      orgStart: cfg.start,
       graceMin: cfg.graceMin,
       officeSet: cfg.lat != null && cfg.lng != null,
       radiusM: cfg.radiusM,
       date,
       mine,
+      lateStats: checkinLateStats(userId, date),
     });
   });
 
-  app.post("/api/checkin", requireAuth, (req: any, res) => {
+  app.post("/api/checkin", requireAuth, async (req: any, res) => {
     const userId = Number(req.session_user?.userId);
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const cfg = checkinConfig();
     if (!cfg.enabled) return res.status(400).json({ error: "Morning check-in is not enabled." });
-    const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const me0 = storage.getUserById(userId) as any;
+    const tz0 = (me0?.timezone as string) || BUSINESS_DAY_DEFAULT_TZ;
+    const date = checkinToday(tz0);
     const existing = storageExtra.getCheckinForUserDate(userId, date);
     if (existing) return res.json({ checkin: existing, already: true });
 
@@ -10311,21 +10408,75 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       distanceM = haversineM(lat, lng, cfg.lat, cfg.lng);
       inArea = distanceM <= cfg.radiusM ? 1 : 0;
     }
-    const me = storage.getUserById(userId) as any;
-    const tz = (me?.timezone as string) || BUSINESS_DAY_DEFAULT_TZ;
-    const [sh, sm] = cfg.start.split(":").map((x: string) => parseInt(x, 10));
-    const onTime = wallClockMinutes(tz) <= sh * 60 + sm + cfg.graceMin ? 1 : 0;
+    const me = me0;
+    const tz = tz0;
+    // Lateness is measured against THIS person's scheduled start for today (the
+    // grace period decides on-time vs late), not a single org-wide time. A
+    // scheduled day off carries no start expectation, so it can never be late.
+    // minutesLate is measured from the START itself so "12 min past your 8:00
+    // start" matches what the UI and the manager email actually say.
+    const exp = checkinExpectedStart(userId, orgId, date, cfg.start);
+    const [sh, sm] = exp.start.split(":").map((x: string) => parseInt(x, 10));
+    const startMin = sh * 60 + sm;
+    const nowMin = wallClockMinutes(tz);
+    const onTime = exp.working ? (nowMin <= startMin + cfg.graceMin ? 1 : 0) : 1;
+    const minutesLate = exp.working ? Math.max(0, nowMin - startMin) : 0;
 
     const checkin = storageExtra.saveCheckin({
       orgId, userId, date, checkedInAt: new Date().toISOString(),
       lat, lng, accuracyM, distanceM, inArea, onTime,
+      minutesLate: onTime ? 0 : minutesLate,
+      expectedStart: exp.working ? exp.start : null,
     });
     audit({
       userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
       entityLabel: `${me?.name ?? "User"} morning check-in`,
-      details: JSON.stringify({ date, onTime: !!onTime, inArea: inArea == null ? null : !!inArea, distanceM }),
+      details: JSON.stringify({ date, onTime: !!onTime, minutesLate: onTime ? 0 : minutesLate, expectedStart: exp.working ? exp.start : null, scheduledOff: !exp.working, inArea: inArea == null ? null : !!inArea, distanceM }),
     });
-    res.json({ checkin });
+
+    // Policy: 3 lates per rolling 90 days. When this check-in is the one that
+    // reaches the limit (and only then — not on every later late), notify the
+    // managers with the offending dates.
+    const lateStats = checkinLateStats(userId, date);
+    if (!onTime && lateStats.count >= CHECKIN_LATE_ALLOWANCE
+        && !storageExtra.lateAlertSentInWindow(userId, lateStats.windowStart, date)) {
+      try {
+        const to = checkinManagerEmails();
+        if (to.length) {
+          const rowsHtml = lateStats.lates.map((l: any) => {
+            const when = new Date(l.checkedInAt).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+            const d = new Date(l.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+            return `<tr><td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${d}</td>`
+              + `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${when}</td>`
+              + `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${l.expectedStart ?? "—"}</td>`
+              + `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${l.minutesLate != null ? l.minutesLate + " min" : "—"}</td></tr>`;
+          }).join("");
+          const body = `<p style="margin:0 0 14px;font-size:15px;color:#1e293b"><strong>${me?.name ?? "A team member"}</strong> has now used all `
+            + `<strong>${CHECKIN_LATE_ALLOWANCE} late check-ins</strong> allowed in a rolling ${CHECKIN_LATE_WINDOW_DAYS}-day window `
+            + `(since ${lateStats.windowStart}).</p>`
+            + `<table style="border-collapse:collapse;width:100%;margin-top:6px">`
+            + `<tr><th align="left" style="padding:6px 10px;border-bottom:2px solid #1A2B4A;font-size:12px">Date</th>`
+            + `<th align="left" style="padding:6px 10px;border-bottom:2px solid #1A2B4A;font-size:12px">Checked in</th>`
+            + `<th align="left" style="padding:6px 10px;border-bottom:2px solid #1A2B4A;font-size:12px">Due</th>`
+            + `<th align="left" style="padding:6px 10px;border-bottom:2px solid #1A2B4A;font-size:12px">Late by</th></tr>${rowsHtml}</table>`
+            + `<p style="margin:14px 0 0;font-size:12px;color:#94a3b8">Any further late check-in in this window puts them over the limit.</p>`;
+          const subject = `Check-in policy: ${me?.name ?? "A team member"} hit ${CHECKIN_LATE_ALLOWANCE} lates in ${CHECKIN_LATE_WINDOW_DAYS} days`;
+          // immediate: true — the deferred queue returns before anything is sent
+          // and only logs failures, so stamping off a queued send could suppress
+          // this alert for the rest of the window. Sending now means a failure
+          // throws, the stamp is skipped, and the next late retries.
+          await sendEmail(
+            { to, subject, html: buildEmail({ subject: "Late Check-In Limit Reached", preheader: `${me?.name ?? "A team member"} — ${lateStats.count} lates`, body }) },
+            { immediate: true },
+          );
+          // Only after a real send: stamp the triggering row so this fires once
+          // per window, not on every subsequent late.
+          storageExtra.markLateAlertSent(userId, date);
+        }
+      } catch (e: any) { console.error("[checkin] late-limit email failed:", e?.message ?? e); }
+    }
+
+    res.json({ checkin, lateStats });
   });
 
   // Admin/manager: everyone's check-in status for a date (missing = no row).
@@ -10334,13 +10485,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
       ? req.query.date
-      : businessTodayForRequest(req, storageExtra.getRawSqlite());
+      : checkinToday(checkinTzFor(Number(req.session_user?.userId)));
     const rows = storageExtra.getCheckinsForDate(orgId, date);
     const byUser = new Map<number, any>(rows.map((r: any) => [r.user_id, r]));
+    const cfg = checkinConfig();
+    const windowStart = addIsoDays(date, -(CHECKIN_LATE_WINDOW_DAYS - 1));
+    const lateCounts = storageExtra.getLateCountsByUser(orgId, windowStart, date) as Map<number, number>;
     const clrs = (storage.getUsers() as any[])
       .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
-      .map((u) => ({ userId: u.id, name: u.name, checkin: byUser.get(u.id) ?? null }));
-    res.json({ date, config: checkinConfig(), clrs });
+      .map((u) => {
+        const exp = checkinExpectedStart(u.id, orgId, date, cfg.start);
+        const lateCount = lateCounts.get(u.id) ?? 0;
+        return {
+          userId: u.id, name: u.name, checkin: byUser.get(u.id) ?? null,
+          expectedStart: exp.working ? exp.start : null,
+          scheduledOff: !exp.working,
+          lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
+        };
+      });
+    res.json({
+      date, config: cfg, clrs,
+      policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
+    });
   });
 
   // Admin: check-in configuration (office point, radius, start time, on/off).
@@ -11868,6 +12034,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = req.session_user?.userId;
     const { reportDate, callsMade, messagesSent, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
+    // Calls made is mandatory — a blank field must not quietly file as 0. The
+    // client sends null when empty; anything non-numeric/negative is rejected too.
+    const callsNum = Number(callsMade);
+    if (callsMade === null || callsMade === undefined || callsMade === "" || !Number.isFinite(callsNum) || callsNum < 0) {
+      return res.status(400).json({ error: 'Enter how many calls you made today (enter 0 if none).' });
+    }
     const normalizeIds = (x: any): number[] =>
       Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
     const assignedIds = normalizeIds(assignedLosCalled);
@@ -11876,7 +12048,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const report = storageExtra.upsertEodReport({
       reportDate,
       assistantId: userId,
-      callsMade: Number(callsMade ?? 0),
+      callsMade: callsNum,
       messagesSent: Number(messagesSent ?? textsSent ?? 0),
       transfers: Number(transfers ?? 0),
       appointments: Number(appointments ?? 0),
@@ -11886,7 +12058,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       additionalLosOtherNotes: otherNotesStr,
     });
     // Also sync call log for the day
-    storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: Number(callsMade ?? 0), notes: null });
+    storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: callsNum, notes: null });
 
     // ── Sync daily_assignments + loan_officers freshness from EOD coverage ──
     // Without this, the algorithm sees the LO's lastWorkedDate as stale and re-recommends
@@ -12061,7 +12233,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       ];
 
       if (allRecipients.length > 0) {
-        const calls = Number(callsMade ?? 0);
+        const calls = callsNum;
         const xfers = Number(transfers ?? 0);
         const appts = Number(appointments ?? 0);
         const safeNotes = (notes ?? "").toString().trim();

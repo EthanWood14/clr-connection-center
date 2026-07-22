@@ -185,6 +185,7 @@ const mainItems: NavItem[] = [
 
 const personalItems: NavItem[] = [
   { title: "My Report",       url: "/my-report",     icon: BarChart2,       help: help.myReport },
+  { title: "Check-In",        url: "/check-ins",     icon: UserCheck },
   { title: "Time Clock",      url: "/time-clock",    icon: Timer },
   { title: "Time Off",        url: "/time-off",      icon: Plane },
   { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
@@ -218,7 +219,6 @@ const loManagementItems: NavItem[] = [
 ];
 
 const adminItems: NavItem[] = [
-  { title: "Check-Ins",       url: "/check-ins",   icon: UserCheck },
   { title: "Outbound Calls", url: "/outbound-calls", icon: PhoneOutgoing, beta: true },
   { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
   { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },

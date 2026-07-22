@@ -1005,6 +1005,9 @@ function MorningCheckInCard() {
     );
   }
 
+  // Scheduled day off — nothing to nag about (the server won't count it late either).
+  if (data.working === false) return null;
+
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
       <div className="flex items-center gap-2 text-[13px] text-amber-900 dark:text-amber-200">

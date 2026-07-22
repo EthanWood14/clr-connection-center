@@ -1973,6 +1973,14 @@ function runNewMigrations() {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, date)
   )`);
+  // How late (minutes past the expected start itself — grace only decides on-time
+  // vs late) and what start time was expected, kept per row so the late history
+  // stays accurate even if the person's schedule changes later.
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN expected_start TEXT`); } catch {}
+  // Marks the late that triggered the "limit reached" manager email, so it fires
+  // once per rolling window instead of once per exact-count coincidence.
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN late_alert_sent INTEGER NOT NULL DEFAULT 0`); } catch {}
   // Check-in config lives with the other org settings on email_settings.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
@@ -4587,12 +4595,50 @@ export function saveCheckin(data: {
   orgId: number; userId: number; date: string; checkedInAt: string;
   lat: number | null; lng: number | null; accuracyM: number | null;
   distanceM: number | null; inArea: number | null; onTime: number | null;
+  minutesLate?: number | null; expectedStart?: string | null;
 }): any {
   // First check-in of the day wins — re-submits don't overwrite the original time.
   sqlite.prepare(`
-    INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time)
-    VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime)
+    INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time, minutes_late, expected_start)
+    VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime, @minutesLate, @expectedStart)
     ON CONFLICT(user_id, date) DO NOTHING
-  `).run(data);
+  `).run({ minutesLate: null, expectedStart: null, ...data });
   return getCheckinForUserDate(data.userId, data.date);
+}
+
+// Late check-ins for a user within a trailing window (inclusive of both dates),
+// newest first. Drives the "3 lates per 90 days" policy and its history list.
+//
+// `expected_start IS NOT NULL` restricts this to lates recorded under the
+// schedule-aligned policy. Rows predating it were scored against a single
+// org-wide time (and could be "late" on someone's day off), so counting them
+// would start people at or over the limit the day this ships.
+export function getLateCheckins(userId: number, startDate: string, endDate: string): any[] {
+  return sqlite.prepare(
+    `SELECT * FROM morning_checkins
+      WHERE user_id = ? AND on_time = 0 AND expected_start IS NOT NULL AND date >= ? AND date <= ?
+      ORDER BY date DESC`
+  ).all(userId, startDate, endDate) as any[];
+}
+// Late counts for every user in an org over a window — for the manager roster.
+export function getLateCountsByUser(orgId: number, startDate: string, endDate: string): Map<number, number> {
+  const rows = sqlite.prepare(
+    `SELECT user_id, COUNT(*) AS n FROM morning_checkins
+      WHERE org_id = ? AND on_time = 0 AND expected_start IS NOT NULL AND date >= ? AND date <= ?
+      GROUP BY user_id`
+  ).all(orgId, startDate, endDate) as any[];
+  return new Map(rows.map((r) => [Number(r.user_id), Number(r.n)]));
+}
+// Has the "hit the late limit" alert already gone out for a late in this window?
+// Keeps the manager email to once per window even if the count jumps past the
+// allowance (backfills, edits) rather than landing exactly on it.
+export function lateAlertSentInWindow(userId: number, startDate: string, endDate: string): boolean {
+  const r = sqlite.prepare(
+    `SELECT 1 FROM morning_checkins
+      WHERE user_id = ? AND late_alert_sent = 1 AND date >= ? AND date <= ? LIMIT 1`
+  ).get(userId, startDate, endDate);
+  return !!r;
+}
+export function markLateAlertSent(userId: number, date: string): void {
+  sqlite.prepare(`UPDATE morning_checkins SET late_alert_sent = 1 WHERE user_id = ? AND date = ?`).run(userId, date);
 }

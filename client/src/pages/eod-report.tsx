@@ -323,7 +323,8 @@ export default function EodReport() {
     mutationFn: () =>
       apiRequest("POST", "/api/eod-reports", {
         reportDate:   selectedDate,
-        callsMade:    parseInt(callsMade) || 0,
+        // null when blank so the server rejects it rather than silently filing a 0.
+        callsMade:    callsMade.trim() === "" ? null : (parseInt(callsMade) || 0),
         messagesSent: parseInt(messagesSent) || 0,
         transfers:    autoTransfers,
         appointments: autoAppointments,
@@ -402,6 +403,8 @@ export default function EodReport() {
   const canGoForward = !isFuture && !(isTomorrow);
   const displayDate = format(parseISO(selectedDate), "EEEE, MMMM d, yyyy");
 
+  // Calls made is mandatory on the EOD — blank blocks submission (0 is fine).
+  const callsValid = callsMade.trim() !== "" && Number.isFinite(Number(callsMade)) && Number(callsMade) >= 0;
   const callsNum = parseInt(callsMade) || 0;
   const ratioPreview = callsNum > 0
     ? ((autoTransfers / callsNum) * 100).toFixed(1) + "%"
@@ -710,17 +713,21 @@ export default function EodReport() {
             </CardHeader>
             <CardContent className="space-y-4">
 
-              {/* Calls made — the one manual entry */}
+              {/* Calls made — the one manual entry, and it's REQUIRED. Enter 0 if
+                  you genuinely made none; the report can't be submitted blank. */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <PhoneCall className="w-3.5 h-3.5" /> Total Calls Made
+                  <PhoneCall className="w-3.5 h-3.5" /> Total Calls Made <span className="text-red-500">*</span>
                 </label>
                 <div className="flex items-center gap-3">
                   <Input
-                    type="number" min={0} placeholder="Enter your total calls for the day"
+                    type="number" min={0} placeholder="Required — enter your total calls (0 if none)"
                     value={callsMade}
                     onChange={e => { setCallsMade(e.target.value); setDirty(true); }}
-                    className="h-9 max-w-[200px]"
+                    aria-required="true"
+                    aria-invalid={!callsValid}
+                    className={"h-9 max-w-[240px]" + (callsValid ? "" : " border-red-400 focus-visible:ring-red-400")}
+                    data-testid="input-calls-made"
                   />
                   {ratioPreview && (
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -729,6 +736,11 @@ export default function EodReport() {
                     </span>
                   )}
                 </div>
+                {!callsValid && (
+                  <p className="text-[11px] font-medium text-red-600 dark:text-red-400" data-testid="calls-required-msg">
+                    Required — enter how many calls you made today (enter 0 if none).
+                  </p>
+                )}
               </div>
 
               {/* Messages sent — texts/DMs sent instead of calls */}
@@ -759,7 +771,8 @@ export default function EodReport() {
                 <Button
                   className="flex-1 min-w-[180px] gap-2"
                   onClick={() => saveMutation.mutate()}
-                  disabled={saveMutation.isPending || (!dirty && !!report)}
+                  disabled={saveMutation.isPending || (!dirty && !!report) || !callsValid}
+                  title={!callsValid ? "Enter your total calls made first" : ""}
                 >
                   {saveMutation.isPending ? (
                     <><Clock className="w-4 h-4 animate-spin" /> Saving…</>

@@ -135,7 +135,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/forum":            "Forum",
   "/shark-tank":       "Shark Tank",
   "/lead-sources":     "Lead Sources",
-  "/check-ins":        "Morning Check-Ins",
+  "/check-ins":        "Check-In",
 };
 
 function usePageTitle() {
