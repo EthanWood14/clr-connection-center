@@ -67,6 +67,8 @@ import Forum from "@/pages/forum";
 import SharkTank from "@/pages/shark-tank";
 import LeadSources from "@/pages/lead-sources";
 import CheckIns from "@/pages/check-ins";
+import ClrProfiles from "@/pages/clr-profiles";
+import ClrProfile from "@/pages/clr-profile";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
@@ -136,6 +138,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/shark-tank":       "Shark Tank",
   "/lead-sources":     "Lead Sources",
   "/check-ins":        "Check-In",
+  "/clr-profiles":     "CLR Profiles",
 };
 
 function usePageTitle() {
@@ -192,6 +195,8 @@ function AppRouter() {
       <Route path="/shark-tank" component={SharkTank} />
       <Route path="/lead-sources" component={LeadSources} />
       <Route path="/check-ins" component={CheckIns} />
+      <Route path="/clr-profiles" component={ClrProfiles} />
+      <Route path="/clr-profiles/:id" component={ClrProfile} />
       <Route path="/super-admin" component={SuperAdmin} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />

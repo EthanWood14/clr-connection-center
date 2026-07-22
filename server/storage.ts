@@ -69,6 +69,9 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN reset_token_expiry INTEGER`); } 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_manager INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_dismissed_sample INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN last_seen_pipeline_sop TEXT`); } catch {}
+// Employment start date (YYYY-MM-DD) — distinct from created_at, which is just
+// when the login was made. Powers tenure on the CLR profile pages.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN start_date TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_calls_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_transfers_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN goal_appointments_weekly INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -1981,6 +1984,12 @@ function runNewMigrations() {
   // Marks the late that triggered the "limit reached" manager email, so it fires
   // once per rolling window instead of once per exact-count coincidence.
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN late_alert_sent INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // A manager can excuse (reverse) a late — it stays on the record for history
+  // but stops counting toward the 3-per-90-days policy.
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN late_excused INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excused_by INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excused_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excuse_reason TEXT`); } catch {}
   // Check-in config lives with the other org settings on email_settings.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
@@ -4613,6 +4622,8 @@ export function saveCheckin(data: {
 // schedule-aligned policy. Rows predating it were scored against a single
 // org-wide time (and could be "late" on someone's day off), so counting them
 // would start people at or over the limit the day this ships.
+// Excused lates are returned (the history should still show them, marked) but
+// they are excluded from the counts that drive the policy.
 export function getLateCheckins(userId: number, startDate: string, endDate: string): any[] {
   return sqlite.prepare(
     `SELECT * FROM morning_checkins
@@ -4624,10 +4635,38 @@ export function getLateCheckins(userId: number, startDate: string, endDate: stri
 export function getLateCountsByUser(orgId: number, startDate: string, endDate: string): Map<number, number> {
   const rows = sqlite.prepare(
     `SELECT user_id, COUNT(*) AS n FROM morning_checkins
-      WHERE org_id = ? AND on_time = 0 AND expected_start IS NOT NULL AND date >= ? AND date <= ?
+      WHERE org_id = ? AND on_time = 0 AND expected_start IS NOT NULL AND late_excused = 0
+        AND date >= ? AND date <= ?
       GROUP BY user_id`
   ).all(orgId, startDate, endDate) as any[];
   return new Map(rows.map((r) => [Number(r.user_id), Number(r.n)]));
+}
+
+// Manager reverses (or re-applies) a late.
+//
+// Excusing also re-arms the "limit reached" manager alert. The stamp lives on
+// whichever row TRIGGERED the alert, which is usually NOT the row being excused,
+// so clearing it on this row alone would leave the alert suppressed for the rest
+// of the window (the person could climb back to the limit in silence). Clear it
+// across the user's whole rolling window instead.
+export function setLateExcused(id: number, excused: boolean, byUserId: number, reason: string, windowStart?: string, windowEnd?: string): any {
+  sqlite.prepare(
+    `UPDATE morning_checkins
+        SET late_excused = ?, excused_by = ?, excused_at = ?, excuse_reason = ?
+      WHERE id = ?`
+  ).run(excused ? 1 : 0, excused ? byUserId : null, excused ? new Date().toISOString() : null,
+        excused ? reason.slice(0, 300) : null, id);
+  const row = sqlite.prepare(`SELECT * FROM morning_checkins WHERE id = ?`).get(id) as any;
+  if (excused && row && windowStart && windowEnd) {
+    sqlite.prepare(
+      `UPDATE morning_checkins SET late_alert_sent = 0
+        WHERE user_id = ? AND date >= ? AND date <= ?`
+    ).run(Number(row.user_id), windowStart, windowEnd);
+  }
+  return row;
+}
+export function getCheckinById(id: number): any {
+  return sqlite.prepare(`SELECT * FROM morning_checkins WHERE id = ?`).get(id) as any;
 }
 // Has the "hit the late limit" alert already gone out for a late in this window?
 // Keeps the manager email to once per window even if the count jumps past the

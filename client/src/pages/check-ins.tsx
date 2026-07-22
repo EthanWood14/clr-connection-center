@@ -17,15 +17,21 @@ import {
 const todayLocal = () => new Date().toLocaleDateString("en-CA");
 
 type Mine = {
+  id: number;
   checked_in_at: string;
   on_time: number | null;
   in_area: number | null;
   distance_m: number | null;
   minutes_late: number | null;
   expected_start: string | null;
+  late_excused?: number | null;
+  excuse_reason?: string | null;
 } | null;
 
-type LateRow = { date: string; checkedInAt: string; minutesLate: number | null; expectedStart: string | null };
+type LateRow = {
+  id: number; date: string; checkedInAt: string; minutesLate: number | null; expectedStart: string | null;
+  excused?: boolean; excusedBy?: string | null; excuseReason?: string | null;
+};
 type LateStats = {
   allowance: number; windowDays: number; windowStart: string;
   count: number; remaining: number; overLimit: boolean; lates: LateRow[];
@@ -125,6 +131,24 @@ export default function CheckIns() {
   const stats = me?.lateStats;
   const mine = me?.mine ?? null;
 
+  // Managers can reverse a late (and undo the reversal). The row keeps its real
+  // times; excusing only stops it counting toward the 90-day allowance.
+  const excuseMut = useMutation({
+    mutationFn: (v: { id: number; excused: boolean; reason: string }) =>
+      apiRequest("POST", `/api/checkin/${v.id}/excuse`, { excused: v.excused, reason: v.reason }),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      toast({ title: v.excused ? "Late excused" : "Late re-applied" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
+  });
+  function excuseLate(id: number, currentlyExcused: boolean) {
+    if (currentlyExcused) { excuseMut.mutate({ id, excused: false, reason: "" }); return; }
+    const reason = window.prompt("Reason for excusing this late (optional):", "") ?? "";
+    excuseMut.mutate({ id, excused: true, reason });
+  }
+
   // ── Manager roster (below the personal card) ──
   const [date, setDate] = useState(() => todayLocal());
   const { data: adminData, isLoading: adminLoading } = useQuery<AdminResp>({
@@ -176,7 +200,11 @@ export default function CheckIns() {
           ) : mine ? (
             <div className="space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
-                {mine.on_time === 1 ? (
+                {mine.late_excused ? (
+                  <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800" title={mine.excuse_reason || "Excused by a manager"}>
+                    <CheckCircle2 className="w-3 h-3" /> Excused
+                  </Badge>
+                ) : mine.on_time === 1 ? (
                   <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                     <CheckCircle2 className="w-3 h-3" /> On time
                   </Badge>
@@ -288,16 +316,23 @@ export default function CheckIns() {
             ) : (
               <div className="rounded-md border divide-y">
                 {stats.lates.map((l) => (
-                  <div key={l.date} className="flex items-center justify-between gap-3 px-3 py-2" data-testid={`late-row-${l.date}`}>
+                  <div key={l.date} className={`flex items-center justify-between gap-3 px-3 py-2 ${l.excused ? "opacity-70" : ""}`} data-testid={`late-row-${l.date}`}>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{fmtDay(l.date)}</p>
+                      <p className={`text-sm font-medium ${l.excused ? "line-through" : ""}`}>{fmtDay(l.date)}</p>
                       <p className="text-[11px] text-muted-foreground">
                         In at {fmtTime(l.checkedInAt)} · due {fmtHm(l.expectedStart)}
+                        {l.excused && ` · excused${l.excusedBy ? ` by ${l.excusedBy}` : ""}${l.excuseReason ? ` — ${l.excuseReason}` : ""}`}
                       </p>
                     </div>
-                    <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 shrink-0">
-                      {l.minutesLate != null ? `${l.minutesLate} min late` : "Late"}
-                    </Badge>
+                    {l.excused ? (
+                      <Badge variant="outline" className="font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 shrink-0">
+                        Excused
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 shrink-0">
+                        {l.minutesLate != null ? `${l.minutesLate} min late` : "Late"}
+                      </Badge>
+                    )}
                   </div>
                 ))}
               </div>
@@ -368,10 +403,26 @@ export default function CheckIns() {
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                               <CheckCircle2 className="w-3 h-3" /> On time
                             </Badge>
+                          ) : ci.late_excused ? (
+                            <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800" title={ci.excuse_reason || "Excused"}>
+                              <CheckCircle2 className="w-3 h-3" /> Excused
+                            </Badge>
                           ) : (
                             <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                               <XCircle className="w-3 h-3" /> Late{ci.minutes_late ? ` ${ci.minutes_late}m` : ""}
                             </Badge>
+                          )}
+                          {/* Reverse a late (or put it back) — managers only. */}
+                          {ci.on_time !== 1 && (
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-6 px-2 text-[11px]"
+                              disabled={excuseMut.isPending}
+                              onClick={() => excuseLate(ci.id, !!ci.late_excused)}
+                              data-testid={`excuse-${c.userId}`}
+                            >
+                              {ci.late_excused ? "Undo" : "Excuse"}
+                            </Button>
                           )}
                           {ci.in_area === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">

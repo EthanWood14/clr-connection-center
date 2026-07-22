@@ -19,7 +19,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect } from "./bonzo";
@@ -5120,6 +5120,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       "role", "isManager", "is_manager", "isClr", "is_clr",
       "excludeFromStats", "exclude_from_stats", "inDailyAssignments", "in_daily_assignments",
       "isActive", "is_active", "orgId", "org_id", "mustChangePassword", "must_change_password",
+      // Employment start date is an HR field — nobody sets their own.
+      "startDate", "start_date",
     ];
     if (!isAdmin) for (const k of PRIVILEGED) delete (rest as any)[k];
     if (!isSuper) { delete (rest as any).superAdmin; delete (rest as any).super_admin; }
@@ -10331,18 +10333,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function checkinLateStats(userId: number, asOfDate: string) {
     const from = addIsoDays(asOfDate, -(CHECKIN_LATE_WINDOW_DAYS - 1));
     const rows = storageExtra.getLateCheckins(userId, from, asOfDate) as any[];
+    // Excused lates stay in the history (flagged) but don't count against the
+    // allowance — reversing one immediately gives the person that late back.
+    const counted = rows.filter((r) => !r.late_excused);
+    const nameById = new Map<number, string>((storage.getUsers() as any[]).map((u: any) => [u.id, u.name]));
     return {
       allowance: CHECKIN_LATE_ALLOWANCE,
       windowDays: CHECKIN_LATE_WINDOW_DAYS,
       windowStart: from,
-      count: rows.length,
-      remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - rows.length),
-      overLimit: rows.length > CHECKIN_LATE_ALLOWANCE,
+      count: counted.length,
+      remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - counted.length),
+      overLimit: counted.length > CHECKIN_LATE_ALLOWANCE,
       lates: rows.map((r) => ({
+        id: r.id,
         date: r.date,
         checkedInAt: r.checked_in_at,
         minutesLate: r.minutes_late ?? null,
         expectedStart: r.expected_start ?? null,
+        excused: !!r.late_excused,
+        excusedBy: r.excused_by ? (nameById.get(Number(r.excused_by)) ?? null) : null,
+        excuseReason: r.excuse_reason ?? null,
       })),
     };
   }
@@ -10443,7 +10453,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       try {
         const to = checkinManagerEmails();
         if (to.length) {
-          const rowsHtml = lateStats.lates.map((l: any) => {
+          // Only the lates that actually count — an excused one must not show up
+          // as evidence, or the table contradicts the headline number.
+          const rowsHtml = lateStats.lates.filter((l: any) => !l.excused).map((l: any) => {
             const when = new Date(l.checkedInAt).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
             const d = new Date(l.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
             return `<tr><td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${d}</td>`
@@ -10507,6 +10519,48 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       date, config: cfg, clrs,
       policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
     });
+  });
+
+  // Manager: reverse (excuse) a late, or put it back. The row keeps its real
+  // times — excusing only stops it counting toward the 3-per-90-days policy.
+  app.post("/api/checkin/:id/excuse", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const uid = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    const row = storageExtra.getCheckinById(id);
+    if (!row || Number(row.org_id) !== orgId) return res.status(404).json({ error: "Not found" });
+    if (row.on_time === 1) return res.status(400).json({ error: "That check-in wasn't late." });
+    // A manager can't clear their own late — an admin can (same rule the comp
+    // approve/deny path uses for self-review).
+    const meRow = storage.getUserById(uid) as any;
+    if (Number(row.user_id) === uid && meRow?.role !== "admin") {
+      return res.status(403).json({ error: "You can't excuse your own late — ask an admin." });
+    }
+    const excused = req.body?.excused === undefined ? true : !!req.body.excused;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    // Re-arm the limit alert across this person's whole current window.
+    const wEnd = checkinToday(checkinTzFor(Number(row.user_id)));
+    const wStart = addIsoDays(wEnd, -(CHECKIN_LATE_WINDOW_DAYS - 1));
+    const updated = storageExtra.setLateExcused(id, excused, uid, reason, wStart, wEnd);
+    const me = meRow;
+    const who = storage.getUserById(Number(row.user_id)) as any;
+    audit({
+      userId: uid, userName: me?.name ?? "Unknown", action: "update",
+      entityType: "checkin", entityId: id,
+      entityLabel: `${who?.name ?? "User"} late on ${row.date} ${excused ? "excused" : "re-applied"}`,
+      details: JSON.stringify({ date: row.date, excused, reason: reason || null }),
+    });
+    try {
+      (storage as any).createNotification?.({
+        userId: Number(row.user_id), type: "checkin",
+        title: excused ? "Late excused" : "Late re-applied",
+        message: excused
+          ? `Your late on ${row.date} was excused by ${me?.name ?? "a manager"}${reason ? ` — ${reason}` : ""}. It no longer counts toward your 90-day total.`
+          : `Your late on ${row.date} was put back by ${me?.name ?? "a manager"} and counts again.`,
+      });
+    } catch {}
+    res.json({ ok: true, checkin: updated });
   });
 
   // Admin: check-in configuration (office point, radius, start time, on/off).
@@ -12728,6 +12782,223 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       console.error("[eod/draft DELETE]", e?.message ?? e);
       res.status(500).json({ error: e?.message ?? "Unknown error" });
     }
+  });
+
+  // ── CLR profiles: start dates + per-person performance ────────────────────
+  // Roster of tiles (managers/admins). Each CLR with their start date, tenure,
+  // and headline numbers for the selected period, so you can scan the team and
+  // drill into anyone.
+  function clrTenureDays(startDate: string | null, createdAt: string | null): number | null {
+    const src = startDate || (createdAt ? String(createdAt).slice(0, 10) : null);
+    if (!src || !/^\d{4}-\d{2}-\d{2}$/.test(src)) return null;
+    const ms = Date.parse(src + "T12:00:00Z");
+    if (!Number.isFinite(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+  }
+  // The set of people these pages cover: active CLRs (assistants + admins who
+  // also carry a CLR seat).
+  function clrRoster(): any[] {
+    return (storage.getUsers() as any[])
+      .filter((u) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }
+  // Core metric block for one CLR over a date range — shared by the roster tiles
+  // and the individual profile page so both always agree.
+  function clrMetrics(userId: number, startDate: string, endDate: string) {
+    const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
+    const callLogs = (storage.getCallLogsByRange(startDate, endDate) as any[])
+      .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
+    const ot = (o: any) => o.outcomeType ?? o.outcome_type;
+    const tt = (o: any) => o.transferType ?? o.transfer_type;
+    const calls = callLogs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
+    const transfersList = outcomes.filter((o) => ot(o) === "transfer");
+    const transfers = transfersList.length;
+    return {
+      calls,
+      transfers,
+      transfersDirect: transfersList.filter((o) => tt(o) === "direct").length,
+      transfersAppointment: transfersList.filter((o) => tt(o) === "appointment").length,
+      appointments: outcomes.filter((o) => ot(o) === "appointment").length,
+      callbacks: outcomes.filter((o) => ot(o) === "callback_requested").length,
+      deferrals: outcomes.filter((o) => ot(o) === "deferral").length,
+      fellThrough: outcomes.filter((o) => ot(o) === "fell_through").length,
+      futureContacts: outcomes.filter((o) => ot(o) === "future_contact").length,
+      noAnswer: outcomes.filter((o) => ot(o) === "no_answer").length,
+      transferRate: calls > 0 ? +((transfers / calls) * 100).toFixed(1) : 0,
+      daysWithCalls: new Set(callLogs.filter((l: any) => (l.callsMade ?? l.calls_made ?? 0) > 0).map((l: any) => l.logDate ?? l.log_date)).size,
+    };
+  }
+
+  app.get("/api/clr-profiles", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const period = (req.query.period as string) || "month";
+    const { startDate, endDate } = resolveNamedPeriod(period, tzFromRequest(req, storageExtra.getRawSqlite()));
+    try {
+      const rows = clrRoster().map((u) => {
+        const m = clrMetrics(u.id, startDate, endDate);
+        return {
+          userId: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          isManager: !!(u.isManager ?? u.is_manager),
+          excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats),
+          startDate: u.startDate ?? u.start_date ?? null,
+          createdAt: u.createdAt ?? u.created_at ?? null,
+          tenureDays: clrTenureDays(u.startDate ?? u.start_date ?? null, u.createdAt ?? u.created_at ?? null),
+          startDateIsEstimate: !(u.startDate ?? u.start_date),
+          metrics: m,
+        };
+      });
+      res.json({ period, startDate, endDate, clrs: rows });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load CLR profiles" });
+    }
+  });
+
+  // One CLR's full page: identity + tenure, metrics for the period, goals,
+  // a daily trend, and the operational extras (hours, attendance, comp).
+  app.get("/api/clr-profiles/:id", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const userId = parseInt(req.params.id, 10);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const u = storage.getUserById(userId) as any;
+    // getUserById is NOT org-scoped — confirm the target is in this org before
+    // returning anything, or a manager could read another tenant's people.
+    const uOrg = Number(u?.orgId ?? u?.org_id);
+    if (!u || (Number.isFinite(uOrg) && uOrg !== orgId)) return res.status(404).json({ error: "Not found" });
+    const period = (req.query.period as string) || "month";
+    const tz = tzFromRequest(req, storageExtra.getRawSqlite());
+    const { startDate, endDate } = resolveNamedPeriod(period, tz);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const metrics = clrMetrics(userId, startDate, endDate);
+
+      // Per-day trend. Bucketed via maps (not a filter per day) and capped —
+      // "all time" spans back to 2000, and neither a ~9,700-entry payload nor
+      // ~9,700 DOM bars is a chart anyone wants.
+      const DAILY_TREND_MAX_DAYS = 120;
+      const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
+      const callLogs = (storage.getCallLogsByRange(startDate, endDate) as any[])
+        .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
+      const ot = (o: any) => o.outcomeType ?? o.outcome_type;
+      const callsByDay = new Map<string, number>();
+      for (const l of callLogs) {
+        const d = l.logDate ?? l.log_date;
+        callsByDay.set(d, (callsByDay.get(d) ?? 0) + (l.callsMade ?? l.calls_made ?? 0));
+      }
+      const transfersByDay = new Map<string, number>();
+      const apptsByDay = new Map<string, number>();
+      for (const o of outcomes) {
+        const t = ot(o);
+        if (t === "transfer") transfersByDay.set(o.date, (transfersByDay.get(o.date) ?? 0) + 1);
+        else if (t === "appointment") apptsByDay.set(o.date, (apptsByDay.get(o.date) ?? 0) + 1);
+      }
+      const days: string[] = [];
+      for (let d = startDate; d <= endDate && days.length <= DAILY_TREND_MAX_DAYS; d = addIsoDays(d, 1)) days.push(d);
+      const dailyTooLong = days.length > DAILY_TREND_MAX_DAYS;
+      const daily = dailyTooLong ? [] : days.map((day) => ({
+        date: day,
+        calls: callsByDay.get(day) ?? 0,
+        transfers: transfersByDay.get(day) ?? 0,
+        appointments: apptsByDay.get(day) ?? 0,
+      }));
+
+      // Weekly goals (per-CLR override falls back to the user's own).
+      let goals = {
+        calls: Number(u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0),
+        transfers: Number(u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0),
+        appointments: Number(u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0),
+      };
+      try {
+        const cg = db.prepare(`SELECT calls_goal, transfers_goal, appointments_goal FROM clr_goals WHERE user_id = ?`).get(userId) as any;
+        if (cg) goals = { calls: Number(cg.calls_goal ?? 0), transfers: Number(cg.transfers_goal ?? 0), appointments: Number(cg.appointments_goal ?? 0) };
+      } catch {}
+
+      // Hours worked from the time clock (closed shifts only).
+      const entries = (storageExtra.getTimeClockEntries({ orgId, userId, startDate, endDate }) as any[]);
+      const hours = Math.round(entries.reduce((s, e) => s + compShiftHours(e), 0) * 100) / 100;
+
+      // Attendance over the same window + the live 90-day late standing.
+      // "lates" here must use the SAME rule as the policy counter below, or the
+      // tile and the "x of 3 used" line contradict each other: policy-era rows
+      // only (expected_start set), excused ones don't count.
+      const ci = db.prepare(
+        `SELECT COUNT(*) AS n,
+                SUM(CASE WHEN on_time = 0 AND late_excused = 0 AND expected_start IS NOT NULL THEN 1 ELSE 0 END) AS lates,
+                SUM(CASE WHEN in_area = 0 THEN 1 ELSE 0 END) AS outside
+           FROM morning_checkins WHERE user_id = ? AND org_id = ? AND date >= ? AND date <= ?`
+      ).get(userId, orgId, startDate, endDate) as any;
+      // Standing is judged in the CLR's OWN timezone, not the viewing manager's.
+      const lateStanding = checkinLateStats(userId, checkinToday(checkinTzFor(userId)));
+
+      // EOD reports submitted in the window.
+      const eod = db.prepare(`SELECT COUNT(*) AS n FROM eod_reports WHERE assistant_id = ? AND report_date >= ? AND report_date <= ?`)
+        .get(userId, startDate, endDate) as any;
+
+      // Comp APPROVED in the window — bucketed by when it was reviewed (falling
+      // back to submission), since that's what "approved in this period" means.
+      const comp = db.prepare(
+        `SELECT COALESCE(SUM(CASE WHEN is_reimbursement = 0 THEN amount_cents ELSE 0 END), 0) AS earned,
+                COALESCE(SUM(CASE WHEN is_reimbursement = 1 THEN amount_cents ELSE 0 END), 0) AS reimbursed
+           FROM comp_requests
+          WHERE user_id = ? AND org_id = ? AND status = 'approved'
+            AND date(COALESCE(reviewed_at, requested_at, created_at)) >= ?
+            AND date(COALESCE(reviewed_at, requested_at, created_at)) <= ?`
+      ).get(userId, orgId, startDate, endDate) as any;
+
+      res.json({
+        clr: {
+          userId: u.id, name: u.name, email: u.email, role: u.role,
+          isManager: !!(u.isManager ?? u.is_manager),
+          excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats),
+          startDate: u.startDate ?? u.start_date ?? null,
+          createdAt: u.createdAt ?? u.created_at ?? null,
+          tenureDays: clrTenureDays(u.startDate ?? u.start_date ?? null, u.createdAt ?? u.created_at ?? null),
+          startDateIsEstimate: !(u.startDate ?? u.start_date),
+        },
+        period, startDate, endDate,
+        metrics, goals, daily, dailyTooLong,
+        // Whole weeks in the window — the client scales WEEKLY goals by this so
+        // a month's actuals aren't compared against a single week's target.
+        periodWeeks: Math.max(1, Math.round(((Date.parse(endDate) - Date.parse(startDate)) / 86400000 + 1) / 7)),
+        hours,
+        attendance: {
+          checkins: Number(ci?.n ?? 0),
+          lates: Number(ci?.lates ?? 0),
+          outsideArea: Number(ci?.outside ?? 0),
+          standing: { count: lateStanding.count, allowance: lateStanding.allowance, windowDays: lateStanding.windowDays },
+        },
+        eodReports: Number(eod?.n ?? 0),
+        comp: { earnedCents: Number(comp?.earned ?? 0), reimbursedCents: Number(comp?.reimbursed ?? 0) },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to load CLR profile" });
+    }
+  });
+
+  // Admin: set a CLR's employment start date.
+  app.patch("/api/clr-profiles/:id/start-date", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const uid = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = parseInt(req.params.id, 10);
+    const target = storage.getUserById(userId) as any;
+    // Same org check as the read side — getUserById isn't org-scoped, and the
+    // raw UPDATE below would otherwise reach across tenants.
+    const tOrg = Number(target?.orgId ?? target?.org_id);
+    if (!target || (Number.isFinite(tOrg) && tOrg !== orgId)) return res.status(404).json({ error: "Not found" });
+    const raw = req.body?.startDate;
+    const startDate = (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) ? raw : null;
+    if (raw && !startDate) return res.status(400).json({ error: "Use a YYYY-MM-DD date." });
+    storageExtra.getRawSqlite().prepare(`UPDATE users SET start_date = ? WHERE id = ? AND org_id = ?`).run(startDate, userId, orgId);
+    const me = storage.getUserById(uid) as any;
+    audit({
+      userId: uid, userName: me?.name ?? "Unknown", action: "update", entityType: "user", entityId: userId,
+      entityLabel: `${target.name ?? "User"} start date`,
+      details: JSON.stringify({ startDate }),
+    });
+    res.json({ ok: true, startDate });
   });
 
   // ── Personal CLR report (per-user analytics for /my-report page) ───────────

@@ -53,6 +53,10 @@ export const users = sqliteTable("users", {
   // ISO timestamp of when the CLR last dismissed the pipeline-stages popup.
   // The popup re-appears 14 days after this; null/empty = never seen yet.
   lastSeenPipelineSop: text("last_seen_pipeline_sop"),
+  // Employment start date ("YYYY-MM-DD") — when they actually started on the
+  // team, which is not the same as when their account was created. Drives tenure
+  // on the CLR profile pages.
+  startDate: text("start_date"),
   goalCallsWeekly: integer("goal_calls_weekly").notNull().default(0),
   goalTransfersWeekly: integer("goal_transfers_weekly").notNull().default(0),
   goalAppointmentsWeekly: integer("goal_appointments_weekly").notNull().default(0),

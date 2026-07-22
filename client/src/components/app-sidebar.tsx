@@ -199,6 +199,12 @@ const teamItems: NavItem[] = [
   { title: "Seating Map",           url: "https://seating-chart-production-1287.up.railway.app", icon: Armchair, external: true },
 ];
 
+// Team items only managers/admins see — the endpoints behind these are
+// manager-gated, so showing them to a CLR would just 403.
+const teamManagerItems: NavItem[] = [
+  { title: "CLR Profiles",          url: "/clr-profiles",  icon: UserCheck },
+];
+
 const toolItems: NavItem[] = [
   { title: "State Lookup",    url: "/state-lookup",   icon: MapPin },
   { title: "Call Hours",      url: "/call-hours",     icon: Clock },
@@ -488,7 +494,8 @@ export function AppSidebar() {
 
         {/* Compressed groups — headers stay visible, items fold away */}
         {renderCollapsibleGroup("personal", "Personal", personalItems)}
-        {renderCollapsibleGroup("team", "Team", teamItems)}
+        {renderCollapsibleGroup("team", "Team",
+          (user?.role === "admin" || (user as any)?.isManager) ? [...teamItems, ...teamManagerItems] : teamItems)}
         {renderCollapsibleGroup("tools", "Tools", toolItems)}
 
         {/* ADVANCED SETTINGS — collapsible folder for admin/help/etc.

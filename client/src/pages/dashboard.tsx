@@ -994,8 +994,8 @@ function MorningCheckInCard() {
         <span className="flex items-center gap-1.5 font-medium text-emerald-900 dark:text-emerald-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Checked in at {t}
         </span>
-        <span className={onTime ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-400 font-medium"}>
-          {onTime ? "On time" : "Late"}
+        <span className={onTime || mine.late_excused ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-400 font-medium"}>
+          {mine.late_excused ? "Excused" : onTime ? "On time" : "Late"}
         </span>
         <span className="flex items-center gap-1 text-muted-foreground">
           <MapPin className="w-3.5 h-3.5" />
