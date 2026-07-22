@@ -1,16 +1,16 @@
 // Business-day calendar helpers.
 //
-// The business day rolls over at 11:00pm (23:00) in the user's local timezone:
-// anything logged before 11pm counts toward the current calendar day, and from
-// 11pm onward counts toward the NEXT day. This "today" logic drives reporting,
+// The business day rolls over at 7:00pm (19:00) in the user's local timezone:
+// anything logged before 7pm counts toward the current calendar day, and from
+// 7pm onward counts toward the NEXT day. This "today" logic drives reporting,
 // dashboards, EOD reports, leaderboards, follow-ups, and anything else
-// date-based, so a CLR can submit their EOD for "today" any time up to 11pm.
+// date-based, so a CLR can submit their EOD for "today" any time up to 7pm.
 //
 // All exported functions return ISO date strings ("YYYY-MM-DD"). They never
 // touch wall-clock components other than to compute the date label - they do
 // not return Date objects, to avoid downstream timezone bugs.
 
-const ROLLOVER_HOUR = 23; // 11pm - first hour counted as the *next* business day
+const ROLLOVER_HOUR = 19; // 7pm - first hour counted as the *next* business day
 const DEFAULT_TZ = "America/Los_Angeles";
 
 // Format any Date as "YYYY-MM-DD" *as observed in* the given IANA timezone.
@@ -48,11 +48,11 @@ export function addIsoDays(iso: string, days: number): string {
 }
 
 /**
- * Business "today" in the given timezone, with an 11pm rollover.
+ * Business "today" in the given timezone, with a 7pm rollover.
  *
  * Examples (TZ = America/Los_Angeles):
- *   2026-05-05 22:59 PT -> "2026-05-05"  (before 11pm: still today)
- *   2026-05-05 23:00 PT -> "2026-05-06"  (11pm onward: counts as the next day)
+ *   2026-05-05 18:59 PT -> "2026-05-05"  (before 7pm: still today)
+ *   2026-05-05 19:00 PT -> "2026-05-06"  (7pm onward: counts as the next day)
  *   2026-05-06 08:00 PT -> "2026-05-06"
  */
 export function businessTodayInTz(tz: string | null | undefined, now: Date = new Date()): string {

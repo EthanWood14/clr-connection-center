@@ -108,7 +108,7 @@ function getDefaultPeriod() {
 // Resolve a named period to date range.
 // Supported: today | week | month | 30days | 90days | alltime | period
 function resolveNamedPeriod(name: string, tz?: string): { startDate: string; endDate: string } {
-  // Anchor every range to the *business* today (10pm forward rollover) in the
+  // Anchor every range to the *business* today (7pm forward rollover) in the
   // caller's timezone. Week boundaries derive from this business today.
   const todayStr = businessTodayInTz(tz || BUSINESS_DAY_DEFAULT_TZ);
   if (name === "today") {
@@ -6651,8 +6651,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const token = crypto.randomBytes(24).toString("hex");
       // "Repeat monthly" saves a recurring template ATOMICALLY with the request —
       // a failure rolls both back (no request without its template or vice versa).
-      // The stamp uses the plain business-tz CALENDAR month (not the 23:00
-      // business-day rollover: a template created 11pm on the 31st belongs to THIS
+      // The stamp uses the plain business-tz CALENDAR month (not the 7pm
+      // business-day rollover: a template created 7pm on the 31st belongs to THIS
       // month, so next month's auto-file isn't silently skipped). An identical
       // active template is reused instead of duplicated — two templates would
       // auto-file the same expense twice every month. Never for "time" (hours are

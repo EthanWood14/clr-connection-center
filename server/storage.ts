@@ -1441,7 +1441,7 @@ export class Storage implements IStorage {
     });
 
     // Today's call totals (scoped to user when assistantId provided)
-    // Uses business-day rollover (10pm forward) in the caller's timezone.
+    // Uses business-day rollover (7pm forward) in the caller's timezone.
     const todayStr = (() => {
       try {
         const { businessTodayInTz } = require("./business-day") as typeof import("./business-day");
