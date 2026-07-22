@@ -362,7 +362,6 @@ function MorningCheckInSettingsCard() {
     queryKey: ["/api/checkin/admin-config"],
     queryFn: () => apiRequest("GET", "/api/checkin/admin"),
   });
-  const [start, setStart] = useState("08:00");
   const [grace, setGrace] = useState("5");
   const [radius, setRadius] = useState("400");
   const [lat, setLat] = useState("");
@@ -372,7 +371,6 @@ function MorningCheckInSettingsCard() {
   useEffect(() => {
     const c = adminCfg?.config;
     if (!c) return;
-    setStart(c.start ?? "08:00");
     setGrace(String(c.graceMin ?? 5));
     setRadius(String(c.radiusM ?? 400));
     setLat(c.lat != null ? String(c.lat) : "");
@@ -401,7 +399,6 @@ function MorningCheckInSettingsCard() {
   }
   function saveAll() {
     save.mutate({
-      start,
       graceMin: parseInt(grace) || 0,
       radiusM: parseInt(radius) || 400,
       lat: lat.trim() === "" ? null : parseFloat(lat),
@@ -417,8 +414,9 @@ function MorningCheckInSettingsCard() {
           Morning Check-In
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          CLRs check in from their dashboard each morning. C3 records the time (on-time vs the start below)
-          and whether their location is within the office radius. Set the office point while standing at the office
+          CLRs check in each morning. Each person's expected start comes from <strong>their own Weekly Schedule</strong> —
+          there's no org-wide start time. C3 records the time (on-time vs their scheduled start, plus the grace below)
+          and whether they're within the office radius. Set the office point while standing at the office
           with "Use my location".
         </p>
       </CardHeader>
@@ -427,11 +425,11 @@ function MorningCheckInSettingsCard() {
           <p className="text-sm font-medium">Enable morning check-in</p>
           <Switch checked={enabled} onCheckedChange={(v) => save.mutate({ enabled: v })} disabled={save.isPending} data-testid="toggle-checkin" />
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Start time</label>
-            <Input type="time" value={start} onChange={e => setStart(e.target.value)} className="h-8 text-sm" />
-          </div>
+        <div className="rounded-md border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+          Start times are per-CLR, pulled from their approved Weekly Schedule. Anyone without a schedule on file still
+          checks in — it's recorded, but it can't be scored on time until they have one.
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Grace (min)</label>
             <Input type="number" min={0} max={120} value={grace} onChange={e => setGrace(e.target.value)} className="h-8 text-sm" />

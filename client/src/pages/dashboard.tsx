@@ -1013,8 +1013,10 @@ function MorningCheckInCard() {
       <div className="flex items-center gap-2 text-[13px] text-amber-900 dark:text-amber-200">
         <Clock className="w-4 h-4 shrink-0" />
         <span>
-          <strong>Morning check-in</strong> — you haven't checked in today. Start time is {data.start}
-          {data.graceMin ? ` (+${data.graceMin} min grace)` : ""}.
+          <strong>Morning check-in</strong> — you haven't checked in today.
+          {data.start
+            ? ` Your scheduled start is ${data.start}${data.graceMin ? ` (+${data.graceMin} min grace)` : ""}.`
+            : " No weekly schedule on file, so it won't be scored."}
         </span>
       </div>
       <Button size="sm" className="gap-1.5" onClick={doCheckin} disabled={locating || checkinMut.isPending} data-testid="button-checkin">

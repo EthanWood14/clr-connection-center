@@ -38,8 +38,8 @@ type LateStats = {
 };
 type MineResp = {
   enabled: boolean;
-  start: string;
-  startSource: "schedule" | "default";
+  start: string | null;
+  startSource: "schedule" | "none";
   working: boolean;
   graceMin: number;
   officeSet: boolean;
@@ -55,6 +55,7 @@ type CheckinRow = {
   checkin: Mine;
   expectedStart: string | null;
   scheduledOff: boolean;
+  noSchedule?: boolean;
   lateCount: number;
   lateOverLimit: boolean;
   lateAtLimit: boolean;
@@ -233,6 +234,21 @@ export default function CheckIns() {
                 {me?.graceMin ? ` (+${me.graceMin} min grace)` : ""}
               </p>
             </div>
+          ) : me.startSource === "none" ? (
+            // No schedule on file — they can still check in, it just isn't scored.
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                <CalendarOff className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>
+                  No weekly schedule on file, so there's no start time to check you against. You can still check in —
+                  it's recorded, but it won't be scored on time until you submit your <strong className="text-foreground">Weekly Schedule</strong>.
+                </span>
+              </div>
+              <Button onClick={doCheckIn} disabled={!me.enabled || locating || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
+                <UserCheck className="w-4 h-4" />
+                {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
+              </Button>
+            </div>
           ) : !me.working ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <CalendarOff className="w-4 h-4" />
@@ -243,9 +259,7 @@ export default function CheckIns() {
               <p className="text-sm text-muted-foreground">
                 Your start today is <strong className="text-foreground">{fmtHm(me?.start ?? null)}</strong>
                 {me?.graceMin ? ` (+${me.graceMin} min grace)` : ""}
-                {me?.startSource === "schedule"
-                  ? " — from your schedule."
-                  : " — org default (submit a schedule to use your own hours)."}
+                {" — from your weekly schedule."}
               </p>
               <Button onClick={doCheckIn} disabled={!me?.enabled || locating || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
                 <UserCheck className="w-4 h-4" />
@@ -393,8 +407,10 @@ export default function CheckIns() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {ci
-                            ? `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`
-                            : c.scheduledOff ? "Scheduled off" : `No check-in${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
+                            ? `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : c.noSchedule ? " · no schedule" : ""}`
+                            : c.noSchedule ? "No schedule on file — not scored"
+                            : c.scheduledOff ? "Scheduled off"
+                            : `No check-in${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
                         </p>
                       </div>
                       {ci ? (

@@ -10302,31 +10302,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // back to the org-wide check-in start on a Mon–Fri week when they have no
   // schedule on file. Non-working days carry no expectation, so they can't be
   // marked late on a day off.
-  function checkinExpectedStart(userId: number, orgId: number, date: string, fallbackStart: string):
-    { start: string; working: boolean; source: "schedule" | "default" } {
+  // A CLR's expected start comes from THEIR weekly schedule — there is no
+  // org-wide start time. If they have no schedule on file (or none for this
+  // weekday) there is simply no expectation: the check-in is still recorded, but
+  // it can't be judged late, because we'd be inventing a time to judge it by.
+  function checkinExpectedStart(userId: number, orgId: number, date: string):
+    { start: string | null; working: boolean; source: "schedule" | "none" } {
     const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-    const dow = new Date(date + "T12:00:00Z").getUTCDay();
-    const key = dayKeys[dow];
+    const key = dayKeys[new Date(date + "T12:00:00Z").getUTCDay()];
     try {
       const row = storageExtra.getRawSqlite()
         .prepare("SELECT days, status FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start='standing'")
         .get(orgId, userId) as any;
-      // Any schedule the person has on file governs their hours EXCEPT an
-      // explicitly denied one. Requiring 'approved' would silently revert them to
-      // the org default the moment they resubmit (PUT /api/schedule flips the row
-      // back to 'pending'), erasing their days off and manufacturing lates.
+      // Any schedule on file governs their hours EXCEPT an explicitly denied one.
+      // Requiring 'approved' would revert them the moment they resubmit (PUT
+      // /api/schedule flips the row to 'pending'), erasing their days off.
       if (row && row.status !== "denied") {
         const days = JSON.parse(row.days || "{}");
         const d = days?.[key];
         if (d && typeof d === "object") {
-          const start = (typeof d.start === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.start)) ? d.start : fallbackStart;
-          return { start, working: !!d.working, source: "schedule" };
+          const start = (typeof d.start === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.start)) ? d.start : null;
+          // A working day with an unreadable start still has no usable time.
+          return { start: d.working ? start : null, working: !!d.working, source: "schedule" };
         }
       }
-    } catch { /* fall through to the org default */ }
-    // No schedule on file: assume a Mon–Fri week at the org start. Never claim
-    // someone works all 7 days, or weekends would read as missed check-ins.
-    return { start: fallbackStart, working: dow >= 1 && dow <= 5, source: "default" };
+    } catch { /* no usable schedule */ }
+    return { start: null, working: false, source: "none" };
   }
 
   // Rolling-window late history for one person (newest first) + the policy.
@@ -10382,13 +10383,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const cfg = checkinConfig();
     const date = checkinToday(checkinTzFor(userId));
     const mine = storageExtra.getCheckinForUserDate(userId, date);
-    const exp = checkinExpectedStart(userId, orgId, date, cfg.start);
+    const exp = checkinExpectedStart(userId, orgId, date);
     res.json({
       enabled: cfg.enabled,
-      start: exp.start,            // schedule-aligned expected start for today
-      startSource: exp.source,     // "schedule" | "default"
-      working: exp.working,        // false on a scheduled day off (never late)
-      orgStart: cfg.start,
+      start: exp.start,            // from their weekly schedule; null = no expectation
+      startSource: exp.source,     // "schedule" | "none"
+      working: exp.working,        // false on a day off / with no schedule (never late)
       graceMin: cfg.graceMin,
       officeSet: cfg.lat != null && cfg.lng != null,
       radiusM: cfg.radiusM,
@@ -10421,27 +10421,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const me = me0;
     const tz = tz0;
     // Lateness is measured against THIS person's scheduled start for today (the
-    // grace period decides on-time vs late), not a single org-wide time. A
-    // scheduled day off carries no start expectation, so it can never be late.
-    // minutesLate is measured from the START itself so "12 min past your 8:00
-    // start" matches what the UI and the manager email actually say.
-    const exp = checkinExpectedStart(userId, orgId, date, cfg.start);
-    const [sh, sm] = exp.start.split(":").map((x: string) => parseInt(x, 10));
-    const startMin = sh * 60 + sm;
-    const nowMin = wallClockMinutes(tz);
-    const onTime = exp.working ? (nowMin <= startMin + cfg.graceMin ? 1 : 0) : 1;
-    const minutesLate = exp.working ? Math.max(0, nowMin - startMin) : 0;
+    // grace period decides on-time vs late). No schedule for today — a day off,
+    // or none on file at all — means no start time exists to judge against, so
+    // the check-in is recorded but never counts as late. minutesLate is measured
+    // from the START itself so "12 min past your 8:00 start" reads true.
+    const exp = checkinExpectedStart(userId, orgId, date);
+    const judged = exp.working && !!exp.start;
+    let onTime = 1;
+    let minutesLate = 0;
+    if (judged) {
+      const [sh, sm] = (exp.start as string).split(":").map((x: string) => parseInt(x, 10));
+      const startMin = sh * 60 + sm;
+      const nowMin = wallClockMinutes(tz);
+      onTime = nowMin <= startMin + cfg.graceMin ? 1 : 0;
+      minutesLate = Math.max(0, nowMin - startMin);
+    }
 
     const checkin = storageExtra.saveCheckin({
       orgId, userId, date, checkedInAt: new Date().toISOString(),
       lat, lng, accuracyM, distanceM, inArea, onTime,
       minutesLate: onTime ? 0 : minutesLate,
-      expectedStart: exp.working ? exp.start : null,
+      expectedStart: judged ? exp.start : null,
     });
     audit({
       userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
       entityLabel: `${me?.name ?? "User"} morning check-in`,
-      details: JSON.stringify({ date, onTime: !!onTime, minutesLate: onTime ? 0 : minutesLate, expectedStart: exp.working ? exp.start : null, scheduledOff: !exp.working, inArea: inArea == null ? null : !!inArea, distanceM }),
+      details: JSON.stringify({ date, onTime: !!onTime, minutesLate: onTime ? 0 : minutesLate, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", inArea: inArea == null ? null : !!inArea, distanceM }),
     });
 
     // Policy: 3 lates per rolling 90 days. When this check-in is the one that
@@ -10506,12 +10511,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const clrs = (storage.getUsers() as any[])
       .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
       .map((u) => {
-        const exp = checkinExpectedStart(u.id, orgId, date, cfg.start);
+        const exp = checkinExpectedStart(u.id, orgId, date);
         const lateCount = lateCounts.get(u.id) ?? 0;
         return {
           userId: u.id, name: u.name, checkin: byUser.get(u.id) ?? null,
           expectedStart: exp.working ? exp.start : null,
-          scheduledOff: !exp.working,
+          scheduledOff: exp.source === "schedule" && !exp.working,
+          noSchedule: exp.source === "none",
           lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
         };
       });
@@ -10572,7 +10578,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (b.lat !== undefined) patch.checkinLat = Number.isFinite(Number(b.lat)) ? Number(b.lat) : null;
     if (b.lng !== undefined) patch.checkinLng = Number.isFinite(Number(b.lng)) ? Number(b.lng) : null;
     if (b.radiusM !== undefined) { const r = Math.round(Number(b.radiusM)); if (Number.isFinite(r) && r >= 25 && r <= 50000) patch.checkinRadiusM = r; }
-    if (b.start !== undefined && /^\d{2}:\d{2}$/.test(String(b.start))) patch.checkinStart = String(b.start);
+    // No org-wide start time: each CLR's expected start comes from their weekly
+    // schedule. (checkin_start is left in the DB but no longer read.)
     if (b.graceMin !== undefined) { const g = Math.round(Number(b.graceMin)); if (Number.isFinite(g) && g >= 0 && g <= 120) patch.checkinGraceMin = g; }
     if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
     res.json(checkinConfig());
