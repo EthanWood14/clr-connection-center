@@ -5536,7 +5536,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       storageExtra.saveExternalCheckin({
         type: type as any, id, date, checkedInAt: new Date().toISOString(),
         expectedStart: exp.working ? exp.start : null,
-        onTime: onTime == null ? 1 : onTime, minutesLate: onTime === 0 ? minutesLate : 0,
+        // No schedule on file ⇒ recorded but not scored, so on_time stays null.
+        onTime, minutesLate: onTime === 0 ? minutesLate : 0,
       });
     }
     res.json(portalPayload(type, id));
