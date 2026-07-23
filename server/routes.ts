@@ -5464,72 +5464,104 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // schedule. The token identifies exactly one person, so they can only act as
   // themselves. Admins mint/rotate the links (see /api/portal-links below).
   const PORTAL_APP_URL = "https://www.westcapitallending.center";
-  const portalHours = (e: any): number => {
-    if (!e?.clock_out) return 0;
-    const a = new Date(e.clock_in).getTime(), b = new Date(e.clock_out).getTime();
-    return (Number.isFinite(a) && Number.isFinite(b) && b > a) ? Math.round(((b - a) / 3600000) * 100) / 100 : 0;
-  };
-  function portalPayload(subj: any) {
-    const open = storageExtra.getOpenExternalShift(subj.type, subj.id);
-    const recent = (storageExtra.getExternalTimeEntries(subj.type, subj.id, 14) as any[]).map((e) => ({
-      id: e.id, clockIn: e.clock_in, clockOut: e.clock_out, hours: portalHours(e),
-    }));
+  const portalUrl = (code: string) => `${PORTAL_APP_URL}/#/portal/${code}`;
+
+  // Every portal request carries the ONE shared org code. Invalid → 404, which
+  // reveals nothing. The person then identifies themselves from the roster.
+  function portalCodeOk(req: any, res: any): boolean {
+    if (!storageExtra.isValidPortalCode(String(req.params.code ?? ""))) {
+      res.status(404).json({ error: "This link isn't valid. Ask your West Capital contact for the current one." });
+      return false;
+    }
+    return true;
+  }
+  // Their expected start for a date comes from the schedule THEY set. No schedule
+  // for that weekday = no expectation, so the check-in is recorded but not scored
+  // — same rule as the CLR check-in.
+  function externalExpectedStart(type: any, id: number, date: string): { start: string | null; working: boolean } {
+    const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const key = dayKeys[new Date(date + "T12:00:00Z").getUTCDay()];
+    const sched = storageExtra.getExternalSchedule(type, id);
+    const d = sched?.[key];
+    if (!d || typeof d !== "object" || !d.working) return { start: null, working: false };
+    const start = (typeof d.start === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.start)) ? d.start : null;
+    return { start, working: true };
+  }
+  function portalPayload(type: any, id: number) {
+    const tz = BUSINESS_DAY_DEFAULT_TZ;
+    const date = checkinToday(tz);
+    const mine = storageExtra.getExternalCheckin(type, id, date);
+    const exp = externalExpectedStart(type, id, date);
     return {
-      subject: { type: subj.type, name: subj.name, loName: subj.loName ?? null },
-      open: open ? { clockIn: open.clock_in } : null,
-      schedule: storageExtra.getExternalSchedule(subj.type, subj.id) ?? null,
-      recent,
+      date,
+      today: mine ? { checkedInAt: mine.checked_in_at, onTime: mine.on_time, minutesLate: mine.minutes_late, expectedStart: mine.expected_start } : null,
+      expectedStart: exp.start, working: exp.working,
+      schedule: storageExtra.getExternalSchedule(type, id) ?? null,
     };
   }
-  // Resolve + validate the token on every request; 404 (not 401/403) so an
-  // invalid link reveals nothing about whether a token exists.
-  function portalSubject(req: any, res: any): any | null {
-    const subj = storageExtra.getPortalSubjectByToken(String(req.params.token ?? ""));
-    if (!subj) { res.status(404).json({ error: "This link isn't valid. Ask your admin for a new one." }); return null; }
-    return subj;
-  }
 
-  app.get("/api/portal/:token", (req: any, res) => {
-    const subj = portalSubject(req, res); if (!subj) return;
-    res.json(portalPayload(subj));
+  // Public: the roster to pick yourself from, plus who's already checked in today.
+  app.get("/api/portal/:code/roster", (req: any, res) => {
+    if (!portalCodeOk(req, res)) return;
+    const date = checkinToday(BUSINESS_DAY_DEFAULT_TZ);
+    const done = new Set((storageExtra.getExternalCheckinsForDate(date) as any[]).map((c) => `${c.subject_type}:${c.subject_id}`));
+    const roster = (storageExtra.listPortalRoster() as any[]).map((s) => ({ ...s, checkedIn: done.has(`${s.type}:${s.id}`) }));
+    res.json({ date, roster });
   });
-  app.post("/api/portal/:token/clock-in", (req: any, res) => {
-    const subj = portalSubject(req, res); if (!subj) return;
-    storageExtra.externalClockIn(subj.type, subj.id);
-    res.json(portalPayload(subj));
+  // Public: one person's status + schedule.
+  app.get("/api/portal/:code/me", (req: any, res) => {
+    if (!portalCodeOk(req, res)) return;
+    const { type, id } = { type: String(req.query.type), id: parseInt(String(req.query.id), 10) };
+    if (!storageExtra.isRosterSubject(type, id)) return res.status(404).json({ error: "Not on the roster." });
+    res.json(portalPayload(type, id));
   });
-  app.post("/api/portal/:token/clock-out", (req: any, res) => {
-    const subj = portalSubject(req, res); if (!subj) return;
-    storageExtra.externalClockOut(subj.type, subj.id);
-    res.json(portalPayload(subj));
+  // Public: check in for today (idempotent — the first check-in of the day wins).
+  app.post("/api/portal/:code/checkin", (req: any, res) => {
+    if (!portalCodeOk(req, res)) return;
+    const type = String(req.body?.type), id = parseInt(String(req.body?.id), 10);
+    if (!storageExtra.isRosterSubject(type, id)) return res.status(404).json({ error: "Not on the roster." });
+    const tz = BUSINESS_DAY_DEFAULT_TZ;
+    const date = checkinToday(tz);
+    if (!storageExtra.getExternalCheckin(type, id, date)) {
+      const cfg = checkinConfig();
+      const exp = externalExpectedStart(type, id, date);
+      let onTime: number | null = null, minutesLate: number | null = null;
+      if (exp.working && exp.start) {
+        const [sh, sm] = exp.start.split(":").map((x: string) => parseInt(x, 10));
+        const startMin = sh * 60 + sm;
+        const nowMin = wallClockMinutes(tz);
+        onTime = nowMin <= startMin + cfg.graceMin ? 1 : 0;
+        minutesLate = Math.max(0, nowMin - startMin);
+      }
+      storageExtra.saveExternalCheckin({
+        type: type as any, id, date, checkedInAt: new Date().toISOString(),
+        expectedStart: exp.working ? exp.start : null,
+        onTime: onTime == null ? 1 : onTime, minutesLate: onTime === 0 ? minutesLate : 0,
+      });
+    }
+    res.json(portalPayload(type, id));
   });
-  app.put("/api/portal/:token/schedule", (req: any, res) => {
-    const subj = portalSubject(req, res); if (!subj) return;
-    const clean = sanitizeScheduleDays(req.body?.days);
-    storageExtra.setExternalSchedule(subj.type, subj.id, JSON.stringify(clean));
-    res.json(portalPayload(subj));
+  // Public: set your own weekly schedule.
+  app.put("/api/portal/:code/schedule", (req: any, res) => {
+    if (!portalCodeOk(req, res)) return;
+    const type = String(req.body?.type), id = parseInt(String(req.body?.id), 10);
+    if (!storageExtra.isRosterSubject(type, id)) return res.status(404).json({ error: "Not on the roster." });
+    storageExtra.setExternalSchedule(type as any, id, JSON.stringify(sanitizeScheduleDays(req.body?.days)));
+    res.json(portalPayload(type, id));
   });
 
-  // Admin: everyone's portal link + on-shift status. Mints a token for anyone
-  // missing one so links are ready to hand out.
-  app.get("/api/portal-links", requireAuth, (req: any, res) => {
-    if (!requireAdminSession(req, res)) return; // admin-only, matching the Admin nav
-    const subs = (storageExtra.listPortalSubjects() as any[]).map((s) => ({
-      ...s, url: `${PORTAL_APP_URL}/#/portal/${s.token}`,
-    }));
-    res.json({ subjects: subs });
+  // Managers: the one shared link (minted on first view). Admins can rotate it.
+  app.get("/api/portal-link", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const code = storageExtra.ensurePortalCode();
+    res.json({ code, url: portalUrl(code) });
   });
-  // Admin: rotate a link (invalidates the old one).
-  app.post("/api/portal-links/:type/:id/rotate", requireAuth, (req: any, res) => {
+  app.post("/api/portal-link/rotate", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const type = req.params.type === "lo" ? "lo" : req.params.type === "loa" ? "loa" : null;
-    const id = parseInt(req.params.id, 10);
-    if (!type || !Number.isFinite(id)) return res.status(400).json({ error: "Bad subject." });
-    const token = storageExtra.ensurePortalToken(type, id, true);
-    if (!token) return res.status(404).json({ error: "Not found." });
+    const code = storageExtra.ensurePortalCode(true);
     const me = storage.getUserById(Number(req.session_user?.userId)) as any;
-    audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "portal_link", entityId: id, entityLabel: `${type.toUpperCase()} #${id} clock-in link rotated`, details: null });
-    res.json({ token, url: `${PORTAL_APP_URL}/#/portal/${token}` });
+    audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "portal_link", entityId: 0, entityLabel: "Shared check-in link rotated", details: null });
+    res.json({ code, url: portalUrl(code) });
   });
 
   // ── LOA transfer queue: which LOA is next in line to accept a transfer ──────
@@ -10597,8 +10629,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Admin/manager: everyone's check-in status for a date (missing = no row).
+  // Team board: today's check-in status + 90-day late standing for EVERY role
+  // (CLRs, Loan Officers, LOAs). Visible to the whole team — attendance is public
+  // to teammates by design; only managers can act (excuse), enforced on that route.
   app.get("/api/checkin/admin", requireAuth, (req: any, res) => {
-    if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
       ? req.query.date
@@ -10621,8 +10655,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
         };
       });
+    // LOs and LOAs check in through the shared public link; their status lives in
+    // external_checkins, keyed by (type, id) rather than a user id.
+    const extToday = new Map<string, any>((storageExtra.getExternalCheckinsForDate(date) as any[]).map((c) => [`${c.subject_type}:${c.subject_id}`, c]));
+    const extLate = storageExtra.getExternalLateCounts(windowStart, date) as Map<string, number>;
+    const external = (storageExtra.listPortalRoster() as any[]).map((s) => {
+      const ci = extToday.get(`${s.type}:${s.id}`) ?? null;
+      const exp = externalExpectedStart(s.type, s.id, date);
+      const lateCount = extLate.get(`${s.type}:${s.id}`) ?? 0;
+      return {
+        type: s.type, id: s.id, name: s.name, loName: s.loName,
+        checkin: ci ? { checked_in_at: ci.checked_in_at, on_time: ci.on_time, minutes_late: ci.minutes_late, expected_start: ci.expected_start } : null,
+        expectedStart: exp.working ? exp.start : null,
+        scheduledOff: !exp.working,
+        noSchedule: !storageExtra.getExternalSchedule(s.type, s.id),
+        lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
+      };
+    });
     res.json({
       date, config: cfg, clrs,
+      los: external.filter((e) => e.type === "lo"),
+      loas: external.filter((e) => e.type === "loa"),
       policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
     });
   });

@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   UserCheck, ChevronLeft, ChevronRight, MapPin, CheckCircle2, XCircle, MinusCircle,
-  Clock, AlertTriangle, CalendarOff,
+  Clock, AlertTriangle, CalendarOff, Copy,
 } from "lucide-react";
 // Check-ins use the PLAIN local calendar date — deliberately NOT the shared
 // business-day helper, which rolls forward at 7pm and would point the roster at
@@ -60,7 +60,14 @@ type CheckinRow = {
   lateOverLimit: boolean;
   lateAtLimit: boolean;
 };
+type ExtRow = {
+  type: "lo" | "loa"; id: number; name: string; loName: string | null;
+  checkin: { checked_in_at: string; on_time: number | null; minutes_late: number | null; expected_start: string | null } | null;
+  expectedStart: string | null; scheduledOff: boolean; noSchedule: boolean;
+  lateCount: number; lateOverLimit: boolean; lateAtLimit: boolean;
+};
 type AdminResp = {
+  los?: ExtRow[]; loas?: ExtRow[];
   date: string;
   config: { enabled: boolean; start: string; graceMin: number; radiusM: number; lat: number | null; lng: number | null };
   clrs: CheckinRow[];
@@ -152,10 +159,15 @@ export default function CheckIns() {
 
   // ── Manager roster (below the personal card) ──
   const [date, setDate] = useState(() => todayLocal());
+  const { data: portalLink } = useQuery<{ code: string; url: string }>({
+    queryKey: ["/api/portal-link"],
+    queryFn: () => apiRequest("GET", "/api/portal-link"),
+    enabled: !!isManager,
+    retry: false,
+  });
   const { data: adminData, isLoading: adminLoading } = useQuery<AdminResp>({
     queryKey: ["/api/checkin/admin", date],
     queryFn: () => apiRequest("GET", `/api/checkin/admin?date=${date}`),
-    enabled: !!isManager,
   });
   const clrs = adminData?.clrs ?? [];
   const checkedIn = clrs.filter(c => c.checkin).length;
@@ -358,8 +370,23 @@ export default function CheckIns() {
         </Card>
       )}
 
-      {/* ── Manager roster ── */}
-      {isManager && (
+      {/* The one shared link LOs/LOAs use — managers hand this out. */}
+      {isManager && portalLink?.url && (
+        <div className="rounded-lg border bg-muted/40 px-4 py-3 flex items-center gap-2 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">LO / LOA check-in link (shared)</p>
+            <p className="text-[11px] font-mono truncate">{portalLink.url}</p>
+          </div>
+          <Button size="sm" variant="outline" className="h-8 gap-1"
+            onClick={() => navigator.clipboard?.writeText(portalLink.url).then(() => toast({ title: "Link copied" }), () => {})}
+            data-testid="copy-portal-link">
+            <Copy className="w-3.5 h-3.5" /> Copy
+          </Button>
+        </div>
+      )}
+
+      {/* ── Team board — everyone can see it; only managers can excuse ── */}
+      {(
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><UserCheck className="w-4 h-4" /> Team check-ins</CardTitle>
@@ -429,7 +456,7 @@ export default function CheckIns() {
                             </Badge>
                           )}
                           {/* Reverse a late (or put it back) — managers only. */}
-                          {ci.on_time !== 1 && (
+                          {isManager && ci.on_time !== 1 && (
                             <Button
                               size="sm" variant="ghost"
                               className="h-6 px-2 text-[11px]"
@@ -468,6 +495,64 @@ export default function CheckIns() {
                 })
               )}
             </div>
+
+            {/* LOs and LOAs check in through the shared public link. */}
+            {(["lo", "loa"] as const).map((grp) => {
+              const rows = (grp === "lo" ? adminData?.los : adminData?.loas) ?? [];
+              if (!rows.length) return null;
+              return (
+                <div key={grp}>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-1.5 mt-1">
+                    {grp === "lo" ? "Loan Officers" : "Loan Officer Assistants"} ({rows.filter((r) => r.checkin).length}/{rows.length} in)
+                  </p>
+                  <div className="rounded-md border divide-y">
+                    {rows.map((r) => (
+                      <div key={`${r.type}-${r.id}`} className="flex items-center gap-3 px-4 py-2.5" data-testid={`ext-row-${r.type}-${r.id}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                            {r.name}
+                            {r.lateCount > 0 && (
+                              <span className={"text-[10px] px-1.5 py-0.5 rounded font-semibold " +
+                                (r.lateOverLimit ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                                  : r.lateAtLimit ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300")}
+                                title={`${r.lateCount} late check-in(s) in the last ${adminData?.policy?.windowDays ?? 90} days`}>
+                                {r.lateCount}/{adminData?.policy?.allowance ?? 3} late
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {r.checkin
+                              ? `Checked in ${fmtTime(r.checkin.checked_in_at)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
+                              : r.noSchedule ? "No schedule on file — not scored"
+                              : r.scheduledOff ? "Not scheduled today"
+                              : `Not checked in${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`}
+                            {r.type === "loa" && r.loName ? ` · ${r.loName}` : ""}
+                          </p>
+                        </div>
+                        {r.checkin ? (
+                          r.checkin.on_time === 0 ? (
+                            <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
+                              <XCircle className="w-3 h-3" /> Late{r.checkin.minutes_late ? ` ${r.checkin.minutes_late}m` : ""}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                              <CheckCircle2 className="w-3 h-3" /> {r.checkin.expected_start ? "On time" : "In"}
+                            </Badge>
+                          )
+                        ) : r.scheduledOff ? (
+                          <Badge variant="outline" className="gap-1 font-normal text-muted-foreground"><CalendarOff className="w-3 h-3" /> Off</Badge>
+                        ) : (
+                          <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                            <XCircle className="w-3 h-3" /> Missing
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}

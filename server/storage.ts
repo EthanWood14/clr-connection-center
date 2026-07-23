@@ -114,23 +114,26 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS loan_officer_assistants (
   created_at TEXT
 )`);
 
-// ── Self-service clock-in / schedule portal for LOs and LOAs ──────────────────
-// LOs and LOAs are not C3 login users, so they get a per-person secret token
-// (an unguessable bookmarkable link) instead of an account. Their clock entries
-// and weekly schedule live in their own tables keyed by (subject_type, id) —
-// the users-keyed time_clock_entries / weekly_schedules can't hold non-users.
-try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN portal_token TEXT`); } catch {}
-try { sqlite.exec(`ALTER TABLE loan_officer_assistants ADD COLUMN portal_token TEXT`); } catch {}
-sqlite.exec(`CREATE TABLE IF NOT EXISTS external_time_entries (
+// ── Self-service check-in / schedule portal for LOs and LOAs ──────────────────
+// LOs and LOAs are not C3 login users. They all share ONE public link carrying an
+// org-level code, pick themselves from the roster, and check in for the day —
+// the same daily-attendance idea as the CLR morning check-in, not a punch clock.
+// Their check-ins and weekly schedule live in their own tables keyed by
+// (subject_type, id); the users-keyed morning_checkins / weekly_schedules can't
+// hold non-users.
+try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN portal_code TEXT`); } catch {}
+sqlite.exec(`CREATE TABLE IF NOT EXISTS external_checkins (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   subject_type TEXT NOT NULL,   -- 'lo' | 'loa'
   subject_id INTEGER NOT NULL,
-  clock_in TEXT NOT NULL,
-  clock_out TEXT,
+  date TEXT NOT NULL,           -- local calendar date "YYYY-MM-DD"
+  checked_in_at TEXT NOT NULL,
+  expected_start TEXT,          -- from their weekly schedule; NULL = not scored
+  on_time INTEGER,
+  minutes_late INTEGER,
   created_at TEXT,
-  updated_at TEXT
+  UNIQUE(subject_type, subject_id, date)
 )`);
-try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_ext_time_subject ON external_time_entries(subject_type, subject_id, clock_in)`); } catch {}
 sqlite.exec(`CREATE TABLE IF NOT EXISTS external_schedules (
   subject_type TEXT NOT NULL,
   subject_id INTEGER NOT NULL,
@@ -4415,55 +4418,68 @@ export function deleteLoanOfficerAssistant(id: number) {
   sqlite.prepare(`UPDATE loan_officer_assistants SET active = 0 WHERE id = ?`).run(id);
 }
 
-// ── LO/LOA self-service portal (tokened, no login) ───────────────────────────
+// ── LO/LOA self-service check-in portal (one shared link, no login) ──────────
 type PortalSubjectType = "lo" | "loa";
 const isSubjectType = (t: any): t is PortalSubjectType => t === "lo" || t === "loa";
 
-// Resolve a portal token to its subject. Returns null for an unknown token.
-export function getPortalSubjectByToken(token: string): { type: PortalSubjectType; id: number; name: string; loId?: number; loName?: string } | null {
-  if (!token || typeof token !== "string" || token.length < 24) return null;
-  // Only ACTIVE LOs can use their link — archiving/deactivating a LO must revoke
-  // portal access, mirroring the LOA active=1 gate below.
-  const lo = sqlite.prepare(`SELECT id, full_name FROM loan_officers WHERE portal_token = ? AND internal_status NOT IN ('archived','inactive')`).get(token) as any;
-  if (lo) return { type: "lo", id: Number(lo.id), name: String(lo.full_name) };
-  const loa = sqlite.prepare(`SELECT a.id, a.full_name, a.lo_id, l.full_name AS lo_name
-      FROM loan_officer_assistants a LEFT JOIN loan_officers l ON l.id = a.lo_id
-      WHERE a.portal_token = ? AND a.active = 1`).get(token) as any;
-  if (loa) return { type: "loa", id: Number(loa.id), name: String(loa.full_name), loId: Number(loa.lo_id), loName: loa.lo_name ? String(loa.lo_name) : undefined };
-  return null;
+// ONE code shared by everyone — it lives in the single public link rather than
+// being per-person, so the URL isn't guessable/indexable but is still one link
+// the whole team can use. Rotating it invalidates the old link for everyone.
+export function ensurePortalCode(rotate = false): string {
+  const row = sqlite.prepare(`SELECT portal_code FROM email_settings WHERE id = 1`).get() as any;
+  if (row?.portal_code && !rotate) return String(row.portal_code);
+  const code = crypto.randomBytes(9).toString("base64url"); // 12 url-safe chars
+  sqlite.prepare(`UPDATE email_settings SET portal_code = ? WHERE id = 1`).run(code);
+  return code;
+}
+export function isValidPortalCode(code: string): boolean {
+  if (!code || typeof code !== "string") return false;
+  const row = sqlite.prepare(`SELECT portal_code FROM email_settings WHERE id = 1`).get() as any;
+  return !!row?.portal_code && String(row.portal_code) === code;
 }
 
-// Ensure a subject has a token (idempotent); optionally force-rotate a new one.
-export function ensurePortalToken(type: PortalSubjectType, id: number, rotate = false): string | null {
-  if (!isSubjectType(type)) return null;
-  const table = type === "lo" ? "loan_officers" : "loan_officer_assistants";
-  const row = sqlite.prepare(`SELECT portal_token FROM ${table} WHERE id = ?`).get(id) as any;
-  if (!row) return null;
-  if (row.portal_token && !rotate) return String(row.portal_token);
-  const token = crypto.randomBytes(24).toString("hex"); // 48 hex chars, unguessable
-  sqlite.prepare(`UPDATE ${table} SET portal_token = ? WHERE id = ?`).run(token, id);
-  return token;
+// Everyone who may check in through the portal: active LOs + active LOAs.
+// Deactivating/archiving someone removes them from the roster entirely.
+export function listPortalRoster(): { type: PortalSubjectType; id: number; name: string; loName: string | null }[] {
+  const out: any[] = [];
+  for (const l of sqlite.prepare(`SELECT id, full_name FROM loan_officers WHERE internal_status NOT IN ('archived','inactive') ORDER BY full_name COLLATE NOCASE`).all() as any[]) {
+    out.push({ type: "lo", id: Number(l.id), name: String(l.full_name), loName: null });
+  }
+  for (const a of sqlite.prepare(`SELECT a.id, a.full_name, l.full_name AS lo_name FROM loan_officer_assistants a
+      LEFT JOIN loan_officers l ON l.id = a.lo_id WHERE a.active = 1 ORDER BY a.full_name COLLATE NOCASE`).all() as any[]) {
+    out.push({ type: "loa", id: Number(a.id), name: String(a.full_name), loName: a.lo_name ? String(a.lo_name) : null });
+  }
+  return out;
+}
+// Confirms a subject is on the roster — never trust a type/id from the client.
+export function isRosterSubject(type: any, id: any): boolean {
+  if (!isSubjectType(type) || !Number.isFinite(Number(id))) return false;
+  return listPortalRoster().some((s) => s.type === type && s.id === Number(id));
 }
 
-export function getOpenExternalShift(type: PortalSubjectType, id: number): any {
-  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE subject_type = ? AND subject_id = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1`).get(type, id) as any;
+export function getExternalCheckin(type: PortalSubjectType, id: number, date: string): any {
+  return sqlite.prepare(`SELECT * FROM external_checkins WHERE subject_type = ? AND subject_id = ? AND date = ?`).get(type, id, date) as any;
 }
-export function externalClockIn(type: PortalSubjectType, id: number): any {
-  const open = getOpenExternalShift(type, id);
-  if (open) return open; // already clocked in — return the existing open shift
-  const now = new Date().toISOString();
-  const info = sqlite.prepare(`INSERT INTO external_time_entries (subject_type, subject_id, clock_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`).run(type, id, now, now, now);
-  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE id = ?`).get(Number(info.lastInsertRowid));
+// One check-in per person per day; a second tap returns the first (never
+// overwrites the original time).
+export function saveExternalCheckin(r: { type: PortalSubjectType; id: number; date: string; checkedInAt: string; expectedStart: string | null; onTime: number | null; minutesLate: number | null }): any {
+  sqlite.prepare(`INSERT INTO external_checkins (subject_type, subject_id, date, checked_in_at, expected_start, on_time, minutes_late, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(subject_type, subject_id, date) DO NOTHING`)
+    .run(r.type, r.id, r.date, r.checkedInAt, r.expectedStart, r.onTime, r.minutesLate, new Date().toISOString());
+  return getExternalCheckin(r.type, r.id, r.date);
 }
-export function externalClockOut(type: PortalSubjectType, id: number): any {
-  const open = getOpenExternalShift(type, id);
-  if (!open) return null;
-  const now = new Date().toISOString();
-  sqlite.prepare(`UPDATE external_time_entries SET clock_out = ?, updated_at = ? WHERE id = ?`).run(now, now, open.id);
-  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE id = ?`).get(open.id);
+export function getExternalCheckinsForDate(date: string): any[] {
+  return sqlite.prepare(`SELECT * FROM external_checkins WHERE date = ?`).all(date) as any[];
 }
-export function getExternalTimeEntries(type: PortalSubjectType, id: number, limit = 30): any[] {
-  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE subject_type = ? AND subject_id = ? ORDER BY clock_in DESC LIMIT ?`).all(type, id, limit) as any[];
+// 90-day late counts per LO/LOA, keyed "type:id". Only scored check-ins (those
+// with an expected_start) can be late, mirroring the CLR policy.
+export function getExternalLateCounts(startDate: string, endDate: string): Map<string, number> {
+  const rows = sqlite.prepare(
+    `SELECT subject_type, subject_id, COUNT(*) AS n FROM external_checkins
+      WHERE on_time = 0 AND expected_start IS NOT NULL AND date >= ? AND date <= ?
+      GROUP BY subject_type, subject_id`
+  ).all(startDate, endDate) as any[];
+  return new Map(rows.map((r) => [`${r.subject_type}:${r.subject_id}`, Number(r.n)]));
 }
 export function getExternalSchedule(type: PortalSubjectType, id: number): any {
   const row = sqlite.prepare(`SELECT days FROM external_schedules WHERE subject_type = ? AND subject_id = ?`).get(type, id) as any;
