@@ -76,6 +76,8 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import SuperAdmin from "@/pages/super-admin";
 import InviteAccept from "@/pages/invite";
+import Portal from "@/pages/portal";
+import ClockLinks from "@/pages/clock-links";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
 
@@ -139,6 +141,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/lead-sources":     "Lead Sources",
   "/check-ins":        "Check-In",
   "/clr-profiles":     "CLR Profiles",
+  "/clock-links":      "Clock-In Links",
 };
 
 function usePageTitle() {
@@ -197,6 +200,7 @@ function AppRouter() {
       <Route path="/check-ins" component={CheckIns} />
       <Route path="/clr-profiles" component={ClrProfiles} />
       <Route path="/clr-profiles/:id" component={ClrProfile} />
+      <Route path="/clock-links" component={ClockLinks} />
       <Route path="/super-admin" component={SuperAdmin} />
       <Route path="/intro-video" component={IntroVideo} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
@@ -309,6 +313,7 @@ export default function App() {
               <Route path="/forgot-password" component={ForgotPassword} />
               <Route path="/reset-password" component={ResetPassword} />
               <Route path="/invite/:token" component={InviteAccept} />
+              <Route path="/portal/:token" component={Portal} />
               <Route>
                 <AuthenticatedApp />
               </Route>

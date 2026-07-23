@@ -4993,6 +4993,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (req.path === "/comp/email-decision") return next();
     if (req.path === "/time-off/email-decision") return next();
     if (req.path === "/schedule/email-decision") return next();
+    // LO/LOA self-service portal — no C3 login; each request is gated by the
+    // per-person secret token in the path, validated in every handler.
+    if (req.path.startsWith("/portal/")) return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -5453,6 +5456,80 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.delete("/api/loan-officer-assistants/:id", (req, res) => {
     storageExtra.deleteLoanOfficerAssistant(parseInt(req.params.id));
     res.json({ ok: true });
+  });
+
+  // ── LO/LOA self-service portal ───────────────────────────────────────────────
+  // Public (no C3 login) but gated by a per-person secret token in the path.
+  // Each LO / LOA gets a bookmarkable link to clock in/out and set their weekly
+  // schedule. The token identifies exactly one person, so they can only act as
+  // themselves. Admins mint/rotate the links (see /api/portal-links below).
+  const PORTAL_APP_URL = "https://www.westcapitallending.center";
+  const portalHours = (e: any): number => {
+    if (!e?.clock_out) return 0;
+    const a = new Date(e.clock_in).getTime(), b = new Date(e.clock_out).getTime();
+    return (Number.isFinite(a) && Number.isFinite(b) && b > a) ? Math.round(((b - a) / 3600000) * 100) / 100 : 0;
+  };
+  function portalPayload(subj: any) {
+    const open = storageExtra.getOpenExternalShift(subj.type, subj.id);
+    const recent = (storageExtra.getExternalTimeEntries(subj.type, subj.id, 14) as any[]).map((e) => ({
+      id: e.id, clockIn: e.clock_in, clockOut: e.clock_out, hours: portalHours(e),
+    }));
+    return {
+      subject: { type: subj.type, name: subj.name, loName: subj.loName ?? null },
+      open: open ? { clockIn: open.clock_in } : null,
+      schedule: storageExtra.getExternalSchedule(subj.type, subj.id) ?? null,
+      recent,
+    };
+  }
+  // Resolve + validate the token on every request; 404 (not 401/403) so an
+  // invalid link reveals nothing about whether a token exists.
+  function portalSubject(req: any, res: any): any | null {
+    const subj = storageExtra.getPortalSubjectByToken(String(req.params.token ?? ""));
+    if (!subj) { res.status(404).json({ error: "This link isn't valid. Ask your admin for a new one." }); return null; }
+    return subj;
+  }
+
+  app.get("/api/portal/:token", (req: any, res) => {
+    const subj = portalSubject(req, res); if (!subj) return;
+    res.json(portalPayload(subj));
+  });
+  app.post("/api/portal/:token/clock-in", (req: any, res) => {
+    const subj = portalSubject(req, res); if (!subj) return;
+    storageExtra.externalClockIn(subj.type, subj.id);
+    res.json(portalPayload(subj));
+  });
+  app.post("/api/portal/:token/clock-out", (req: any, res) => {
+    const subj = portalSubject(req, res); if (!subj) return;
+    storageExtra.externalClockOut(subj.type, subj.id);
+    res.json(portalPayload(subj));
+  });
+  app.put("/api/portal/:token/schedule", (req: any, res) => {
+    const subj = portalSubject(req, res); if (!subj) return;
+    const clean = sanitizeScheduleDays(req.body?.days);
+    storageExtra.setExternalSchedule(subj.type, subj.id, JSON.stringify(clean));
+    res.json(portalPayload(subj));
+  });
+
+  // Admin: everyone's portal link + on-shift status. Mints a token for anyone
+  // missing one so links are ready to hand out.
+  app.get("/api/portal-links", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return; // admin-only, matching the Admin nav
+    const subs = (storageExtra.listPortalSubjects() as any[]).map((s) => ({
+      ...s, url: `${PORTAL_APP_URL}/#/portal/${s.token}`,
+    }));
+    res.json({ subjects: subs });
+  });
+  // Admin: rotate a link (invalidates the old one).
+  app.post("/api/portal-links/:type/:id/rotate", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const type = req.params.type === "lo" ? "lo" : req.params.type === "loa" ? "loa" : null;
+    const id = parseInt(req.params.id, 10);
+    if (!type || !Number.isFinite(id)) return res.status(400).json({ error: "Bad subject." });
+    const token = storageExtra.ensurePortalToken(type, id, true);
+    if (!token) return res.status(404).json({ error: "Not found." });
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "portal_link", entityId: id, entityLabel: `${type.toUpperCase()} #${id} clock-in link rotated`, details: null });
+    res.json({ token, url: `${PORTAL_APP_URL}/#/portal/${token}` });
   });
 
   // ── LOA transfer queue: which LOA is next in line to accept a transfer ──────

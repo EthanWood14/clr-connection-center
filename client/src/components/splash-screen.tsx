@@ -2,8 +2,13 @@ import { useEffect, useState } from "react";
 
 const SESSION_KEY = "splash_shown";
 
+// The public LO/LOA portal is for external people — never flash the internal
+// "Team Members Only" splash there.
+const isPortal = () => { try { return (window.location.hash || "").startsWith("#/portal/"); } catch { return false; } };
+
 export function SplashScreen() {
   const [show, setShow] = useState(() => {
+    if (isPortal()) return false;
     try { return sessionStorage.getItem(SESSION_KEY) !== "1"; } catch { return true; }
   });
   const [fading, setFading] = useState(false);

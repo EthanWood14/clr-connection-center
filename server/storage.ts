@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { currentOrgId } from "./orgContext";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
@@ -111,6 +112,31 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS loan_officer_assistants (
   full_name TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT
+)`);
+
+// ── Self-service clock-in / schedule portal for LOs and LOAs ──────────────────
+// LOs and LOAs are not C3 login users, so they get a per-person secret token
+// (an unguessable bookmarkable link) instead of an account. Their clock entries
+// and weekly schedule live in their own tables keyed by (subject_type, id) —
+// the users-keyed time_clock_entries / weekly_schedules can't hold non-users.
+try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN portal_token TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE loan_officer_assistants ADD COLUMN portal_token TEXT`); } catch {}
+sqlite.exec(`CREATE TABLE IF NOT EXISTS external_time_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_type TEXT NOT NULL,   -- 'lo' | 'loa'
+  subject_id INTEGER NOT NULL,
+  clock_in TEXT NOT NULL,
+  clock_out TEXT,
+  created_at TEXT,
+  updated_at TEXT
+)`);
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_ext_time_subject ON external_time_entries(subject_type, subject_id, clock_in)`); } catch {}
+sqlite.exec(`CREATE TABLE IF NOT EXISTS external_schedules (
+  subject_type TEXT NOT NULL,
+  subject_id INTEGER NOT NULL,
+  days TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT,
+  PRIMARY KEY (subject_type, subject_id)
 )`);
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
 // Whether Bulk Texter was part of a transfer (1/0/null). Only set on transfers.
@@ -4387,6 +4413,86 @@ export function createLoanOfficerAssistant(data: { loId: number; fullName: strin
 export function deleteLoanOfficerAssistant(id: number) {
   // Soft-delete so historical outcomes that reference this LOA still resolve a name.
   sqlite.prepare(`UPDATE loan_officer_assistants SET active = 0 WHERE id = ?`).run(id);
+}
+
+// ── LO/LOA self-service portal (tokened, no login) ───────────────────────────
+type PortalSubjectType = "lo" | "loa";
+const isSubjectType = (t: any): t is PortalSubjectType => t === "lo" || t === "loa";
+
+// Resolve a portal token to its subject. Returns null for an unknown token.
+export function getPortalSubjectByToken(token: string): { type: PortalSubjectType; id: number; name: string; loId?: number; loName?: string } | null {
+  if (!token || typeof token !== "string" || token.length < 24) return null;
+  // Only ACTIVE LOs can use their link — archiving/deactivating a LO must revoke
+  // portal access, mirroring the LOA active=1 gate below.
+  const lo = sqlite.prepare(`SELECT id, full_name FROM loan_officers WHERE portal_token = ? AND internal_status NOT IN ('archived','inactive')`).get(token) as any;
+  if (lo) return { type: "lo", id: Number(lo.id), name: String(lo.full_name) };
+  const loa = sqlite.prepare(`SELECT a.id, a.full_name, a.lo_id, l.full_name AS lo_name
+      FROM loan_officer_assistants a LEFT JOIN loan_officers l ON l.id = a.lo_id
+      WHERE a.portal_token = ? AND a.active = 1`).get(token) as any;
+  if (loa) return { type: "loa", id: Number(loa.id), name: String(loa.full_name), loId: Number(loa.lo_id), loName: loa.lo_name ? String(loa.lo_name) : undefined };
+  return null;
+}
+
+// Ensure a subject has a token (idempotent); optionally force-rotate a new one.
+export function ensurePortalToken(type: PortalSubjectType, id: number, rotate = false): string | null {
+  if (!isSubjectType(type)) return null;
+  const table = type === "lo" ? "loan_officers" : "loan_officer_assistants";
+  const row = sqlite.prepare(`SELECT portal_token FROM ${table} WHERE id = ?`).get(id) as any;
+  if (!row) return null;
+  if (row.portal_token && !rotate) return String(row.portal_token);
+  const token = crypto.randomBytes(24).toString("hex"); // 48 hex chars, unguessable
+  sqlite.prepare(`UPDATE ${table} SET portal_token = ? WHERE id = ?`).run(token, id);
+  return token;
+}
+
+export function getOpenExternalShift(type: PortalSubjectType, id: number): any {
+  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE subject_type = ? AND subject_id = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1`).get(type, id) as any;
+}
+export function externalClockIn(type: PortalSubjectType, id: number): any {
+  const open = getOpenExternalShift(type, id);
+  if (open) return open; // already clocked in — return the existing open shift
+  const now = new Date().toISOString();
+  const info = sqlite.prepare(`INSERT INTO external_time_entries (subject_type, subject_id, clock_in, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`).run(type, id, now, now, now);
+  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE id = ?`).get(Number(info.lastInsertRowid));
+}
+export function externalClockOut(type: PortalSubjectType, id: number): any {
+  const open = getOpenExternalShift(type, id);
+  if (!open) return null;
+  const now = new Date().toISOString();
+  sqlite.prepare(`UPDATE external_time_entries SET clock_out = ?, updated_at = ? WHERE id = ?`).run(now, now, open.id);
+  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE id = ?`).get(open.id);
+}
+export function getExternalTimeEntries(type: PortalSubjectType, id: number, limit = 30): any[] {
+  return sqlite.prepare(`SELECT * FROM external_time_entries WHERE subject_type = ? AND subject_id = ? ORDER BY clock_in DESC LIMIT ?`).all(type, id, limit) as any[];
+}
+export function getExternalSchedule(type: PortalSubjectType, id: number): any {
+  const row = sqlite.prepare(`SELECT days FROM external_schedules WHERE subject_type = ? AND subject_id = ?`).get(type, id) as any;
+  if (!row) return null;
+  try { return JSON.parse(row.days || "{}"); } catch { return null; }
+}
+export function setExternalSchedule(type: PortalSubjectType, id: number, daysJson: string): void {
+  const now = new Date().toISOString();
+  sqlite.prepare(`INSERT INTO external_schedules (subject_type, subject_id, days, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(subject_type, subject_id) DO UPDATE SET days = excluded.days, updated_at = excluded.updated_at`)
+    .run(type, id, daysJson, now);
+}
+
+// Admin roster of everyone who can use the portal, each with their token (minting
+// one if missing) and whether they're currently clocked in.
+export function listPortalSubjects(): any[] {
+  const out: any[] = [];
+  // Active LOs only — don't mint tokens for or list archived/inactive LOs.
+  const los = sqlite.prepare(`SELECT id, full_name, internal_status FROM loan_officers WHERE internal_status NOT IN ('archived','inactive') ORDER BY full_name COLLATE NOCASE`).all() as any[];
+  for (const l of los) {
+    const token = ensurePortalToken("lo", l.id);
+    out.push({ type: "lo", id: l.id, name: l.full_name, loName: null, status: l.internal_status, token, onShift: !!getOpenExternalShift("lo", l.id) });
+  }
+  const loas = sqlite.prepare(`SELECT a.id, a.full_name, l.full_name AS lo_name FROM loan_officer_assistants a LEFT JOIN loan_officers l ON l.id = a.lo_id WHERE a.active = 1 ORDER BY a.full_name COLLATE NOCASE`).all() as any[];
+  for (const a of loas) {
+    const token = ensurePortalToken("loa", a.id);
+    out.push({ type: "loa", id: a.id, name: a.full_name, loName: a.lo_name ?? null, status: "active", token, onShift: !!getOpenExternalShift("loa", a.id) });
+  }
+  return out;
 }
 
 // ── Shark Tank pool storage ──────────────────────────────────────────────────
