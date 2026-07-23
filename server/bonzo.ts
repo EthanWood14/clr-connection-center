@@ -171,7 +171,10 @@ export async function getProspectAssignee(prospectId: number): Promise<number | 
 }
 
 // Names + current tags — what the transfer sync needs before renaming/tagging.
-export async function getProspectSnapshot(prospectId: number): Promise<{ firstName: string; lastName: string; tags: string[] } | null> {
+export async function getProspectSnapshot(prospectId: number): Promise<{
+  firstName: string; lastName: string; tags: string[];
+  pipelineId: number | null; stageId: number | null; stageName: string | null;
+} | null> {
   const r = await req("GET", `/prospects/${prospectId}`);
   const d = r.json?.data ?? r.json;
   if (!r.ok || !d?.id) return null;
@@ -179,12 +182,36 @@ export async function getProspectSnapshot(prospectId: number): Promise<{ firstNa
     firstName: String(d.first_name ?? ""),
     lastName: String(d.last_name ?? ""),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t: any) => String(t?.name ?? t)).filter(Boolean),
+    // Read-only: the stage is reported here but CANNOT be written back — see
+    // the note on updateProspect.
+    pipelineId: d.pipeline?.id != null ? Number(d.pipeline.id) : (d.pipeline_id != null ? Number(d.pipeline_id) : null),
+    stageId: d.pipeline_stage?.id != null ? Number(d.pipeline_stage.id) : null,
+    stageName: d.pipeline_stage?.name != null ? String(d.pipeline_stage.name) : null,
   };
+}
+
+// The ordered stage list for a pipeline, or [] when the token can't see it
+// (pipelines are per-seat: an org token only sees its own LOs' pipelines).
+export async function getPipelineStages(pipelineId: number): Promise<{ id: number; name: string; order: number }[]> {
+  const r = await req("GET", `/pipelines`);
+  const list = Array.isArray(r.json?.data) ? r.json.data : [];
+  const p = list.find((x: any) => Number(x?.id) === Number(pipelineId));
+  const stages = Array.isArray(p?.stages) ? p.stages : [];
+  return stages
+    .map((s: any) => ({ id: Number(s.id), name: String(s.name ?? ""), order: Number(s.order ?? 0) }))
+    .sort((a: any, b: any) => a.order - b.order);
 }
 
 // PUT /prospects/{id} — partial update with FLAT keys (PATCH is rejected).
 // ⚠️ `tags` REPLACES the prospect's whole tag set (verified live) — callers
 // must merge with the existing tags, never send just the new one.
+// ⚠️ The pipeline STAGE cannot be written here. Re-verified live 2026-07-21
+// across 15 endpoint/param variants: PUT returns 200 and echoes the OLD stage
+// back for pipeline_stage_id / stage_id / stage / pipelineStageId /
+// pipeline_stage{} / pipeline_stage_name; PATCH /prospects/{id} is 405; and
+// /prospects/{id}/stage, /move-stage, /pipeline, plus every
+// /pipelines/{id}/stages/... move route, are 404. Stage moves have to be done
+// by a Bonzo-side automation reacting to a tag we set.
 export async function updateProspect(prospectId: number, payload: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
   const r = await req("PUT", `/prospects/${prospectId}`, payload);
   return r.ok ? { ok: true } : { ok: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };

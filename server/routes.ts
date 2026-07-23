@@ -22,7 +22,7 @@ import { npaToState } from "./npa-state";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -14426,6 +14426,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     console.log(`[bonzo-appt] outcome=${outcomeId} result=${result} noted on prospect=${o.bonzo_prospect_id}`);
   }
 
+  // ── "Move to Responded on transfer" decision ────────────────────────────────
+  // Bonzo's API cannot set a pipeline stage (verified live — see the note on
+  // updateProspect), so C3 makes the DECISION and expresses it as a tag; a Bonzo
+  // automation ("when tag CLR_MOVE_RESPONDED_TAG is added → move to Responded")
+  // performs the move. Keeping the logic here means the exclusion rule lives in
+  // code we control instead of being duplicated across every LO's pipeline.
+  //
+  // Rule: transfers move the prospect to Responded, UNLESS the deal has already
+  // advanced — anything from "App Taken" through "Funded" is left alone so a
+  // transfer never drags a live loan backwards.
+  const CLR_MOVE_RESPONDED_TAG = "clrmoveresponded";
+  // Deal stages that must never be moved back, by name. Used both to bound the
+  // App-Taken→Funded range and as the fallback for pipelines that don't use
+  // those exact labels.
+  const ADVANCED_STAGE_RE = /app\s*taken|pitched|collecting\s*doc|need\s*docs|processing|in\s*process|submitted|underwrit|conditional|approved|clear\s*to\s*close|ctc|locked|funded/i;
+  const RESPONDED_STAGE_RE = /^responded/i;
+
+  // True when this prospect's current stage is an advanced deal stage that a
+  // transfer must not move. Falls back to name matching when the pipeline isn't
+  // visible to our token (pipelines are per-seat) or lacks App Taken/Funded.
+  function isAdvancedStage(stageName: string | null, stages: { id: number; name: string; order: number }[], stageId: number | null): boolean {
+    const appTaken = stages.find((s) => /app\s*taken/i.test(s.name));
+    const funded = stages.find((s) => /funded/i.test(s.name));
+    const cur = stageId != null ? stages.find((s) => s.id === stageId) : undefined;
+    // Preferred: the literal "App Taken … Funded" band in this pipeline's order.
+    if (appTaken && funded && cur && funded.order >= appTaken.order) {
+      return cur.order >= appTaken.order && cur.order <= funded.order;
+    }
+    return ADVANCED_STAGE_RE.test(String(stageName ?? ""));
+  }
+
   // ── Transfer → Bonzo sync ───────────────────────────────────────────────────
   // When a transfer is logged, mark the Bonzo prospect: append the attribution
   // suffix to the last name and add the "clrtransfer" tag. Suffix format:
@@ -14461,16 +14492,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       try { loaFirst = firstName((storageExtra.getLoanOfficerAssistant(o.loa_id) as any)?.fullName); } catch {}
     }
     const suffix = isChris && loaFirst ? `(${loaFirst} l ${clrFirst})` : `(CLR ${clrFirst})`;
+    // Decide whether this transfer should move the prospect to Responded. Skip
+    // it when the deal is already App Taken → Funded, and when they're already
+    // sitting in Responded (nothing to move).
+    let stages: { id: number; name: string; order: number }[] = [];
+    if (snap.pipelineId != null) {
+      try { stages = await getPipelineStages(snap.pipelineId); } catch { stages = []; }
+    }
+    const advanced = isAdvancedStage(snap.stageName, stages, snap.stageId);
+    const alreadyResponded = RESPONDED_STAGE_RE.test(String(snap.stageName ?? ""));
+    const shouldMove = !advanced && !alreadyResponded;
+
+    const tags = [...snap.tags];
+    const has = (t: string) => tags.some((x) => x.toLowerCase() === t.toLowerCase());
+    let tagsChanged = false;
+    if (!has("clrtransfer")) { tags.push("clrtransfer"); tagsChanged = true; }
+    if (shouldMove && !has(CLR_MOVE_RESPONDED_TAG)) { tags.push(CLR_MOVE_RESPONDED_TAG); tagsChanged = true; }
+
     const updates: Record<string, any> = {};
     if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
-    if (!snap.tags.some(t => t.toLowerCase() === "clrtransfer")) updates.tags = [...snap.tags, "clrtransfer"];
+    if (tagsChanged) updates.tags = tags;
     if (Object.keys(updates).length) {
       const r = await updateProspect(prospectId, updates);
       if (!r.ok) { console.error(`[bonzo-transfer] outcome=${outcomeId}: update failed: ${r.error}`); return; }
     }
+    // Leave a note on the prospect when we deliberately did NOT move an advanced
+    // deal, so the LO can see the transfer was logged and why the stage stands.
+    if (advanced) {
+      try {
+        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (App Taken→Funded deals are not moved back to Responded).`);
+      } catch { /* note is best-effort */ }
+    }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" renamed=${"last_name" in updates} tagged=${"tags" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" stage="${snap.stageName ?? "?"}" advanced=${advanced} moveTagged=${shouldMove} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag
