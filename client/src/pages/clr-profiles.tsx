@@ -134,7 +134,9 @@ export default function ClrProfiles() {
           ))}
         </div>
       )}
-      <p className="text-[11px] text-muted-foreground">* No start date on file — showing when the account was created. Set the real date on their profile page.</p>
+      {clrs.some((c) => c.startDateIsEstimate) && (
+        <p className="text-[11px] text-muted-foreground">* No start date on file — showing when the account was created. Set the real date on their profile page.</p>
+      )}
     </div>
   );
 }

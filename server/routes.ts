@@ -3436,6 +3436,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try {
     const db = storageExtra.getRawSqlite();
     db.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    // Seed every user's employment start date from when their account was
+    // created, so CLR profiles show a real date instead of an empty field
+    // nobody has time to fill in. Runs once — an admin correcting or clearing a
+    // date afterwards won't be re-stamped on the next boot.
+    try {
+      const seeded = db.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'user_start_date_from_created_v1'`).get();
+      if (!seeded) {
+        const info = db.prepare(
+          `UPDATE users SET start_date = date(created_at)
+            WHERE start_date IS NULL AND created_at IS NOT NULL AND date(created_at) IS NOT NULL`
+        ).run();
+        db.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+          .run('user_start_date_from_created_v1', new Date().toISOString());
+        if ((info.changes as number) > 0) console.log(`[migration] user_start_date_from_created_v1: seeded ${info.changes} start date(s) from account creation`);
+      }
+    } catch (e: any) { console.error('user_start_date_from_created_v1 failed:', e?.message ?? e); }
+
     const done = db.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'comp_drafts_to_pending_v1'`).get();
     if (!done) {
       const nowIso = new Date().toISOString();
@@ -5006,6 +5023,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isSuper) {
       delete createData.superAdmin; delete createData.super_admin;
       createData.orgId = Number(me?.orgId ?? me?.org_id ?? req.session_user?.orgId ?? 1) || 1;
+    }
+    // Default the employment start date to today (the account is being made
+    // because they're starting), so CLR profiles never show a blank. An admin
+    // can correct it on their profile page.
+    if (!createData.startDate && !createData.start_date) {
+      createData.startDate = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ });
     }
     const newUser = storage.createUser(createData);
 
