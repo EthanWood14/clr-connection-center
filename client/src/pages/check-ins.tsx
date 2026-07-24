@@ -5,11 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   UserCheck, ChevronLeft, ChevronRight, MapPin, CheckCircle2, XCircle, MinusCircle,
-  Clock, AlertTriangle, CalendarOff, Copy,
+  Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw,
 } from "lucide-react";
 // Check-ins use the PLAIN local calendar date — deliberately NOT the shared
 // business-day helper, which rolls forward at 7pm and would point the roster at
@@ -69,6 +74,7 @@ type ExtRow = {
 type AdminResp = {
   los?: ExtRow[]; loas?: ExtRow[];
   date: string;
+  timeZone?: string;
   config: { enabled: boolean; start: string; graceMin: number; radiusM: number; lat: number | null; lng: number | null };
   clrs: CheckinRow[];
   policy: { allowance: number; windowDays: number; windowStart: string };
@@ -86,8 +92,12 @@ function fmtDist(m: number | null) {
 function fmtDay(d: string) {
   return new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 }
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function fmtTime(iso: string, timeZone?: string) {
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...(timeZone ? { timeZone } : {}) });
+  } catch {
+    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
 }
 // "08:00" → "8:00 AM"
 function fmtHm(hm: string | null) {
@@ -102,6 +112,7 @@ export default function CheckIns() {
   const { toast } = useToast();
   const { user } = useAuth();
   const isManager = user?.role === "admin" || (user as any)?.isManager;
+  const isAdmin = user?.role === "admin" || !!user?.superAdmin;
 
   const { data: me, isLoading: meLoading } = useQuery<MineResp>({ queryKey: ["/api/checkin"] });
   const [locating, setLocating] = useState(false);
@@ -165,13 +176,35 @@ export default function CheckIns() {
     enabled: !!isManager,
     retry: false,
   });
+  const rotatePortalLink = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/portal-link/rotate", {}),
+    onSuccess: (next: { code: string; url: string }) => {
+      queryClient.setQueryData(["/api/portal-link"], next);
+      toast({ title: "Shared link rotated", description: "The old LO / LOA check-in link no longer works." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't rotate link", description: e?.message, variant: "destructive" }),
+  });
+  async function copyPortalLink() {
+    if (!portalLink?.url) return;
+    try {
+      await navigator.clipboard.writeText(portalLink.url);
+      toast({ title: "Check-in link copied" });
+    } catch {
+      toast({ title: "Couldn't copy the link", description: "Select the address and copy it manually.", variant: "destructive" });
+    }
+  }
   const { data: adminData, isLoading: adminLoading } = useQuery<AdminResp>({
     queryKey: ["/api/checkin/admin", date],
     queryFn: () => apiRequest("GET", `/api/checkin/admin?date=${date}`),
   });
   const clrs = adminData?.clrs ?? [];
+  const los = adminData?.los ?? [];
+  const loas = adminData?.loas ?? [];
   const checkedIn = clrs.filter(c => c.checkin).length;
-  const onTimeCount = clrs.filter(c => c.checkin && c.checkin.on_time === 1).length;
+  const totalPeople = clrs.length + los.length + loas.length;
+  const totalCheckedIn = checkedIn + los.filter((r) => r.checkin).length + loas.filter((r) => r.checkin).length;
+  const onTimeCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 1).length;
+  const lateTodayCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 0).length;
   const inAreaCount = clrs.filter(c => c.checkin && c.checkin.in_area === 1).length;
 
   return (
@@ -372,16 +405,51 @@ export default function CheckIns() {
 
       {/* The one shared link LOs/LOAs use — managers hand this out. */}
       {isManager && portalLink?.url && (
-        <div className="rounded-lg border bg-muted/40 px-4 py-3 flex items-center gap-2 flex-wrap">
+        <div className="rounded-xl border bg-muted/40 px-4 py-3 flex items-center gap-2 flex-wrap">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">LO / LOA check-in link (shared)</p>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">LO / LOA daily check-in</p>
+            <p className="text-xs text-muted-foreground mt-0.5">One shared, mobile-friendly link for your active Loan Officers and Assistants.</p>
             <p className="text-[11px] font-mono truncate">{portalLink.url}</p>
           </div>
-          <Button size="sm" variant="outline" className="h-8 gap-1"
-            onClick={() => navigator.clipboard?.writeText(portalLink.url).then(() => toast({ title: "Link copied" }), () => {})}
-            data-testid="copy-portal-link">
+          <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={copyPortalLink} data-testid="copy-portal-link">
             <Copy className="w-3.5 h-3.5" /> Copy
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 gap-1.5"
+            onClick={() => window.open(portalLink.url, "_blank", "noopener,noreferrer")}
+            data-testid="open-portal-link"
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Open
+          </Button>
+          {isAdmin && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-9 gap-1.5 text-muted-foreground" data-testid="rotate-portal-link">
+                  <RotateCcw className="w-3.5 h-3.5" /> Rotate
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Rotate the shared check-in link?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The current link will stop working immediately. You'll need to send the new link to every LO and LOA.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Keep current link</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-red-600 hover:bg-red-700"
+                    disabled={rotatePortalLink.isPending}
+                    onClick={() => rotatePortalLink.mutate()}
+                  >
+                    {rotatePortalLink.isPending ? "Rotating…" : "Rotate link"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       )}
 
@@ -399,8 +467,14 @@ export default function CheckIns() {
                 <Button variant="outline" size="icon" className="h-8 w-8" disabled={date >= todayLocal()} onClick={() => setDate(d => shiftDate(d, 1))}><ChevronRight className="w-4 h-4" /></Button>
               </div>
               <div className="text-xs text-muted-foreground">
-                {checkedIn}/{clrs.length} checked in · {onTimeCount} on time · {inAreaCount} in office
+                {totalCheckedIn}/{totalPeople} checked in · {onTimeCount} on time · {lateTodayCount} late
               </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted-foreground">
+              <span className="rounded-full border bg-background px-2 py-1">CLRs {checkedIn}/{clrs.length}</span>
+              <span className="rounded-full border bg-background px-2 py-1">LOs {los.filter((r) => r.checkin).length}/{los.length}</span>
+              <span className="rounded-full border bg-background px-2 py-1">LOAs {loas.filter((r) => r.checkin).length}/{loas.length}</span>
+              {inAreaCount > 0 && <span className="rounded-full border bg-background px-2 py-1">{inAreaCount} CLR{inAreaCount === 1 ? "" : "s"} in office</span>}
             </div>
 
             <div className="rounded-md border divide-y">
@@ -523,7 +597,7 @@ export default function CheckIns() {
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {r.checkin
-                              ? `Checked in ${fmtTime(r.checkin.checked_in_at)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
+                              ? `Checked in ${fmtTime(r.checkin.checked_in_at, adminData?.timeZone)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
                               : r.noSchedule ? "No schedule on file — not scored"
                               : r.scheduledOff ? "Not scheduled today"
                               : `Not checked in${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`}
@@ -535,9 +609,13 @@ export default function CheckIns() {
                             <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                               <XCircle className="w-3 h-3" /> Late{r.checkin.minutes_late ? ` ${r.checkin.minutes_late}m` : ""}
                             </Badge>
-                          ) : (
+                          ) : r.checkin.on_time === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
-                              <CheckCircle2 className="w-3 h-3" /> {r.checkin.expected_start ? "On time" : "In"}
+                              <CheckCircle2 className="w-3 h-3" /> On time
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                              <UserCheck className="w-3 h-3" /> In · not scored
                             </Badge>
                           )
                         ) : r.scheduledOff ? (

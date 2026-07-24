@@ -12,6 +12,7 @@ export const organizations = sqliteTable("organizations", {
   resendApiKey: text("resend_api_key"),
   fromEmail: text("from_email"),
   managerEmails: text("manager_emails"),
+  portalCode: text("portal_code"),
   plan: text("plan").notNull().default("trial"),
   isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
