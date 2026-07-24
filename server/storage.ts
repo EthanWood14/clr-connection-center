@@ -131,6 +131,11 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS external_checkins (
   expected_start TEXT,          -- from their weekly schedule; NULL = not scored
   on_time INTEGER,
   minutes_late INTEGER,
+  lat REAL,
+  lng REAL,
+  accuracy_m INTEGER,
+  distance_m INTEGER,
+  in_area INTEGER,
   created_at TEXT,
   UNIQUE(subject_type, subject_id, date)
 )`);
@@ -143,6 +148,11 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS external_schedules (
   PRIMARY KEY (subject_type, subject_id)
 )`);
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN lat REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN lng REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN accuracy_m INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN distance_m INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN in_area INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_schedules ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_date ON external_checkins(org_id, date)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_subject_date ON external_checkins(org_id, subject_type, subject_id, date DESC)`); } catch {}
@@ -4542,11 +4552,32 @@ export function getExternalCheckin(orgId: number, type: PortalSubjectType, id: n
 // overwrites the original time). LO/LOA ids are globally unique in their source
 // tables, so the global subject/date key intentionally follows a person if a
 // super-admin moves that record to another organization.
-export function saveExternalCheckin(r: { orgId: number; type: PortalSubjectType; id: number; date: string; checkedInAt: string; expectedStart: string | null; onTime: number | null; minutesLate: number | null }): any {
-  sqlite.prepare(`INSERT INTO external_checkins (org_id, subject_type, subject_id, date, checked_in_at, expected_start, on_time, minutes_late, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+export function saveExternalCheckin(r: {
+  orgId: number;
+  type: PortalSubjectType;
+  id: number;
+  date: string;
+  checkedInAt: string;
+  expectedStart: string | null;
+  onTime: number | null;
+  minutesLate: number | null;
+  lat: number | null;
+  lng: number | null;
+  accuracyM: number | null;
+  distanceM: number | null;
+  inArea: number | null;
+}): any {
+  sqlite.prepare(`INSERT INTO external_checkins (
+      org_id, subject_type, subject_id, date, checked_in_at, expected_start,
+      on_time, minutes_late, lat, lng, accuracy_m, distance_m, in_area, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET org_id = excluded.org_id`)
-    .run(r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart, r.onTime, r.minutesLate, new Date().toISOString());
+    .run(
+      r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart,
+      r.onTime, r.minutesLate, r.lat, r.lng, r.accuracyM, r.distanceM,
+      r.inArea, new Date().toISOString(),
+    );
   return getExternalCheckin(r.orgId, r.type, r.id, r.date);
 }
 export function getExternalCheckinsForDate(orgId: number, date: string): any[] {

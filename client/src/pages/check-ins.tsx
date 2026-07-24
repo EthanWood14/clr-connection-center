@@ -67,7 +67,14 @@ type CheckinRow = {
 };
 type ExtRow = {
   type: "lo" | "loa"; id: number; name: string; loName: string | null;
-  checkin: { checked_in_at: string; on_time: number | null; minutes_late: number | null; expected_start: string | null } | null;
+  checkin: {
+    checked_in_at: string;
+    on_time: number | null;
+    minutes_late: number | null;
+    expected_start: string | null;
+    in_area: number | null;
+    distance_m: number | null;
+  } | null;
   expectedStart: string | null; scheduledOff: boolean; noSchedule: boolean;
   lateCount: number; lateOverLimit: boolean; lateAtLimit: boolean;
 };
@@ -108,6 +115,43 @@ function fmtHm(hm: string | null) {
   return `${h12}:${String(m).padStart(2, "0")} ${ap}`;
 }
 
+function RollingLateCount({
+  count,
+  allowance,
+  windowDays,
+  overLimit,
+  atLimit,
+}: {
+  count: number;
+  allowance: number;
+  windowDays: number;
+  overLimit: boolean;
+  atLimit: boolean;
+}) {
+  const tone = overLimit
+    ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+    : atLimit
+    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+    : count > 0
+    ? "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-300"
+    : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300";
+
+  return (
+    <div
+      className={`min-w-[82px] shrink-0 rounded-lg border px-2.5 py-1.5 text-center ${tone}`}
+      aria-label={`${count} of ${allowance} lates in the last ${windowDays} days`}
+    >
+      <p className="leading-none tabular-nums">
+        <span className="text-xl font-bold">{count}</span>
+        <span className="text-xs font-semibold opacity-70"> / {allowance}</span>
+      </p>
+      <p className="mt-1 text-[9px] font-semibold uppercase tracking-wider opacity-80">
+        lates · {windowDays}d
+      </p>
+    </div>
+  );
+}
+
 export default function CheckIns() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -135,15 +179,31 @@ export default function CheckIns() {
   });
 
   function doCheckIn() {
-    // Location is best-effort: if it's denied or unavailable we still record the
-    // time, just without the in-office verification.
+    checkinMut.reset();
     const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
-    if (!navigator.geolocation) return submit({});
+    // No office point means there is nothing to verify, so check-in remains
+    // usable without prompting for location.
+    if (!me?.officeSet) return submit({});
+    if (!navigator.geolocation) {
+      toast({
+        title: "Location is required",
+        description: "This browser cannot provide your location. Use a device with Location Services enabled.",
+        variant: "destructive",
+      });
+      return;
+    }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
-      () => submit({}),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+      () => {
+        setLocating(false);
+        toast({
+          title: "Couldn't verify your location",
+          description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
+          variant: "destructive",
+        });
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     );
   }
 
@@ -293,6 +353,11 @@ export default function CheckIns() {
                 <UserCheck className="w-4 h-4" />
                 {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
               </Button>
+              {me.officeSet && (
+                <p className="text-[11px] text-muted-foreground">
+                  Precise location is required. You must be within {me.radiusM} m of the office.
+                </p>
+              )}
             </div>
           ) : !me.working ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -312,7 +377,7 @@ export default function CheckIns() {
               </Button>
               {me?.officeSet && (
                 <p className="text-[11px] text-muted-foreground">
-                  We'll check you're within {me.radiusM} m of the office. Allow location when prompted.
+                  Precise location is required. You must be within {me.radiusM} m of the office.
                 </p>
               )}
             </div>
@@ -514,8 +579,16 @@ export default function CheckIns() {
                             : `No check-in${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
                         </p>
                       </div>
-                      {ci ? (
-                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      <div className="flex w-full items-start justify-between gap-2 sm:w-auto sm:items-center sm:justify-end">
+                        <RollingLateCount
+                          count={c.lateCount}
+                          allowance={adminData?.policy?.allowance ?? 3}
+                          windowDays={adminData?.policy?.windowDays ?? 90}
+                          overLimit={c.lateOverLimit}
+                          atLimit={c.lateAtLimit && !c.lateOverLimit}
+                        />
+                        {ci ? (
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end">
                           {ci.on_time === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                               <CheckCircle2 className="w-3 h-3" /> On time
@@ -554,16 +627,17 @@ export default function CheckIns() {
                               <MinusCircle className="w-3 h-3" /> No location
                             </Badge>
                           )}
-                        </div>
-                      ) : c.scheduledOff ? (
-                        <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                          <CalendarOff className="w-3 h-3" /> Off
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                          <XCircle className="w-3 h-3" /> Missing
-                        </Badge>
-                      )}
+                          </div>
+                        ) : c.scheduledOff ? (
+                          <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                            <CalendarOff className="w-3 h-3" /> Off
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                            <XCircle className="w-3 h-3" /> Missing
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -581,20 +655,9 @@ export default function CheckIns() {
                   </p>
                   <div className="rounded-md border divide-y">
                     {rows.map((r) => (
-                      <div key={`${r.type}-${r.id}`} className="flex items-center gap-3 px-4 py-2.5" data-testid={`ext-row-${r.type}-${r.id}`}>
+                      <div key={`${r.type}-${r.id}`} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center" data-testid={`ext-row-${r.type}-${r.id}`}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate flex items-center gap-1.5">
-                            {r.name}
-                            {r.lateCount > 0 && (
-                              <span className={"text-[10px] px-1.5 py-0.5 rounded font-semibold " +
-                                (r.lateOverLimit ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                                  : r.lateAtLimit ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
-                                  : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300")}
-                                title={`${r.lateCount} late check-in(s) in the last ${adminData?.policy?.windowDays ?? 90} days`}>
-                                {r.lateCount}/{adminData?.policy?.allowance ?? 3} late
-                              </span>
-                            )}
-                          </p>
+                          <p className="truncate text-sm font-medium">{r.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {r.checkin
                               ? `Checked in ${fmtTime(r.checkin.checked_in_at, adminData?.timeZone)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
@@ -604,27 +667,51 @@ export default function CheckIns() {
                             {r.type === "loa" && r.loName ? ` · ${r.loName}` : ""}
                           </p>
                         </div>
-                        {r.checkin ? (
-                          r.checkin.on_time === 0 ? (
-                            <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
-                              <XCircle className="w-3 h-3" /> Late{r.checkin.minutes_late ? ` ${r.checkin.minutes_late}m` : ""}
-                            </Badge>
-                          ) : r.checkin.on_time === 1 ? (
-                            <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
-                              <CheckCircle2 className="w-3 h-3" /> On time
-                            </Badge>
+                        <div className="flex w-full items-start justify-between gap-2 sm:w-auto sm:items-center sm:justify-end">
+                          <RollingLateCount
+                            count={r.lateCount}
+                            allowance={adminData?.policy?.allowance ?? 3}
+                            windowDays={adminData?.policy?.windowDays ?? 90}
+                            overLimit={r.lateOverLimit}
+                            atLimit={r.lateAtLimit && !r.lateOverLimit}
+                          />
+                          {r.checkin ? (
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {r.checkin.on_time === 0 ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
+                                <XCircle className="w-3 h-3" /> Late{r.checkin.minutes_late ? ` ${r.checkin.minutes_late}m` : ""}
+                              </Badge>
+                            ) : r.checkin.on_time === 1 ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" /> On time
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                                <UserCheck className="w-3 h-3" /> In · not scored
+                              </Badge>
+                            )}
+                            {r.checkin.in_area === 1 ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                                <MapPin className="w-3 h-3" /> In area
+                              </Badge>
+                            ) : r.checkin.in_area === 0 ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                                <MapPin className="w-3 h-3" /> Outside{r.checkin.distance_m != null ? ` · ${fmtDist(r.checkin.distance_m)}` : ""}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                                <MinusCircle className="w-3 h-3" /> Legacy · no location
+                              </Badge>
+                            )}
+                            </div>
+                          ) : r.scheduledOff ? (
+                            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground"><CalendarOff className="w-3 h-3" /> Off</Badge>
                           ) : (
-                            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                              <UserCheck className="w-3 h-3" /> In · not scored
+                            <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                              <XCircle className="w-3 h-3" /> Missing
                             </Badge>
-                          )
-                        ) : r.scheduledOff ? (
-                          <Badge variant="outline" className="gap-1 font-normal text-muted-foreground"><CalendarOff className="w-3 h-3" /> Off</Badge>
-                        ) : (
-                          <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                            <XCircle className="w-3 h-3" /> Missing
-                          </Badge>
-                        )}
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

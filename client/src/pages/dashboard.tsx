@@ -959,28 +959,49 @@ function ScopeSelector({ value, onChange }: { value: ScopeKey; onChange: (s: Sco
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 // ── Morning check-in card ─────────────────────────────────────────────────────
-// Renders only while the org has check-ins enabled. Grabs browser geolocation
-// (optional — the check-in still records the time if location is denied) and
-// posts once; the first check-in of the business day wins.
+// Renders only while the org has check-ins enabled. When an office point is
+// configured, the browser location must verify that the person is nearby.
 function MorningCheckInCard() {
   const [locating, setLocating] = useState(false);
+  const { toast } = useToast();
   const { data, refetch } = useQuery<any>({ queryKey: ["/api/checkin"] });
   const checkinMut = useMutation({
     mutationFn: (body: any) => apiRequest("POST", "/api/checkin", body),
     onSuccess: () => refetch(),
+    onError: (error: any) => toast({
+      title: "Couldn't check in",
+      description: error?.message ?? "Please try again.",
+      variant: "destructive",
+    }),
   });
 
   if (!data?.enabled) return null;
   const mine = data.mine;
 
   function doCheckin() {
-    setLocating(true);
+    checkinMut.reset();
     const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
-    if (!navigator.geolocation) return submit({});
+    if (!data.officeSet) return submit({});
+    if (!navigator.geolocation) {
+      toast({
+        title: "Location is required",
+        description: "This browser cannot provide your location. Use a device with Location Services enabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
-      () => submit({}), // denied/unavailable — still record the time
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+      () => {
+        setLocating(false);
+        toast({
+          title: "Couldn't verify your location",
+          description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
+          variant: "destructive",
+        });
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     );
   }
 
@@ -1023,6 +1044,11 @@ function MorningCheckInCard() {
         <MapPin className="w-3.5 h-3.5" />
         {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
       </Button>
+      {data.officeSet && (
+        <span className="basis-full text-[11px] text-amber-800 dark:text-amber-300">
+          Precise location is required within {data.radiusM} m of the office.
+        </span>
+      )}
     </div>
   );
 }

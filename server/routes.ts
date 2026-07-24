@@ -3364,13 +3364,25 @@ export function registerRoutes(httpServer: Server, app: Express) {
       )
     `);
   } catch {}
-  // Approval workflow columns (schedule submissions must be accepted by a
-  // manager/admin, like comp requests and time off).
+  // Legacy approval columns remain so old links and historical rows still load.
+  // Weekly schedules now self-apply; approval never affected check-in behavior
+  // and could leave users stuck when no approver was configured.
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewed_by INTEGER`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewer_note TEXT DEFAULT ''`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN reviewed_at TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE weekly_schedules ADD COLUMN approval_token TEXT`); } catch {}
+  try {
+    storageExtra.getRawSqlite().exec(`
+      UPDATE weekly_schedules
+      SET status='approved',
+          reviewed_by=NULL,
+          reviewer_note='',
+          reviewed_at=COALESCE(reviewed_at, updated_at, submitted_at),
+          approval_token=NULL
+      WHERE status='pending'
+    `);
+  } catch {}
 
   // ── comp_requests migration ──────────────────────────────────────────────────
   // Reimbursement/comp tracking. Each row is one expense the user logged. It
@@ -5522,14 +5534,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       onTime: r.on_time,
       minutesLate: r.minutes_late ?? null,
       expectedStart: r.expected_start ?? null,
+      inArea: r.in_area ?? null,
+      distanceM: r.distance_m ?? null,
     }));
     return {
       enabled: cfg.enabled,
       graceMin: cfg.graceMin,
+      officeSet: cfg.lat != null && cfg.lng != null,
+      radiusM: cfg.radiusM,
       timeZone: tz,
       timeZoneLabel: "Pacific Time",
       date,
-      today: mine ? { checkedInAt: mine.checked_in_at, onTime: mine.on_time, minutesLate: mine.minutes_late, expectedStart: mine.expected_start } : null,
+      today: mine ? {
+        checkedInAt: mine.checked_in_at,
+        onTime: mine.on_time,
+        minutesLate: mine.minutes_late,
+        expectedStart: mine.expected_start,
+        inArea: mine.in_area ?? null,
+        distanceM: mine.distance_m ?? null,
+      } : null,
       expectedStart: exp.start, working: exp.working,
       schedule: storageExtra.getExternalSchedule(orgId, type, id) ?? null,
       lateStats: externalLateStats(orgId, type, id, date),
@@ -5545,7 +5568,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const cfg = checkinConfig();
     const done = new Set((storageExtra.getExternalCheckinsForDate(orgId, date) as any[]).map((c) => `${c.subject_type}:${c.subject_id}`));
     const roster = (storageExtra.listPortalRoster(orgId) as any[]).map((s) => ({ ...s, checkedIn: done.has(`${s.type}:${s.id}`) }));
-    res.json({ date, timeZone, timeZoneLabel: "Pacific Time", enabled: cfg.enabled, roster });
+    res.json({
+      date, timeZone, timeZoneLabel: "Pacific Time", enabled: cfg.enabled,
+      officeSet: cfg.lat != null && cfg.lng != null,
+      radiusM: cfg.radiusM,
+      roster,
+    });
   });
   // Public: one person's status + schedule.
   app.get("/api/portal/:code/me", (req: any, res) => {
@@ -5565,6 +5593,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (existing) return res.json(portalPayload(orgId, type, id));
     const cfg = checkinConfig();
     if (!cfg.enabled) return res.status(400).json({ error: "Daily check-ins are currently paused." });
+    const location = validateCheckinLocation(req.body, cfg);
+    if (!location.ok) {
+      return res.status(location.status).json({
+        error: location.error,
+        code: location.code,
+        ...(location.details ?? {}),
+      });
+    }
     {
       const exp = externalExpectedStart(orgId, type, id, date);
       let onTime: number | null = null, minutesLate: number | null = null;
@@ -5580,6 +5616,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         expectedStart: exp.working ? exp.start : null,
         // No schedule on file ⇒ recorded but not scored, so on_time stays null.
         onTime, minutesLate: onTime === 0 ? minutesLate : 0,
+        lat: location.lat,
+        lng: location.lng,
+        accuracyM: location.accuracyM,
+        distanceM: location.distanceM,
+        inArea: location.inArea,
       });
     }
     res.json(portalPayload(orgId, type, id));
@@ -6404,7 +6445,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       days,
       lunch,
       notes: r.notes ?? "",
-      status: r.status ?? "pending",
+      status: r.status ?? "approved",
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
       reviewerNote: r.reviewer_note ?? "",
       reviewedAt: r.reviewed_at ?? null,
@@ -6458,46 +6499,41 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // Submit (or resubmit) your schedule — goes to 'pending' and emails the
-  // approver with Approve/Deny links, like comp requests and time off.
-  app.put("/api/schedule", requireAuth, async (req: any, res) => {
+  // Save the standing schedule and make it active immediately. The old approval
+  // state was cosmetic (check-ins already used pending rows) and became a
+  // dead-end whenever no approval recipient was configured.
+  app.put("/api/schedule", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const userId = Number(sess?.userId);
     const { days, lunch, notes } = req.body ?? {};
+    const validationError = scheduleDaysValidationError(days);
+    if (validationError) return res.status(400).json({ error: validationError });
     // Lunch is stored alongside the day map and automatically subtracted from
     // each working day's hours.
     const clean: any = { ...sanitizeScheduleDays(days), lunch: sanitizeScheduleLunch(lunch) };
     const notesStr = typeof notes === "string" ? notes.slice(0, 1000) : "";
     const nowIso = new Date().toISOString();
-    const token = crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
       db.prepare(`
         INSERT INTO weekly_schedules (org_id, user_id, week_start, days, notes, status, reviewed_by, reviewer_note, reviewed_at, approval_token, submitted_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'pending', NULL, '', NULL, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'approved', NULL, '', ?, NULL, ?, ?)
         ON CONFLICT(org_id, user_id, week_start) DO UPDATE SET
-          days=excluded.days, notes=excluded.notes, status='pending',
-          reviewed_by=NULL, reviewer_note='', reviewed_at=NULL,
-          approval_token=excluded.approval_token,
+          days=excluded.days, notes=excluded.notes, status='approved',
+          reviewed_by=NULL, reviewer_note='', reviewed_at=excluded.reviewed_at,
+          approval_token=NULL,
           submitted_at=excluded.submitted_at, updated_at=excluded.updated_at
-      `).run(orgId, userId, SCHED_STANDING_KEY, JSON.stringify(clean), notesStr, token, nowIso, nowIso);
+      `).run(orgId, userId, SCHED_STANDING_KEY, JSON.stringify(clean), notesStr, nowIso, nowIso, nowIso);
       const me = storage.getUserById(userId) as any;
-      audit({ userId, userName: me?.name ?? "Unknown", action: "create", entityType: "weekly_schedule", entityId: 0, entityLabel: "Weekly schedule submitted", details: null });
-      // Email the approver (best-effort)
-      let emailedTo: string | null = null;
-      try {
-        const settings = storageExtra.getEmailSettings() as any;
-        const approverId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || 0;
-        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
-        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
-        if (approverEmail) {
-          const { subject, html } = buildScheduleApprovalEmail(clean, token, me?.name ?? "A team member");
-          await sendEmail({ to: approverEmail, subject, html });
-          emailedTo = approverEmail;
-        }
-      } catch (e: any) { console.error("[schedule] approval email failed:", e?.message ?? e); }
-      res.json({ ok: true, emailedTo });
+      const row = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start=?")
+        .get(orgId, userId, SCHED_STANDING_KEY) as any;
+      audit({
+        userId, userName: me?.name ?? "Unknown", action: "update",
+        entityType: "weekly_schedule", entityId: row?.id ?? 0,
+        entityLabel: "Weekly schedule saved", details: JSON.stringify({ status: "approved" }),
+      });
+      res.json({ ok: true, status: "approved", schedule: mapSchedule(row, schedNameMap()) });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save schedule" });
     }
@@ -6508,7 +6544,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(sess?.orgId ?? 1) || 1;
     try {
       const db = storageExtra.getRawSqlite();
-      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY (status='pending') DESC, user_id ASC").all(orgId, SCHED_STANDING_KEY) as any[];
+      const rows = db.prepare("SELECT * FROM weekly_schedules WHERE org_id=? AND week_start=? ORDER BY user_id ASC").all(orgId, SCHED_STANDING_KEY) as any[];
       const nameById = schedNameMap();
       res.json(rows.map(r => mapSchedule(r, nameById)));
     } catch (e: any) {
@@ -10463,6 +10499,78 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
     return Math.round(2 * R * Math.asin(Math.sqrt(a)));
   }
+  type CheckinLocation = {
+    lat: number | null;
+    lng: number | null;
+    accuracyM: number | null;
+    distanceM: number | null;
+    inArea: number | null;
+  };
+  type CheckinLocationResult =
+    | ({ ok: true } & CheckinLocation)
+    | { ok: false; status: number; error: string; code: string; details?: Record<string, number> };
+
+  // One authoritative location gate for signed-in CLR check-ins and the public
+  // LO/LOA portal. If no office point is configured, location stays optional.
+  // Once an office is configured, a current, sufficiently accurate browser
+  // reading must fall inside the configured radius.
+  function validateCheckinLocation(body: any, cfg: ReturnType<typeof checkinConfig>): CheckinLocationResult {
+    const parseNumber = (value: any): number | null => {
+      if (value === null || value === undefined || value === "") return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    };
+    const rawLat = parseNumber(body?.lat);
+    const rawLng = parseNumber(body?.lng);
+    const coordsValid = rawLat != null && rawLng != null
+      && rawLat >= -90 && rawLat <= 90 && rawLng >= -180 && rawLng <= 180;
+    const lat = coordsValid ? rawLat : null;
+    const lng = coordsValid ? rawLng : null;
+    const rawAccuracy = parseNumber(body?.accuracyM);
+    const accuracyM = rawAccuracy != null && rawAccuracy > 0 ? Math.round(rawAccuracy) : null;
+    const officeSet = Number.isFinite(cfg.lat) && Number.isFinite(cfg.lng);
+
+    if (!officeSet) {
+      return { ok: true, lat, lng, accuracyM, distanceM: null, inArea: null };
+    }
+    if (lat == null || lng == null) {
+      return {
+        ok: false,
+        status: 422,
+        code: "LOCATION_REQUIRED",
+        error: "A precise location is required to check in. Enable Location Services and browser location access, then try again.",
+      };
+    }
+    if (accuracyM == null) {
+      return {
+        ok: false,
+        status: 422,
+        code: "LOCATION_ACCURACY_REQUIRED",
+        error: "Your browser did not provide a reliable location. Enable precise location access and try again.",
+      };
+    }
+    const maxAccuracyM = Math.min(250, Math.max(25, Math.round(cfg.radiusM)));
+    if (accuracyM > maxAccuracyM) {
+      return {
+        ok: false,
+        status: 422,
+        code: "LOCATION_INACCURATE",
+        error: `Your location is only accurate to about ${accuracyM} m. Move to a spot with a stronger signal and try again (${maxAccuracyM} m or better required).`,
+        details: { accuracyM, maxAccuracyM },
+      };
+    }
+    const distanceM = haversineM(lat, lng, cfg.lat as number, cfg.lng as number);
+    if (distanceM > cfg.radiusM) {
+      return {
+        ok: false,
+        status: 422,
+        code: "OUTSIDE_CHECKIN_AREA",
+        error: `You appear to be ${distanceM} m from the office check-in point. Move within the configured ${cfg.radiusM} m radius and try again.`,
+        details: { distanceM, radiusM: cfg.radiusM },
+      };
+    }
+    return { ok: true, lat, lng, accuracyM, distanceM, inArea: 1 };
+  }
   // Current wall-clock minutes-since-midnight in the user's timezone.
   function wallClockMinutes(tz: string): number {
     const hm = new Date().toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
@@ -10600,15 +10708,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const existing = storageExtra.getCheckinForUserDate(userId, date);
     if (existing) return res.json({ checkin: existing, already: true });
 
-    const lat = Number.isFinite(Number(req.body?.lat)) ? Number(req.body.lat) : null;
-    const lng = Number.isFinite(Number(req.body?.lng)) ? Number(req.body.lng) : null;
-    const accuracyM = Number.isFinite(Number(req.body?.accuracyM)) ? Math.round(Number(req.body.accuracyM)) : null;
-    let distanceM: number | null = null;
-    let inArea: number | null = null;
-    if (lat != null && lng != null && cfg.lat != null && cfg.lng != null) {
-      distanceM = haversineM(lat, lng, cfg.lat, cfg.lng);
-      inArea = distanceM <= cfg.radiusM ? 1 : 0;
+    const location = validateCheckinLocation(req.body, cfg);
+    if (!location.ok) {
+      return res.status(location.status).json({
+        error: location.error,
+        code: location.code,
+        ...(location.details ?? {}),
+      });
     }
+    const { lat, lng, accuracyM, distanceM, inArea } = location;
     const me = me0;
     const tz = tz0;
     // Lateness is measured against THIS person's scheduled start for today (the
@@ -10724,7 +10832,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const lateCount = extLate.get(`${s.type}:${s.id}`) ?? 0;
       return {
         type: s.type, id: s.id, name: s.name, loName: s.loName,
-        checkin: ci ? { checked_in_at: ci.checked_in_at, on_time: ci.on_time, minutes_late: ci.minutes_late, expected_start: ci.expected_start } : null,
+        checkin: ci ? {
+          checked_in_at: ci.checked_in_at,
+          on_time: ci.on_time,
+          minutes_late: ci.minutes_late,
+          expected_start: ci.expected_start,
+          in_area: ci.in_area ?? null,
+          distance_m: ci.distance_m ?? null,
+        } : null,
         expectedStart: exp.working ? exp.start : null,
         scheduledOff: exp.source === "schedule" && !exp.working,
         noSchedule: exp.source === "none",

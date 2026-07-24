@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertCircle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
-  Clock3, Copy, Save, Search, UserCheck, UsersRound, XCircle,
+  Clock3, Copy, MapPin, Save, Search, UserCheck, UsersRound, XCircle,
 } from "lucide-react";
 
 const DAYS = [
@@ -25,6 +25,8 @@ type RecentCheckin = {
   onTime: number | null;
   minutesLate: number | null;
   expectedStart: string | null;
+  inArea: number | null;
+  distanceM: number | null;
 };
 type TodayCheckin = Omit<RecentCheckin, "date">;
 type Me = {
@@ -33,6 +35,8 @@ type Me = {
   timeZoneLabel?: string;
   enabled: boolean;
   graceMin: number;
+  officeSet: boolean;
+  radiusM: number;
   today: TodayCheckin | null;
   expectedStart: string | null;
   working: boolean;
@@ -45,6 +49,8 @@ type RosterResp = {
   timeZone: string;
   timeZoneLabel?: string;
   enabled: boolean;
+  officeSet: boolean;
+  radiusM: number;
   roster: Who[];
 };
 
@@ -106,6 +112,7 @@ export default function Portal() {
   const [q, setQ] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "lo" | "loa">("all");
   const [editingSchedule, setEditingSchedule] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     document.title = "LO / LOA Daily Check-In · WCLCC";
@@ -189,7 +196,8 @@ export default function Portal() {
   };
 
   const checkIn = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/portal/${code}/checkin`, { type: who!.type, id: who!.id }),
+    mutationFn: (location: { lat?: number; lng?: number; accuracyM?: number }) =>
+      apiRequest("POST", `/api/portal/${code}/checkin`, { type: who!.type, id: who!.id, ...location }),
     onSuccess: (result: Me) => {
       qc.setQueryData(["/api/portal", code, "me", who?.type, who?.id], result);
       qc.invalidateQueries({ queryKey: ["/api/portal", code, "roster"] });
@@ -201,6 +209,42 @@ export default function Portal() {
     },
     onError: (error: any) => toast({ title: "Couldn't check in", description: error?.message, variant: "destructive" }),
   });
+  function beginCheckIn() {
+    checkIn.reset();
+    const officeSet = meQ.data?.officeSet ?? rosterQ.data?.officeSet ?? false;
+    const submit = (location: { lat?: number; lng?: number; accuracyM?: number }) => {
+      setLocating(false);
+      checkIn.mutate(location);
+    };
+    // Organizations without an office point remain usable and do not prompt for
+    // a location they cannot verify.
+    if (!officeSet) return submit({});
+    if (!navigator.geolocation) {
+      toast({
+        title: "Location is required",
+        description: "This browser cannot provide your location. Use a device with Location Services enabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => submit({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracyM: pos.coords.accuracy,
+      }),
+      () => {
+        setLocating(false);
+        toast({
+          title: "Couldn't verify your location",
+          description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
+          variant: "destructive",
+        });
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
+    );
+  }
   const saveSched = useMutation({
     mutationFn: () => apiRequest("PUT", `/api/portal/${code}/schedule`, { type: who!.type, id: who!.id, days }),
     onSuccess: (result: Me) => {
@@ -407,6 +451,12 @@ export default function Portal() {
                         ? `${me.today.minutesLate ?? 0} min after your ${fmtHm(me.today.expectedStart)} start`
                         : "Recorded, not scored — no scheduled start was on file"}
                     </p>
+                    {me.today.inArea === 1 && (
+                      <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1 pl-7 flex items-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        Office location verified{me.today.distanceM != null ? ` · ${me.today.distanceM} m away` : ""}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -433,13 +483,19 @@ export default function Portal() {
                     </div>
                     <Button
                       className="w-full gap-2 h-12 text-base"
-                      disabled={!me.enabled || checkIn.isPending}
-                      onClick={() => checkIn.mutate()}
+                      disabled={!me.enabled || locating || checkIn.isPending}
+                      onClick={beginCheckIn}
                       data-testid="portal-check-in"
                     >
                       <UserCheck className="w-5 h-5" />
-                      {checkIn.isPending ? "Checking in…" : me.working ? "Check in for today" : "Check in anyway"}
+                      {locating ? "Getting location…" : checkIn.isPending ? "Checking in…" : me.working ? "Check in for today" : "Check in anyway"}
                     </Button>
+                    {me.officeSet && (
+                      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        Precise location is required. You must be within {me.radiusM} m of the office.
+                      </p>
+                    )}
                     {checkIn.isError && (
                       <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-3 py-2 text-xs text-red-800 dark:text-red-300" role="alert">
                         {(checkIn.error as Error)?.message || "The check-in did not go through. Please try again."}
