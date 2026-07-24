@@ -48,6 +48,45 @@ export function addIsoDays(iso: string, days: number): string {
 }
 
 /**
+ * Return completed weekdays immediately before an effective business date.
+ *
+ * Callers should pass businessTodayInTz()/businessTodayForRequest() as the
+ * anchor. At 6:59pm Friday that anchor is Friday, so Thursday is first. At
+ * 7:00pm it is Saturday, so Friday becomes the first completed weekday.
+ */
+export function previousWeekdaysFromBusinessDate(
+  businessDate: string,
+  limit = 3,
+  maxLookbackDays = 10,
+): string[] {
+  const weekdays: string[] = [];
+  for (let daysBack = 1; daysBack <= maxLookbackDays && weekdays.length < limit; daysBack++) {
+    const candidate = addIsoDays(businessDate, -daysBack);
+    const [y, m, d] = candidate.split("-").map(n => parseInt(n, 10));
+    const dow = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
+    if (dow !== 0 && dow !== 6) weekdays.push(candidate);
+  }
+  return weekdays;
+}
+
+/**
+ * Dates whose EOD reports are due as of `now` in the given timezone.
+ * This is the authoritative composition used by the required-report lock.
+ */
+export function requiredEodWeekdaysInTz(
+  tz: string | null | undefined,
+  now: Date = new Date(),
+  limit = 3,
+  maxLookbackDays = 10,
+): string[] {
+  return previousWeekdaysFromBusinessDate(
+    businessTodayInTz(tz, now),
+    limit,
+    maxLookbackDays,
+  );
+}
+
+/**
  * Business "today" in the given timezone, with a 7pm rollover.
  *
  * Examples (TZ = America/Los_Angeles):

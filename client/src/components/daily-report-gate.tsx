@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -59,7 +59,7 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const [callsMade, setCallsMade] = useState("");
   const [notes, setNotes] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [submittedDate, setSubmittedDate] = useState<string | null>(null);
 
   // Admins and non-CLRs are exempt from the daily report gate.
   const isClr = !!(user && (user as any).isClr && user.role !== "admin");
@@ -67,21 +67,22 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   const { data: checkData, isLoading: checkLoading } = useQuery<CheckResult>({
     queryKey: ["/api/call-logs/check-previous-day"],
     enabled: !!user && !authLoading && isClr,
+    refetchInterval: 60 * 1000, // pick up the permanent 7pm boundary while open
     staleTime: 60 * 1000, // 1 min — fresh enough across navigation, not every request
     retry: false,
   });
 
   const submitLog = useMutation({
-    mutationFn: (payload: { callsMade: number; notes: string; didNotWork: boolean }) =>
+    mutationFn: (payload: { logDate: string; callsMade: number; notes: string; didNotWork: boolean }) =>
       apiRequest("POST", "/api/call-logs", {
-        logDate: checkData!.date,
+        logDate: payload.logDate,
         assistantId: user!.id,
         callsMade: payload.callsMade,
         notes: payload.notes,
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["/api/call-logs/check-previous-day"] });
-      setSubmitted(true);
+      setSubmittedDate(variables.logDate);
       toast({ title: "Report submitted", description: "You're all set for today." });
     },
     onError: () => {
@@ -89,46 +90,53 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
     },
   });
 
+  useEffect(() => {
+    // Never carry the previous business day's report values through the 7pm flip.
+    setCallsMade("");
+    setNotes("");
+  }, [checkData?.date]);
+
   const handleSubmit = () => {
     const count = parseInt(callsMade);
     if (isNaN(count) || count < 0) {
       toast({ title: "Enter a valid call count", variant: "destructive" });
       return;
     }
-    submitLog.mutate({ callsMade: count, notes, didNotWork: false });
+    submitLog.mutate({ logDate: checkData!.date, callsMade: count, notes, didNotWork: false });
   };
 
   const handleDidNotWork = () => {
     submitLog.mutate({
+      logDate: checkData!.date,
       callsMade: 0,
       notes: "Did Not Work",
       didNotWork: true,
     });
   };
 
-  // While loading auth or check, just show children (no flash)
-  if (authLoading || checkLoading || !user) return <>{children}</>;
-
-  // Admins / non-CLR users never see the gate.
-  if (!isClr) return <>{children}</>;
-
-  // Skip the gate entirely for brand-new users (they've never seen the intro yet)
-  if (!user.hasSeenIntro) return <>{children}</>;
-
-  // If the server says the user is exempt, already has a log, or was just submitted, show app normally.
-  const gated = !submitted && checkData !== undefined && !checkData.exempt && !checkData.hasLog;
-
-  if (!gated) return <>{children}</>;
+  // Keep one stable parent around the app whether gated or not. Reparenting the
+  // children when the 7pm poll flips would remount the open page and lose form state.
+  const gated = !authLoading
+    && !checkLoading
+    && !!user
+    && isClr
+    && !!user.hasSeenIntro
+    && checkData !== undefined
+    && submittedDate !== checkData.date
+    && !checkData.exempt
+    && !checkData.hasLog;
 
   const todayLabel = checkData ? formatDate(checkData.date) : "today";
 
   return (
     <>
-      {/* Blurred background */}
-      <div className="pointer-events-none select-none blur-sm opacity-40 overflow-hidden h-screen">
+      <div className={gated
+        ? "pointer-events-none select-none blur-sm opacity-40 overflow-hidden h-screen"
+        : "contents"}>
         {children}
       </div>
 
+      {gated && (
       <Dialog open={true}>
         <DialogContent
           className="sm:max-w-md [&>button]:hidden"
@@ -218,6 +226,7 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
           </div>
         </DialogContent>
       </Dialog>
+      )}
     </>
   );
 }

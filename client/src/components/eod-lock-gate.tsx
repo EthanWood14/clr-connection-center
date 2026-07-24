@@ -28,6 +28,7 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
     queryKey: ["/api/auth/eod-lock-status"],
     enabled: !!user && !authLoading && isClr,
     staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
     retry: false,
   });
 

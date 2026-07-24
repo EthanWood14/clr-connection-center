@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
-  AlertCircle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
+  AlertCircle, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
   Clock3, Copy, MapPin, Save, Search, UserCheck, UsersRound, XCircle,
 } from "lucide-react";
 
@@ -29,6 +29,13 @@ type RecentCheckin = {
   distanceM: number | null;
 };
 type TodayCheckin = Omit<RecentCheckin, "date">;
+type LateStats = {
+  count: number;
+  allowance: number;
+  windowDays: number;
+  remaining: number;
+  overLimit: boolean;
+};
 type Me = {
   date: string;
   timeZone: string;
@@ -42,7 +49,7 @@ type Me = {
   working: boolean;
   schedule: Record<string, Day> | null;
   recentCheckins: RecentCheckin[];
-  lateStats: { count: number; allowance: number; windowDays: number; remaining: number; overLimit: boolean };
+  lateStats: LateStats;
 };
 type RosterResp = {
   date: string;
@@ -93,6 +100,78 @@ function scheduleSummary(days: Record<string, Day>) {
     return `Monday–Friday · ${fmtHm(first.start)}–${fmtHm(first.end)}`;
   }
   return `${working.length} working day${working.length === 1 ? "" : "s"}${sameHours ? ` · ${fmtHm(first.start)}–${fmtHm(first.end)}` : ""}`;
+}
+
+function LateStanding({ stats }: { stats: LateStats }) {
+  const atLimit = !stats.overLimit && stats.count >= stats.allowance;
+  const hasLates = stats.count > 0;
+  const progress = stats.allowance > 0
+    ? Math.min(100, Math.round((stats.count / stats.allowance) * 100))
+    : 0;
+  const status = stats.overLimit
+    ? "Over limit"
+    : atLimit
+    ? "Limit reached"
+    : hasLates
+    ? "Within allowance"
+    : "Clear";
+  const remaining = stats.overLimit
+    ? `${Math.max(1, stats.count - stats.allowance)} over`
+    : atLimit
+    ? "No remaining"
+    : hasLates
+    ? `${stats.remaining} remaining`
+    : "No counted lates";
+  const statusClass = stats.overLimit
+    ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+    : atLimit
+    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+    : hasLates
+    ? "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-300"
+    : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300";
+  const progressClass = stats.overLimit
+    ? "bg-red-600"
+    : hasLates
+    ? "bg-amber-500"
+    : "bg-emerald-500";
+
+  return (
+    <section
+      className="rounded-xl border bg-muted/25 p-4"
+      aria-label={`${stats.count} of ${stats.allowance} lates in the last ${stats.windowDays} days`}
+      data-testid="portal-late-standing"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <AlertTriangle className="h-3.5 w-3.5" /> Late check-ins
+          </p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-4xl font-bold leading-none tabular-nums text-foreground">{stats.count}</span>
+            <span className="text-sm font-semibold text-foreground">{stats.count === 1 ? "late" : "lates"}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Rolling {stats.windowDays}-day total</p>
+        </div>
+        <Badge variant="outline" className={`shrink-0 ${statusClass}`}>{status}</Badge>
+      </div>
+      <div className="mt-4">
+        <div
+          className="h-2 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="Late allowance used"
+          aria-valuemin={0}
+          aria-valuemax={stats.allowance}
+          aria-valuenow={stats.count}
+        >
+          <div className={`h-full rounded-full transition-all ${progressClass}`} style={{ width: `${progress}%` }} />
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">{stats.count} of {stats.allowance} allowance used</span>
+          <span className="font-semibold text-foreground">{remaining}</span>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export default function Portal() {
@@ -505,18 +584,8 @@ export default function Portal() {
                 )}
 
                 {me?.lateStats && (
-                  <div className="border-t pt-3 flex items-center justify-between gap-3 text-xs">
-                    <span className="text-muted-foreground">Late standing · last {me.lateStats.windowDays} days</span>
-                    <Badge
-                      variant="outline"
-                      className={me.lateStats.count >= me.lateStats.allowance
-                        ? "border-red-300 text-red-700 dark:border-red-800 dark:text-red-300"
-                        : me.lateStats.count > 0
-                        ? "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300"
-                        : "border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300"}
-                    >
-                      {me.lateStats.count} of {me.lateStats.allowance}
-                    </Badge>
+                  <div className="border-t pt-4">
+                    <LateStanding stats={me.lateStats} />
                   </div>
                 )}
               </CardContent>

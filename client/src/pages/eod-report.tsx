@@ -22,7 +22,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { parseServerTimestamp } from "@/lib/dates";
-import { businessTodayClient } from "@/lib/business-day";
+import { businessTodayInTz } from "@/lib/business-day";
 
 const ACTIVITY_TYPES = [
   { value: "follow_up",          label: "Follow-Up Call" },
@@ -62,7 +62,15 @@ export default function EodReport() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = (user as any)?.isAdmin || (user as any)?.role === 'admin';
-  const todayStr = businessTodayClient();
+  // Keep the EOD date on the same profile-timezone, 7pm clock as the server.
+  // Re-evaluate while this page stays open so the boundary does not require a
+  // refresh, but leave selectedDate alone so an in-progress report never jumps.
+  const [businessClock, setBusinessClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setBusinessClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const todayStr = businessTodayInTz((user as any)?.timezone, new Date(businessClock));
   // Honor a ?date=YYYY-MM-DD query param so prompts / reminder emails and the
   // EOD lock gate can deep-link to a specific missed day instead of dumping the
   // user on today. Under wouter's hash routing, navigate("/eod-report?date=X")
@@ -119,8 +127,12 @@ export default function EodReport() {
   const [draftBannerDismissed, setDraftBannerDismissed] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
+  // The active draft keeps its date when the business clock rolls at 7pm.
+  const [draftDate, setDraftDate] = useState<string | null>(
+    () => initialDate === todayStr ? initialDate : null,
+  );
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const draftLoadedRef = useRef(false);
+  const draftLoadedForRef = useRef<string | null>(null);
   const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
@@ -224,15 +236,17 @@ export default function EodReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportKey]);
 
-  // Load the persisted draft once on mount. Only runs for today's page and
-  // only when no report has been submitted yet — a submitted report always
-  // wins, since the draft is meant to hold an in-progress first submission.
+  // Load a persisted draft once per viewed date. After the 7pm rollover, a
+  // matching draft can still restore the just-finished day's unfinished form.
+  // A submitted report always wins.
   useEffect(() => {
-    if (draftLoadedRef.current) return;
-    if (selectedDate !== todayStr) return;
+    if (draftLoadedForRef.current === selectedDate) return;
     if (isLoading) return;
-    if (report) { draftLoadedRef.current = true; return; }
-    draftLoadedRef.current = true;
+    draftLoadedForRef.current = selectedDate;
+    if (report) return;
+    if (selectedDate === todayStr && draftDate !== selectedDate) {
+      setDraftDate(selectedDate);
+    }
     (async () => {
       try {
         const res = await fetch("/api/eod/draft", { credentials: "include" });
@@ -240,6 +254,9 @@ export default function EodReport() {
         const body = await res.json();
         if (!body || !body.data) return;
         const d = body.data;
+        const savedDate = typeof d.selectedDate === "string" ? d.selectedDate : null;
+        if (savedDate ? savedDate !== selectedDate : selectedDate !== todayStr) return;
+        setDraftDate(selectedDate);
         skipAutoSaveRef.current = true;
         if (typeof d.callsMade === "string") setCallsMade(d.callsMade);
         if (typeof d.messagesSent === "string") setMessagesSent(d.messagesSent);
@@ -255,7 +272,7 @@ export default function EodReport() {
       } catch { /* ignore — draft restore is best-effort */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, todayStr, isLoading, report]);
+  }, [selectedDate, todayStr, isLoading, report, draftDate]);
 
   async function saveDraft(silent: boolean): Promise<boolean> {
     try {
@@ -288,16 +305,16 @@ export default function EodReport() {
     }
   }
 
-  // Debounced auto-save — fires 500ms after the last form edit while on today.
+  // Debounced auto-save — the active draft date remains eligible across 7pm.
   useEffect(() => {
-    if (selectedDate !== todayStr) return;
+    if (selectedDate !== draftDate) return;
     if (!dirty) return;
     if (skipAutoSaveRef.current) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => { void saveDraft(true); }, 500);
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callsMade, messagesSent, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, todayStr, dirty]);
+  }, [callsMade, messagesSent, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, draftDate, dirty]);
 
   async function clearDraft(resetForm: boolean) {
     try {
@@ -782,7 +799,7 @@ export default function EodReport() {
                     <><Send className="w-4 h-4" /> {report ? "Resubmit Report" : "Submit Report"}</>
                   )}
                 </Button>
-                {selectedDate === todayStr && !report && (
+                {selectedDate === draftDate && !report && (
                   <Button
                     type="button"
                     variant="outline"
@@ -798,7 +815,7 @@ export default function EodReport() {
                   </Button>
                 )}
               </div>
-              {selectedDate === todayStr && !report && draftSavedAt && (
+              {selectedDate === draftDate && !report && draftSavedAt && (
                 <p className="text-[11px] text-muted-foreground -mt-1">
                   Saved · {format(draftSavedAt, "h:mm a")}
                 </p>

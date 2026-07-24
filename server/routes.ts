@@ -19,7 +19,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
@@ -2977,10 +2977,11 @@ cron.schedule("0 9 * * 1-5", async () => {
 });
 
 // ── EOD Manager Digest ────────────────────────────────────────────────────────
-// Cron: daily at 6:30 PM Pacific time (DST-aware via timezone option) on weekdays.
-// Sends ONE digest email to managers covering all EOD submissions that day.
+// Cron: daily at 7:05 PM Pacific time (DST-aware via timezone option) on weekdays.
+// The five-minute buffer lets submissions at the 7:00 PM EOD boundary land
+// before ONE digest email is sent to managers for that day.
 // Individual CLRs already get their own copy immediately on submission.
-cron.schedule("30 18 * * 1-5", async () => {
+cron.schedule("5 19 * * 1-5", async () => {
   try {
     console.log("[eod-digest] daily manager digest running...");
     const db = storageExtra.getRawSqlite();
@@ -4598,7 +4599,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // EOD lock status: locks CLRs who haven't submitted EODs for any of the last
-  // 3 weekdays. Skips dates before the user's created_at and dates >10 days ago.
+  // 3 completed weekdays. A day becomes completed at the shared 7pm business
+  // cutoff in the user's timezone — never at the Railway server's UTC midnight.
+  // Skips dates before the user's created_at and dates >10 days ago.
   // Non-CLRs (admin without isClr, viewers) are never locked.
   app.get("/api/auth/eod-lock-status", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
@@ -4609,31 +4612,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const isClr = user.role === "assistant" || (user.role === "admin" && !!(user.isClr ?? user.is_clr));
     if (!isClr) return res.json({ locked: false, missingDates: [] });
 
-    const fmt = (d: Date) => {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
-    };
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tenDaysAgo = new Date(today);
-    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
-
     const createdAtRaw = user.createdAt ?? user.created_at ?? null;
-    const createdAt = createdAtRaw ? new Date(String(createdAtRaw).replace(" ", "T")) : null;
-    if (createdAt) createdAt.setHours(0, 0, 0, 0);
-
-    const lastWeekdays: string[] = [];
-    const cursor = new Date(today);
-    cursor.setDate(cursor.getDate() - 1);
-    while (lastWeekdays.length < 3 && cursor >= tenDaysAgo) {
-      const dow = cursor.getDay();
-      if (dow !== 0 && dow !== 6) {
-        if (!createdAt || cursor >= createdAt) lastWeekdays.push(fmt(cursor));
-      }
-      cursor.setDate(cursor.getDate() - 1);
-    }
+    const createdDate = createdAtRaw ? String(createdAtRaw).slice(0, 10) : null;
+    const timezone = tzFromRequest(req, storageExtra.getRawSqlite());
+    const lastWeekdays = requiredEodWeekdaysInTz(timezone, new Date(), 3, 10)
+      .filter((date) => !createdDate || date >= createdDate);
 
     const missingDates: string[] = [];
     for (const d of lastWeekdays) {
@@ -12191,7 +12174,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.get('/api/eod-reports', requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
-    const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+    // Default through the same 7pm, user-timezone business clock as every EOD
+    // gate. UTC midnight is 4/5pm Pacific and must never advance this date.
+    const date = (req.query.date as string) || businessTodayForRequest(req, storageExtra.getRawSqlite());
     if (req.session_user?.role === 'admin' && req.query.all === '1') {
       const from = (req.query.from as string) || date;
       const to = (req.query.to as string) || date;

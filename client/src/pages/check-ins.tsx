@@ -266,6 +266,10 @@ export default function CheckIns() {
   const onTimeCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 1).length;
   const lateTodayCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 0).length;
   const inAreaCount = clrs.filter(c => c.checkin && c.checkin.in_area === 1).length;
+  const teamRows = [...clrs, ...los, ...loas];
+  const peopleWithLates = teamRows.filter((r) => r.lateCount > 0).length;
+  const peopleAtLimit = teamRows.filter((r) => r.lateAtLimit && !r.lateOverLimit).length;
+  const peopleOverLimit = teamRows.filter((r) => r.lateOverLimit).length;
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-3xl mx-auto">
@@ -389,27 +393,56 @@ export default function CheckIns() {
       {stats && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" /> Lates — last {stats.windowDays} days
-            </CardTitle>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" /> Late check-ins
+                </CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">Rolling {stats.windowDays}-day standing</p>
+              </div>
+              <Badge
+                variant="outline"
+                className={stats.overLimit
+                  ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+                  : stats.count >= stats.allowance
+                  ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                  : stats.count > 0
+                  ? "border-amber-200 text-amber-800 dark:border-amber-900 dark:text-amber-300"
+                  : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300"}
+              >
+                {stats.overLimit ? "Over limit" : stats.count >= stats.allowance ? "Limit reached" : stats.count > 0 ? "Within allowance" : "Clear"}
+              </Badge>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <span
-                className={
-                  "text-3xl font-bold tabular-nums " +
-                  (stats.count >= stats.allowance ? "text-red-600 dark:text-red-400" : stats.count > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")
-                }
-                data-testid="late-count"
-              >
-                {stats.count}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                of <strong className="text-foreground">{stats.allowance}</strong> allowed
-                {stats.remaining > 0
-                  ? ` · ${stats.remaining} left`
-                  : stats.overLimit ? " · over the limit" : " · limit reached"}
-              </span>
+            <div className="rounded-xl border bg-muted/25 px-4 py-4">
+              <div className="flex items-end justify-between gap-4">
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className={
+                      "text-5xl font-bold leading-none tabular-nums " +
+                      (stats.overLimit ? "text-red-600 dark:text-red-400" : stats.count > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground")
+                    }
+                    data-testid="late-count"
+                  >
+                    {stats.count}
+                  </span>
+                  <span className="text-sm font-semibold">{stats.count === 1 ? "late" : "lates"}</span>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Allowance</p>
+                  <p className="text-lg font-bold tabular-nums">{stats.count} / {stats.allowance}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {stats.overLimit
+                  ? `${stats.count - stats.allowance} over the allowance`
+                  : stats.count >= stats.allowance
+                  ? "No lates remaining in this window"
+                  : stats.count > 0
+                  ? `${stats.remaining} late${stats.remaining === 1 ? "" : "s"} remaining`
+                  : `All ${stats.allowance} lates remain available`}
+              </p>
             </div>
 
             {/* allowance pips */}
@@ -428,7 +461,11 @@ export default function CheckIns() {
             </div>
 
             {stats.count >= stats.allowance && (
-              <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-3 py-2 text-[12px] text-red-800 dark:text-red-300">
+              <div className={`rounded-lg border px-3 py-2 text-[12px] ${
+                stats.overLimit
+                  ? "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+                  : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+              }`}>
                 {stats.overLimit
                   ? `You're over the ${stats.allowance}-late limit for this ${stats.windowDays}-day window, and your managers were notified when you reached it.`
                   : `You've used all ${stats.allowance} lates for this ${stats.windowDays}-day window — your managers have been notified. Any further late puts you over.`}
@@ -528,7 +565,7 @@ export default function CheckIns() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-1">
                 <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setDate(d => shiftDate(d, -1))}><ChevronLeft className="w-4 h-4" /></Button>
-                <span className="text-sm font-semibold w-44 text-center">{fmtDay(date)}</span>
+                <span className="w-36 text-center text-sm font-semibold sm:w-44">{fmtDay(date)}</span>
                 <Button variant="outline" size="icon" className="h-8 w-8" disabled={date >= todayLocal()} onClick={() => setDate(d => shiftDate(d, 1))}><ChevronRight className="w-4 h-4" /></Button>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -542,6 +579,34 @@ export default function CheckIns() {
               {inAreaCount > 0 && <span className="rounded-full border bg-background px-2 py-1">{inAreaCount} CLR{inAreaCount === 1 ? "" : "s"} in office</span>}
             </div>
 
+            {adminData && (
+              <section className="rounded-xl border bg-muted/25 p-3" aria-label="Team rolling late standing" data-testid="team-late-summary">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold">Rolling late standing</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {adminData.policy.allowance} allowed in the last {adminData.policy.windowDays} days
+                    </p>
+                  </div>
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </div>
+                <div className="mt-3 grid grid-cols-3 divide-x rounded-lg border bg-background">
+                  <div className="px-2 py-2.5 text-center">
+                    <p className="text-2xl font-bold tabular-nums">{peopleWithLates}</p>
+                    <p className="text-[10px] text-muted-foreground">with lates</p>
+                  </div>
+                  <div className="px-2 py-2.5 text-center">
+                    <p className={`text-2xl font-bold tabular-nums ${peopleAtLimit > 0 ? "text-amber-600 dark:text-amber-400" : ""}`}>{peopleAtLimit}</p>
+                    <p className="text-[10px] text-muted-foreground">at limit</p>
+                  </div>
+                  <div className="px-2 py-2.5 text-center">
+                    <p className={`text-2xl font-bold tabular-nums ${peopleOverLimit > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{peopleOverLimit}</p>
+                    <p className="text-[10px] text-muted-foreground">over limit</p>
+                  </div>
+                </div>
+              </section>
+            )}
+
             <div className="rounded-md border divide-y">
               {adminLoading ? (
                 <div className="p-4 space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -551,26 +616,9 @@ export default function CheckIns() {
                 clrs.map((c) => {
                   const ci = c.checkin;
                   return (
-                    <div key={c.userId} className="flex items-center gap-3 px-4 py-2.5" data-testid={`checkin-row-${c.userId}`}>
+                    <div key={c.userId} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center" data-testid={`checkin-row-${c.userId}`}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate flex items-center gap-1.5">
-                          {c.name}
-                          {c.lateCount > 0 && (
-                            <span
-                              className={
-                                "text-[10px] px-1.5 py-0.5 rounded font-semibold " +
-                                (c.lateOverLimit
-                                  ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                                  : c.lateAtLimit
-                                  ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
-                                  : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300")
-                              }
-                              title={`${c.lateCount} late check-in(s) in the last ${adminData?.policy?.windowDays ?? 90} days`}
-                            >
-                              {c.lateCount}/{adminData?.policy?.allowance ?? 3} late
-                            </span>
-                          )}
-                        </p>
+                        <p className="truncate text-sm font-medium">{c.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {ci
                             ? `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : c.noSchedule ? " · no schedule" : ""}`
