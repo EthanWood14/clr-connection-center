@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertCircle, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
-  Clock3, Copy, MapPin, Save, Search, UserCheck, UsersRound, XCircle,
+  Clock3, Copy, MapPin, MessageSquareText, Save, Search, Send, UserCheck, UsersRound, XCircle,
 } from "lucide-react";
 
 const DAYS = [
@@ -19,7 +20,13 @@ const DAYS = [
 ] as const;
 type Day = { working: boolean; start: string; end: string };
 type Who = { type: "lo" | "loa"; id: number; name: string; loName: string | null; checkedIn: boolean };
+type PortalRequestStatus = {
+  id: number;
+  status: "pending" | "approved" | "denied" | "cancelled";
+  requestedAt?: string | null;
+};
 type RecentCheckin = {
+  id: number;
   date: string;
   checkedInAt: string;
   onTime: number | null;
@@ -27,14 +34,22 @@ type RecentCheckin = {
   expectedStart: string | null;
   inArea: number | null;
   distanceM: number | null;
+  excused?: boolean;
+  request?: PortalRequestStatus | null;
 };
 type TodayCheckin = Omit<RecentCheckin, "date">;
+type PortalLateRow = {
+  id: number;
+  date: string;
+  request?: PortalRequestStatus | null;
+};
 type LateStats = {
   count: number;
   allowance: number;
   windowDays: number;
   remaining: number;
   overLimit: boolean;
+  lates?: PortalLateRow[];
 };
 type Me = {
   date: string;
@@ -100,6 +115,23 @@ function scheduleSummary(days: Record<string, Day>) {
     return `Monday–Friday · ${fmtHm(first.start)}–${fmtHm(first.end)}`;
   }
   return `${working.length} working day${working.length === 1 ? "" : "s"}${sameHours ? ` · ${fmtHm(first.start)}–${fmtHm(first.end)}` : ""}`;
+}
+
+function portalRequestLabel(status: PortalRequestStatus["status"]) {
+  if (status === "approved") return "Approved";
+  if (status === "denied") return "Not approved";
+  if (status === "cancelled") return "Cancelled";
+  return "Pending review";
+}
+
+function portalRequestClass(status: PortalRequestStatus["status"]) {
+  if (status === "approved") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
+  }
+  if (status === "denied") {
+    return "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300";
+  }
+  return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
 }
 
 function LateStanding({ stats }: { stats: LateStats }) {
@@ -192,6 +224,7 @@ export default function Portal() {
   const [roleFilter, setRoleFilter] = useState<"all" | "lo" | "loa">("all");
   const [editingSchedule, setEditingSchedule] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [lateRequestReason, setLateRequestReason] = useState("");
 
   useEffect(() => {
     document.title = "LO / LOA Daily Check-In · WCLCC";
@@ -258,6 +291,7 @@ export default function Portal() {
     setDays(blankDays());
     setDirty(false);
     setEditingSchedule(false);
+    setLateRequestReason("");
     try {
       localStorage.setItem(rememberKey, JSON.stringify(person));
       localStorage.removeItem("portal.me");
@@ -268,6 +302,7 @@ export default function Portal() {
     setDays(blankDays());
     setDirty(false);
     setEditingSchedule(false);
+    setLateRequestReason("");
     try {
       localStorage.removeItem(rememberKey);
       localStorage.removeItem("portal.me");
@@ -287,6 +322,20 @@ export default function Portal() {
       });
     },
     onError: (error: any) => toast({ title: "Couldn't check in", description: error?.message, variant: "destructive" }),
+  });
+  const requestLateExcuse = useMutation({
+    mutationFn: (v: { checkinId: number; reason: string }) =>
+      apiRequest("POST", `/api/portal/${code}/checkin/${v.checkinId}/excuse-request`, {
+        type: who!.type,
+        subjectId: who!.id,
+        reason: v.reason,
+      }),
+    onSuccess: () => {
+      setLateRequestReason("");
+      qc.invalidateQueries({ queryKey: ["/api/portal", code, "me", who?.type, who?.id] });
+      toast({ title: "Excuse request sent", description: "Your request is waiting for review." });
+    },
+    onError: (error: any) => toast({ title: "Couldn't send request", description: error?.message, variant: "destructive" }),
   });
   function beginCheckIn() {
     checkIn.reset();
@@ -362,6 +411,10 @@ export default function Portal() {
   const timeZone = me?.timeZone ?? rosterQ.data?.timeZone ?? "America/Los_Angeles";
   const timeZoneLabel = me?.timeZoneLabel ?? rosterQ.data?.timeZoneLabel ?? "Pacific Time";
   const currentDate = me?.date;
+  const todayLateRow = me?.today
+    ? me.lateStats?.lates?.find((late) => late.id === me.today?.id || late.date === me.date)
+    : null;
+  const todayRequest = me?.today?.request ?? todayLateRow?.request ?? null;
   const priorCheckins = (me?.recentCheckins ?? []).filter((r) => r.date !== currentDate).slice(0, 5);
 
   if (!code || rosterQ.isError) {
@@ -506,7 +559,7 @@ export default function Portal() {
                   <div
                     aria-live="polite"
                     className={`rounded-xl border px-4 py-4 ${
-                      me.today.onTime === 1
+                      me.today.onTime === 1 || me.today.excused || todayRequest?.status === "approved"
                         ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800"
                         : me.today.onTime === 0
                         ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800"
@@ -514,13 +567,17 @@ export default function Portal() {
                     }`}
                   >
                     <div className={`flex items-center gap-2 text-sm font-semibold ${
-                      me.today.onTime === 1
+                      me.today.onTime === 1 || me.today.excused || todayRequest?.status === "approved"
                         ? "text-emerald-800 dark:text-emerald-300"
                         : me.today.onTime === 0
                         ? "text-amber-800 dark:text-amber-300"
                         : "text-slate-800 dark:text-slate-200"
                     }`}>
-                      {me.today.onTime === 1 ? <CheckCircle2 className="w-5 h-5" /> : me.today.onTime === 0 ? <XCircle className="w-5 h-5" /> : <UserCheck className="w-5 h-5" />}
+                      {me.today.onTime === 1 || me.today.excused || todayRequest?.status === "approved"
+                        ? <CheckCircle2 className="w-5 h-5" />
+                        : me.today.onTime === 0
+                        ? <XCircle className="w-5 h-5" />
+                        : <UserCheck className="w-5 h-5" />}
                       Checked in at {fmtTime(me.today.checkedInAt, timeZone)}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 pl-7">
@@ -535,6 +592,97 @@ export default function Portal() {
                         <MapPin className="w-3 h-3" />
                         Office location verified{me.today.distanceM != null ? ` · ${me.today.distanceM} m away` : ""}
                       </p>
+                    )}
+                    {me.today.onTime === 0 && (
+                      <div className="mt-4 border-t border-amber-200/80 pt-3 dark:border-amber-800/70">
+                        {todayRequest ? (
+                          <div
+                            className={`rounded-lg border px-3 py-2.5 ${portalRequestClass(todayRequest.status)}`}
+                            role="status"
+                            data-testid={`portal-attendance-status-${me.date}`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                                <MessageSquareText className="h-4 w-4" /> Excuse request
+                              </p>
+                              <Badge variant="outline" className={`font-normal ${portalRequestClass(todayRequest.status)}`}>
+                                {portalRequestLabel(todayRequest.status)}
+                              </Badge>
+                            </div>
+                            <p className="mt-1.5 text-xs">
+                              {todayRequest.status === "approved"
+                                ? "This late was excused and no longer counts toward your rolling total."
+                                : todayRequest.status === "denied"
+                                ? "This request was not approved, so the late remains in your rolling total."
+                                : "Your request is waiting for an attendance reviewer."}
+                            </p>
+                            {(todayRequest.status === "denied" || todayRequest.status === "cancelled") && (
+                              <div className="mt-3 border-t border-current/20 pt-3">
+                                <label className="block text-xs font-medium">
+                                  Add context and request another review
+                                  <Textarea
+                                    value={lateRequestReason}
+                                    onChange={(event) => setLateRequestReason(event.target.value)}
+                                    maxLength={500}
+                                    placeholder="Share an updated reason"
+                                    className="mt-1.5 min-h-20 resize-y bg-background text-foreground"
+                                    data-testid="portal-attendance-reason"
+                                  />
+                                </label>
+                                <Button
+                                  size="sm"
+                                  className="mt-2 w-full gap-1.5"
+                                  disabled={lateRequestReason.trim().length < 2 || !me.today.id || requestLateExcuse.isPending}
+                                  onClick={() => requestLateExcuse.mutate({
+                                    checkinId: me.today!.id,
+                                    reason: lateRequestReason.trim(),
+                                  })}
+                                  data-testid="portal-attendance-submit"
+                                >
+                                  <Send className="h-3.5 w-3.5" />
+                                  {requestLateExcuse.isPending ? "Sending…" : "Request another review"}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div data-testid="portal-attendance-request-form">
+                            <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-900 dark:text-amber-200">
+                              <MessageSquareText className="h-4 w-4" /> Need this late reviewed?
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Briefly explain what happened. Your reason is sent privately to attendance reviewers.
+                            </p>
+                            <label className="mt-3 block text-xs font-medium">
+                              Reason
+                              <Textarea
+                                value={lateRequestReason}
+                                onChange={(event) => setLateRequestReason(event.target.value)}
+                                maxLength={500}
+                                placeholder="Share the reason for arriving late"
+                                className="mt-1.5 min-h-24 resize-y bg-background"
+                                data-testid="portal-attendance-reason"
+                              />
+                            </label>
+                            <Button
+                              size="sm"
+                              className="mt-3 w-full gap-1.5"
+                              disabled={lateRequestReason.trim().length < 2 || !me.today.id || requestLateExcuse.isPending}
+                              onClick={() => requestLateExcuse.mutate({
+                                checkinId: me.today!.id,
+                                reason: lateRequestReason.trim(),
+                              })}
+                              data-testid="portal-attendance-submit"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              {requestLateExcuse.isPending ? "Sending…" : "Request review"}
+                            </Button>
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              Submitting does not automatically excuse the late.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -692,24 +840,36 @@ export default function Portal() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y">
-                    {priorCheckins.map((row) => (
-                      <div key={row.date} className="px-4 py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">{fmtDay(row.date)}</p>
-                          <p className="text-xs text-muted-foreground">In at {fmtTime(row.checkedInAt, timeZone)}</p>
+                    {priorCheckins.map((row) => {
+                      const rowRequest = row.request
+                        ?? me?.lateStats?.lates?.find((late) => late.id === row.id || late.date === row.date)?.request
+                        ?? null;
+                      return (
+                        <div key={row.date} className="px-4 py-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">{fmtDay(row.date)}</p>
+                            <p className="text-xs text-muted-foreground">In at {fmtTime(row.checkedInAt, timeZone)}</p>
+                          </div>
+                          <div className="flex shrink-0 flex-col items-end gap-1.5">
+                            <Badge
+                              variant="outline"
+                              className={row.onTime === 1 || row.excused
+                                ? "border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300"
+                                : row.onTime === 0
+                                ? "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300"
+                                : "text-muted-foreground"}
+                            >
+                              {row.onTime === 1 ? "On time" : row.excused ? "Excused" : row.onTime === 0 ? `${row.minutesLate ?? 0} min late` : "Not scored"}
+                            </Badge>
+                            {rowRequest && (
+                              <Badge variant="outline" className={`font-normal ${portalRequestClass(rowRequest.status)}`}>
+                                {portalRequestLabel(rowRequest.status)}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={row.onTime === 1
-                            ? "border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300"
-                            : row.onTime === 0
-                            ? "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300"
-                            : "text-muted-foreground"}
-                        >
-                          {row.onTime === 1 ? "On time" : row.onTime === 0 ? `${row.minutesLate ?? 0} min late` : "Not scored"}
-                        </Badge>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>

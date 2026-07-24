@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test:business-day": "tsx --test tests/business-day.test.ts",
+    "test:attendance": "tsx --test tests/attendance-excuse.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

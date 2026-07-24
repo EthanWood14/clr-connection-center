@@ -5471,6 +5471,67 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     return orgId;
   }
+
+  type AttendanceSubjectType = "user" | "lo" | "loa";
+  function attendanceSubjectName(orgId: number, type: AttendanceSubjectType, id: number): string | null {
+    const db = storageExtra.getRawSqlite();
+    if (type === "user") {
+      const row = db.prepare("SELECT name FROM users WHERE id=? AND org_id=?").get(id, orgId) as any;
+      return row?.name ? String(row.name) : null;
+    }
+    if (type === "lo") {
+      const row = db.prepare("SELECT full_name FROM loan_officers WHERE id=? AND org_id=?").get(id, orgId) as any;
+      return row?.full_name ? String(row.full_name) : null;
+    }
+    const row = db.prepare(`SELECT a.full_name FROM loan_officer_assistants a
+      INNER JOIN loan_officers l ON l.id=a.lo_id
+      WHERE a.id=? AND l.org_id=?`).get(id, orgId) as any;
+    return row?.full_name ? String(row.full_name) : null;
+  }
+
+  function attendanceManagerUsers(orgId: number, excludeUserId?: number): any[] {
+    const rows = storageExtra.getRawSqlite().prepare(`SELECT id, name FROM users
+      WHERE org_id=? AND is_active=1 AND (role='admin' OR is_manager=1)
+      ORDER BY id`).all(orgId) as any[];
+    return excludeUserId ? rows.filter((u) => Number(u.id) !== excludeUserId) : rows;
+  }
+
+  async function notifyAttendanceManagers(
+    orgId: number,
+    requesterName: string,
+    attendanceDate: string,
+    excludeUserId?: number,
+  ): Promise<void> {
+    const recipients = attendanceManagerUsers(orgId, excludeUserId);
+    const title = "Late excuse request";
+    const message = `${requesterName} requested review of a late check-in on ${attendanceDate}.`;
+    for (const manager of recipients) {
+      try {
+        (storage as any).createNotification?.({
+          userId: Number(manager.id),
+          type: "attendance_excuse",
+          title,
+          message,
+        });
+      } catch {}
+    }
+    await Promise.allSettled(recipients.map((manager) =>
+      sendPushToUser(Number(manager.id), {
+        title,
+        body: message,
+        url: "/#/check-ins",
+      }),
+    ));
+  }
+
+  function portalAttendanceRequestStatus(row: any) {
+    return row ? {
+      id: Number(row.id),
+      status: String(row.status),
+      requestedAt: row.requested_at,
+    } : null;
+  }
+
   // Their expected start for a date comes from the schedule THEY set. No schedule
   // for that weekday = no expectation, so the check-in is recorded but not scored
   // — same rule as the CLR check-in.
@@ -5488,20 +5549,37 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function externalLateStats(orgId: number, type: any, id: number, asOfDate: string) {
     const from = addIsoDays(asOfDate, -(CHECKIN_LATE_WINDOW_DAYS - 1));
     const rows = storageExtra.getExternalLateCheckins(orgId, type, id, from, asOfDate) as any[];
+    const requests = storageExtra.getAttendanceExcuseRequestsForSubject(orgId, type, id) as any[];
+    const requestByCheckin = new Map<number, any>(
+      requests.filter((r) => r.kind === "late" && r.checkin_id != null)
+        .map((r) => [Number(r.checkin_id), r]),
+    );
+    const counted = rows.filter((r) => !r.late_excused);
     return {
       allowance: CHECKIN_LATE_ALLOWANCE,
       windowDays: CHECKIN_LATE_WINDOW_DAYS,
       windowStart: from,
-      count: rows.length,
-      remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - rows.length),
-      overLimit: rows.length > CHECKIN_LATE_ALLOWANCE,
-      lates: rows.map((r) => ({
-        id: r.id,
-        date: r.date,
-        checkedInAt: r.checked_in_at,
-        minutesLate: r.minutes_late ?? null,
-        expectedStart: r.expected_start ?? null,
-      })),
+      count: counted.length,
+      remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - counted.length),
+      overLimit: counted.length > CHECKIN_LATE_ALLOWANCE,
+      lates: rows.map((r) => {
+        const request = requestByCheckin.get(Number(r.id));
+        return {
+          id: r.id,
+          date: r.date,
+          checkedInAt: r.checked_in_at,
+          minutesLate: r.minutes_late ?? null,
+          expectedStart: r.expected_start ?? null,
+          excused: !!r.late_excused,
+          // The public portal is selected from a shared roster, so it may show
+          // workflow state but never the private reason or reviewer note.
+          request: request ? {
+            id: request.id,
+            status: request.status,
+            requestedAt: request.requested_at,
+          } : null,
+        };
+      }),
     };
   }
   function portalPayload(orgId: number, type: any, id: number) {
@@ -5510,16 +5588,30 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const mine = storageExtra.getExternalCheckin(orgId, type, id, date);
     const exp = externalExpectedStart(orgId, type, id, date);
     const cfg = checkinConfig();
-    const recent = (storageExtra.getRecentExternalCheckins(orgId, type, id, 6) as any[]).map((r) => ({
-      id: r.id,
-      date: r.date,
-      checkedInAt: r.checked_in_at,
-      onTime: r.on_time,
-      minutesLate: r.minutes_late ?? null,
-      expectedStart: r.expected_start ?? null,
-      inArea: r.in_area ?? null,
-      distanceM: r.distance_m ?? null,
-    }));
+    const requests = storageExtra.getAttendanceExcuseRequestsForSubject(orgId, type, id) as any[];
+    const requestByCheckin = new Map<number, any>(
+      requests.filter((r) => r.kind === "late" && r.checkin_id != null)
+        .map((r) => [Number(r.checkin_id), r]),
+    );
+    const recent = (storageExtra.getRecentExternalCheckins(orgId, type, id, 6) as any[]).map((r) => {
+      const request = requestByCheckin.get(Number(r.id));
+      return {
+        id: r.id,
+        date: r.date,
+        checkedInAt: r.checked_in_at,
+        onTime: r.on_time,
+        minutesLate: r.minutes_late ?? null,
+        expectedStart: r.expected_start ?? null,
+        inArea: r.in_area ?? null,
+        distanceM: r.distance_m ?? null,
+        excused: !!r.late_excused,
+        request: request ? {
+          id: request.id,
+          status: request.status,
+          requestedAt: request.requested_at,
+        } : null,
+      };
+    });
     return {
       enabled: cfg.enabled,
       graceMin: cfg.graceMin,
@@ -5529,12 +5621,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       timeZoneLabel: "Pacific Time",
       date,
       today: mine ? {
+        id: mine.id,
         checkedInAt: mine.checked_in_at,
         onTime: mine.on_time,
         minutesLate: mine.minutes_late,
         expectedStart: mine.expected_start,
         inArea: mine.in_area ?? null,
         distanceM: mine.distance_m ?? null,
+        excused: !!mine.late_excused,
       } : null,
       expectedStart: exp.start, working: exp.working,
       schedule: storageExtra.getExternalSchedule(orgId, type, id) ?? null,
@@ -5608,6 +5702,51 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     res.json(portalPayload(orgId, type, id));
   });
+
+  // Public portal: submit a private reason for one of this roster person's late
+  // check-ins. The shared portal may expose review status, but never the reason.
+  app.post("/api/portal/:code/checkin/:id/excuse-request", async (req: any, res) => {
+    const orgId = portalOrgId(req, res); if (!orgId) return;
+    const checkinId = parseInt(req.params.id, 10);
+    const type = String(req.body?.type ?? "") as AttendanceSubjectType;
+    const subjectId = parseInt(String(req.body?.subjectId ?? ""), 10);
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if ((type !== "lo" && type !== "loa") || !Number.isFinite(subjectId)) {
+      return res.status(400).json({ error: "Choose a valid LO or LOA." });
+    }
+    if (reason.length < 2) return res.status(400).json({ error: "Please enter a reason." });
+    if (reason.length > 500) return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    if (!storageExtra.isRosterSubject(orgId, type, subjectId)) {
+      return res.status(404).json({ error: "Not on the roster." });
+    }
+    const checkin = storageExtra.getExternalCheckinById(checkinId) as any;
+    if (!checkin
+        || Number(checkin.org_id) !== orgId
+        || checkin.subject_type !== type
+        || Number(checkin.subject_id) !== subjectId) {
+      return res.status(404).json({ error: "Late check-in not found." });
+    }
+    if (Number(checkin.on_time) !== 0 || !checkin.expected_start) {
+      return res.status(400).json({ error: "Only a scored late check-in can be submitted for review." });
+    }
+    if (checkin.late_excused) return res.status(400).json({ error: "That late is already excused." });
+
+    const result = storageExtra.submitLateExcuseRequest({
+      orgId,
+      subjectType: type,
+      subjectId,
+      attendanceDate: String(checkin.date),
+      checkinId,
+      reason,
+      requestedVia: "portal",
+    });
+    const requesterName = attendanceSubjectName(orgId, type, subjectId) ?? "An LO / LOA";
+    if (result.created || result.resubmitted) {
+      await notifyAttendanceManagers(orgId, requesterName, String(checkin.date));
+    }
+    res.json({ ok: true, request: portalAttendanceRequestStatus(result.request) });
+  });
+
   // Public: set your own weekly schedule.
   app.put("/api/portal/:code/schedule", (req: any, res) => {
     const orgId = portalOrgId(req, res); if (!orgId) return;
@@ -10613,9 +10752,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   // Rolling-window late history for one person (newest first) + the policy.
-  function checkinLateStats(userId: number, asOfDate: string) {
+  function checkinLateStats(userId: number, orgId: number, asOfDate: string) {
     const from = addIsoDays(asOfDate, -(CHECKIN_LATE_WINDOW_DAYS - 1));
     const rows = storageExtra.getLateCheckins(userId, from, asOfDate) as any[];
+    const requests = storageExtra.getAttendanceExcuseRequestsForSubject(orgId, "user", userId) as any[];
+    const requestByCheckin = new Map<number, any>(
+      requests.filter((r) => r.kind === "late" && r.checkin_id != null)
+        .map((r) => [Number(r.checkin_id), r]),
+    );
     // Excused lates stay in the history (flagged) but don't count against the
     // allowance — reversing one immediately gives the person that late back.
     const counted = rows.filter((r) => !r.late_excused);
@@ -10627,16 +10771,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       count: counted.length,
       remaining: Math.max(0, CHECKIN_LATE_ALLOWANCE - counted.length),
       overLimit: counted.length > CHECKIN_LATE_ALLOWANCE,
-      lates: rows.map((r) => ({
-        id: r.id,
-        date: r.date,
-        checkedInAt: r.checked_in_at,
-        minutesLate: r.minutes_late ?? null,
-        expectedStart: r.expected_start ?? null,
-        excused: !!r.late_excused,
-        excusedBy: r.excused_by ? (nameById.get(Number(r.excused_by)) ?? null) : null,
-        excuseReason: r.excuse_reason ?? null,
-      })),
+      lates: rows.map((r) => {
+        const request = requestByCheckin.get(Number(r.id));
+        return {
+          id: r.id,
+          date: r.date,
+          checkedInAt: r.checked_in_at,
+          minutesLate: r.minutes_late ?? null,
+          expectedStart: r.expected_start ?? null,
+          excused: !!r.late_excused,
+          excusedBy: r.excused_by ? (nameById.get(Number(r.excused_by)) ?? null) : null,
+          excuseReason: r.excuse_reason ?? null,
+          request: request ? {
+            id: request.id,
+            status: request.status,
+            reason: request.reason,
+            requestedAt: request.requested_at,
+            reviewedAt: request.reviewed_at ?? null,
+            reviewerNote: request.reviewer_note ?? "",
+          } : null,
+        };
+      }),
     };
   }
 
@@ -10659,6 +10814,108 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return Array.from(out);
   }
 
+  function attendanceSelfRequest(row: any) {
+    return row ? {
+      id: Number(row.id),
+      status: String(row.status),
+      reason: String(row.reason ?? ""),
+      requestedAt: row.requested_at,
+      reviewedAt: row.reviewed_at ?? null,
+      reviewerNote: row.reviewer_note ?? "",
+    } : null;
+  }
+
+  function attendanceRequestForManager(orgId: number, row: any) {
+    const reviewer = row.reviewed_by
+      ? storage.getUserById(Number(row.reviewed_by)) as any
+      : null;
+    return {
+      id: Number(row.id),
+      subjectType: row.subject_type as AttendanceSubjectType,
+      subjectId: Number(row.subject_id),
+      subjectName: attendanceSubjectName(orgId, row.subject_type, Number(row.subject_id))
+        ?? `${String(row.subject_type).toUpperCase()} #${row.subject_id}`,
+      attendanceDate: row.attendance_date,
+      kind: row.kind,
+      checkinId: row.checkin_id != null ? Number(row.checkin_id) : null,
+      expectedStart: row.expected_start ?? null,
+      reason: row.reason ?? "",
+      status: row.status,
+      requestedVia: row.requested_via,
+      requestedAt: row.requested_at,
+      reviewedByName: reviewer?.name ?? null,
+      reviewedAt: row.reviewed_at ?? null,
+      reviewerNote: row.reviewer_note ?? null,
+    };
+  }
+
+  function notifyAttendanceUserDecision(
+    userId: number,
+    date: string,
+    status: "approved" | "denied",
+    reviewerNote: string,
+  ): void {
+    const approved = status === "approved";
+    const title = approved ? "Late excuse approved" : "Late excuse not approved";
+    const message = approved
+      ? `Your late on ${date} was excused and no longer counts toward your rolling total.`
+      : `Your late excuse request for ${date} was not approved.${reviewerNote ? ` ${reviewerNote}` : ""}`;
+    try {
+      (storage as any).createNotification?.({
+        userId,
+        type: "attendance_excuse",
+        title,
+        message,
+      });
+    } catch {}
+    sendPushToUser(userId, {
+      title,
+      body: approved
+        ? `Your late on ${date} was excused.`
+        : `Your request for ${date} was not approved.`,
+      url: "/#/check-ins",
+    }).catch(() => {});
+  }
+
+  function attendanceExpectedStart(
+    orgId: number,
+    type: AttendanceSubjectType,
+    subjectId: number,
+    date: string,
+  ): { start: string | null; working: boolean; source: "schedule" | "none"; timeZone: string } {
+    if (type === "user") {
+      return {
+        ...checkinExpectedStart(subjectId, orgId, date),
+        timeZone: checkinTzFor(subjectId),
+      };
+    }
+    return {
+      ...externalExpectedStart(orgId, type, subjectId, date),
+      timeZone: BUSINESS_DAY_DEFAULT_TZ,
+    };
+  }
+
+  function attendanceCheckinForDate(
+    orgId: number,
+    type: AttendanceSubjectType,
+    subjectId: number,
+    date: string,
+  ): any {
+    if (type === "user") {
+      const row = storageExtra.getCheckinForUserDate(subjectId, date);
+      return row && Number(row.org_id) === orgId ? row : null;
+    }
+    return storageExtra.getExternalCheckin(orgId, type, subjectId, date);
+  }
+
+  function attendanceStartHasPassed(date: string, start: string, timeZone: string): boolean {
+    const today = checkinToday(timeZone);
+    if (date < today) return true;
+    if (date > today) return false;
+    const [h, m] = start.split(":").map((n) => parseInt(n, 10));
+    return wallClockMinutes(timeZone) > h * 60 + m + checkinConfig().graceMin;
+  }
+
   app.get("/api/checkin", requireAuth, (req: any, res) => {
     const userId = Number(req.session_user?.userId);
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -10676,7 +10933,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       radiusM: cfg.radiusM,
       date,
       mine,
-      lateStats: checkinLateStats(userId, date),
+      lateStats: checkinLateStats(userId, orgId, date),
     });
   });
 
@@ -10709,8 +10966,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // from the START itself so "12 min past your 8:00 start" reads true.
     const exp = checkinExpectedStart(userId, orgId, date);
     const judged = exp.working && !!exp.start;
-    let onTime = 1;
-    let minutesLate = 0;
+    let onTime: number | null = null;
+    let minutesLate: number | null = null;
     if (judged) {
       const [sh, sm] = (exp.start as string).split(":").map((x: string) => parseInt(x, 10));
       const startMin = sh * 60 + sm;
@@ -10722,20 +10979,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const checkin = storageExtra.saveCheckin({
       orgId, userId, date, checkedInAt: new Date().toISOString(),
       lat, lng, accuracyM, distanceM, inArea, onTime,
-      minutesLate: onTime ? 0 : minutesLate,
+      minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null,
       expectedStart: judged ? exp.start : null,
     });
     audit({
       userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
       entityLabel: `${me?.name ?? "User"} morning check-in`,
-      details: JSON.stringify({ date, onTime: !!onTime, minutesLate: onTime ? 0 : minutesLate, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", inArea: inArea == null ? null : !!inArea, distanceM }),
+      details: JSON.stringify({ date, onTime: onTime == null ? null : !!onTime, minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", inArea: inArea == null ? null : !!inArea, distanceM }),
     });
 
     // Policy: 3 lates per rolling 90 days. When this check-in is the one that
     // reaches the limit (and only then — not on every later late), notify the
     // managers with the offending dates.
-    const lateStats = checkinLateStats(userId, date);
-    if (!onTime && lateStats.count >= CHECKIN_LATE_ALLOWANCE
+    const lateStats = checkinLateStats(userId, orgId, date);
+    if (onTime === 0 && lateStats.count >= CHECKIN_LATE_ALLOWANCE
         && !storageExtra.lateAlertSentInWindow(userId, lateStats.windowStart, date)) {
       try {
         const to = checkinManagerEmails();
@@ -10778,6 +11035,219 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ checkin, lateStats });
   });
 
+  // Signed-in CLR: submit a private reason for one of their own scored lates.
+  app.post("/api/checkin/:id/excuse-request", requireAuth, async (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const checkinId = parseInt(req.params.id, 10);
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 2) return res.status(400).json({ error: "Please enter a reason." });
+    if (reason.length > 500) return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    const checkin = storageExtra.getCheckinById(checkinId) as any;
+    if (!checkin || Number(checkin.org_id) !== orgId || Number(checkin.user_id) !== userId) {
+      return res.status(404).json({ error: "Late check-in not found." });
+    }
+    if (Number(checkin.on_time) !== 0 || !checkin.expected_start) {
+      return res.status(400).json({ error: "Only a scored late check-in can be submitted for review." });
+    }
+    if (checkin.late_excused) return res.status(400).json({ error: "That late is already excused." });
+
+    const result = storageExtra.submitLateExcuseRequest({
+      orgId,
+      subjectType: "user",
+      subjectId: userId,
+      attendanceDate: String(checkin.date),
+      checkinId,
+      reason,
+      requestedVia: "app",
+      requestedByUserId: userId,
+    });
+    const requester = storage.getUserById(userId) as any;
+    if (result.created || result.resubmitted) {
+      await notifyAttendanceManagers(orgId, requester?.name ?? "A team member", String(checkin.date), userId);
+      audit({
+        userId,
+        userName: requester?.name ?? "Unknown",
+        action: "create",
+        entityType: "attendance_excuse_request",
+        entityId: Number(result.request.id),
+        entityLabel: `${requester?.name ?? "User"} late on ${checkin.date}`,
+        details: JSON.stringify({ checkinId, attendanceDate: checkin.date, requestedVia: "app" }),
+      });
+    }
+    res.json({ ok: true, request: attendanceSelfRequest(result.request) });
+  });
+
+  // Manager/admin: private review queue. This is deliberately separate from
+  // the team-visible attendance board because it contains submitted reasons.
+  app.get("/api/checkin/attendance-requests", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const kind = typeof req.query.kind === "string" ? req.query.kind : undefined;
+    if (status && !["pending", "approved", "denied", "cancelled"].includes(status)) {
+      return res.status(400).json({ error: "Invalid request status." });
+    }
+    if (kind && kind !== "late" && kind !== "absence") {
+      return res.status(400).json({ error: "Invalid attendance request kind." });
+    }
+    const requests = storageExtra.getAttendanceExcuseRequestsForOrg(orgId, {
+      status: status as any,
+      kind: kind as any,
+    });
+    res.json({ requests: (requests as any[]).map((row) => attendanceRequestForManager(orgId, row)) });
+  });
+
+  app.patch("/api/checkin/attendance-requests/:id", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const reviewerId = Number(req.session_user?.userId);
+    const requestId = parseInt(req.params.id, 10);
+    const status = req.body?.status as "approved" | "denied";
+    const reviewerNote = typeof req.body?.reviewerNote === "string"
+      ? req.body.reviewerNote.trim().slice(0, 500)
+      : "";
+    if (status !== "approved" && status !== "denied") {
+      return res.status(400).json({ error: "status must be 'approved' or 'denied'." });
+    }
+    const existing = storageExtra.getAttendanceExcuseRequest(orgId, requestId) as any;
+    if (!existing) return res.status(404).json({ error: "Request not found." });
+    if (existing.status !== "pending") return res.status(409).json({ error: "This request was already reviewed." });
+    const reviewer = storage.getUserById(reviewerId) as any;
+    if (existing.subject_type === "user"
+        && Number(existing.subject_id) === reviewerId
+        && reviewer?.role !== "admin") {
+      return res.status(403).json({ error: "You can't review your own request. Ask an admin." });
+    }
+    const lateWindowEnd = existing.kind === "late" && existing.subject_type === "user"
+      ? checkinToday(checkinTzFor(Number(existing.subject_id)))
+      : undefined;
+    const lateWindowStart = lateWindowEnd
+      ? addIsoDays(lateWindowEnd, -(CHECKIN_LATE_WINDOW_DAYS - 1))
+      : undefined;
+    const result = storageExtra.reviewAttendanceExcuseRequest({
+      orgId,
+      requestId,
+      status,
+      reviewedByUserId: reviewerId,
+      reviewerNote,
+      lateWindowStart,
+      lateWindowEnd,
+    });
+    if (!result.changed) return res.status(409).json({ error: "This request was already reviewed." });
+    const request = result.request as any;
+    const subjectName = attendanceSubjectName(orgId, request.subject_type, Number(request.subject_id)) ?? "Team member";
+    audit({
+      userId: reviewerId,
+      userName: reviewer?.name ?? "Unknown",
+      action: "update",
+      entityType: "attendance_excuse_request",
+      entityId: requestId,
+      entityLabel: `${subjectName} ${request.kind} on ${request.attendance_date}`,
+      details: JSON.stringify({ status, reviewerNote: reviewerNote || null }),
+    });
+    if (request.kind === "late" && request.subject_type === "user") {
+      notifyAttendanceUserDecision(Number(request.subject_id), String(request.attendance_date), status, reviewerNote);
+    }
+    res.json({ ok: true, request: attendanceRequestForManager(orgId, request) });
+  });
+
+  // Admin-only absence exception. It records the exception without inventing a
+  // check-in row, preserving the difference between "arrived" and "absent".
+  app.post("/api/checkin/absence-excuses", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const adminUserId = Number(req.session_user?.userId);
+    const subjectType = String(req.body?.subjectType ?? (req.body?.userId ? "user" : "")) as AttendanceSubjectType;
+    const subjectId = Number(req.body?.subjectId ?? req.body?.userId);
+    const attendanceDate = String(req.body?.date ?? "");
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!["user", "lo", "loa"].includes(subjectType) || !Number.isInteger(subjectId) || subjectId <= 0) {
+      return res.status(400).json({ error: "Choose a valid team member." });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) {
+      return res.status(400).json({ error: "Enter a valid attendance date." });
+    }
+    if (reason.length < 2) return res.status(400).json({ error: "Please enter an absence reason." });
+    if (reason.length > 500) return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    const subjectName = attendanceSubjectName(orgId, subjectType, subjectId);
+    if (!subjectName) return res.status(404).json({ error: "Team member not found." });
+    if ((subjectType === "lo" || subjectType === "loa")
+        && !storageExtra.isRosterSubject(orgId, subjectType, subjectId)) {
+      return res.status(404).json({ error: "Team member is not active on this organization's roster." });
+    }
+    const expected = attendanceExpectedStart(orgId, subjectType, subjectId, attendanceDate);
+    if (!expected.working || !expected.start) {
+      return res.status(400).json({ error: "This person was not scheduled to work that day." });
+    }
+    if (attendanceCheckinForDate(orgId, subjectType, subjectId, attendanceDate)) {
+      return res.status(409).json({ error: "This person has a check-in for that day, so they were not absent." });
+    }
+    if (!attendanceStartHasPassed(attendanceDate, expected.start, expected.timeZone)) {
+      return res.status(400).json({ error: "That scheduled start time has not passed yet." });
+    }
+    if (subjectType === "user") {
+      try {
+        const timeOff = storageExtra.getRawSqlite().prepare(`SELECT id FROM time_off_requests
+          WHERE org_id=? AND user_id=? AND status='approved' AND start_date<=? AND end_date>=? LIMIT 1`)
+          .get(orgId, subjectId, attendanceDate, attendanceDate) as any;
+        if (timeOff) return res.status(409).json({ error: "This absence is already excused by approved time off." });
+      } catch {}
+    }
+    const result = storageExtra.createAdminAbsenceExcuse({
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      expectedStart: expected.start,
+      reason,
+      adminUserId,
+    });
+    const admin = storage.getUserById(adminUserId) as any;
+    audit({
+      userId: adminUserId,
+      userName: admin?.name ?? "Unknown",
+      action: "create",
+      entityType: "attendance_absence_excuse",
+      entityId: Number(result.request.id),
+      entityLabel: `${subjectName} absence on ${attendanceDate}`,
+      details: JSON.stringify({ subjectType, subjectId, attendanceDate }),
+    });
+    res.json({ ok: true, request: attendanceRequestForManager(orgId, result.request) });
+  });
+
+  app.delete("/api/checkin/absence-excuses/:id", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const adminUserId = Number(req.session_user?.userId);
+    const requestId = parseInt(req.params.id, 10);
+    const existing = storageExtra.getAttendanceExcuseRequest(orgId, requestId) as any;
+    if (!existing || existing.kind !== "absence" || existing.requested_via !== "admin") {
+      return res.status(404).json({ error: "Absence excuse not found." });
+    }
+    const result = storageExtra.cancelAdminAbsenceExcuse({
+      orgId,
+      subjectType: existing.subject_type,
+      subjectId: Number(existing.subject_id),
+      attendanceDate: String(existing.attendance_date),
+      adminUserId,
+      note: "Removed by admin",
+    });
+    if (!result.changed) return res.status(409).json({ error: "This absence excuse is already inactive." });
+    const admin = storage.getUserById(adminUserId) as any;
+    const subjectName = attendanceSubjectName(orgId, existing.subject_type, Number(existing.subject_id)) ?? "Team member";
+    audit({
+      userId: adminUserId,
+      userName: admin?.name ?? "Unknown",
+      action: "update",
+      entityType: "attendance_absence_excuse",
+      entityId: requestId,
+      entityLabel: `${subjectName} absence on ${existing.attendance_date}`,
+      details: JSON.stringify({ status: "cancelled" }),
+    });
+    res.json({ ok: true });
+  });
+
   // Admin/manager: everyone's check-in status for a date (missing = no row).
   // Team board: today's check-in status + 90-day late standing for EVERY role
   // (CLRs, Loan Officers, LOAs). Visible to the whole team — attendance is public
@@ -10792,16 +11262,51 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const cfg = checkinConfig();
     const windowStart = addIsoDays(date, -(CHECKIN_LATE_WINDOW_DAYS - 1));
     const lateCounts = storageExtra.getLateCountsByUser(orgId, windowStart, date) as Map<number, number>;
+    const approvedAbsences = storageExtra.getApprovedAbsenceExcusesForDate(orgId, date) as any[];
+    const absenceBySubject = new Map<string, any>(
+      approvedAbsences.map((r) => [`${r.subject_type}:${r.subject_id}`, r]),
+    );
+    const approvedTimeOff = new Set<number>();
+    try {
+      const timeOffRows = storageExtra.getRawSqlite().prepare(`SELECT user_id FROM time_off_requests
+        WHERE org_id=? AND status='approved' AND start_date<=? AND end_date>=?`)
+        .all(orgId, date, date) as any[];
+      for (const row of timeOffRows) approvedTimeOff.add(Number(row.user_id));
+    } catch {}
     const clrs = (storage.getUsers() as any[])
       .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
       .map((u) => {
         const exp = checkinExpectedStart(u.id, orgId, date);
         const lateCount = lateCounts.get(u.id) ?? 0;
+        const ci = byUser.get(u.id) ?? null;
+        const absence = absenceBySubject.get(`user:${u.id}`) ?? null;
+        const timeOff = approvedTimeOff.has(Number(u.id));
+        const absenceExcused = !ci && (absence != null || timeOff);
+        const startPassed = !!(exp.working && exp.start
+          && attendanceStartHasPassed(date, exp.start, checkinTzFor(Number(u.id))));
         return {
-          userId: u.id, name: u.name, checkin: byUser.get(u.id) ?? null,
+          userId: u.id,
+          name: u.name,
+          // This endpoint is team-visible. Return attendance facts only; private
+          // excuse/request reasons are confined to the manager review endpoint.
+          checkin: ci ? {
+            id: ci.id,
+            checked_in_at: ci.checked_in_at,
+            on_time: ci.on_time,
+            minutes_late: ci.minutes_late,
+            expected_start: ci.expected_start,
+            in_area: ci.in_area ?? null,
+            distance_m: ci.distance_m ?? null,
+            late_excused: !!ci.late_excused,
+          } : null,
           expectedStart: exp.working ? exp.start : null,
           scheduledOff: exp.source === "schedule" && !exp.working,
           noSchedule: exp.source === "none",
+          absenceExcused,
+          absenceExcuseId: !ci && absence ? Number(absence.id) : null,
+          absenceExcuseSource: absenceExcused ? (absence ? "admin" : "time_off") : null,
+          startPassed,
+          absenceEligible: !ci && !absenceExcused && startPassed,
           lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
         };
       });
@@ -10813,19 +11318,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const ci = extToday.get(`${s.type}:${s.id}`) ?? null;
       const exp = externalExpectedStart(orgId, s.type, s.id, date);
       const lateCount = extLate.get(`${s.type}:${s.id}`) ?? 0;
+      const absence = absenceBySubject.get(`${s.type}:${s.id}`) ?? null;
+      const startPassed = !!(exp.working && exp.start
+        && attendanceStartHasPassed(date, exp.start, BUSINESS_DAY_DEFAULT_TZ));
       return {
         type: s.type, id: s.id, name: s.name, loName: s.loName,
         checkin: ci ? {
+          id: ci.id,
           checked_in_at: ci.checked_in_at,
           on_time: ci.on_time,
           minutes_late: ci.minutes_late,
           expected_start: ci.expected_start,
           in_area: ci.in_area ?? null,
           distance_m: ci.distance_m ?? null,
+          late_excused: !!ci.late_excused,
         } : null,
         expectedStart: exp.working ? exp.start : null,
         scheduledOff: exp.source === "schedule" && !exp.working,
         noSchedule: exp.source === "none",
+        absenceExcused: !ci && !!absence,
+        absenceExcuseId: !ci && absence ? Number(absence.id) : null,
+        absenceExcuseSource: !ci && absence ? "admin" : null,
+        startPassed,
+        absenceEligible: !ci && !absence && startPassed,
         lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
       };
     });
@@ -10846,7 +11361,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id, 10);
     const row = storageExtra.getCheckinById(id);
     if (!row || Number(row.org_id) !== orgId) return res.status(404).json({ error: "Not found" });
-    if (row.on_time === 1) return res.status(400).json({ error: "That check-in wasn't late." });
+    if (Number(row.on_time) !== 0 || !row.expected_start) {
+      return res.status(400).json({ error: "That check-in wasn't a scored late." });
+    }
     // A manager can't clear their own late — an admin can (same rule the comp
     // approve/deny path uses for self-review).
     const meRow = storage.getUserById(uid) as any;
@@ -10855,10 +11372,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const excused = req.body?.excused === undefined ? true : !!req.body.excused;
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length > 500) {
+      return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    }
     // Re-arm the limit alert across this person's whole current window.
     const wEnd = checkinToday(checkinTzFor(Number(row.user_id)));
     const wStart = addIsoDays(wEnd, -(CHECKIN_LATE_WINDOW_DAYS - 1));
-    const updated = storageExtra.setLateExcused(id, excused, uid, reason, wStart, wEnd);
+    const { checkin: updated } = storageExtra.setAdminUserLateExcuse({
+      orgId,
+      userId: Number(row.user_id),
+      checkinId: id,
+      attendanceDate: String(row.date),
+      excused,
+      adminUserId: uid,
+      reason,
+      lateWindowStart: wStart,
+      lateWindowEnd: wEnd,
+    });
     const me = meRow;
     const who = storage.getUserById(Number(row.user_id)) as any;
     audit({
@@ -11053,8 +11583,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function requireAdminSession(req: any, res: Response): boolean {
     const uid = req.session_user?.userId;
     if (!uid) { res.status(401).json({ error: "Unauthorized" }); return false; }
-    const u = storage.getUserById(uid);
-    if (!u || u.role !== "admin") { res.status(403).json({ error: "Admin only" }); return false; }
+    const u = storage.getUserById(uid) as any;
+    const superAdmin = !!(u?.superAdmin ?? u?.super_admin);
+    if (!u || (u.role !== "admin" && !superAdmin)) { res.status(403).json({ error: "Admin only" }); return false; }
     return true;
   }
 
@@ -11064,7 +11595,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!uid) { res.status(401).json({ error: "Unauthorized" }); return false; }
     const u = storage.getUserById(uid) as any;
     const isMgr = !!(u?.isManager ?? u?.is_manager);
-    if (!u || (u.role !== "admin" && !isMgr)) { res.status(403).json({ error: "Manager or admin only" }); return false; }
+    const superAdmin = !!(u?.superAdmin ?? u?.super_admin);
+    if (!u || (u.role !== "admin" && !isMgr && !superAdmin)) { res.status(403).json({ error: "Manager or admin only" }); return false; }
     return true;
   }
 
@@ -13249,7 +13781,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
            FROM morning_checkins WHERE user_id = ? AND org_id = ? AND date >= ? AND date <= ?`
       ).get(userId, orgId, startDate, endDate) as any;
       // Standing is judged in the CLR's OWN timezone, not the viewing manager's.
-      const lateStanding = checkinLateStats(userId, checkinToday(checkinTzFor(userId)));
+      const lateStanding = checkinLateStats(userId, orgId, checkinToday(checkinTzFor(userId)));
 
       // EOD reports submitted in the window.
       const eod = db.prepare(`SELECT COUNT(*) AS n FROM eod_reports WHERE assistant_id = ? AND report_date >= ? AND report_date <= ?`)

@@ -27,6 +27,8 @@ const typeRoutes: Record<string, string> = {
   transfer_celebration: "/leaderboard",
   nmls_check: "/nmls-checks",
   nmls_escalation: "/nmls-checks",
+  checkin: "/check-ins",
+  attendance_excuse: "/check-ins",
 };
 
 const typeColors: Record<string, string> = {
@@ -42,6 +44,8 @@ const typeColors: Record<string, string> = {
   transfer_celebration: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   nmls_check: "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400",
   nmls_escalation: "bg-destructive/10 text-destructive",
+  checkin: "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
+  attendance_excuse: "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
 };
 
 const ACTION_REQUIRED_TYPES = ["nmls_check", "nmls_escalation"];

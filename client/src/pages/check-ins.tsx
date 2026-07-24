@@ -4,7 +4,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -14,7 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   UserCheck, ChevronLeft, ChevronRight, MapPin, CheckCircle2, XCircle, MinusCircle,
-  Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw,
+  Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw, MessageSquareText,
+  Send, ShieldCheck,
 } from "lucide-react";
 // Check-ins use the PLAIN local calendar date — deliberately NOT the shared
 // business-day helper, which rolls forward at 7pm and would point the roster at
@@ -31,11 +34,21 @@ type Mine = {
   expected_start: string | null;
   late_excused?: number | null;
   excuse_reason?: string | null;
+  request?: ExcuseRequestSummary | null;
 } | null;
 
+type RequestStatus = "pending" | "approved" | "denied" | "cancelled";
+type ExcuseRequestSummary = {
+  id: number;
+  status: RequestStatus;
+  reason?: string | null;
+  requestedAt?: string | null;
+  reviewerNote?: string | null;
+};
 type LateRow = {
   id: number; date: string; checkedInAt: string; minutesLate: number | null; expectedStart: string | null;
   excused?: boolean; excusedBy?: string | null; excuseReason?: string | null;
+  request?: ExcuseRequestSummary | null;
 };
 type LateStats = {
   allowance: number; windowDays: number; windowStart: string;
@@ -64,19 +77,31 @@ type CheckinRow = {
   lateCount: number;
   lateOverLimit: boolean;
   lateAtLimit: boolean;
+  absenceExcused?: boolean;
+  absenceExcuseId?: number | null;
+  absenceExcuseSource?: "admin" | "time_off" | null;
+  startPassed?: boolean;
+  absenceEligible?: boolean;
 };
 type ExtRow = {
   type: "lo" | "loa"; id: number; name: string; loName: string | null;
   checkin: {
+    id?: number;
     checked_in_at: string;
     on_time: number | null;
     minutes_late: number | null;
     expected_start: string | null;
     in_area: number | null;
     distance_m: number | null;
+    late_excused?: number | null;
   } | null;
   expectedStart: string | null; scheduledOff: boolean; noSchedule: boolean;
   lateCount: number; lateOverLimit: boolean; lateAtLimit: boolean;
+  absenceExcused?: boolean;
+  absenceExcuseId?: number | null;
+  absenceExcuseSource?: "admin" | "time_off" | null;
+  startPassed?: boolean;
+  absenceEligible?: boolean;
 };
 type AdminResp = {
   los?: ExtRow[]; loas?: ExtRow[];
@@ -85,6 +110,24 @@ type AdminResp = {
   config: { enabled: boolean; start: string; graceMin: number; radiusM: number; lat: number | null; lng: number | null };
   clrs: CheckinRow[];
   policy: { allowance: number; windowDays: number; windowStart: string };
+};
+
+type AttendanceRequest = {
+  id: number;
+  subjectType: "user" | "lo" | "loa";
+  subjectId: number;
+  subjectName: string;
+  attendanceDate: string;
+  kind: "late" | "absence";
+  checkinId: number | null;
+  expectedStart: string | null;
+  reason: string;
+  status: RequestStatus;
+  requestedVia: "app" | "portal" | "admin";
+  requestedAt: string;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  reviewerNote: string | null;
 };
 
 function shiftDate(d: string, days: number): string {
@@ -113,6 +156,237 @@ function fmtHm(hm: string | null) {
   const ap = h >= 12 ? "PM" : "AM";
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${String(m).padStart(2, "0")} ${ap}`;
+}
+
+function requestStatusLabel(status: RequestStatus) {
+  if (status === "approved") return "Approved";
+  if (status === "denied") return "Not approved";
+  if (status === "cancelled") return "Cancelled";
+  return "Pending review";
+}
+
+function requestStatusClass(status: RequestStatus) {
+  if (status === "approved") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
+  }
+  if (status === "denied") {
+    return "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300";
+  }
+  return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
+}
+
+function RequestStatusBadge({ status }: { status: RequestStatus }) {
+  return (
+    <Badge variant="outline" className={`shrink-0 font-normal ${requestStatusClass(status)}`}>
+      {requestStatusLabel(status)}
+    </Badge>
+  );
+}
+
+function ManualLateExcuseAction({
+  userId,
+  currentlyExcused,
+  pending,
+  onExcuse,
+  onUndo,
+}: {
+  userId: number;
+  currentlyExcused: boolean;
+  pending: boolean;
+  onExcuse: (reason: string) => Promise<unknown>;
+  onUndo: () => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+
+  if (currentlyExcused) {
+    return (
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 text-[11px]"
+        disabled={pending}
+        onClick={() => void onUndo()}
+        data-testid={`excuse-${userId}`}
+      >
+        Undo
+      </Button>
+    );
+  }
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setReason("");
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-[11px]"
+          disabled={pending}
+          data-testid={`excuse-${userId}`}
+        >
+          Excuse
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Excuse this late?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The arrival time stays on the record, but this late will no longer count toward the rolling allowance.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <label className="space-y-1.5 text-sm font-medium">
+          Manager note <span className="font-normal text-muted-foreground">(optional)</span>
+          <Textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            maxLength={500}
+            placeholder="Add context for the attendance record"
+            className="mt-1.5 min-h-24 resize-y"
+            data-testid={`excuse-reason-${userId}`}
+          />
+        </label>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            disabled={pending}
+            onClick={async () => {
+              try {
+                await onExcuse(reason.trim());
+                setOpen(false);
+              } catch {}
+            }}
+          >
+            {pending ? "Saving…" : "Excuse late"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function AbsenceExcuseAction({
+  subjectType,
+  subjectId,
+  date,
+  excused,
+  excuseId,
+  excuseSource,
+  pending,
+  onCreate,
+  onDelete,
+}: {
+  subjectType: "user" | "lo" | "loa";
+  subjectId: number;
+  date: string;
+  excused: boolean;
+  excuseId: number | null;
+  excuseSource: "admin" | "time_off" | null;
+  pending: boolean;
+  onCreate: (reason: string) => Promise<unknown>;
+  onDelete: () => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const testId = `${subjectType}-${subjectId}-${date}`;
+
+  if (excused) {
+    if (excuseSource !== "admin" || !excuseId) return null;
+    return (
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px]"
+            disabled={pending}
+            data-testid={`undo-absence-excuse-${testId}`}
+          >
+            Undo
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this absence excuse?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The person will appear as missing again for {fmtDay(date)}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep excuse</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              disabled={pending}
+              onClick={() => void onDelete()}
+            >
+              Remove excuse
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  }
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setReason("");
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-[11px]"
+          disabled={pending}
+          data-testid={`excuse-absence-${testId}`}
+        >
+          Excuse absence
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Excuse this absence?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Mark {fmtDay(date)} as excused without creating a check-in.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <label className="space-y-1.5 text-sm font-medium">
+          Reason
+          <Textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            maxLength={500}
+            placeholder="Why is this absence excused?"
+            className="mt-1.5 min-h-24 resize-y"
+            data-testid={`absence-excuse-reason-${testId}`}
+          />
+        </label>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            disabled={!reason.trim() || pending}
+            onClick={async () => {
+              try {
+                await onCreate(reason.trim());
+                setOpen(false);
+              } catch {}
+            }}
+            data-testid={`save-absence-excuse-${testId}`}
+          >
+            {pending ? "Saving…" : "Excuse absence"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 function RollingLateCount({
@@ -155,11 +429,13 @@ function RollingLateCount({
 export default function CheckIns() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isManager = user?.role === "admin" || (user as any)?.isManager;
+  const isManager = user?.role === "admin" || (user as any)?.isManager || !!user?.superAdmin;
   const isAdmin = user?.role === "admin" || !!user?.superAdmin;
 
   const { data: me, isLoading: meLoading } = useQuery<MineResp>({ queryKey: ["/api/checkin"] });
   const [locating, setLocating] = useState(false);
+  const [lateRequestReason, setLateRequestReason] = useState("");
+  const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
   const checkinMut = useMutation({
     mutationFn: (body: any) => apiRequest("POST", "/api/checkin", body),
@@ -168,11 +444,17 @@ export default function CheckIns() {
       queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
       const ci = r?.checkin;
       toast({
-        title: ci?.on_time === 1 ? "Checked in — on time" : "Checked in — late",
+        title: ci?.on_time === 1
+          ? "Checked in — on time"
+          : ci?.on_time === 0
+          ? "Checked in — late"
+          : "Check-in recorded",
         description: ci?.on_time === 1
           ? "Have a great day!"
-          : `${ci?.minutes_late ?? 0} min past your ${fmtHm(ci?.expected_start ?? null)} start.`,
-        variant: ci?.on_time === 1 ? undefined : "destructive",
+          : ci?.on_time === 0
+          ? `${ci?.minutes_late ?? 0} min past your ${fmtHm(ci?.expected_start ?? null)} start.`
+          : "No scheduled start was on file, so this check-in was not scored.",
+        variant: ci?.on_time === 0 ? "destructive" : undefined,
       });
     },
     onError: (e: any) => toast({ title: "Couldn't check in", description: e?.message, variant: "destructive" }),
@@ -209,6 +491,20 @@ export default function CheckIns() {
 
   const stats = me?.lateStats;
   const mine = me?.mine ?? null;
+  const mineLate = mine ? stats?.lates.find((late) => late.id === mine.id) : null;
+  const mineRequest = mine?.request ?? mineLate?.request ?? null;
+
+  const lateRequestMut = useMutation({
+    mutationFn: (v: { id: number; reason: string }) =>
+      apiRequest("POST", `/api/checkin/${v.id}/excuse-request`, { reason: v.reason }),
+    onSuccess: () => {
+      setLateRequestReason("");
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/attendance-requests"] });
+      toast({ title: "Excuse request sent", description: "A manager will review your reason." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't send request", description: e?.message, variant: "destructive" }),
+  });
 
   // Managers can reverse a late (and undo the reversal). The row keeps its real
   // times; excusing only stops it counting toward the 90-day allowance.
@@ -222,11 +518,6 @@ export default function CheckIns() {
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
-  function excuseLate(id: number, currentlyExcused: boolean) {
-    if (currentlyExcused) { excuseMut.mutate({ id, excused: false, reason: "" }); return; }
-    const reason = window.prompt("Reason for excusing this late (optional):", "") ?? "";
-    excuseMut.mutate({ id, excused: true, reason });
-  }
 
   // ── Manager roster (below the personal card) ──
   const [date, setDate] = useState(() => todayLocal());
@@ -257,6 +548,49 @@ export default function CheckIns() {
     queryKey: ["/api/checkin/admin", date],
     queryFn: () => apiRequest("GET", `/api/checkin/admin?date=${date}`),
   });
+  const { data: attendanceRequestData, isLoading: attendanceRequestsLoading } = useQuery<{ requests: AttendanceRequest[] }>({
+    queryKey: ["/api/checkin/attendance-requests"],
+    queryFn: () => apiRequest("GET", "/api/checkin/attendance-requests"),
+    enabled: !!isManager,
+  });
+  const reviewRequestMut = useMutation({
+    mutationFn: (v: { id: number; status: "approved" | "denied"; reviewerNote?: string }) =>
+      apiRequest("PATCH", `/api/checkin/attendance-requests/${v.id}`, {
+        status: v.status,
+        ...(v.reviewerNote ? { reviewerNote: v.reviewerNote } : {}),
+      }),
+    onSuccess: (_result, v) => {
+      setReviewNotes((current) => {
+        const next = { ...current };
+        delete next[v.id];
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/attendance-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      toast({ title: v.status === "approved" ? "Request approved" : "Request denied" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't review request", description: e?.message, variant: "destructive" }),
+  });
+  const absenceExcuseMut = useMutation({
+    mutationFn: (v: { subjectType: "user" | "lo" | "loa"; subjectId: number; date: string; reason: string }) =>
+      apiRequest("POST", "/api/checkin/absence-excuses", v),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/attendance-requests"] });
+      toast({ title: "Absence excused" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't excuse absence", description: e?.message, variant: "destructive" }),
+  });
+  const removeAbsenceExcuseMut = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/checkin/absence-excuses/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/attendance-requests"] });
+      toast({ title: "Absence excuse removed" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove excuse", description: e?.message, variant: "destructive" }),
+  });
   const clrs = adminData?.clrs ?? [];
   const los = adminData?.los ?? [];
   const loas = adminData?.loas ?? [];
@@ -270,6 +604,9 @@ export default function CheckIns() {
   const peopleWithLates = teamRows.filter((r) => r.lateCount > 0).length;
   const peopleAtLimit = teamRows.filter((r) => r.lateAtLimit && !r.lateOverLimit).length;
   const peopleOverLimit = teamRows.filter((r) => r.lateOverLimit).length;
+  const attendanceRequests = attendanceRequestData?.requests ?? [];
+  const pendingAttendanceRequests = attendanceRequests.filter((request) => request.status === "pending");
+  const resolvedAttendanceRequests = attendanceRequests.filter((request) => request.status !== "pending");
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-3xl mx-auto">
@@ -318,9 +655,13 @@ export default function CheckIns() {
                   <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                     <CheckCircle2 className="w-3 h-3" /> On time
                   </Badge>
-                ) : (
+                ) : mine.on_time === 0 ? (
                   <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                     <XCircle className="w-3 h-3" /> Late{mine.minutes_late ? ` by ${mine.minutes_late} min` : ""}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                    <UserCheck className="w-3 h-3" /> Recorded · not scored
                   </Badge>
                 )}
                 {mine.in_area === 1 ? (
@@ -339,9 +680,106 @@ export default function CheckIns() {
               </div>
               <p className="text-sm text-muted-foreground">
                 Checked in at <strong className="text-foreground">{fmtTime(mine.checked_in_at)}</strong>
-                {" · "}due {fmtHm(mine.expected_start ?? me?.start ?? null)}
-                {me?.graceMin ? ` (+${me.graceMin} min grace)` : ""}
+                {(mine.expected_start ?? me?.start)
+                  ? ` · due ${fmtHm(mine.expected_start ?? me?.start ?? null)}${me?.graceMin ? ` (+${me.graceMin} min grace)` : ""}`
+                  : " · not scored — no scheduled start"}
               </p>
+              {mine.on_time === 0 && (mineRequest || !mine.late_excused) && (
+                mineRequest ? (
+                  <div
+                    className={`rounded-xl border px-3 py-3 ${requestStatusClass(mineRequest.status)}`}
+                    role="status"
+                    data-testid={`attendance-request-status-${me.date}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold">
+                        <MessageSquareText className="h-4 w-4" />
+                        Excuse request
+                      </p>
+                      <RequestStatusBadge status={mineRequest.status} />
+                    </div>
+                    <p className="mt-2 text-xs">
+                      {mineRequest.status === "approved"
+                        ? "This late was excused and no longer counts toward your rolling total."
+                        : mineRequest.status === "denied"
+                        ? "This request was not approved, so the late remains in your rolling total."
+                        : "Your reason was sent privately to the attendance reviewers."}
+                    </p>
+                    {mineRequest.reason && (
+                      <p className="mt-2 rounded-md bg-background/70 px-2.5 py-2 text-xs text-foreground">
+                        <span className="font-semibold">Your reason:</span> {mineRequest.reason}
+                      </p>
+                    )}
+                    {mineRequest.reviewerNote && (
+                      <p className="mt-2 text-xs">
+                        <span className="font-semibold">Reviewer note:</span> {mineRequest.reviewerNote}
+                      </p>
+                    )}
+                    {(mineRequest.status === "denied" || mineRequest.status === "cancelled") && (
+                      <div className="mt-3 border-t border-current/20 pt-3">
+                        <label className="block text-xs font-medium">
+                          Add context and request another review
+                          <Textarea
+                            value={lateRequestReason}
+                            onChange={(event) => setLateRequestReason(event.target.value)}
+                            maxLength={500}
+                            placeholder="Share an updated reason"
+                            className="mt-1.5 min-h-20 resize-y bg-background text-foreground"
+                            data-testid={`attendance-request-reason-${me.date}`}
+                          />
+                        </label>
+                        <Button
+                          size="sm"
+                          className="mt-2 w-full gap-1.5 sm:w-auto"
+                          disabled={lateRequestReason.trim().length < 2 || lateRequestMut.isPending}
+                          onClick={() => lateRequestMut.mutate({ id: mine.id, reason: lateRequestReason.trim() })}
+                          data-testid={`attendance-request-submit-${me.date}`}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          {lateRequestMut.isPending ? "Sending…" : "Request another review"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-3 dark:border-amber-900 dark:bg-amber-950/20"
+                    data-testid={`attendance-request-form-${me.date}`}
+                  >
+                    <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-900 dark:text-amber-200">
+                      <MessageSquareText className="h-4 w-4" />
+                      Need this late reviewed?
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Explain what happened. Your reason is private and will only be shown to attendance reviewers.
+                    </p>
+                    <label className="mt-3 block text-xs font-medium">
+                      Reason
+                      <Textarea
+                        value={lateRequestReason}
+                        onChange={(event) => setLateRequestReason(event.target.value)}
+                        maxLength={500}
+                        placeholder="Share the reason for arriving late"
+                        className="mt-1.5 min-h-24 resize-y bg-background"
+                        data-testid={`attendance-request-reason-${me.date}`}
+                      />
+                    </label>
+                    <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-[11px] text-muted-foreground">Submitting does not automatically excuse the late.</p>
+                      <Button
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={lateRequestReason.trim().length < 2 || lateRequestMut.isPending}
+                        onClick={() => lateRequestMut.mutate({ id: mine.id, reason: lateRequestReason.trim() })}
+                        data-testid={`attendance-request-submit-${me.date}`}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        {lateRequestMut.isPending ? "Sending…" : "Request review"}
+                      </Button>
+                    </div>
+                  </div>
+                )
+              )}
             </div>
           ) : me.startSource === "none" ? (
             // No schedule on file — they can still check in, it just isn't scored.
@@ -477,23 +915,36 @@ export default function CheckIns() {
             ) : (
               <div className="rounded-md border divide-y">
                 {stats.lates.map((l) => (
-                  <div key={l.date} className={`flex items-center justify-between gap-3 px-3 py-2 ${l.excused ? "opacity-70" : ""}`} data-testid={`late-row-${l.date}`}>
+                  <div key={l.date} className={`flex items-start justify-between gap-3 px-3 py-2.5 ${l.excused ? "opacity-70" : ""}`} data-testid={`late-row-${l.date}`}>
                     <div className="min-w-0">
                       <p className={`text-sm font-medium ${l.excused ? "line-through" : ""}`}>{fmtDay(l.date)}</p>
                       <p className="text-[11px] text-muted-foreground">
                         In at {fmtTime(l.checkedInAt)} · due {fmtHm(l.expectedStart)}
                         {l.excused && ` · excused${l.excusedBy ? ` by ${l.excusedBy}` : ""}${l.excuseReason ? ` — ${l.excuseReason}` : ""}`}
                       </p>
+                      {l.request?.reason && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground">Your request:</span> {l.request.reason}
+                        </p>
+                      )}
+                      {l.request?.reviewerNote && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground">Reviewer note:</span> {l.request.reviewerNote}
+                        </p>
+                      )}
                     </div>
-                    {l.excused ? (
-                      <Badge variant="outline" className="font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 shrink-0">
-                        Excused
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 shrink-0">
-                        {l.minutesLate != null ? `${l.minutesLate} min late` : "Late"}
-                      </Badge>
-                    )}
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      {l.excused ? (
+                        <Badge variant="outline" className="font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 shrink-0">
+                          Excused
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 shrink-0">
+                          {l.minutesLate != null ? `${l.minutesLate} min late` : "Late"}
+                        </Badge>
+                      )}
+                      {l.request && l.request.status !== "approved" && <RequestStatusBadge status={l.request.status} />}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -501,6 +952,150 @@ export default function CheckIns() {
             <p className="text-[11px] text-muted-foreground">
               Rolling window since {fmtDay(stats.windowStart)}. Lates drop off automatically as they age past {stats.windowDays} days.
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Request reasons are intentionally isolated from the team-wide board below. */}
+      {isManager && (
+        <Card data-testid="attendance-requests">
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ShieldCheck className="h-4 w-4" /> Attendance requests
+                </CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">Private reasons requiring manager review</p>
+              </div>
+              <Badge
+                variant="outline"
+                className={pendingAttendanceRequests.length > 0
+                  ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                  : "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"}
+              >
+                {pendingAttendanceRequests.length} pending
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {attendanceRequestsLoading ? (
+              <div className="space-y-2">
+                {[0, 1].map((key) => <Skeleton key={key} className="h-36 w-full" />)}
+              </div>
+            ) : pendingAttendanceRequests.length === 0 ? (
+              <div className="rounded-xl border border-dashed px-4 py-6 text-center">
+                <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-600" />
+                <p className="mt-2 text-sm font-medium">No requests waiting</p>
+                <p className="mt-1 text-xs text-muted-foreground">New late-excuse requests will appear here.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pendingAttendanceRequests.map((request) => {
+                  const isReviewing = reviewRequestMut.isPending && reviewRequestMut.variables?.id === request.id;
+                  const reviewerNote = reviewNotes[request.id] ?? "";
+                  return (
+                    <section
+                      key={request.id}
+                      className="rounded-xl border bg-muted/20 p-3 sm:p-4"
+                      data-testid={`attendance-request-${request.id}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{request.subjectName}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {request.subjectType === "user" ? "CLR" : request.subjectType.toUpperCase()}
+                            {" · "}{fmtDay(request.attendanceDate)}
+                            {request.expectedStart ? ` · due ${fmtHm(request.expectedStart)}` : ""}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="font-normal">
+                            {request.kind === "absence" ? "Absence" : "Late"}
+                          </Badge>
+                          <RequestStatusBadge status={request.status} />
+                        </div>
+                      </div>
+                      <div className="mt-3 rounded-lg border bg-background px-3 py-2.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Reason</p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm">{request.reason}</p>
+                      </div>
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        Submitted via {request.requestedVia === "portal" ? "LO / LOA portal" : request.requestedVia}
+                        {request.requestedAt ? ` · ${fmtTime(request.requestedAt, adminData?.timeZone)}` : ""}
+                      </p>
+                      <label className="mt-3 block">
+                        <span className="sr-only">Optional reviewer note for {request.subjectName}</span>
+                        <Input
+                          value={reviewerNote}
+                          onChange={(event) => setReviewNotes((current) => ({ ...current, [request.id]: event.target.value }))}
+                          maxLength={500}
+                          placeholder="Reviewer note (optional)"
+                          className="h-10"
+                          data-testid={`attendance-request-note-${request.id}`}
+                        />
+                      </label>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30"
+                          disabled={reviewRequestMut.isPending}
+                          onClick={() => reviewRequestMut.mutate({
+                            id: request.id,
+                            status: "denied",
+                            reviewerNote: reviewerNote.trim() || undefined,
+                          })}
+                          data-testid={`attendance-deny-${request.id}`}
+                        >
+                          {isReviewing && reviewRequestMut.variables?.status === "denied" ? "Saving…" : "Deny"}
+                        </Button>
+                        <Button
+                          className="gap-1.5"
+                          disabled={reviewRequestMut.isPending}
+                          onClick={() => reviewRequestMut.mutate({
+                            id: request.id,
+                            status: "approved",
+                            reviewerNote: reviewerNote.trim() || undefined,
+                          })}
+                          data-testid={`attendance-approve-${request.id}`}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          {isReviewing && reviewRequestMut.variables?.status === "approved" ? "Saving…" : "Approve"}
+                        </Button>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+
+            {resolvedAttendanceRequests.length > 0 && (
+              <details className="rounded-xl border">
+                <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium">
+                  Recently reviewed ({resolvedAttendanceRequests.length})
+                </summary>
+                <div className="divide-y border-t">
+                  {resolvedAttendanceRequests.map((request) => (
+                    <div key={request.id} className="px-3 py-3" data-testid={`attendance-request-${request.id}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{request.subjectName}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {request.kind === "absence" ? "Absence" : "Late"} · {fmtDay(request.attendanceDate)}
+                          </p>
+                        </div>
+                        <RequestStatusBadge status={request.status} />
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">{request.reason}</p>
+                      {request.reviewerNote && (
+                        <p className="mt-1.5 text-xs">
+                          <span className="font-semibold">Reviewer note:</span> {request.reviewerNote}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </CardContent>
         </Card>
       )}
@@ -555,7 +1150,7 @@ export default function CheckIns() {
         </div>
       )}
 
-      {/* ── Team board — everyone can see it; only managers can excuse ── */}
+      {/* ── Team board — everyone can see attendance state, never private request reasons ── */}
       {(
         <Card>
           <CardHeader className="pb-3">
@@ -624,7 +1219,7 @@ export default function CheckIns() {
                             ? `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : c.noSchedule ? " · no schedule" : ""}`
                             : c.noSchedule ? "No schedule on file — not scored"
                             : c.scheduledOff ? "Scheduled off"
-                            : `No check-in${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
+                            : `${c.startPassed ? "No check-in" : "Not due yet"}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
                         </p>
                       </div>
                       <div className="flex w-full items-start justify-between gap-2 sm:w-auto sm:items-center sm:justify-end">
@@ -642,25 +1237,27 @@ export default function CheckIns() {
                               <CheckCircle2 className="w-3 h-3" /> On time
                             </Badge>
                           ) : ci.late_excused ? (
-                            <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800" title={ci.excuse_reason || "Excused"}>
+                            <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                               <CheckCircle2 className="w-3 h-3" /> Excused
                             </Badge>
-                          ) : (
+                          ) : ci.on_time === 0 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                               <XCircle className="w-3 h-3" /> Late{ci.minutes_late ? ` ${ci.minutes_late}m` : ""}
                             </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                              <UserCheck className="w-3 h-3" /> In · not scored
+                            </Badge>
                           )}
                           {/* Reverse a late (or put it back) — managers only. */}
-                          {isManager && ci.on_time !== 1 && (
-                            <Button
-                              size="sm" variant="ghost"
-                              className="h-6 px-2 text-[11px]"
-                              disabled={excuseMut.isPending}
-                              onClick={() => excuseLate(ci.id, !!ci.late_excused)}
-                              data-testid={`excuse-${c.userId}`}
-                            >
-                              {ci.late_excused ? "Undo" : "Excuse"}
-                            </Button>
+                          {isManager && ci.on_time === 0 && (
+                            <ManualLateExcuseAction
+                              userId={c.userId}
+                              currentlyExcused={!!ci.late_excused}
+                              pending={excuseMut.isPending}
+                              onExcuse={(reason) => excuseMut.mutateAsync({ id: ci.id, excused: true, reason })}
+                              onUndo={() => excuseMut.mutateAsync({ id: ci.id, excused: false, reason: "" })}
+                            />
                           )}
                           {ci.in_area === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
@@ -676,14 +1273,49 @@ export default function CheckIns() {
                             </Badge>
                           )}
                           </div>
+                        ) : c.noSchedule ? (
+                          <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                            <MinusCircle className="w-3 h-3" /> No schedule
+                          </Badge>
                         ) : c.scheduledOff ? (
                           <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
                             <CalendarOff className="w-3 h-3" /> Off
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                            <XCircle className="w-3 h-3" /> Missing
-                          </Badge>
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            {c.absenceExcused ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" />
+                                {c.absenceExcuseSource === "time_off" ? "Approved time off" : "Absence excused"}
+                              </Badge>
+                            ) : !c.startPassed ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                                <Clock className="w-3 h-3" /> Not due yet
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                                <XCircle className="w-3 h-3" /> Missing
+                              </Badge>
+                            )}
+                            {isAdmin && (c.absenceEligible || (c.absenceExcused && c.absenceExcuseSource === "admin")) && (
+                              <AbsenceExcuseAction
+                                subjectType="user"
+                                subjectId={c.userId}
+                                date={date}
+                                excused={!!c.absenceExcused}
+                                excuseId={c.absenceExcuseId ?? null}
+                                excuseSource={c.absenceExcuseSource ?? null}
+                                pending={absenceExcuseMut.isPending || removeAbsenceExcuseMut.isPending}
+                                onCreate={(reason) => absenceExcuseMut.mutateAsync({
+                                  subjectType: "user",
+                                  subjectId: c.userId,
+                                  date,
+                                  reason,
+                                })}
+                                onDelete={() => removeAbsenceExcuseMut.mutateAsync(c.absenceExcuseId!)}
+                              />
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -711,7 +1343,7 @@ export default function CheckIns() {
                               ? `Checked in ${fmtTime(r.checkin.checked_in_at, adminData?.timeZone)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
                               : r.noSchedule ? "No schedule on file — not scored"
                               : r.scheduledOff ? "Not scheduled today"
-                              : `Not checked in${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`}
+                              : `${r.startPassed ? "Not checked in" : "Not due yet"}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`}
                             {r.type === "loa" && r.loName ? ` · ${r.loName}` : ""}
                           </p>
                         </div>
@@ -725,7 +1357,11 @@ export default function CheckIns() {
                           />
                           {r.checkin ? (
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            {r.checkin.on_time === 0 ? (
+                            {r.checkin.late_excused ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" /> Excused
+                              </Badge>
+                            ) : r.checkin.on_time === 0 ? (
                               <Badge variant="outline" className="gap-1 font-normal text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                                 <XCircle className="w-3 h-3" /> Late{r.checkin.minutes_late ? ` ${r.checkin.minutes_late}m` : ""}
                               </Badge>
@@ -752,12 +1388,46 @@ export default function CheckIns() {
                               </Badge>
                             )}
                             </div>
+                          ) : r.noSchedule ? (
+                            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                              <MinusCircle className="w-3 h-3" /> No schedule
+                            </Badge>
                           ) : r.scheduledOff ? (
                             <Badge variant="outline" className="gap-1 font-normal text-muted-foreground"><CalendarOff className="w-3 h-3" /> Off</Badge>
                           ) : (
-                            <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                              <XCircle className="w-3 h-3" /> Missing
-                            </Badge>
+                            <div className="flex flex-wrap items-center justify-end gap-1.5">
+                              {r.absenceExcused ? (
+                                <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+                                  <CheckCircle2 className="w-3 h-3" /> Absence excused
+                                </Badge>
+                              ) : !r.startPassed ? (
+                                <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                                  <Clock className="w-3 h-3" /> Not due yet
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
+                                  <XCircle className="w-3 h-3" /> Missing
+                                </Badge>
+                              )}
+                              {isAdmin && (r.absenceEligible || (r.absenceExcused && r.absenceExcuseSource === "admin")) && (
+                                <AbsenceExcuseAction
+                                  subjectType={r.type}
+                                  subjectId={r.id}
+                                  date={date}
+                                  excused={!!r.absenceExcused}
+                                  excuseId={r.absenceExcuseId ?? null}
+                                  excuseSource={r.absenceExcuseSource ?? null}
+                                  pending={absenceExcuseMut.isPending || removeAbsenceExcuseMut.isPending}
+                                  onCreate={(reason) => absenceExcuseMut.mutateAsync({
+                                    subjectType: r.type,
+                                    subjectId: r.id,
+                                    date,
+                                    reason,
+                                  })}
+                                  onDelete={() => removeAbsenceExcuseMut.mutateAsync(r.absenceExcuseId!)}
+                                />
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>

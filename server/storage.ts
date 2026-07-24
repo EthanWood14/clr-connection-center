@@ -147,16 +147,45 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS external_schedules (
   updated_at TEXT,
   PRIMARY KEY (subject_type, subject_id)
 )`);
+// One org-scoped workflow covers late excuse requests and admin-recorded
+// absence excuses for CLRs, LOs, and LOAs. Absences cannot live on a check-in
+// row because the defining fact is that no row exists.
+sqlite.exec(`CREATE TABLE IF NOT EXISTS attendance_excuse_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL DEFAULT 1,
+  subject_type TEXT NOT NULL,       -- 'user' | 'lo' | 'loa'
+  subject_id INTEGER NOT NULL,
+  attendance_date TEXT NOT NULL,    -- plain local check-in date
+  kind TEXT NOT NULL,               -- 'late' | 'absence'
+  checkin_id INTEGER,
+  expected_start TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | denied | cancelled
+  requested_via TEXT NOT NULL,      -- app | portal | admin
+  requested_by_user_id INTEGER,
+  requested_at TEXT NOT NULL,
+  reviewed_by INTEGER,
+  reviewed_at TEXT,
+  reviewer_note TEXT,
+  updated_at TEXT NOT NULL,
+  UNIQUE(org_id, subject_type, subject_id, attendance_date, kind)
+)`);
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN lat REAL`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN lng REAL`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN accuracy_m INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN distance_m INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN in_area INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN late_excused INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_by INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_at TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excuse_reason TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_schedules ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_date ON external_checkins(org_id, date)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_subject_date ON external_checkins(org_id, subject_type, subject_id, date DESC)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_schedules_org_subject ON external_schedules(org_id, subject_type, subject_id)`); } catch {}
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_attendance_excuse_queue ON attendance_excuse_requests(org_id, status, kind, requested_at DESC)`); } catch {}
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_attendance_excuse_subject ON attendance_excuse_requests(org_id, subject_type, subject_id, attendance_date DESC)`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
 // Whether Bulk Texter was part of a transfer (1/0/null). Only set on transfers.
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bulk_texter INTEGER`); } catch {}
@@ -4548,6 +4577,9 @@ export function getExternalCheckin(orgId: number, type: PortalSubjectType, id: n
     WHERE org_id = ? AND subject_type = ? AND subject_id = ? AND date = ?`)
     .get(orgId, type, id, date) as any;
 }
+export function getExternalCheckinById(id: number): any {
+  return sqlite.prepare(`SELECT * FROM external_checkins WHERE id = ?`).get(id) as any;
+}
 // One check-in per person per day; a second tap returns the first (never
 // overwrites the original time). LO/LOA ids are globally unique in their source
 // tables, so the global subject/date key intentionally follows a person if a
@@ -4567,17 +4599,30 @@ export function saveExternalCheckin(r: {
   distanceM: number | null;
   inArea: number | null;
 }): any {
-  sqlite.prepare(`INSERT INTO external_checkins (
-      org_id, subject_type, subject_id, date, checked_in_at, expected_start,
-      on_time, minutes_late, lat, lng, accuracy_m, distance_m, in_area, created_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET org_id = excluded.org_id`)
-    .run(
-      r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart,
-      r.onTime, r.minutesLate, r.lat, r.lng, r.accuracyM, r.distanceM,
-      r.inArea, new Date().toISOString(),
-    );
+  const tx = sqlite.transaction(() => {
+    const now = new Date().toISOString();
+    sqlite.prepare(`INSERT INTO external_checkins (
+        org_id, subject_type, subject_id, date, checked_in_at, expected_start,
+        on_time, minutes_late, lat, lng, accuracy_m, distance_m, in_area, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET org_id = excluded.org_id`)
+      .run(
+        r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart,
+        r.onTime, r.minutesLate, r.lat, r.lng, r.accuracyM, r.distanceM,
+        r.inArea, now,
+      );
+    // A real arrival supersedes an earlier admin-entered absence exception.
+    // Keep the historical request, but cancel it atomically with the check-in so
+    // the board and review history can never disagree.
+    sqlite.prepare(`UPDATE attendance_excuse_requests
+      SET status='cancelled', reviewed_at=?, reviewer_note=?, updated_at=?
+      WHERE org_id=? AND subject_type=? AND subject_id=?
+        AND attendance_date=? AND kind='absence' AND status='approved'`)
+      .run(now, "Automatically cancelled because a check-in was recorded.", now,
+        r.orgId, r.type, r.id, r.date);
+  });
+  tx.immediate();
   return getExternalCheckin(r.orgId, r.type, r.id, r.date);
 }
 export function getExternalCheckinsForDate(orgId: number, date: string): any[] {
@@ -4589,7 +4634,7 @@ export function getExternalCheckinsForDate(orgId: number, date: string): any[] {
 export function getExternalLateCounts(orgId: number, startDate: string, endDate: string): Map<string, number> {
   const rows = sqlite.prepare(
     `SELECT subject_type, subject_id, COUNT(*) AS n FROM external_checkins
-      WHERE org_id = ? AND on_time = 0 AND expected_start IS NOT NULL
+      WHERE org_id = ? AND on_time = 0 AND expected_start IS NOT NULL AND late_excused = 0
         AND date >= ? AND date <= ?
       GROUP BY subject_type, subject_id`
   ).all(orgId, startDate, endDate) as any[];
@@ -4608,6 +4653,20 @@ export function getRecentExternalCheckins(orgId: number, type: PortalSubjectType
     WHERE org_id = ? AND subject_type = ? AND subject_id = ?
     ORDER BY date DESC, checked_in_at DESC LIMIT ?`)
     .all(orgId, type, id, n) as any[];
+}
+export function setExternalLateExcused(id: number, excused: boolean, byUserId: number, reason: string): any {
+  sqlite.prepare(
+    `UPDATE external_checkins
+        SET late_excused = ?, excused_by = ?, excused_at = ?, excuse_reason = ?
+      WHERE id = ?`
+  ).run(
+    excused ? 1 : 0,
+    excused ? byUserId : null,
+    excused ? new Date().toISOString() : null,
+    excused ? reason.slice(0, 500) : null,
+    id,
+  );
+  return getExternalCheckinById(id);
 }
 export function getExternalSchedule(orgId: number, type: PortalSubjectType, id: number): any {
   const row = sqlite.prepare(`SELECT days FROM external_schedules
@@ -4842,11 +4901,21 @@ export function saveCheckin(data: {
   minutesLate?: number | null; expectedStart?: string | null;
 }): any {
   // First check-in of the day wins — re-submits don't overwrite the original time.
-  sqlite.prepare(`
-    INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time, minutes_late, expected_start)
-    VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime, @minutesLate, @expectedStart)
-    ON CONFLICT(user_id, date) DO NOTHING
-  `).run({ minutesLate: null, expectedStart: null, ...data });
+  const tx = sqlite.transaction(() => {
+    const now = new Date().toISOString();
+    sqlite.prepare(`
+      INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time, minutes_late, expected_start)
+      VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime, @minutesLate, @expectedStart)
+      ON CONFLICT(user_id, date) DO NOTHING
+    `).run({ minutesLate: null, expectedStart: null, ...data });
+    sqlite.prepare(`UPDATE attendance_excuse_requests
+      SET status='cancelled', reviewed_at=?, reviewer_note=?, updated_at=?
+      WHERE org_id=? AND subject_type='user' AND subject_id=?
+        AND attendance_date=? AND kind='absence' AND status='approved'`)
+      .run(now, "Automatically cancelled because a check-in was recorded.", now,
+        data.orgId, data.userId, data.date);
+  });
+  tx.immediate();
   return getCheckinForUserDate(data.userId, data.date);
 }
 
@@ -4915,4 +4984,991 @@ export function lateAlertSentInWindow(userId: number, startDate: string, endDate
 }
 export function markLateAlertSent(userId: number, date: string): void {
   sqlite.prepare(`UPDATE morning_checkins SET late_alert_sent = 1 WHERE user_id = ? AND date = ?`).run(userId, date);
+}
+
+// ── Attendance excuse workflow ────────────────────────────────────────────────
+// Attendance dates are deliberately stored and compared as plain local
+// YYYY-MM-DD values. They are check-in dates, not timestamps and not EOD
+// business-day buckets.
+export type AttendanceExcuseSubjectType = "user" | "lo" | "loa";
+export type AttendanceExcuseKind = "late" | "absence";
+export type AttendanceExcuseStatus = "pending" | "approved" | "denied" | "cancelled";
+export type AttendanceExcuseRequestedVia = "app" | "portal" | "admin";
+
+export interface AttendanceExcuseRequest {
+  id: number;
+  org_id: number;
+  subject_type: AttendanceExcuseSubjectType;
+  subject_id: number;
+  attendance_date: string;
+  kind: AttendanceExcuseKind;
+  checkin_id: number | null;
+  expected_start: string | null;
+  reason: string;
+  status: AttendanceExcuseStatus;
+  requested_via: AttendanceExcuseRequestedVia;
+  requested_by_user_id: number | null;
+  requested_at: string;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  reviewer_note: string | null;
+  updated_at: string;
+}
+
+export type AttendanceExcuseStorageErrorCode =
+  | "INVALID_ARGUMENT"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "INVALID_STATE";
+
+export class AttendanceExcuseStorageError extends Error {
+  readonly code: AttendanceExcuseStorageErrorCode;
+  readonly status: number;
+
+  constructor(code: AttendanceExcuseStorageErrorCode, message: string) {
+    super(message);
+    this.name = "AttendanceExcuseStorageError";
+    this.code = code;
+    this.status = code === "INVALID_ARGUMENT"
+      ? 400
+      : code === "NOT_FOUND"
+      ? 404
+      : 409;
+  }
+}
+
+export interface AttendanceExcuseRequestFilters {
+  status?: AttendanceExcuseStatus;
+  kind?: AttendanceExcuseKind;
+  subjectType?: AttendanceExcuseSubjectType;
+  attendanceDate?: string;
+  limit?: number;
+}
+
+export interface SubmitLateExcuseRequestInput {
+  orgId: number;
+  subjectType: AttendanceExcuseSubjectType;
+  subjectId: number;
+  attendanceDate: string;
+  checkinId: number;
+  reason: string;
+  requestedVia: AttendanceExcuseRequestedVia;
+  requestedByUserId?: number | null;
+}
+
+export interface ReviewAttendanceExcuseRequestInput {
+  orgId: number;
+  requestId: number;
+  status: "approved" | "denied";
+  reviewedByUserId: number;
+  reviewerNote?: string | null;
+  lateWindowStart?: string;
+  lateWindowEnd?: string;
+}
+
+export interface ResolvePendingAttendanceExcuseRequestInput {
+  orgId: number;
+  subjectType: AttendanceExcuseSubjectType;
+  subjectId: number;
+  attendanceDate: string;
+  kind: AttendanceExcuseKind;
+  resolution: "approved" | "denied" | "cancelled";
+  resolvedByUserId?: number | null;
+  note?: string | null;
+  lateWindowStart?: string;
+  lateWindowEnd?: string;
+}
+
+export interface SetAdminUserLateExcuseInput {
+  orgId: number;
+  userId: number;
+  checkinId: number;
+  attendanceDate: string;
+  excused: boolean;
+  adminUserId: number;
+  reason?: string | null;
+  lateWindowStart?: string;
+  lateWindowEnd?: string;
+}
+
+export interface CreateAdminAbsenceExcuseInput {
+  orgId: number;
+  subjectType: AttendanceExcuseSubjectType;
+  subjectId: number;
+  attendanceDate: string;
+  expectedStart?: string | null;
+  reason: string;
+  adminUserId: number;
+}
+
+export interface CancelAdminAbsenceExcuseInput {
+  orgId: number;
+  subjectType: AttendanceExcuseSubjectType;
+  subjectId: number;
+  attendanceDate: string;
+  adminUserId: number;
+  note?: string | null;
+}
+
+const ATTENDANCE_REASON_MAX = 500;
+const ATTENDANCE_REVIEW_NOTE_MAX = 500;
+
+function attendanceExcuseError(code: AttendanceExcuseStorageErrorCode, message: string): never {
+  throw new AttendanceExcuseStorageError(code, message);
+}
+
+function attendancePositiveId(value: unknown, label: string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    attendanceExcuseError("INVALID_ARGUMENT", `${label} must be a positive integer.`);
+  }
+  return n;
+}
+
+function attendanceLocalDate(value: unknown, label = "Attendance date"): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    attendanceExcuseError("INVALID_ARGUMENT", `${label} must use YYYY-MM-DD.`);
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day, 12));
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) {
+    attendanceExcuseError("INVALID_ARGUMENT", `${label} is not a valid calendar date.`);
+  }
+  return value;
+}
+
+function attendanceExpectedStart(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    attendanceExcuseError("INVALID_ARGUMENT", "Expected start must use 24-hour HH:MM.");
+  }
+  return value;
+}
+
+function attendanceRequiredReason(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    attendanceExcuseError("INVALID_ARGUMENT", "A reason is required.");
+  }
+  const reason = value.trim();
+  if (reason.length > ATTENDANCE_REASON_MAX) {
+    attendanceExcuseError(
+      "INVALID_ARGUMENT",
+      `Reason cannot exceed ${ATTENDANCE_REASON_MAX} characters.`,
+    );
+  }
+  return reason;
+}
+
+function attendanceReviewNote(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") {
+    attendanceExcuseError("INVALID_ARGUMENT", "Reviewer note must be text.");
+  }
+  const note = value.trim();
+  if (!note) return null;
+  if (note.length > ATTENDANCE_REVIEW_NOTE_MAX) {
+    attendanceExcuseError(
+      "INVALID_ARGUMENT",
+      `Reviewer note cannot exceed ${ATTENDANCE_REVIEW_NOTE_MAX} characters.`,
+    );
+  }
+  return note;
+}
+
+function attendanceSubjectType(value: unknown): AttendanceExcuseSubjectType {
+  if (value !== "user" && value !== "lo" && value !== "loa") {
+    attendanceExcuseError("INVALID_ARGUMENT", "Invalid attendance subject type.");
+  }
+  return value;
+}
+
+function attendanceKind(value: unknown): AttendanceExcuseKind {
+  if (value !== "late" && value !== "absence") {
+    attendanceExcuseError("INVALID_ARGUMENT", "Invalid attendance excuse kind.");
+  }
+  return value;
+}
+
+function attendanceStatus(value: unknown): AttendanceExcuseStatus {
+  if (
+    value !== "pending"
+    && value !== "approved"
+    && value !== "denied"
+    && value !== "cancelled"
+  ) {
+    attendanceExcuseError("INVALID_ARGUMENT", "Invalid attendance excuse status.");
+  }
+  return value;
+}
+
+function attendanceRequestedVia(value: unknown): AttendanceExcuseRequestedVia {
+  if (value !== "app" && value !== "portal" && value !== "admin") {
+    attendanceExcuseError("INVALID_ARGUMENT", "Invalid attendance request source.");
+  }
+  return value;
+}
+
+function assertAttendanceSubjectInOrg(
+  orgId: number,
+  subjectType: AttendanceExcuseSubjectType,
+  subjectId: number,
+): void {
+  let row: any;
+  if (subjectType === "user") {
+    row = sqlite.prepare(`SELECT 1 FROM users WHERE id = ? AND org_id = ?`)
+      .get(subjectId, orgId);
+  } else if (subjectType === "lo") {
+    row = sqlite.prepare(`SELECT 1 FROM loan_officers WHERE id = ? AND org_id = ?`)
+      .get(subjectId, orgId);
+  } else {
+    row = sqlite.prepare(`
+      SELECT 1
+      FROM loan_officer_assistants loa
+      INNER JOIN loan_officers lo ON lo.id = loa.lo_id
+      WHERE loa.id = ? AND lo.org_id = ?
+    `).get(subjectId, orgId);
+  }
+  if (!row) {
+    attendanceExcuseError("NOT_FOUND", "Attendance subject was not found in this organization.");
+  }
+}
+
+function assertAttendanceReviewerInOrg(orgId: number, userId: number): void {
+  const row = sqlite.prepare(`SELECT 1 FROM users WHERE id = ? AND (org_id = ? OR super_admin = 1)`)
+    .get(userId, orgId);
+  if (!row) {
+    attendanceExcuseError("NOT_FOUND", "Reviewing user was not found in this organization.");
+  }
+}
+
+function getAttendanceRequestRow(orgId: number, requestId: number): AttendanceExcuseRequest | null {
+  return (sqlite.prepare(`
+    SELECT *
+    FROM attendance_excuse_requests
+    WHERE id = ? AND org_id = ?
+  `).get(requestId, orgId) as AttendanceExcuseRequest | undefined) ?? null;
+}
+
+function getAttendanceRequestForSubjectDate(
+  orgId: number,
+  subjectType: AttendanceExcuseSubjectType,
+  subjectId: number,
+  attendanceDate: string,
+  kind: AttendanceExcuseKind,
+): AttendanceExcuseRequest | null {
+  return (sqlite.prepare(`
+    SELECT *
+    FROM attendance_excuse_requests
+    WHERE org_id = ? AND subject_type = ? AND subject_id = ?
+      AND attendance_date = ? AND kind = ?
+  `).get(
+    orgId,
+    subjectType,
+    subjectId,
+    attendanceDate,
+    kind,
+  ) as AttendanceExcuseRequest | undefined) ?? null;
+}
+
+function getScopedAttendanceCheckin(
+  orgId: number,
+  subjectType: AttendanceExcuseSubjectType,
+  subjectId: number,
+  attendanceDate: string,
+  checkinId?: number,
+): any | null {
+  if (subjectType === "user") {
+    const byId = checkinId == null ? "" : " AND id = @checkinId";
+    const params: Record<string, unknown> = { orgId, subjectId, attendanceDate };
+    if (checkinId != null) params.checkinId = checkinId;
+    return sqlite.prepare(`
+      SELECT *
+      FROM morning_checkins
+      WHERE org_id = @orgId AND user_id = @subjectId AND date = @attendanceDate${byId}
+      LIMIT 1
+    `).get(params) as any ?? null;
+  }
+  const byId = checkinId == null ? "" : " AND id = @checkinId";
+  const params: Record<string, unknown> = { orgId, subjectType, subjectId, attendanceDate };
+  if (checkinId != null) params.checkinId = checkinId;
+  return sqlite.prepare(`
+    SELECT *
+    FROM external_checkins
+    WHERE org_id = @orgId AND subject_type = @subjectType
+      AND subject_id = @subjectId AND date = @attendanceDate${byId}
+    LIMIT 1
+  `).get(params) as any ?? null;
+}
+
+function assertScoredLateCheckin(row: any | null): any {
+  if (!row) {
+    attendanceExcuseError("NOT_FOUND", "The matching check-in was not found.");
+  }
+  if (Number(row.on_time) !== 0 || row.expected_start == null) {
+    attendanceExcuseError("INVALID_STATE", "Only a scored late check-in can be excused.");
+  }
+  return row;
+}
+
+function assertNoAttendanceCheckin(
+  orgId: number,
+  subjectType: AttendanceExcuseSubjectType,
+  subjectId: number,
+  attendanceDate: string,
+): void {
+  if (getScopedAttendanceCheckin(orgId, subjectType, subjectId, attendanceDate)) {
+    attendanceExcuseError(
+      "CONFLICT",
+      "An absence cannot be excused because this subject already has a check-in for that date.",
+    );
+  }
+}
+
+export function getAttendanceExcuseRequest(
+  orgIdValue: number,
+  requestIdValue: number,
+): AttendanceExcuseRequest | null {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const requestId = attendancePositiveId(requestIdValue, "Request id");
+  return getAttendanceRequestRow(orgId, requestId);
+}
+
+export function getAttendanceExcuseRequestsForSubject(
+  orgIdValue: number,
+  subjectTypeValue: AttendanceExcuseSubjectType,
+  subjectIdValue: number,
+): AttendanceExcuseRequest[] {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const subjectType = attendanceSubjectType(subjectTypeValue);
+  const subjectId = attendancePositiveId(subjectIdValue, "Subject id");
+  return sqlite.prepare(`
+    SELECT *
+    FROM attendance_excuse_requests
+    WHERE org_id = ? AND subject_type = ? AND subject_id = ?
+    ORDER BY attendance_date DESC, requested_at DESC, id DESC
+  `).all(orgId, subjectType, subjectId) as AttendanceExcuseRequest[];
+}
+
+export function getAttendanceExcuseRequestsForOrg(
+  orgIdValue: number,
+  filters: AttendanceExcuseRequestFilters = {},
+): AttendanceExcuseRequest[] {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const where = ["org_id = @orgId"];
+  const params: Record<string, unknown> = { orgId };
+
+  if (filters.status != null) {
+    params.status = attendanceStatus(filters.status);
+    where.push("status = @status");
+  }
+  if (filters.kind != null) {
+    params.kind = attendanceKind(filters.kind);
+    where.push("kind = @kind");
+  }
+  if (filters.subjectType != null) {
+    params.subjectType = attendanceSubjectType(filters.subjectType);
+    where.push("subject_type = @subjectType");
+  }
+  if (filters.attendanceDate != null) {
+    params.attendanceDate = attendanceLocalDate(filters.attendanceDate);
+    where.push("attendance_date = @attendanceDate");
+  }
+
+  const rawLimit = filters.limit == null ? 200 : Number(filters.limit);
+  if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
+    attendanceExcuseError("INVALID_ARGUMENT", "Limit must be a positive number.");
+  }
+  params.limit = Math.min(500, Math.trunc(rawLimit));
+
+  return sqlite.prepare(`
+    SELECT *
+    FROM attendance_excuse_requests
+    WHERE ${where.join(" AND ")}
+    ORDER BY
+      CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+      requested_at DESC,
+      id DESC
+    LIMIT @limit
+  `).all(params) as AttendanceExcuseRequest[];
+}
+
+export function getApprovedAbsenceExcusesForDate(
+  orgIdValue: number,
+  attendanceDateValue: string,
+): AttendanceExcuseRequest[] {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const attendanceDate = attendanceLocalDate(attendanceDateValue);
+  return sqlite.prepare(`
+    SELECT *
+    FROM attendance_excuse_requests
+    WHERE org_id = ? AND attendance_date = ?
+      AND kind = 'absence' AND status = 'approved'
+    ORDER BY subject_type, subject_id
+  `).all(orgId, attendanceDate) as AttendanceExcuseRequest[];
+}
+
+export function submitLateExcuseRequest(
+  input: SubmitLateExcuseRequestInput,
+): { request: AttendanceExcuseRequest; created: boolean; resubmitted: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const subjectType = attendanceSubjectType(input.subjectType);
+  const subjectId = attendancePositiveId(input.subjectId, "Subject id");
+  const attendanceDate = attendanceLocalDate(input.attendanceDate);
+  const checkinId = attendancePositiveId(input.checkinId, "Check-in id");
+  const reason = attendanceRequiredReason(input.reason);
+  const requestedVia = attendanceRequestedVia(input.requestedVia);
+  const requestedByUserId = input.requestedByUserId == null
+    ? null
+    : attendancePositiveId(input.requestedByUserId, "Requesting user id");
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, subjectType, subjectId);
+    if (requestedByUserId != null) {
+      assertAttendanceReviewerInOrg(orgId, requestedByUserId);
+    }
+
+    const checkin = assertScoredLateCheckin(getScopedAttendanceCheckin(
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      checkinId,
+    ));
+    const existing = getAttendanceRequestForSubjectDate(
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      "late",
+    );
+
+    if (existing?.status === "approved") {
+      if (Number(existing.checkin_id) !== checkinId) {
+        attendanceExcuseError("CONFLICT", "The approved request belongs to a different check-in.");
+      }
+      return { request: existing, created: false, resubmitted: false };
+    }
+    if (Number(checkin.late_excused) === 1) {
+      attendanceExcuseError("INVALID_STATE", "This late check-in has already been excused.");
+    }
+
+    const now = new Date().toISOString();
+    if (!existing) {
+      const info = sqlite.prepare(`
+        INSERT INTO attendance_excuse_requests (
+          org_id, subject_type, subject_id, attendance_date, kind, checkin_id,
+          expected_start, reason, status, requested_via,
+          requested_by_user_id, requested_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'late', ?, ?, ?, 'pending', ?, ?, ?, ?)
+      `).run(
+        orgId,
+        subjectType,
+        subjectId,
+        attendanceDate,
+        checkinId,
+        String(checkin.expected_start),
+        reason,
+        requestedVia,
+        requestedByUserId,
+        now,
+        now,
+      );
+      const request = getAttendanceRequestRow(orgId, Number(info.lastInsertRowid));
+      if (!request) attendanceExcuseError("NOT_FOUND", "Created attendance request could not be read.");
+      return { request, created: true, resubmitted: false };
+    }
+
+    if (existing.status === "pending") {
+      // Pending requests are immutable. Otherwise a requester could replace the
+      // reason while a manager is reviewing stale UI, without a new notification
+      // or a new requested_at timestamp.
+      return { request: existing, created: false, resubmitted: false };
+    }
+
+    sqlite.prepare(`
+      UPDATE attendance_excuse_requests
+      SET checkin_id = ?, expected_start = ?, reason = ?, status = 'pending',
+          requested_via = ?, requested_by_user_id = ?, requested_at = ?,
+          reviewed_by = NULL, reviewed_at = NULL, reviewer_note = NULL,
+          updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(
+      checkinId,
+      String(checkin.expected_start),
+      reason,
+      requestedVia,
+      requestedByUserId,
+      now,
+      now,
+      existing.id,
+      orgId,
+    );
+    const request = getAttendanceRequestRow(orgId, existing.id);
+    if (!request) attendanceExcuseError("NOT_FOUND", "Attendance request could not be read.");
+    return { request, created: false, resubmitted: true };
+  });
+
+  return tx.immediate();
+}
+
+function reviewAttendanceRequestInTransaction(
+  request: AttendanceExcuseRequest,
+  status: "approved" | "denied",
+  reviewedByUserId: number,
+  reviewerNote: string | null,
+  lateWindowStart: string | null,
+  lateWindowEnd: string | null,
+): { request: AttendanceExcuseRequest; changed: boolean } {
+  if (request.status !== "pending") {
+    return { request, changed: false };
+  }
+
+  if (status === "approved" && request.kind === "late") {
+    if (request.checkin_id == null) {
+      attendanceExcuseError("INVALID_STATE", "Late excuse request has no check-in reference.");
+    }
+    const checkin = assertScoredLateCheckin(getScopedAttendanceCheckin(
+      request.org_id,
+      request.subject_type,
+      request.subject_id,
+      request.attendance_date,
+      Number(request.checkin_id),
+    ));
+    const now = new Date().toISOString();
+    const excuseReason = reviewerNote || request.reason;
+
+    if (request.subject_type === "user") {
+      sqlite.prepare(`
+        UPDATE morning_checkins
+        SET late_excused = 1, excused_by = ?, excused_at = ?, excuse_reason = ?
+        WHERE id = ? AND org_id = ? AND user_id = ? AND date = ?
+      `).run(
+        reviewedByUserId,
+        now,
+        excuseReason.slice(0, 300),
+        request.checkin_id,
+        request.org_id,
+        request.subject_id,
+        request.attendance_date,
+      );
+      if (lateWindowStart && lateWindowEnd) {
+        sqlite.prepare(`
+          UPDATE morning_checkins
+          SET late_alert_sent = 0
+          WHERE org_id = ? AND user_id = ? AND date >= ? AND date <= ?
+        `).run(request.org_id, Number(checkin.user_id), lateWindowStart, lateWindowEnd);
+      }
+    } else {
+      sqlite.prepare(`
+        UPDATE external_checkins
+        SET late_excused = 1, excused_by = ?, excused_at = ?, excuse_reason = ?
+        WHERE id = ? AND org_id = ? AND subject_type = ?
+          AND subject_id = ? AND date = ?
+      `).run(
+        reviewedByUserId,
+        now,
+        excuseReason.slice(0, 500),
+        request.checkin_id,
+        request.org_id,
+        request.subject_type,
+        request.subject_id,
+        request.attendance_date,
+      );
+    }
+  } else if (status === "approved" && request.kind === "absence") {
+    assertNoAttendanceCheckin(
+      request.org_id,
+      request.subject_type,
+      request.subject_id,
+      request.attendance_date,
+    );
+  }
+
+  const reviewedAt = new Date().toISOString();
+  const result = sqlite.prepare(`
+    UPDATE attendance_excuse_requests
+    SET status = ?, reviewed_by = ?, reviewed_at = ?, reviewer_note = ?, updated_at = ?
+    WHERE id = ? AND org_id = ? AND status = 'pending'
+  `).run(
+    status,
+    reviewedByUserId,
+    reviewedAt,
+    reviewerNote,
+    reviewedAt,
+    request.id,
+    request.org_id,
+  );
+  const updated = getAttendanceRequestRow(request.org_id, request.id);
+  if (!updated) attendanceExcuseError("NOT_FOUND", "Attendance request could not be read.");
+  return { request: updated, changed: Number(result.changes) > 0 };
+}
+
+function normalizedLateWindow(
+  startValue: string | undefined,
+  endValue: string | undefined,
+): { start: string | null; end: string | null } {
+  if ((startValue == null) !== (endValue == null)) {
+    attendanceExcuseError(
+      "INVALID_ARGUMENT",
+      "Late window start and end must be supplied together.",
+    );
+  }
+  if (startValue == null || endValue == null) return { start: null, end: null };
+  const start = attendanceLocalDate(startValue, "Late window start");
+  const end = attendanceLocalDate(endValue, "Late window end");
+  if (start > end) {
+    attendanceExcuseError("INVALID_ARGUMENT", "Late window start must not be after its end.");
+  }
+  return { start, end };
+}
+
+export function reviewAttendanceExcuseRequest(
+  input: ReviewAttendanceExcuseRequestInput,
+): { request: AttendanceExcuseRequest; changed: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const requestId = attendancePositiveId(input.requestId, "Request id");
+  if (input.status !== "approved" && input.status !== "denied") {
+    attendanceExcuseError("INVALID_ARGUMENT", "Review status must be approved or denied.");
+  }
+  const reviewedByUserId = attendancePositiveId(input.reviewedByUserId, "Reviewing user id");
+  const reviewerNote = attendanceReviewNote(input.reviewerNote);
+  const lateWindow = normalizedLateWindow(input.lateWindowStart, input.lateWindowEnd);
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceReviewerInOrg(orgId, reviewedByUserId);
+    const request = getAttendanceRequestRow(orgId, requestId);
+    if (!request) attendanceExcuseError("NOT_FOUND", "Attendance request was not found.");
+    assertAttendanceSubjectInOrg(orgId, request.subject_type, request.subject_id);
+    return reviewAttendanceRequestInTransaction(
+      request,
+      input.status,
+      reviewedByUserId,
+      reviewerNote,
+      lateWindow.start,
+      lateWindow.end,
+    );
+  });
+
+  return tx.immediate();
+}
+
+export function resolvePendingAttendanceExcuseRequest(
+  input: ResolvePendingAttendanceExcuseRequestInput,
+): { request: AttendanceExcuseRequest | null; changed: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const subjectType = attendanceSubjectType(input.subjectType);
+  const subjectId = attendancePositiveId(input.subjectId, "Subject id");
+  const attendanceDate = attendanceLocalDate(input.attendanceDate);
+  const kind = attendanceKind(input.kind);
+  if (
+    input.resolution !== "approved"
+    && input.resolution !== "denied"
+    && input.resolution !== "cancelled"
+  ) {
+    attendanceExcuseError(
+      "INVALID_ARGUMENT",
+      "Resolution must be approved, denied, or cancelled.",
+    );
+  }
+  const resolvedByUserId = input.resolvedByUserId == null
+    ? null
+    : attendancePositiveId(input.resolvedByUserId, "Resolving user id");
+  if (input.resolution !== "cancelled" && resolvedByUserId == null) {
+    attendanceExcuseError("INVALID_ARGUMENT", "A resolving user is required.");
+  }
+  const note = attendanceReviewNote(input.note);
+  const lateWindow = normalizedLateWindow(input.lateWindowStart, input.lateWindowEnd);
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, subjectType, subjectId);
+    if (resolvedByUserId != null) {
+      assertAttendanceReviewerInOrg(orgId, resolvedByUserId);
+    }
+    const request = getAttendanceRequestForSubjectDate(
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      kind,
+    );
+    if (!request || request.status !== "pending") {
+      return { request, changed: false };
+    }
+
+    if (input.resolution === "cancelled") {
+      const now = new Date().toISOString();
+      const result = sqlite.prepare(`
+        UPDATE attendance_excuse_requests
+        SET status = 'cancelled', reviewed_by = ?, reviewed_at = ?,
+            reviewer_note = ?, updated_at = ?
+        WHERE id = ? AND org_id = ? AND status = 'pending'
+      `).run(resolvedByUserId, now, note, now, request.id, orgId);
+      const updated = getAttendanceRequestRow(orgId, request.id);
+      if (!updated) attendanceExcuseError("NOT_FOUND", "Attendance request could not be read.");
+      return { request: updated, changed: Number(result.changes) > 0 };
+    }
+
+    return reviewAttendanceRequestInTransaction(
+      request,
+      input.resolution,
+      resolvedByUserId!,
+      note,
+      lateWindow.start,
+      lateWindow.end,
+    );
+  });
+
+  return tx.immediate();
+}
+
+export function setAdminUserLateExcuse(
+  input: SetAdminUserLateExcuseInput,
+): { checkin: any; request: AttendanceExcuseRequest | null } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const userId = attendancePositiveId(input.userId, "User id");
+  const checkinId = attendancePositiveId(input.checkinId, "Check-in id");
+  const attendanceDate = attendanceLocalDate(input.attendanceDate);
+  const adminUserId = attendancePositiveId(input.adminUserId, "Reviewing user id");
+  const reviewerNote = attendanceReviewNote(input.reason);
+  const lateWindow = normalizedLateWindow(input.lateWindowStart, input.lateWindowEnd);
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, "user", userId);
+    assertAttendanceReviewerInOrg(orgId, adminUserId);
+    const checkin = assertScoredLateCheckin(getScopedAttendanceCheckin(
+      orgId,
+      "user",
+      userId,
+      attendanceDate,
+      checkinId,
+    ));
+    const existingRequest = getAttendanceRequestForSubjectDate(
+      orgId,
+      "user",
+      userId,
+      attendanceDate,
+      "late",
+    );
+    const now = new Date().toISOString();
+
+    if (input.excused) {
+      const excuseReason = reviewerNote || existingRequest?.reason || "";
+      sqlite.prepare(`
+        UPDATE morning_checkins
+        SET late_excused = 1, excused_by = ?, excused_at = ?, excuse_reason = ?
+        WHERE id = ? AND org_id = ? AND user_id = ? AND date = ?
+      `).run(
+        adminUserId,
+        now,
+        excuseReason.slice(0, 300),
+        checkinId,
+        orgId,
+        userId,
+        attendanceDate,
+      );
+      if (lateWindow.start && lateWindow.end) {
+        sqlite.prepare(`
+          UPDATE morning_checkins
+          SET late_alert_sent = 0
+          WHERE org_id = ? AND user_id = ? AND date >= ? AND date <= ?
+        `).run(orgId, userId, lateWindow.start, lateWindow.end);
+      }
+      if (existingRequest) {
+        sqlite.prepare(`
+          UPDATE attendance_excuse_requests
+          SET status = 'approved', reviewed_by = ?, reviewed_at = ?,
+              reviewer_note = ?, updated_at = ?
+          WHERE id = ? AND org_id = ?
+        `).run(adminUserId, now, reviewerNote, now, existingRequest.id, orgId);
+      }
+    } else {
+      sqlite.prepare(`
+        UPDATE morning_checkins
+        SET late_excused = 0, excused_by = NULL, excused_at = NULL, excuse_reason = NULL
+        WHERE id = ? AND org_id = ? AND user_id = ? AND date = ?
+      `).run(checkinId, orgId, userId, attendanceDate);
+      if (existingRequest?.status === "approved") {
+        sqlite.prepare(`
+          UPDATE attendance_excuse_requests
+          SET status = 'cancelled', reviewed_by = ?, reviewed_at = ?,
+              reviewer_note = ?, updated_at = ?
+          WHERE id = ? AND org_id = ? AND status = 'approved'
+        `).run(
+          adminUserId,
+          now,
+          "Late was re-applied by a manager.",
+          now,
+          existingRequest.id,
+          orgId,
+        );
+      }
+    }
+
+    const updatedCheckin = getScopedAttendanceCheckin(
+      orgId,
+      "user",
+      userId,
+      attendanceDate,
+      checkinId,
+    );
+    if (!updatedCheckin) {
+      attendanceExcuseError("NOT_FOUND", "The updated check-in could not be read.");
+    }
+    return {
+      checkin: updatedCheckin,
+      request: existingRequest
+        ? getAttendanceRequestRow(orgId, existingRequest.id)
+        : null,
+    };
+  });
+
+  return tx.immediate();
+}
+
+export function createAdminAbsenceExcuse(
+  input: CreateAdminAbsenceExcuseInput,
+): { request: AttendanceExcuseRequest; created: boolean; changed: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const subjectType = attendanceSubjectType(input.subjectType);
+  const subjectId = attendancePositiveId(input.subjectId, "Subject id");
+  const attendanceDate = attendanceLocalDate(input.attendanceDate);
+  const expectedStart = attendanceExpectedStart(input.expectedStart);
+  const reason = attendanceRequiredReason(input.reason);
+  const adminUserId = attendancePositiveId(input.adminUserId, "Admin user id");
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, subjectType, subjectId);
+    assertAttendanceReviewerInOrg(orgId, adminUserId);
+    assertNoAttendanceCheckin(orgId, subjectType, subjectId, attendanceDate);
+    const existing = getAttendanceRequestForSubjectDate(
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      "absence",
+    );
+    const now = new Date().toISOString();
+
+    if (!existing) {
+      const info = sqlite.prepare(`
+        INSERT INTO attendance_excuse_requests (
+          org_id, subject_type, subject_id, attendance_date, kind,
+          checkin_id, expected_start, reason, status, requested_via,
+          requested_by_user_id, requested_at, reviewed_by, reviewed_at,
+          reviewer_note, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'absence', NULL, ?, ?, 'approved', 'admin',
+                ?, ?, ?, ?, NULL, ?)
+      `).run(
+        orgId,
+        subjectType,
+        subjectId,
+        attendanceDate,
+        expectedStart,
+        reason,
+        adminUserId,
+        now,
+        adminUserId,
+        now,
+        now,
+      );
+      const request = getAttendanceRequestRow(orgId, Number(info.lastInsertRowid));
+      if (!request) attendanceExcuseError("NOT_FOUND", "Created absence excuse could not be read.");
+      return { request, created: true, changed: true };
+    }
+
+    if (existing.status === "approved") {
+      if (existing.requested_via !== "admin") {
+        return { request: existing, created: false, changed: false };
+      }
+      const changed = existing.reason !== reason || existing.expected_start !== expectedStart;
+      if (changed) {
+        sqlite.prepare(`
+          UPDATE attendance_excuse_requests
+          SET expected_start = ?, reason = ?, reviewed_by = ?, reviewed_at = ?,
+              updated_at = ?
+          WHERE id = ? AND org_id = ? AND status = 'approved'
+        `).run(expectedStart, reason, adminUserId, now, now, existing.id, orgId);
+      }
+      const request = getAttendanceRequestRow(orgId, existing.id);
+      if (!request) attendanceExcuseError("NOT_FOUND", "Absence excuse could not be read.");
+      return { request, created: false, changed };
+    }
+
+    if (existing.status === "pending") {
+      sqlite.prepare(`
+        UPDATE attendance_excuse_requests
+        SET expected_start = COALESCE(?, expected_start), status = 'approved',
+            reviewed_by = ?, reviewed_at = ?, reviewer_note = ?, updated_at = ?
+        WHERE id = ? AND org_id = ? AND status = 'pending'
+      `).run(expectedStart, adminUserId, now, reason, now, existing.id, orgId);
+    } else {
+      sqlite.prepare(`
+        UPDATE attendance_excuse_requests
+        SET checkin_id = NULL, expected_start = ?, reason = ?, status = 'approved',
+            requested_via = 'admin', requested_by_user_id = ?, requested_at = ?,
+            reviewed_by = ?, reviewed_at = ?, reviewer_note = NULL, updated_at = ?
+        WHERE id = ? AND org_id = ?
+      `).run(
+        expectedStart,
+        reason,
+        adminUserId,
+        now,
+        adminUserId,
+        now,
+        now,
+        existing.id,
+        orgId,
+      );
+    }
+    const request = getAttendanceRequestRow(orgId, existing.id);
+    if (!request) attendanceExcuseError("NOT_FOUND", "Absence excuse could not be read.");
+    return { request, created: false, changed: true };
+  });
+
+  return tx.immediate();
+}
+
+export function cancelAdminAbsenceExcuse(
+  input: CancelAdminAbsenceExcuseInput,
+): { request: AttendanceExcuseRequest | null; changed: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const subjectType = attendanceSubjectType(input.subjectType);
+  const subjectId = attendancePositiveId(input.subjectId, "Subject id");
+  const attendanceDate = attendanceLocalDate(input.attendanceDate);
+  const adminUserId = attendancePositiveId(input.adminUserId, "Admin user id");
+  const note = attendanceReviewNote(input.note);
+
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, subjectType, subjectId);
+    assertAttendanceReviewerInOrg(orgId, adminUserId);
+    const existing = getAttendanceRequestForSubjectDate(
+      orgId,
+      subjectType,
+      subjectId,
+      attendanceDate,
+      "absence",
+    );
+    if (!existing || existing.status !== "approved") {
+      return { request: existing, changed: false };
+    }
+
+    const now = new Date().toISOString();
+    const result = sqlite.prepare(`
+      UPDATE attendance_excuse_requests
+      SET status = 'cancelled', reviewed_by = ?, reviewed_at = ?,
+          reviewer_note = ?, updated_at = ?
+      WHERE id = ? AND org_id = ? AND kind = 'absence' AND status = 'approved'
+    `).run(adminUserId, now, note, now, existing.id, orgId);
+    const request = getAttendanceRequestRow(orgId, existing.id);
+    if (!request) attendanceExcuseError("NOT_FOUND", "Absence excuse could not be read.");
+    return { request, changed: Number(result.changes) > 0 };
+  });
+
+  return tx.immediate();
 }
