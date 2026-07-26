@@ -1,5 +1,17 @@
 import { useMemo, useState } from "react";
-import { Bell, Check, FileStack, MessageCircle, MessagesSquare, UserCheck } from "lucide-react";
+import {
+  BarChart3,
+  Bell,
+  Check,
+  Clock3,
+  FileStack,
+  MessageCircle,
+  MessagesSquare,
+  Plane,
+  RefreshCw,
+  UserCheck,
+  WalletCards,
+} from "lucide-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
@@ -19,6 +31,13 @@ const LAP_NOTIFICATION_ROUTES: Record<string, string> = {
   attendance_excuse: "/check-ins",
   lap_result: "/results",
   lap_results: "/results",
+  comp: "/comp-requests",
+  comp_request: "/comp-requests",
+  time_off: "/time-off",
+  timeoff: "/time-off",
+  time_clock: "/time-clock",
+  timeclock: "/time-clock",
+  goal_hit: "/team-stats",
 };
 
 const notificationIcons: Record<string, typeof Bell> = {
@@ -28,6 +47,13 @@ const notificationIcons: Record<string, typeof Bell> = {
   attendance_excuse: UserCheck,
   lap_result: FileStack,
   lap_results: FileStack,
+  comp: WalletCards,
+  comp_request: WalletCards,
+  time_off: Plane,
+  timeoff: Plane,
+  time_clock: Clock3,
+  timeclock: Clock3,
+  goal_hit: BarChart3,
 };
 
 function relativeTime(value: unknown) {
@@ -50,7 +76,12 @@ export function LapNotificationBell() {
   const notificationsKey = `/api/notifications?portal=lap&userId=${uid}`;
   const unreadKey = `/api/notifications/unread-count?portal=lap&userId=${uid}`;
 
-  const { data = [] } = useQuery<any[]>({
+  const {
+    data = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery<any[]>({
     queryKey: [notificationsKey],
     enabled: uid > 0,
     refetchInterval: 30000,
@@ -101,7 +132,25 @@ export function LapNotificationBell() {
         </div>
         <Separator />
         <ScrollArea className="h-80">
-          {notifications.length === 0 ? (
+          {isLoading ? (
+            <div className="space-y-3 px-4 py-4" aria-label="Loading notifications">
+              {[0, 1, 2].map((key) => (
+                <div key={key} className="flex animate-pulse items-center gap-3">
+                  <span className="h-8 w-8 rounded-lg bg-muted" />
+                  <span className="h-8 flex-1 rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          ) : isError ? (
+            <div className="flex h-40 flex-col items-center justify-center gap-2 px-5 text-center">
+              <Bell className="h-6 w-6 text-destructive" />
+              <p className="text-sm font-medium">Notifications unavailable</p>
+              <p className="text-xs text-muted-foreground">Try loading your updates again.</p>
+              <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetch()}>
+                <RefreshCw className="h-3.5 w-3.5" /> Retry
+              </Button>
+            </div>
+          ) : notifications.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center gap-2 px-5 text-center">
               <Check className="h-6 w-6 text-primary" />
               <p className="text-sm font-medium">You’re all caught up</p>

@@ -16,7 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Clock, Play, Square, Plus, Pencil, Trash2, DollarSign, ChevronLeft, ChevronRight, Settings2, Wallet } from "lucide-react";
+import { AlertTriangle, Clock, Play, Square, Plus, Pencil, Trash2, DollarSign, ChevronLeft, ChevronRight, RefreshCw, Settings2, Wallet } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 
@@ -77,7 +77,7 @@ export default function TimeClock() {
   const [scope, setScope] = useState<"mine" | "team">("mine");
   const { start, end, label } = useMemo(() => monthBounds(monthAnchor), [monthAnchor]);
 
-  const { data, isLoading } = useQuery<TCResp>({
+  const { data, isLoading, isError, refetch } = useQuery<TCResp>({
     queryKey: ["/api/timeclock", scope, start, end],
     queryFn: () => apiRequest("GET", `/api/timeclock?scope=${scope}&startDate=${start}&endDate=${end}`),
     refetchInterval: 30000,
@@ -231,7 +231,24 @@ export default function TimeClock() {
       {/* Clock in/out */}
       <Card>
         <CardContent className="p-5">
-          {open ? (
+          {isLoading ? (
+            <Skeleton className="h-20 w-full" />
+          ) : isError ? (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+                <div>
+                  <p className="text-sm font-semibold">Time Clock could not be loaded</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Clock status, hours, and pay estimates are hidden until the connection is restored.
+                  </p>
+                </div>
+              </div>
+              <Button type="button" variant="outline" onClick={() => void refetch()} className="shrink-0 gap-1.5">
+                <RefreshCw className="h-4 w-4" /> Retry
+              </Button>
+            </div>
+          ) : open ? (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 text-emerald-600 font-semibold text-sm">
@@ -279,7 +296,7 @@ export default function TimeClock() {
               <Settings2 className="w-3.5 h-3.5" /> Pay rates
             </Button>
           )}
-          <Button size="sm" className="gap-1.5" onClick={openNew} data-testid="add-entry"><Plus className="w-3.5 h-3.5" /> Add entry</Button>
+          <Button size="sm" className="gap-1.5" onClick={openNew} disabled={isLoading || isError} data-testid="add-entry"><Plus className="w-3.5 h-3.5" /> Add entry</Button>
         </div>
       </div>
 
@@ -296,7 +313,7 @@ export default function TimeClock() {
               <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
               <s.icon className="w-4 h-4 text-muted-foreground" />
             </div>
-            <p className="text-xl font-bold mt-1 tabular-nums">{s.value}</p>
+            <p className="text-xl font-bold mt-1 tabular-nums">{isLoading || isError ? "—" : s.value}</p>
           </div>
         ))}
       </div>
@@ -340,7 +357,18 @@ export default function TimeClock() {
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Shifts — {label}</CardTitle></CardHeader>
         <CardContent className="space-y-2">
-          {isLoading ? (
+          {isError ? (
+            <div className="flex flex-col items-center gap-3 py-7 text-center">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+              <div>
+                <p className="text-sm font-medium">Shift history is unavailable.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Retry before relying on this month&apos;s totals.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+                <RefreshCw className="h-3.5 w-3.5" /> Retry
+              </Button>
+            </div>
+          ) : isLoading ? (
             <Skeleton className="h-20 w-full" />
           ) : entries.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">No shifts this month. Clock in above, or add one manually.</p>
@@ -375,7 +403,9 @@ export default function TimeClock() {
               );
             })
           )}
-          <p className="text-[11px] text-muted-foreground pt-1">Pay is an estimate at {money(rate.rateCents)}/hr + {(rate.seRate * 100).toFixed(2)}% SE reimbursement. Finalized in the month-end payroll summary.</p>
+          {!isLoading && !isError && (
+            <p className="text-[11px] text-muted-foreground pt-1">Pay is an estimate at {money(rate.rateCents)}/hr + {(rate.seRate * 100).toFixed(2)}% SE reimbursement. Finalized in the month-end payroll summary.</p>
+          )}
         </CardContent>
       </Card>
 

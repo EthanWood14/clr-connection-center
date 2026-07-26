@@ -259,6 +259,7 @@ sqlite.exec(`
 
   CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
     user_id INTEGER,
     type TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -320,10 +321,48 @@ try {
 
 // ── Migration: add has_seen_intro to users if missing ─────────────────────────
 try { sqlite.exec(`ALTER TABLE notifications ADD COLUMN portal TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE notifications ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try {
+  sqlite.prepare(`
+    UPDATE notifications
+    SET org_id = COALESCE(
+      (SELECT users.org_id FROM users WHERE users.id = notifications.user_id),
+      org_id,
+      1
+    )
+  `).run();
   sqlite.prepare(`UPDATE notifications SET portal = 'c3' WHERE portal IS NULL AND type IN ('chat', 'forum')`).run();
   sqlite.prepare(`UPDATE notifications SET portal = 'lap' WHERE type IN ('lap_result', 'lap_results')`).run();
-  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_user_portal_read ON notifications(user_id, portal, is_read)`);
+  sqlite.prepare(`
+    UPDATE notifications
+    SET portal = 'c3'
+    WHERE portal IS NULL
+      AND (
+        type IN (
+          'assignment_ready',
+          'license_alert',
+          'missed_appointment',
+          'nmls_check',
+          'nmls_escalation'
+        )
+        OR title LIKE 'Bonzo stage change%'
+        OR title LIKE '%Incomplete LO Profile:%'
+      )
+  `).run();
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS notification_reads (
+      notification_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      read_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (notification_id, user_id),
+      FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_org_user_portal_read
+      ON notifications(org_id, user_id, portal, is_read);
+    CREATE INDEX IF NOT EXISTS idx_notification_reads_user
+      ON notification_reads(user_id, notification_id);
+  `);
 } catch {}
 
 try {
@@ -1451,48 +1490,164 @@ export class Storage implements IStorage {
   }
 
   getNotifications(userId?: number, portal?: CommunicationPortal) {
-    if (userId !== undefined) {
-      // Return notifications for this user (personal + broadcasts)
-      return db.select().from(notifications)
-        .where(portal
-          ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
-          : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
-        .orderBy(desc(notifications.createdAt)).all();
+    const scopedUserId = userId == null ? null : Math.trunc(Number(userId));
+    const userOrg = scopedUserId == null
+      ? null
+      : sqlite.prepare(`SELECT org_id FROM users WHERE id = ?`).get(scopedUserId) as any;
+    const contextOrgId = currentOrgId();
+    const orgId = contextOrgId ?? Number(userOrg?.org_id ?? 1);
+    if (scopedUserId != null && (!userOrg || (contextOrgId != null && Number(userOrg.org_id) !== contextOrgId))) {
+      return [];
     }
-    return portal
-      ? db.select().from(notifications).where(sql`${notifications.portal} IS NULL OR ${notifications.portal} = ${portal}`).orderBy(desc(notifications.createdAt)).all()
-      : db.select().from(notifications).orderBy(desc(notifications.createdAt)).all();
+
+    const rows = sqlite.prepare(`
+      SELECT
+        n.id,
+        n.org_id,
+        n.user_id,
+        n.type,
+        n.title,
+        n.message,
+        n.portal,
+        CASE
+          WHEN n.user_id IS NULL AND @userId IS NOT NULL THEN
+            CASE
+              WHEN n.is_read = 1 OR EXISTS (
+                SELECT 1 FROM notification_reads nr
+                WHERE nr.notification_id = n.id AND nr.user_id = @userId
+              ) THEN 1
+              ELSE 0
+            END
+          ELSE n.is_read
+        END AS is_read,
+        n.created_at
+      FROM notifications n
+      WHERE n.org_id = @orgId
+        AND (@userId IS NULL OR n.user_id = @userId OR n.user_id IS NULL)
+        AND (@portal IS NULL OR n.portal IS NULL OR n.portal = @portal)
+      ORDER BY n.created_at DESC, n.id DESC
+    `).all({
+      orgId,
+      userId: scopedUserId,
+      portal: portal ?? null,
+    }) as any[];
+
+    return rows.map((row) => ({
+      id: Number(row.id),
+      orgId: Number(row.org_id),
+      userId: row.user_id == null ? null : Number(row.user_id),
+      type: String(row.type),
+      title: String(row.title),
+      message: String(row.message),
+      portal: row.portal == null ? null : String(row.portal),
+      isRead: !!row.is_read,
+      createdAt: String(row.created_at),
+    })) as Notification[];
   }
   createNotification(data: InsertNotification) {
-    return db.insert(notifications).values({ ...data, createdAt: new Date().toISOString() }).returning().get();
+    const requestedUserId = data.userId == null ? null : Math.trunc(Number(data.userId));
+    const target = requestedUserId == null
+      ? null
+      : sqlite.prepare(`SELECT org_id FROM users WHERE id = ?`).get(requestedUserId) as any;
+    if (requestedUserId != null && !target) {
+      throw new Error("Notification recipient not found");
+    }
+    const contextOrgId = currentOrgId();
+    const targetOrgId = target ? Number(target.org_id) : null;
+    if (contextOrgId != null && targetOrgId != null && contextOrgId !== targetOrgId) {
+      throw new Error("Notification recipient is outside the active organization");
+    }
+    const orgId = targetOrgId
+      ?? Number((data as any).orgId ?? contextOrgId ?? 1);
+    return db.insert(notifications).values({
+      ...data,
+      orgId,
+      userId: requestedUserId,
+      createdAt: new Date().toISOString(),
+    }).returning().get();
   }
   markNotificationRead(id: number, userId?: number, portal?: CommunicationPortal) {
-    // When a userId is supplied, only the recipient (or a broadcast row, userId
-    // NULL) can be marked read — prevents flipping another user's notification.
-    if (userId != null) {
-      db.update(notifications).set({ isRead: true })
-        .where(portal
-          ? sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
-          : sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
-        .run();
-      return;
+    if (userId == null) return;
+    const scopedUserId = Math.trunc(Number(userId));
+    const user = sqlite.prepare(`SELECT org_id FROM users WHERE id = ?`).get(scopedUserId) as any;
+    const contextOrgId = currentOrgId();
+    if (!user || (contextOrgId != null && Number(user.org_id) !== contextOrgId)) return;
+    const orgId = contextOrgId ?? Number(user.org_id);
+    const portalSql = portal ? `AND (portal IS NULL OR portal = @portal)` : "";
+    const row = sqlite.prepare(`
+      SELECT id, user_id
+      FROM notifications
+      WHERE id = @id
+        AND org_id = @orgId
+        AND (user_id = @userId OR user_id IS NULL)
+        ${portalSql}
+      LIMIT 1
+    `).get({ id, orgId, userId: scopedUserId, portal: portal ?? null }) as any;
+    if (!row) return;
+    if (row.user_id == null) {
+      sqlite.prepare(`
+        INSERT INTO notification_reads (notification_id, user_id, read_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(notification_id, user_id) DO UPDATE SET read_at = excluded.read_at
+      `).run(id, scopedUserId, new Date().toISOString());
+    } else {
+      sqlite.prepare(`
+        UPDATE notifications SET is_read = 1
+        WHERE id = ? AND org_id = ? AND user_id = ?
+      `).run(id, orgId, scopedUserId);
     }
-    db.update(notifications).set({ isRead: true }).where(eq(notifications.id, id)).run();
   }
   markAllNotificationsRead(userId: number, portal?: CommunicationPortal) {
-    db.update(notifications).set({ isRead: true })
-      .where(portal
-        ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
-        : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
-      .run();
+    const scopedUserId = Math.trunc(Number(userId));
+    const user = sqlite.prepare(`SELECT org_id FROM users WHERE id = ?`).get(scopedUserId) as any;
+    const contextOrgId = currentOrgId();
+    if (!user || (contextOrgId != null && Number(user.org_id) !== contextOrgId)) return;
+    const orgId = contextOrgId ?? Number(user.org_id);
+    const portalSql = portal ? `AND (portal IS NULL OR portal = @portal)` : "";
+    const params = { orgId, userId: scopedUserId, portal: portal ?? null, readAt: new Date().toISOString() };
+    sqlite.prepare(`
+      UPDATE notifications
+      SET is_read = 1
+      WHERE org_id = @orgId
+        AND user_id = @userId
+        ${portalSql}
+    `).run(params);
+    sqlite.prepare(`
+      INSERT INTO notification_reads (notification_id, user_id, read_at)
+      SELECT id, @userId, @readAt
+      FROM notifications
+      WHERE org_id = @orgId
+        AND user_id IS NULL
+        ${portalSql}
+      ON CONFLICT(notification_id, user_id) DO UPDATE SET read_at = excluded.read_at
+    `).run(params);
   }
   getUnreadCount(userId: number, portal?: CommunicationPortal) {
-    const result = db.select({ count: sql<number>`count(*)` }).from(notifications)
-      .where(portal
-        ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND ${notifications.isRead} = 0 AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
-        : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND ${notifications.isRead} = 0`)
-      .get();
-    return result?.count ?? 0;
+    const scopedUserId = Math.trunc(Number(userId));
+    const user = sqlite.prepare(`SELECT org_id FROM users WHERE id = ?`).get(scopedUserId) as any;
+    const contextOrgId = currentOrgId();
+    if (!user || (contextOrgId != null && Number(user.org_id) !== contextOrgId)) return 0;
+    const orgId = contextOrgId ?? Number(user.org_id);
+    const portalSql = portal ? `AND (n.portal IS NULL OR n.portal = @portal)` : "";
+    const result = sqlite.prepare(`
+      SELECT COUNT(*) AS count
+      FROM notifications n
+      WHERE n.org_id = @orgId
+        AND (n.user_id = @userId OR n.user_id IS NULL)
+        ${portalSql}
+        AND (
+          (n.user_id = @userId AND n.is_read = 0)
+          OR (
+            n.user_id IS NULL
+            AND n.is_read = 0
+            AND NOT EXISTS (
+              SELECT 1 FROM notification_reads nr
+              WHERE nr.notification_id = n.id AND nr.user_id = @userId
+            )
+          )
+        )
+    `).get({ orgId, userId: scopedUserId, portal: portal ?? null }) as any;
+    return Number(result?.count ?? 0);
   }
 
   getAlgorithmSettings() {
@@ -2574,6 +2729,19 @@ function runNewMigrations() {
     )`);
   } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`); } catch {}
+  try {
+    // A browser PushSubscription belongs to the currently signed-in user on
+    // that device. Keep one owner per endpoint so shared computers cannot
+    // continue delivering a previous user's private alerts.
+    sqlite.exec(`
+      DELETE FROM push_subscriptions
+      WHERE id NOT IN (
+        SELECT MAX(id) FROM push_subscriptions GROUP BY endpoint
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint
+        ON push_subscriptions(endpoint);
+    `);
+  } catch {}
 
   // LAP files are intentionally isolated from C3 outcomes and attachments.
   // Replacing a document creates an immutable version while a partial unique
@@ -4678,23 +4846,57 @@ function normalizeLoa(row: any): any {
   };
 }
 export function getLoanOfficerAssistants(loId?: number) {
+  const orgId = currentOrgId() ?? 1;
   if (loId != null) {
-    return (sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE lo_id = ? AND active = 1 ORDER BY full_name`).all(loId) as any[]).map(normalizeLoa);
+    return (sqlite.prepare(`
+      SELECT a.*
+      FROM loan_officer_assistants a
+      INNER JOIN loan_officers lo ON lo.id = a.lo_id
+      WHERE a.lo_id = ? AND a.active = 1 AND lo.org_id = ?
+      ORDER BY a.full_name COLLATE NOCASE
+    `).all(loId, orgId) as any[]).map(normalizeLoa);
   }
-  return (sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE active = 1 ORDER BY full_name`).all() as any[]).map(normalizeLoa);
+  return (sqlite.prepare(`
+    SELECT a.*
+    FROM loan_officer_assistants a
+    INNER JOIN loan_officers lo ON lo.id = a.lo_id
+    WHERE a.active = 1 AND lo.org_id = ?
+    ORDER BY a.full_name COLLATE NOCASE
+  `).all(orgId) as any[]).map(normalizeLoa);
 }
 export function getLoanOfficerAssistant(id: number) {
-  return normalizeLoa(sqlite.prepare(`SELECT * FROM loan_officer_assistants WHERE id = ?`).get(id));
+  const orgId = currentOrgId() ?? 1;
+  return normalizeLoa(sqlite.prepare(`
+    SELECT a.*
+    FROM loan_officer_assistants a
+    INNER JOIN loan_officers lo ON lo.id = a.lo_id
+    WHERE a.id = ? AND lo.org_id = ?
+    LIMIT 1
+  `).get(id, orgId));
 }
 export function createLoanOfficerAssistant(data: { loId: number; fullName: string }) {
+  const orgId = currentOrgId() ?? 1;
+  const parent = sqlite.prepare(`
+    SELECT id FROM loan_officers
+    WHERE id = ? AND org_id = ?
+      AND COALESCE(internal_status, 'active') NOT IN ('archived', 'inactive')
+  `).get(data.loId, orgId);
+  if (!parent) throw new Error("Loan Officer not found in your organization.");
   const info = sqlite.prepare(
     `INSERT INTO loan_officer_assistants (lo_id, full_name, active, created_at) VALUES (?, ?, 1, ?)`
   ).run(data.loId, data.fullName, new Date().toISOString());
   return getLoanOfficerAssistant(Number(info.lastInsertRowid));
 }
-export function deleteLoanOfficerAssistant(id: number) {
+export function deleteLoanOfficerAssistant(id: number): boolean {
+  const orgId = currentOrgId() ?? 1;
   // Soft-delete so historical outcomes that reference this LOA still resolve a name.
-  sqlite.prepare(`UPDATE loan_officer_assistants SET active = 0 WHERE id = ?`).run(id);
+  const result = sqlite.prepare(`
+    UPDATE loan_officer_assistants
+    SET active = 0
+    WHERE id = ?
+      AND lo_id IN (SELECT id FROM loan_officers WHERE org_id = ?)
+  `).run(id, orgId);
+  return result.changes > 0;
 }
 
 // ── LO/LOA self-service check-in portal (one shared link, no login) ──────────

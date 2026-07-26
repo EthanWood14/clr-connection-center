@@ -8,6 +8,8 @@ const tempDir = mkdtempSync(join(tmpdir(), "c3-portal-communications-"));
 process.env.DATABASE_PATH = join(tempDir, "portal-communications.db");
 
 const communications = await import("../server/storage");
+const { runWithOrg } = await import("../server/orgContext");
+const push = await import("../server/push");
 const sqlite = communications.getRawSqlite();
 const notificationStore = communications.storage;
 
@@ -42,6 +44,7 @@ test("portal communications isolate C3 and LAP within each organization", async 
   const orgA = insertOrganization("Communications Org A");
   const orgB = insertOrganization("Communications Org B");
   const userA = insertUser("Communications User A", orgA);
+  const userA2 = insertUser("Communications User A2", orgA);
   const userB = insertUser("Communications User B", orgB);
 
   await t.test("chat reads and ID-based mutations require the matching portal and org", () => {
@@ -252,14 +255,28 @@ test("portal communications isolate C3 and LAP within each organization", async 
       isRead: false,
       portal: "lap",
     });
-    const shared = notificationStore.createNotification({
-      userId: userA,
-      type: "schedule",
-      title: "Shared schedule",
-      message: "Visible in both portals",
-      isRead: false,
-      portal: null,
-    });
+    const shared = runWithOrg(
+      { orgId: orgA, superAdmin: false },
+      () => notificationStore.createNotification({
+        userId: null,
+        type: "schedule",
+        title: "Shared schedule",
+        message: "Visible to this organization in both portals",
+        isRead: false,
+        portal: null,
+      }),
+    );
+    const legacyReadBroadcast = runWithOrg(
+      { orgId: orgA, superAdmin: false },
+      () => notificationStore.createNotification({
+        userId: null,
+        type: "announcement",
+        title: "Previously read C3 announcement",
+        message: "Legacy broadcast read state must remain read after receipt migration",
+        isRead: true,
+        portal: "c3",
+      }),
+    );
     const otherOrg = notificationStore.createNotification({
       userId: userB,
       type: "forum",
@@ -268,7 +285,9 @@ test("portal communications isolate C3 and LAP within each organization", async 
       isRead: false,
       portal: "lap",
     });
-    const createdIds = new Set([c3.id, lap.id, shared.id, otherOrg.id].map(Number));
+    const createdIds = new Set(
+      [c3.id, lap.id, shared.id, legacyReadBroadcast.id, otherOrg.id].map(Number),
+    );
 
     const c3Rows = notificationStore
       .getNotifications(userA, "c3")
@@ -276,12 +295,34 @@ test("portal communications isolate C3 and LAP within each organization", async 
     const lapRows = notificationStore
       .getNotifications(userA, "lap")
       .filter((row) => createdIds.has(Number(row.id)));
-    assert.deepEqual(ids(c3Rows), ids([c3, shared]));
+    assert.deepEqual(ids(c3Rows), ids([c3, shared, legacyReadBroadcast]));
     assert.deepEqual(ids(lapRows), ids([lap, shared]));
     assert.equal(c3Rows.some((row) => row.id === otherOrg.id), false);
     assert.equal(lapRows.some((row) => row.id === otherOrg.id), false);
     assert.equal(notificationStore.getUnreadCount(userA, "c3"), 2);
     assert.equal(notificationStore.getUnreadCount(userA, "lap"), 2);
+    assert.equal(notificationStore.getUnreadCount(userA2, "c3"), 1);
+    assert.equal(notificationStore.getUnreadCount(userA2, "lap"), 1);
+    assert.equal(
+      notificationStore.getNotifications(userA2, "c3")
+        .find((row) => Number(row.id) === Number(legacyReadBroadcast.id))?.isRead,
+      true,
+      "legacy globally-read broadcasts stay read after per-user receipts are introduced",
+    );
+    assert.throws(
+      () => runWithOrg(
+        { orgId: orgA, superAdmin: false },
+        () => notificationStore.createNotification({
+          userId: userB,
+          type: "announcement",
+          title: "Cross-organization notification",
+          message: "Must be rejected",
+          isRead: false,
+          portal: "lap",
+        }),
+      ),
+      /outside the active organization/,
+    );
 
     notificationStore.markNotificationRead(lap.id, userA, "c3");
     assert.equal(
@@ -297,10 +338,108 @@ test("portal communications isolate C3 and LAP within each organization", async 
         .map((row) => [Number(row.id), Number(row.is_read)]),
     );
     assert.equal(readState.get(Number(c3.id)), 1);
-    assert.equal(readState.get(Number(shared.id)), 1);
+    assert.equal(
+      readState.get(Number(shared.id)),
+      0,
+      "broadcast rows remain unread globally and use per-user receipts",
+    );
     assert.equal(readState.get(Number(lap.id)), 0);
     assert.equal(readState.get(Number(otherOrg.id)), 0);
+    assert.equal(
+      Number(
+        (sqlite.prepare(`
+          SELECT COUNT(*) AS count
+          FROM notification_reads
+          WHERE notification_id = ? AND user_id = ?
+        `).get(shared.id, userA) as any).count,
+      ),
+      1,
+    );
     assert.equal(notificationStore.getUnreadCount(userA, "c3"), 0);
     assert.equal(notificationStore.getUnreadCount(userA, "lap"), 1);
+    assert.equal(notificationStore.getUnreadCount(userA2, "c3"), 1);
+    assert.equal(notificationStore.getUnreadCount(userA2, "lap"), 1);
+    assert.equal(
+      notificationStore.getNotifications(userA2, "c3")
+        .find((row) => Number(row.id) === Number(shared.id))?.isRead,
+      false,
+    );
+  });
+
+  await t.test("LOA records and browser push endpoints cannot cross organization boundaries", () => {
+    const loA = Number(sqlite.prepare(`
+      INSERT INTO loan_officers
+        (full_name, nmls_id, licensed_states, internal_status, org_id)
+      VALUES (?, ?, '[]', 'active', ?)
+    `).run("Communications LO A", `COMM-A-${orgA}`, orgA).lastInsertRowid);
+    const loB = Number(sqlite.prepare(`
+      INSERT INTO loan_officers
+        (full_name, nmls_id, licensed_states, internal_status, org_id)
+      VALUES (?, ?, '[]', 'active', ?)
+    `).run("Communications LO B", `COMM-B-${orgB}`, orgB).lastInsertRowid);
+
+    const loaA = runWithOrg(
+      { orgId: orgA, superAdmin: false },
+      () => communications.createLoanOfficerAssistant({
+        loId: loA,
+        fullName: "Organization A Assistant",
+      }),
+    );
+    const loaB = runWithOrg(
+      { orgId: orgB, superAdmin: false },
+      () => communications.createLoanOfficerAssistant({
+        loId: loB,
+        fullName: "Organization B Assistant",
+      }),
+    );
+
+    assert.equal(
+      runWithOrg(
+        { orgId: orgB, superAdmin: false },
+        () => communications.getLoanOfficerAssistant(loaA.id),
+      ),
+      undefined,
+    );
+    assert.equal(
+      runWithOrg(
+        { orgId: orgA, superAdmin: false },
+        () => communications.getLoanOfficerAssistant(loaB.id),
+      ),
+      undefined,
+    );
+    assert.throws(
+      () => runWithOrg(
+        { orgId: orgA, superAdmin: false },
+        () => communications.createLoanOfficerAssistant({
+          loId: loB,
+          fullName: "Cross-organization Assistant",
+        }),
+      ),
+      /not found in your organization/,
+    );
+    assert.equal(
+      runWithOrg(
+        { orgId: orgB, superAdmin: false },
+        () => communications.deleteLoanOfficerAssistant(loaA.id),
+      ),
+      false,
+    );
+    assert.ok(
+      runWithOrg(
+        { orgId: orgA, superAdmin: false },
+        () => communications.getLoanOfficerAssistant(loaA.id),
+      ),
+    );
+
+    const endpoint = "https://push.example.test/shared-browser-endpoint";
+    const keys = { p256dh: "test-p256dh", auth: "test-auth" };
+    push.saveSubscription(userA, orgA, { endpoint, keys });
+    push.saveSubscription(userB, orgB, { endpoint, keys });
+    const owners = sqlite.prepare(`
+      SELECT user_id, org_id
+      FROM push_subscriptions
+      WHERE endpoint = ?
+    `).all(endpoint) as Array<{ user_id: number; org_id: number }>;
+    assert.deepEqual(owners, [{ user_id: userB, org_id: orgB }]);
   });
 });

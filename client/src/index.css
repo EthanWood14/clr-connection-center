@@ -829,46 +829,88 @@ html.lap-mode [style*="rgba(196,154,60"] {
   background-color: rgba(227, 173, 181, 0.16) !important;
 }
 
-html.lap-mode [class*="text-blue-"],
-html.lap-mode [class*="text-sky-"],
-html.lap-mode [class*="text-indigo-"] {
+/* Shared operational pages still use a small, known set of blue utilities.
+   Map those exact tokens instead of matching arbitrary class substrings:
+   substring selectors also caught solid buttons and hover utilities, turning
+   white-on-blue actions into unreadable white-on-translucent-burgundy text. */
+html.lap-mode .text-blue-600,
+html.lap-mode .text-blue-700,
+html.lap-mode .text-blue-800,
+html.lap-mode .text-sky-600,
+html.lap-mode .text-sky-700,
+html.lap-mode .text-sky-800,
+html.lap-mode .text-sky-900,
+html.lap-mode .text-indigo-500,
+html.lap-mode .text-indigo-600,
+html.lap-mode .text-indigo-900 {
   color: #8B2F3F !important;
 }
 
-html.dark.lap-mode [class*="text-blue-"],
-html.dark.lap-mode [class*="text-sky-"],
-html.dark.lap-mode [class*="text-indigo-"] {
+html.dark.lap-mode .dark\:text-blue-300,
+html.dark.lap-mode .dark\:text-blue-400,
+html.dark.lap-mode .dark\:text-sky-200,
+html.dark.lap-mode .dark\:text-sky-300,
+html.dark.lap-mode .dark\:text-sky-400,
+html.dark.lap-mode .dark\:text-indigo-200,
+html.dark.lap-mode .dark\:text-indigo-400 {
   color: #E8B8BE !important;
 }
 
-html.lap-mode [class*="bg-blue-"],
-html.lap-mode [class*="bg-sky-"],
-html.lap-mode [class*="bg-indigo-"] {
+html.lap-mode .bg-blue-100,
+html.lap-mode .bg-sky-50,
+html.lap-mode .bg-sky-100,
+html.lap-mode .bg-indigo-50 {
   background-color: rgba(139, 47, 63, 0.12) !important;
 }
 
-html.dark.lap-mode [class*="bg-blue-"],
-html.dark.lap-mode [class*="bg-sky-"],
-html.dark.lap-mode [class*="bg-indigo-"] {
+html.lap-mode .bg-blue-500,
+html.lap-mode .bg-sky-600,
+html.lap-mode .bg-indigo-600 {
+  background-color: #8B2F3F !important;
+}
+
+html.lap-mode .hover\:bg-indigo-700:hover {
+  background-color: #6E1F2B !important;
+}
+
+html.dark.lap-mode .dark\:bg-blue-900\/30,
+html.dark.lap-mode .dark\:bg-sky-900\/30,
+html.dark.lap-mode .dark\:bg-sky-950\/30,
+html.dark.lap-mode .dark\:bg-indigo-950\/30 {
   background-color: rgba(139, 47, 63, 0.22) !important;
 }
 
-html.lap-mode [class*="border-blue-"],
-html.lap-mode [class*="border-sky-"],
-html.lap-mode [class*="border-indigo-"] {
+html.lap-mode .border-blue-300,
+html.lap-mode .border-sky-200,
+html.lap-mode .border-sky-200\/60,
+html.lap-mode .border-indigo-200,
+html.dark.lap-mode .dark\:border-sky-800,
+html.dark.lap-mode .dark\:border-sky-800\/60,
+html.dark.lap-mode .dark\:border-indigo-800 {
   border-color: rgba(139, 47, 63, 0.34) !important;
 }
 
-html.lap-mode [class*="from-blue-"],
-html.lap-mode [class*="from-sky-"],
-html.lap-mode [class*="from-indigo-"] {
+html.lap-mode .from-sky-50,
+html.lap-mode .from-sky-500 {
   --tw-gradient-from: #8B2F3F var(--tw-gradient-from-position) !important;
   --tw-gradient-to: rgb(139 47 63 / 0) var(--tw-gradient-to-position) !important;
 }
 
-html.lap-mode [class*="to-blue-"],
-html.lap-mode [class*="to-sky-"],
-html.lap-mode [class*="to-indigo-"] {
+html.lap-mode .to-blue-600 {
   --tw-gradient-to: #3B111A var(--tw-gradient-to-position) !important;
+}
+
+html.lap-mode .hover\:from-sky-600:hover {
+  --tw-gradient-from: #6E1F2B var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(110 31 43 / 0) var(--tw-gradient-to-position) !important;
+}
+
+html.lap-mode .hover\:to-blue-700:hover {
+  --tw-gradient-to: #3B111A var(--tw-gradient-to-position) !important;
+}
+
+html.dark.lap-mode .dark\:from-sky-950\/30 {
+  --tw-gradient-from: rgb(139 47 63 / 0.22) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(139 47 63 / 0) var(--tw-gradient-to-position) !important;
 }
 

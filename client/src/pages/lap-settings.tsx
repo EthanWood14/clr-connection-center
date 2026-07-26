@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PushNotificationsCard } from "@/components/push-notifications-card";
 import { lapRequest } from "@/lib/lap-api";
 import { queryClient } from "@/lib/queryClient";
 
@@ -335,6 +336,8 @@ export default function LapSettings() {
               </div>
             </CardContent>
           </Card>
+
+          <PushNotificationsCard portal="lap" />
 
           <Card className="border-primary/25 bg-primary/5">
             <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">

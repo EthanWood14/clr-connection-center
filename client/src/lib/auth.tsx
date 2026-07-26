@@ -1,5 +1,33 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { queryClient, apiRequest } from "./queryClient";
+import { detectProductPortal } from "./product-metadata";
+
+async function getExistingPushSubscription(): Promise<PushSubscription | null> {
+  if (
+    typeof window === "undefined"
+    || !("serviceWorker" in navigator)
+    || !("PushManager" in window)
+    || !("Notification" in window)
+    || Notification.permission !== "granted"
+  ) {
+    return null;
+  }
+
+  const registration = await navigator.serviceWorker.getRegistration("/");
+  return registration?.pushManager.getSubscription() ?? null;
+}
+
+async function rebindExistingPushSubscription() {
+  try {
+    const subscription = await getExistingPushSubscription();
+    if (!subscription) return;
+    await apiRequest("POST", "/api/push/subscribe", {
+      subscription: subscription.toJSON(),
+    });
+  } catch {
+    // Push is optional. A later auth refresh or service-worker-ready event retries.
+  }
+}
 
 export interface AuthUser {
   id: number;
@@ -74,11 +102,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    const rebind = () => { void rebindExistingPushSubscription(); };
+    rebind();
+    window.addEventListener("wcl:service-worker-ready", rebind);
+    return () => window.removeEventListener("wcl:service-worker-ready", rebind);
+  }, [user?.id, user?.orgId]);
+
   const logout = useCallback(async () => {
-    await apiRequest("POST", "/api/auth/logout").catch(() => {});
+    const portal = detectProductPortal();
+    let pushEndpoint = "";
+    try {
+      const subscription = await getExistingPushSubscription();
+      if (subscription) {
+        pushEndpoint = subscription.endpoint;
+        await apiRequest("DELETE", "/api/push/unsubscribe", {
+          endpoint: pushEndpoint,
+        });
+      }
+    } catch {
+      // Logout must still complete if the device subscription cannot be detached.
+    }
+    await apiRequest("POST", "/api/auth/logout", { pushEndpoint }).catch(() => {});
     setUser(null);
     queryClient.clear();
-    window.location.hash = "#/login";
+    window.location.hash = portal === "lap" ? "#/lap" : "#/login";
   }, []);
 
   const markIntroSeen = useCallback(async () => {

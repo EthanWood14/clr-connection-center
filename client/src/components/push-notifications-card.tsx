@@ -18,16 +18,26 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 type Status = "loading" | "unsupported" | "denied" | "disabled" | "enabled";
 
-export function PushNotificationsCard() {
+type PushNotificationsCardProps = {
+  portal?: "c3" | "lap";
+};
+
+export function PushNotificationsCard({ portal = "c3" }: PushNotificationsCardProps) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [status, setStatus] = useState<Status>("loading");
   const [busy, setBusy] = useState(false);
-  const isAdmin = user?.role === "admin";
+  const isLap = portal === "lap";
+  const productName = isLap ? "LAP" : "C3";
+  const isAdmin = user?.role === "admin" || !!user?.superAdmin;
 
   async function refresh() {
     if (typeof window === "undefined") return;
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    if (
+      !("serviceWorker" in navigator)
+      || !("PushManager" in window)
+      || !("Notification" in window)
+    ) {
       setStatus("unsupported");
       return;
     }
@@ -63,14 +73,22 @@ export function PushNotificationsCard() {
       // subscribing again, otherwise pushManager.subscribe rejects with
       // InvalidStateError on browsers that already have one.
       const existing = await reg.pushManager.getSubscription();
-      if (existing) { try { await existing.unsubscribe(); } catch {} }
+      if (existing) {
+        try {
+          await apiRequest("DELETE", "/api/push/unsubscribe", { endpoint: existing.endpoint });
+        } catch {}
+        try { await existing.unsubscribe(); } catch {}
+      }
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
       await apiRequest("POST", "/api/push/subscribe", { subscription: sub.toJSON() });
       setStatus("enabled");
-      toast({ title: "Notifications enabled", description: "You'll get push alerts on this device." });
+      toast({
+        title: `${productName} notifications enabled`,
+        description: "You'll get push alerts on this device.",
+      });
     } catch (e: any) {
       toast({ title: "Failed to enable", description: e?.message ?? "Unknown error", variant: "destructive" });
     } finally {
@@ -102,9 +120,10 @@ export function PushNotificationsCard() {
     setBusy(true);
     try {
       await apiRequest("POST", "/api/push/send", {
-        title: "Test notification",
-        body: "Push is working on this device.",
-        url: "/",
+        title: `${productName} test notification`,
+        body: `${productName} push is working on this device.`,
+        url: isLap ? "/#/lap" : "/#/",
+        portal,
       });
       toast({ title: "Test sent" });
     } catch (e: any) {
@@ -151,15 +170,22 @@ export function PushNotificationsCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Get background alerts for reminders, forum activity, and announcements — even when the app is closed.
+          {isLap
+            ? "Get LAP alerts for team chat, forum activity, and workflow updates — even when the portal is closed."
+            : "Get C3 alerts for reminders, forum activity, and announcements — even when the app is closed."}
         </p>
+        {isLap && (
+          <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Browser permission is shared for this site, while LAP notification content and preferences stay separate from C3.
+          </p>
+        )}
         <div className="flex items-center justify-between">
           <div className="text-sm">{statusText}</div>
           <Switch
             checked={status === "enabled"}
             disabled={busy || status === "loading" || status === "unsupported" || status === "denied"}
             onCheckedChange={(v) => (v ? enable() : disable())}
-            data-testid="push-notifications-toggle"
+            data-testid={isLap ? "lap-push-notifications-toggle" : "push-notifications-toggle"}
           />
         </div>
         {status === "enabled" && (
@@ -167,7 +193,7 @@ export function PushNotificationsCard() {
             <Button onClick={sendTest} size="sm" variant="outline" disabled={busy}>
               Send test notification
             </Button>
-            {isAdmin && (
+            {isAdmin && !isLap && (
               <Button
                 onClick={sendSampleAppointment}
                 size="sm"

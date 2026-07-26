@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useToast } from "@/hooks/use-toast";
 import {
   MessageSquare, ArrowLeft, ArrowUp, Pin, Check, Bell, BellOff,
-  Trash2, Pencil, Search, CheckCircle2,
+  Trash2, Pencil, Search, CheckCircle2, AlertTriangle, RefreshCw,
 } from "lucide-react";
 
 function timeAgo(iso: string) {
@@ -97,7 +97,12 @@ export default function Forum({ portal = "c3" }: ForumProps) {
   const [editAnswerBody, setEditAnswerBody] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
 
-  const { data: listData, isLoading: loadingList } = useQuery<{ posts: ForumPost[] }>({
+  const {
+    data: listData,
+    isLoading: loadingList,
+    isError: listError,
+    refetch: refetchList,
+  } = useQuery<{ posts: ForumPost[] }>({
     queryKey: [postsApi, search],
     queryFn: () => {
       const qs = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
@@ -106,7 +111,12 @@ export default function Forum({ portal = "c3" }: ForumProps) {
     refetchInterval: selectedId ? false : 30000,
   });
 
-  const { data: detailData } = useQuery<{ post: ForumPost }>({
+  const {
+    data: detailData,
+    isLoading: loadingDetail,
+    isError: detailError,
+    refetch: refetchDetail,
+  } = useQuery<{ post: ForumPost }>({
     queryKey: [postsApi, selectedId],
     queryFn: () => apiRequest("GET", `${postsApi}/${selectedId}`),
     enabled: !!selectedId,
@@ -200,6 +210,41 @@ export default function Forum({ portal = "c3" }: ForumProps) {
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  if (selectedId && loadingDetail) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-6">
+        <Button variant="ghost" onClick={() => setSelectedId(null)} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to {forumLabel}
+        </Button>
+        <Card>
+          <CardContent className="flex min-h-52 items-center justify-center p-8 text-sm text-muted-foreground">
+            Loading discussion…
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (selectedId && detailError) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-6">
+        <Button variant="ghost" onClick={() => setSelectedId(null)} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to {forumLabel}
+        </Button>
+        <Card>
+          <CardContent className="flex min-h-52 flex-col items-center justify-center gap-2 p-8 text-center">
+            <AlertTriangle className="h-7 w-7 text-destructive" />
+            <p className="text-sm font-medium">Couldn&apos;t load this discussion</p>
+            <p className="text-xs text-muted-foreground">Try again without losing your place in the forum.</p>
+            <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetchDetail()}>
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // ── Detail view ────────────────────────────────────────────────────────
   if (selectedId && post) {
@@ -479,7 +524,20 @@ export default function Forum({ portal = "c3" }: ForumProps) {
 
       {loadingList && <div className="text-center text-muted-foreground py-8">Loading…</div>}
 
-      {!loadingList && posts.length === 0 && (
+      {listError && (
+        <Card>
+          <CardContent className="flex min-h-40 flex-col items-center justify-center gap-2 p-8 text-center">
+            <AlertTriangle className="h-7 w-7 text-destructive" />
+            <p className="text-sm font-medium">Couldn&apos;t load the forum</p>
+            <p className="text-xs text-muted-foreground">Your posts are still saved. Try loading the list again.</p>
+            <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetchList()}>
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loadingList && !listError && posts.length === 0 && (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />

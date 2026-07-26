@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search, Target, Check, EyeOff } from "lucide-react";
+import { Send, Trash2, MessageSquare, ArrowLeft, SmilePlus, Bell, BellOff, Image as ImageIcon, X, Sticker, Search, Target, Check, EyeOff, AlertTriangle, RefreshCw } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
 
@@ -86,7 +86,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
   const imgInputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const { data, isLoading } = useQuery<{ messages: any[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ messages: any[] }>({
     queryKey: chatQueryKey,
     refetchInterval: 3000, // poll every 3s
   });
@@ -169,7 +169,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
   type MemeItem = { id: string; name: string; blank: string; keywords: string[] };
   const { data: memeData, isLoading: memesLoading } = useQuery<{ items: MemeItem[] }>({
     queryKey: ["/api/memes/catalog"],
-    enabled: memeOpen,
+    enabled: memeOpen && !isLap,
     staleTime: 6 * 60 * 60 * 1000,
   });
   const sendMeme = useMutation({
@@ -211,7 +211,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
   const [memeMode, setMemeMode] = useState<"memes" | "gifs">("memes");
   const { data: gifCfg } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/memes/gif-enabled"],
-    enabled: memeOpen,
+    enabled: memeOpen && !isLap,
     staleTime: 10 * 60 * 1000,
   });
   const gifEnabled = gifCfg?.enabled === true;
@@ -237,7 +237,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
       return loaded;
     },
     initialPageParam: 0,
-    enabled: memeOpen && memeMode === "gifs" && gifEnabled,
+    enabled: memeOpen && !isLap && memeMode === "gifs" && gifEnabled,
     staleTime: 60 * 1000,
   });
   // Flatten pages, de-duping by id (Giphy trending can repeat across offsets).
@@ -273,7 +273,11 @@ export default function Chat({ portal = "c3" }: ChatProps) {
     e?.preventDefault();
     const text = draft.trim();
     if ((!text && !pendingImage) || sendMsg.isPending) return;
-    sendMsg.mutate({ message: text, image: pendingImage ? { base64: pendingImage.base64, mime: pendingImage.mime } : null, grabIt });
+    sendMsg.mutate({
+      message: text,
+      image: pendingImage ? { base64: pendingImage.base64, mime: pendingImage.mime } : null,
+      grabIt: isLap ? false : grabIt,
+    });
   }
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -304,7 +308,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
   return (
     <div className="flex flex-col h-[calc(100vh-48px)]">
       {/* Mobile sticky header with back button */}
-      <div className="md:hidden sticky top-0 z-20 flex items-center justify-between h-12 px-3 border-b bg-sidebar text-sidebar-foreground flex-shrink-0">
+      {!isLap && <div className="md:hidden sticky top-0 z-20 flex items-center justify-between h-12 px-3 border-b bg-sidebar text-sidebar-foreground flex-shrink-0">
         <Link
           href="/"
           data-testid="chat-mobile-back"
@@ -325,11 +329,11 @@ export default function Chat({ portal = "c3" }: ChatProps) {
         >
           {chatMuted ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
         </button>
-      </div>
+      </div>}
 
       <div className="flex flex-col flex-1 min-h-0 max-w-3xl w-full mx-auto p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
       {/* Header (desktop) */}
-      <div className="hidden md:flex items-center gap-3 mb-4">
+      <div className={`${isLap ? "flex" : "hidden md:flex"} items-center gap-3 mb-4`}>
         <div className="p-2 rounded-lg bg-primary/10 text-primary">
           <MessageSquare className="w-5 h-5" />
         </div>
@@ -371,6 +375,15 @@ export default function Chat({ portal = "c3" }: ChatProps) {
                 </div>
               </div>
             ))}
+          </div>
+        ) : isError ? (
+          <div className="flex h-full min-h-48 flex-col items-center justify-center gap-2 px-5 text-center">
+            <AlertTriangle className="h-7 w-7 text-destructive" />
+            <p className="text-sm font-medium">Couldn&apos;t load messages</p>
+            <p className="text-xs text-muted-foreground">The conversation is still available; try connecting again.</p>
+            <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetch()}>
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
+            </Button>
           </div>
         ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-16">
@@ -415,13 +428,13 @@ export default function Chat({ portal = "c3" }: ChatProps) {
                       )}
                       <div className={`relative flex items-center gap-1.5 ${isMe ? "flex-row-reverse" : ""}`}>
                         <div className={`px-3 py-2 rounded-2xl text-sm leading-snug break-words whitespace-pre-wrap ${
-                          m.grab_it
+                          !isLap && m.grab_it
                             ? "bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 text-foreground shadow-sm"
                             : isMe
                             ? "bg-primary text-primary-foreground rounded-tr-sm"
                             : "bg-white dark:bg-zinc-800 border rounded-tl-sm shadow-sm"
                         }`}>
-                          {!!m.grab_it && (
+                          {!isLap && !!m.grab_it && (
                             <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
                               <Target className="w-3.5 h-3.5" /> {m.claimed_by ? "Grab it lead" : "Grab it — first to claim calls this lead"}
                             </div>
@@ -438,12 +451,12 @@ export default function Chat({ portal = "c3" }: ChatProps) {
                           )}
                           {m.message}
                           {/* Content hidden once someone else claimed the lead */}
-                          {m.hidden && (
+                          {!isLap && m.hidden && (
                             <div className="flex items-center gap-1.5 text-xs italic text-muted-foreground">
                               <EyeOff className="w-3.5 h-3.5" /> Lead hidden — already claimed
                             </div>
                           )}
-                          {!!m.grab_it && (
+                          {!isLap && !!m.grab_it && (
                             m.claimed_by ? (
                               <div className="mt-2 space-y-1.5">
                                 <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
@@ -485,7 +498,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
                         <div className="relative">
                           <button
                             onClick={() => setPickerFor(pickerFor === m.id ? null : m.id)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary"
                             data-testid={`chat-react-${m.id}`}
                             aria-label="React"
                           >
@@ -503,7 +516,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
                         {(isMe || user?.role === "admin") && (
                           <button
                             onClick={() => deleteMsg.mutate(m.id)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -551,7 +564,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
       )}
 
       {/* Meme picker panel */}
-      {memeOpen && (
+      {!isLap && memeOpen && (
         <div className="mt-2 rounded-xl border bg-background p-2 shadow-sm">
           {gifEnabled && (
             <div className="mb-2 flex gap-1 rounded-lg bg-muted/50 p-0.5 text-xs">
@@ -677,7 +690,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
             onChange={e => { ingestImageFile(e.target.files?.[0]); if (imgInputRef.current) imgInputRef.current.value = ""; }}
             data-testid="chat-image-input"
           />
-          <Button
+          {!isLap && <Button
             type="button"
             variant={memeOpen ? "default" : "outline"}
             size="icon"
@@ -688,7 +701,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
             data-testid="chat-meme-toggle"
           >
             <Sticker className="w-4 h-4" />
-          </Button>
+          </Button>}
           <Button
             type="button"
             variant="outline"
@@ -701,7 +714,7 @@ export default function Chat({ portal = "c3" }: ChatProps) {
           >
             <ImageIcon className="w-4 h-4" />
           </Button>
-          <Button
+          {!isLap && <Button
             type="button"
             variant="outline"
             size="icon"
@@ -713,14 +726,14 @@ export default function Chat({ portal = "c3" }: ChatProps) {
             data-testid="chat-grabit-toggle"
           >
             <Target className="w-4 h-4" />
-          </Button>
+          </Button>}
           <Input
             ref={inputRef}
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onPaste={handlePaste}
-            placeholder={grabIt ? "🎯 Post a lead for grabs — first to claim calls it…" : "Message the team… (paste a screenshot too)"}
-            className={`flex-1 rounded-full px-4 ${grabIt ? "ring-2 ring-amber-400 border-amber-400" : ""}`}
+            placeholder={!isLap && grabIt ? "🎯 Post a lead for grabs — first to claim calls it…" : "Message the team… (paste a screenshot too)"}
+            className={`flex-1 rounded-full px-4 ${!isLap && grabIt ? "ring-2 ring-amber-400 border-amber-400" : ""}`}
             maxLength={1000}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             autoFocus

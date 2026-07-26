@@ -85,8 +85,13 @@ const emptyCreateFiles = (): CreateFileState => ({
 
 function validateLapFile(file: File): { title: string; description: string } | null {
   const extensionAllowed = /\.(pdf|png|jpe?g)$/i.test(file.name);
-  if (!LAP_ALLOWED_FILE_TYPES.has(file.type.toLowerCase()) && !(file.type === "" && extensionAllowed)) {
+  const mime = file.type.toLowerCase();
+  const genericMime = mime === "" || mime === "application/octet-stream";
+  if (!LAP_ALLOWED_FILE_TYPES.has(mime) && !(genericMime && extensionAllowed)) {
     return { title: "Unsupported file type", description: "Upload a PDF, PNG, or JPEG file." };
+  }
+  if (file.size <= 0) {
+    return { title: "File is empty", description: "Choose a file that contains document data." };
   }
   if (file.size > LAP_FILE_MAX_BYTES) {
     return { title: "File is too large", description: "LAP files must be 12 MB or smaller." };
@@ -588,6 +593,7 @@ export default function LapResults() {
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState<FormState>(() => emptyForm());
   const [createFiles, setCreateFiles] = useState<CreateFileState>(() => emptyCreateFiles());
+  const detailRef = useRef<HTMLDivElement>(null);
   const deferredSearch = useDeferredValue(search.trim());
   const [matchesResultRoute, resultRouteParams] = useRoute<{ resultId: string }>("/results/:resultId");
   const requestedResultId = matchesResultRoute ? Number(resultRouteParams?.resultId) : 0;
@@ -651,6 +657,16 @@ export default function LapResults() {
     if (selectedId != null && results.some((result) => result.id === selectedId)) return;
     setSelectedId(results[0]?.id ?? null);
   }, [matchesResultRoute, requestedResult, results, selectedId]);
+
+  useEffect(() => {
+    if (!matchesResultRoute || !hasValidRequestedResultId) return;
+    if (!window.matchMedia("(max-width: 1023px)").matches) return;
+    const timer = window.setTimeout(() => {
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      detailRef.current?.focus({ preventScroll: true });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [hasValidRequestedResultId, matchesResultRoute, requestedResultId]);
 
   const selected = matchesResultRoute
     ? requestedResult
@@ -872,8 +888,9 @@ export default function LapResults() {
           )}
         </Card>
 
-        <Card>
-          <CardContent className="p-5 sm:p-6">
+        <div ref={detailRef} tabIndex={-1} className="scroll-mt-16 outline-none">
+          <Card>
+            <CardContent className="p-5 sm:p-6">
             {matchesResultRoute && hasValidRequestedResultId && requestedResultQuery.isLoading ? (
               <div className="flex min-h-[560px] flex-col items-center justify-center text-center">
                 <RefreshCw className="h-7 w-7 animate-spin text-primary" />
@@ -909,8 +926,9 @@ export default function LapResults() {
                 </p>
               </div>
             )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <Dialog

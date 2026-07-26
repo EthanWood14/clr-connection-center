@@ -8,7 +8,15 @@ import { storage, getRawSqlite } from "./storage";
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const SA_COOKIE = "clr_sa_session";
 const MAIN_COOKIE = "clr_session";
-const CONSOLE_ACCESS_CODE = "WCL-SUPER-2026";
+const CONSOLE_ACCESS_CODE = process.env.SA_CONSOLE_ACCESS_CODE?.trim() ?? "";
+
+function hasValidConsoleAccessCode(value: unknown): boolean {
+  if (!CONSOLE_ACCESS_CODE) return false;
+  const supplied = Buffer.from(String(value ?? "").trim(), "utf8");
+  const configured = Buffer.from(CONSOLE_ACCESS_CODE, "utf8");
+  return supplied.length === configured.length
+    && crypto.timingSafeEqual(supplied, configured);
+}
 
 // Tables exposed in DB Viewer (read-only)
 const ALLOWED_TABLES = new Set([
@@ -62,7 +70,11 @@ function requireSaAuth(req: Request, res: Response, next: NextFunction) {
     }
     // Re-verify super_admin flag on each request
     const user = storage.getUserById(session.userId) as any;
-    if (!user || !(user.superAdmin ?? user.super_admin)) {
+    if (
+      !user
+      || !(user.isActive ?? user.is_active)
+      || !(user.superAdmin ?? user.super_admin)
+    ) {
       return res.status(403).json({ error: "Forbidden" });
     }
     (req as any).sa_session = session;
@@ -99,12 +111,12 @@ export function registerSaConsole(app: Express) {
       bumpSaRate(ip);
       return res.status(401).json({ error: "Access denied" });
     }
-    if (String(accessCode).trim() !== CONSOLE_ACCESS_CODE) {
+    if (!hasValidConsoleAccessCode(accessCode)) {
       bumpSaRate(ip);
       return res.status(401).json({ error: "Access denied" });
     }
     const user = storage.getUserByEmail(String(email).trim()) as any;
-    if (!user || !user.password_hash) {
+    if (!user || !(user.isActive ?? user.is_active) || !user.password_hash) {
       bumpSaRate(ip);
       return res.status(401).json({ error: "Access denied" });
     }

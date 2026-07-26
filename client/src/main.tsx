@@ -1,6 +1,8 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/error-boundary";
+import { APP_VERSION } from "@shared/version";
+import { applyProductMetadata, detectProductPortal } from "./lib/product-metadata";
 import "./index.css";
 
 // Normalize query strings inside the hash (e.g. "#/reset-password?token=abc")
@@ -18,6 +20,26 @@ import "./index.css";
 
 if (!window.location.hash) {
   window.location.hash = "#/";
+}
+
+applyProductMetadata(detectProductPortal(), { updateTitle: true });
+const syncProductMetadata = () => {
+  applyProductMetadata(detectProductPortal(), { updateTitle: true });
+};
+window.addEventListener("hashchange", syncProductMetadata);
+window.addEventListener("popstate", syncProductMetadata);
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    const release = encodeURIComponent(APP_VERSION);
+    navigator.serviceWorker.register(`/sw.js?v=${release}`, {
+      scope: "/",
+      updateViaCache: "none",
+    }).then((registration) => {
+      window.dispatchEvent(new Event("wcl:service-worker-ready"));
+      void registration.update().catch(() => {});
+    }).catch(() => {});
+  });
 }
 
 createRoot(document.getElementById("root")!).render(

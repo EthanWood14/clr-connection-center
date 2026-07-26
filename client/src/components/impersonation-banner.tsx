@@ -4,7 +4,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 
-export function ImpersonationBanner() {
+export function ImpersonationBanner({ returnLabel = "Exit to SA Console" }: { returnLabel?: string }) {
   const { user } = useAuth();
   const { data: org } = useQuery<{ id: number; name: string; companyName: string }>({
     queryKey: ["/api/org/current"],
@@ -41,7 +41,7 @@ export function ImpersonationBanner() {
         onClick={exitImpersonation}
         data-testid="button-exit-impersonation"
       >
-        <X className="w-3 h-3 mr-1" /> Exit to SA Console
+        <X className="w-3 h-3 mr-1" /> {returnLabel}
       </Button>
     </div>
   );

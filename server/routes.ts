@@ -70,18 +70,42 @@ function signPayload(payload: object): string {
   return JSON.stringify(payload);
 }
 
-// Auth middleware — reads signed cookie and attaches user to req
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+function freshSessionFromSignedCookie(req: Request): any | null {
   const raw = (req as any).signedCookies?.[COOKIE_NAME];
-  if (!raw) return res.status(401).json({ error: "Unauthorized" });
+  if (!raw) return null;
   try {
     const session = JSON.parse(raw);
-    if (!session?.userId) return res.status(401).json({ error: "Unauthorized" });
-    (req as any).session_user = session;
-    next();
+    const userId = Number(session?.userId);
+    if (!Number.isInteger(userId) || userId <= 0) return null;
+    const user = storage.getUserById(userId) as any;
+    if (!user || !(user.isActive ?? user.is_active)) return null;
+
+    // Authorization comes from the database on every request. The signed
+    // cookie identifies the session, but must not preserve a revoked role,
+    // super-admin grant, organization, or deactivated account for seven days.
+    const superAdmin = !!(user.superAdmin ?? user.super_admin);
+    const userOrgId = Number(user.orgId ?? user.org_id ?? 1) || 1;
+    const isImpersonating = !!(superAdmin && session.isImpersonating && session.orgId);
+    const orgId = isImpersonating ? (Number(session.orgId) || userOrgId) : userOrgId;
+    return {
+      ...session,
+      userId,
+      role: user.role,
+      orgId,
+      superAdmin,
+      isImpersonating,
+    };
   } catch {
-    return res.status(401).json({ error: "Unauthorized" });
+    return null;
   }
+}
+
+// Auth middleware — validates the signed cookie against the current DB user.
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const session = freshSessionFromSignedCookie(req);
+  if (!session) return res.status(401).json({ error: "Unauthorized" });
+  (req as any).session_user = session;
+  next();
 }
 
 // Helper: get current reporting period.
@@ -1789,12 +1813,14 @@ function notifyNmlsAssignment(assigneeId: number, lo: any) {
     type: "nmls_check",
     title: "NMLS License Check Due",
     message: `Please verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) is still active in all licensed states. Open the NMLS Tracker to confirm.`,
+    portal: "c3",
     isRead: false,
   });
   sendPushToUser(assigneeId, {
     title: "NMLS License Check Due",
     body: `Verify ${lo.fullName}'s NMLS license (${lo.nmlsId ?? "no NMLS"}) — tap to open NMLS Tracker.`,
-    url: "/nmls-checks",
+    url: "/#/nmls-checks",
+    portal: "c3",
   }).catch(() => {});
 }
 
@@ -1834,6 +1860,7 @@ function runNmlsEscalations() {
     storage.createNotification({
       userId: null as any,
       type: "nmls_escalation",
+      portal: "c3",
       title: "NMLS Check Overdue ⚠️",
       message: `${lo.fullName}'s NMLS license check has not been confirmed in ${schedule.escalation_days} days. Open the NMLS Tracker to verify it now.`,
       isRead: false,
@@ -1847,7 +1874,8 @@ function runNmlsEscalations() {
       sendPushToUsers(recipients, {
         title: "NMLS Check Overdue",
         body: `${lo.fullName}'s NMLS license check is ${schedule.escalation_days}+ days overdue — tap to verify.`,
-        url: "/nmls-checks",
+        url: "/#/nmls-checks",
+        portal: "c3",
       }).catch(() => {});
     } catch {}
   }
@@ -1945,6 +1973,7 @@ function nagMissedAppointments() {
     storage.createNotification({
       userId: r.assistantId,
       type: "missed_appointment",
+      portal: "c3",
       title: `⚠️ ${r.n} missed appointment${plural}`,
       message: `You have ${r.n} appointment${plural} past the scheduled time (oldest: ${r.oldest}). Open Upcoming Appointments and mark each as transferred, rescheduled, or fell through — this reminder repeats until they're handled.`,
       isRead: false,
@@ -1953,6 +1982,7 @@ function nagMissedAppointments() {
       title: `${r.n} missed appointment${plural} need attention`,
       body: "Mark them transferred, rescheduled, or fell through — tap to open.",
       url: "/#/appointments",
+      portal: "c3",
     }).catch(() => {});
   }
   if (rows.length) console.log(`[missed-appts] nagged ${rows.length} CLR(s)`);
@@ -2264,6 +2294,7 @@ async function verifyLoNmls(loId: number): Promise<{ ok: boolean; status: string
       storage.createNotification({
         userId: null as any,
         type: "license_alert",
+        portal: "c3",
         title: `NMLS Alert: ${lo.fullName} is ${result.status}`,
         message: `${lo.fullName}'s NMLS license is now ${result.status}. Verify at nmlsconsumeraccess.org.`,
         isRead: false,
@@ -2310,6 +2341,7 @@ cron.schedule("0 9 */3 * *", () => {
       storage.createNotification({
         userId: null as any,
         type: "announcement",
+        portal: "c3",
         title: `⚠️ Incomplete LO Profile: ${lo.fullName}`,
         message: `${lo.fullName} is missing required info: ${missingStr}. Please update their profile in LO Management.`,
         isRead: false,
@@ -2670,7 +2702,8 @@ cron.schedule("*/5 * * * *", async () => {
         pushSummary = await sendPushToUser(r.assistant_id, {
           title: "⏰ Appointment in 30 minutes",
           body: `${borrower} — ${loName}`,
-          url: "/appointments",
+          url: "/#/appointments",
+          portal: "c3",
         });
       } catch (e: any) {
         console.error(`[appt-30m] push failed outcome=${r.id}:`, e?.message ?? e);
@@ -2735,7 +2768,8 @@ cron.schedule("* * * * *", async () => {
         pushSummary = await sendPushToUser(r.assistant_id, {
           title: "⏰ Appointment in 2 minutes",
           body: `${borrower} — ${loName} — starting soon`,
-          url: "/appointments",
+          url: "/#/appointments",
+          portal: "c3",
         });
       } catch (e: any) {
         console.error(`[appt-2m] push failed outcome=${r.id}:`, e?.message ?? e);
@@ -3613,20 +3647,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Per-request org context (AsyncLocalStorage): scopes all storage queries.
   // Super-admin and SA console routes bypass scope (they intentionally cross orgs).
   app.use((req: Request, res: Response, next: NextFunction) => {
-    let orgId = 1;
-    let superAdmin = false;
-    try {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (raw) {
-        const session = JSON.parse(raw);
-        orgId = Number(session?.orgId ?? 1) || 1;
-        superAdmin = !!session?.superAdmin;
-      }
-    } catch {}
+    const session = freshSessionFromSignedCookie(req);
+    const orgId = Number(session?.orgId ?? 1) || 1;
+    const superAdmin = !!session?.superAdmin;
+    if (session) (req as any).session_user = session;
     const path = req.path || "";
-    const bypassScope = path.startsWith("/api/super-admin")
+    const bypassScope = superAdmin && (
+      path.startsWith("/api/super-admin")
       || path.startsWith("/api/sa/")
-      || path.startsWith("/__sa/");
+      || path.startsWith("/__sa/")
+    );
     runWithOrg({ orgId, superAdmin, bypassScope }, () => next());
   });
 
@@ -3651,18 +3681,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!mutating) return next();
     // Allowed auth routes even in demo mode
     if (req.path === "/auth/login" || req.path === "/auth/logout") return next();
-    try {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (!raw) return next();
-      const session = JSON.parse(raw);
-      // Super-admins are never demo-locked, even if impersonating a demo org.
-      if (session?.superAdmin) return next();
-      const orgId = Number(session?.orgId ?? 0);
-      if (orgId && isDemoOrg(orgId)) {
-        return res.status(403).json({ error: "Demo mode is read-only. Sign up for full access." });
-      }
-    } catch {
-      // bad cookie → let downstream auth handle it
+    const session = (req as any).session_user ?? freshSessionFromSignedCookie(req);
+    if (!session) return next();
+    // Super-admin status and organization were re-derived from the database by
+    // the org-context middleware above; never authorize from the stale cookie.
+    if (session.superAdmin) return next();
+    const orgId = Number(session.orgId ?? 0);
+    if (orgId && isDemoOrg(orgId)) {
+      return res.status(403).json({ error: "Demo mode is read-only. Sign up for full access." });
     }
     next();
   });
@@ -3679,7 +3705,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     } catch {
       dbOk = false;
     }
-    res.json({ status: dbOk ? "ok" : "degraded", uptime: getProcessUptimeSec(), db: dbOk });
+    res.json({ ok: dbOk, status: dbOk ? "ok" : "degraded", version: APP_VERSION, uptime: getProcessUptimeSec(), db: dbOk });
   });
 
   // ── Public status page + API (no auth) ────────────────────────────────────
@@ -3804,22 +3830,26 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
   });
 
+  function hasValidBootstrapToken(req: any): boolean {
+    const bootstrap = req.headers["x-bootstrap-token"];
+    return typeof bootstrap === "string"
+      && !!process.env.BOOTSTRAP_TOKEN
+      && bootstrap === process.env.BOOTSTRAP_TOKEN;
+  }
+
+  function hasFreshAdminSession(req: any): boolean {
+    const session = freshSessionFromSignedCookie(req);
+    return !!(session && (session.role === "admin" || session.superAdmin));
+  }
+
   // Auth: either authenticated admin OR a request bearing the Railway project ID
   // in X-Bootstrap-Token (so the import can be triggered without a session).
   app.post("/api/admin/import-ethan-outcomes", async (req: any, res: any) => {
-    const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
-    if (!isBootstrap) {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (!raw) return res.status(401).json({ error: "Unauthorized" });
-      try {
-        const session = JSON.parse(raw);
-        const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
-        if (!me || (me.role !== "admin" && !me.superAdmin)) {
-          return res.status(403).json({ error: "Admin only" });
-        }
-      } catch {
-        return res.status(401).json({ error: "Unauthorized" });
+    if (!hasValidBootstrapToken(req)) {
+      const session = freshSessionFromSignedCookie(req);
+      if (!session) return res.status(401).json({ error: "Unauthorized" });
+      if (session.role !== "admin" && !session.superAdmin) {
+        return res.status(403).json({ error: "Admin only" });
       }
     }
     try {
@@ -3902,19 +3932,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Verify Ethan's outcome count ─────────────────────────────────────────
   app.get("/api/admin/ethan-outcomes-count", (req: any, res: any) => {
-    const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
-    if (!isBootstrap) {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (!raw) return res.status(401).json({ error: "Unauthorized" });
-      try {
-        const session = JSON.parse(raw);
-        const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
-        if (!me || (me.role !== "admin" && !me.superAdmin)) {
-          return res.status(403).json({ error: "Admin only" });
-        }
-      } catch {
-        return res.status(401).json({ error: "Unauthorized" });
+    if (!hasValidBootstrapToken(req)) {
+      const session = freshSessionFromSignedCookie(req);
+      if (!session) return res.status(401).json({ error: "Unauthorized" });
+      if (session.role !== "admin" && !session.superAdmin) {
+        return res.status(403).json({ error: "Admin only" });
       }
     }
     const sqlite = (storageExtra as any).getRawSqlite();
@@ -3930,15 +3952,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // directory, etc.) and to clean up archived/inactive rows that don't have
   // historical outcomes/assignments tied to them.
   function isBootstrapOrAdmin(req: any): boolean {
-    const bootstrap = req.headers["x-bootstrap-token"];
-    if (typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN)) return true;
-    try {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (!raw) return false;
-      const session = JSON.parse(raw);
-      const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
-      return !!(me && (me.role === "admin" || me.superAdmin));
-    } catch { return false; }
+    return hasValidBootstrapToken(req) || hasFreshAdminSession(req);
   }
 
   app.get("/api/admin/lo-diagnostic", (req: any, res: any) => {
@@ -4063,14 +4077,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── One-time import v2: Ryan + Randy outcomes ────────────────────────────
   app.post("/api/admin/run-import-v2", async (req: any, res: any) => {
-    const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
-    if (!isBootstrap) {
-      const sess = req.session_user;
-      const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
-      if (!me || (me.role !== "admin" && !me.superAdmin)) {
-        return res.status(403).json({ error: "Admin only" });
-      }
+    if (!isBootstrapOrAdmin(req)) {
+      return res.status(403).json({ error: "Admin only" });
     }
 
     try {
@@ -4304,25 +4312,65 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ ok: true });
   });
 
+  function requestedPushPortal(value: unknown, res: Response): CommunicationPortal | null {
+    const portal = value == null || value === "" ? "c3" : String(value);
+    if (portal !== "c3" && portal !== "lap") {
+      res.status(400).json({ error: "portal must be c3 or lap" });
+      return null;
+    }
+    return portal;
+  }
+
+  function scopedPushTarget(req: any, res: Response, value: unknown): any | null {
+    const targetId = Number(value);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      res.status(400).json({ error: "A valid target user is required" });
+      return null;
+    }
+    const target = storage.getUserById(targetId) as any;
+    const callerOrgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const targetOrgId = Number(target?.orgId ?? target?.org_id ?? 0);
+    if (!target || !(target.isActive ?? target.is_active) || targetOrgId !== callerOrgId) {
+      res.status(404).json({ error: "Target user not found in your organization" });
+      return null;
+    }
+    return target;
+  }
+
+  function safePushHashUrl(value: unknown, portal: CommunicationPortal, fallback: string): string | null {
+    const candidate = String(value ?? fallback).trim();
+    if (!/^\/#\/[A-Za-z0-9/_?=&%+.,:@~-]*$/.test(candidate)) return null;
+    const lapRoute = candidate === "/#/lap"
+      || candidate.startsWith("/#/lap/")
+      || candidate.startsWith("/#/lap?");
+    if ((portal === "lap") !== lapRoute) return null;
+    return candidate;
+  }
+
   // Admin diagnostic: shows total subscription count, per-user counts, and
   // whether VAPID is initialized. Useful when troubleshooting "why isn't push
   // firing" — if push.sent is always 0, this tells you whether the issue is
   // an empty subscription table or a delivery failure.
   app.get("/api/push/diagnostics", requireAuth, (req: any, res) => {
-    const me = req.session_user?.userId;
-    const meUser = me ? (storage.getUserById(me) as any) : null;
-    if (!me || meUser?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!requireAdminSession(req, res)) return;
     try {
       const sqlite = storageExtra.getRawSqlite();
-      const total = (sqlite.prepare(`SELECT COUNT(*) AS c FROM push_subscriptions`).get() as any).c as number;
+      const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+      const total = (sqlite.prepare(`
+        SELECT COUNT(*) AS c
+        FROM push_subscriptions ps
+        INNER JOIN users u ON u.id = ps.user_id AND u.org_id = ps.org_id
+        WHERE ps.org_id = ? AND u.org_id = ?
+      `).get(orgId, orgId) as any).c as number;
       const perUser = sqlite.prepare(`
         SELECT ps.user_id AS userId, u.name, u.email, COUNT(*) AS subscriptions
           FROM push_subscriptions ps
-          LEFT JOIN users u ON u.id = ps.user_id
+          INNER JOIN users u ON u.id = ps.user_id AND u.org_id = ps.org_id
+         WHERE ps.org_id = ? AND u.org_id = ?
          GROUP BY ps.user_id
          ORDER BY subscriptions DESC, u.name ASC
-      `).all();
-      const usersTotal = (sqlite.prepare(`SELECT COUNT(*) AS c FROM users`).get() as any).c as number;
+      `).all(orgId, orgId);
+      const usersTotal = (sqlite.prepare(`SELECT COUNT(*) AS c FROM users WHERE org_id = ?`).get(orgId) as any).c as number;
       res.json({
         vapidInitialized: !!getVapidPublicKey(),
         totalSubscriptions: total,
@@ -4342,33 +4390,53 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/push/test-appointment", requireAuth, async (req: any, res) => {
     const me = req.session_user?.userId;
     if (!me) return res.status(401).json({ error: "Unauthorized" });
-    const meUser = storage.getUserById(me) as any;
-    if (meUser?.role !== "admin") return res.status(403).json({ error: "Admin only" });
-    const targetId = Number(req.body?.userId ?? me);
-    const borrower = (req.body?.borrower as string) || "Sample Borrower";
-    const loName = (req.body?.loName as string) || "Sample LO";
-    const result = await sendPushToUser(targetId, {
+    if (!requireAdminSession(req, res)) return;
+    const target = scopedPushTarget(req, res, req.body?.userId ?? me);
+    if (!target) return;
+    const portal = requestedPushPortal(req.body?.portal, res);
+    if (!portal) return;
+    const url = safePushHashUrl(
+      req.body?.url,
+      portal,
+      portal === "lap" ? "/#/lap" : "/#/appointments",
+    );
+    if (!url) return res.status(400).json({ error: "url must be an internal hash route for the selected portal" });
+    const borrower = typeof req.body?.borrower === "string"
+      ? req.body.borrower.trim().slice(0, 160) || "Sample Borrower"
+      : "Sample Borrower";
+    const loName = typeof req.body?.loName === "string"
+      ? req.body.loName.trim().slice(0, 160) || "Sample LO"
+      : "Sample LO";
+    const result = await sendPushToUser(target.id, {
       title: "⏰ Appointment in 30 minutes",
       body: `${borrower} — ${loName}`,
-      url: "/appointments",
+      url,
+      portal,
     });
-    console.log(`[push-test] sample appointment reminder fired to user=${targetId} sent=${result.sent} failed=${result.failed}`);
-    res.json({ targetUserId: targetId, ...result });
+    console.log(`[push-test] sample appointment reminder fired to user=${target.id} portal=${portal} sent=${result.sent} failed=${result.failed}`);
+    res.json({ targetUserId: target.id, portal, ...result });
   });
 
   // Internal-ish helper: admins can send a push to any user; users can self-test
   app.post("/api/push/send", requireAuth, async (req: any, res) => {
     const me = req.session_user?.userId;
     if (!me) return res.status(401).json({ error: "Unauthorized" });
-    const meUser = storage.getUserById(me) as any;
     const targetId = Number(req.body?.userId ?? me);
-    if (targetId !== me && meUser?.role !== "admin") {
-      return res.status(403).json({ error: "Forbidden" });
-    }
-    const { title, body, url } = req.body ?? {};
+    if (targetId !== me && !requireAdminSession(req, res)) return;
+    const target = scopedPushTarget(req, res, targetId);
+    if (!target) return;
+    const portal = requestedPushPortal(req.body?.portal, res);
+    if (!portal) return;
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
     if (!title || !body) return res.status(400).json({ error: "title and body required" });
-    const result = await sendPushToUser(targetId, { title, body, url });
-    res.json(result);
+    if (title.length > 160 || body.length > 1000) {
+      return res.status(400).json({ error: "title must be at most 160 characters and body at most 1000 characters" });
+    }
+    const url = safePushHashUrl(req.body?.url, portal, portal === "lap" ? "/#/lap" : "/#/");
+    if (!url) return res.status(400).json({ error: "url must be an internal hash route for the selected portal" });
+    const result = await sendPushToUser(target.id, { title, body, url, portal });
+    res.json({ targetUserId: target.id, portal, ...result });
   });
 
   // ── SMS (Twilio) ────────────────────────────────────────────────────────────
@@ -4603,6 +4671,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       audit({ action: "login_failed", entityType: "auth", entityLabel: trimmedEmail, details: JSON.stringify({ ip, reason: "no_user" }) });
       return res.status(401).json({ error: "Invalid email or password" });
     }
+    if (!(user.isActive ?? (user as any).is_active)) {
+      audit({ userId: user.id, userName: user.name, action: "login_failed", entityType: "auth", entityId: user.id, entityLabel: user.email, details: JSON.stringify({ ip, reason: "inactive" }) });
+      return res.status(403).json({ error: "This account is inactive. Contact an administrator." });
+    }
     if (!user.password_hash) return res.status(401).json({ error: "Account has no password set" });
     const valid = await bcrypt.compare(trimmedPassword, user.password_hash);
     if (!valid) {
@@ -4628,19 +4700,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!(u.isClr ?? u.is_clr), hasSeenIntro: !!(u.hasSeenIntro ?? u.has_seen_intro), mustChangePassword: !!(u.mustChangePassword ?? u.must_change_password), hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), superAdmin, orgId } });
   });
 
-  app.post("/api/auth/logout", (_req, res) => {
+  app.post("/api/auth/logout", (req: any, res) => {
+    // Unbind only this browser's endpoint. Other signed-in devices should keep
+    // receiving alerts, while a shared browser stops receiving the old user's.
+    const session = freshSessionFromSignedCookie(req);
+    const pushEndpoint = typeof req.body?.pushEndpoint === "string"
+      ? req.body.pushEndpoint.trim()
+      : "";
+    if (session && pushEndpoint && pushEndpoint.length <= 4096) {
+      try { removeSubscription(Number(session.userId), pushEndpoint); } catch {}
+    }
     res.clearCookie(COOKIE_NAME, { path: "/" });
     return res.json({ ok: true });
   });
 
   app.get("/api/auth/me", (req, res) => {
-    const raw = (req as any).signedCookies?.[COOKIE_NAME];
-    if (!raw) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const session = JSON.parse(raw);
-      if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
+      const session = freshSessionFromSignedCookie(req);
+      if (!session) return res.status(401).json({ error: "Not authenticated" });
       const user = storage.getUserById(session.userId);
-      if (!user) return res.status(401).json({ error: "User not found" });
+      if (!user || !(user.isActive ?? (user as any).is_active)) {
+        return res.status(401).json({ error: "User is inactive or no longer exists" });
+      }
       const u = user as any;
       // Allow impersonation: session.orgId overrides user.orgId if super admin
       const orgId = session.superAdmin && session.orgId ? Number(session.orgId) : Number(u.orgId ?? u.org_id ?? 1);
@@ -4822,17 +4903,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return res.json({ ok: true });
   });
 
-  app.post("/api/auth/change-password", async (req, res) => {
-    const raw = (req as any).signedCookies?.[COOKIE_NAME];
-    if (!raw) return res.status(401).json({ error: "Not authenticated" });
-    let userId: number;
-    try {
-      const session = JSON.parse(raw);
-      if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
-      userId = session.userId;
-    } catch {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+  app.post("/api/auth/change-password", requireAuth, async (req: any, res) => {
+    const userId = Number(req.session_user.userId);
 
     const { currentPassword, newPassword } = req.body ?? {};
     if (!currentPassword || !newPassword) {
@@ -4857,17 +4929,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Update own password (supports forced first-login change) ───────────────
-  app.put("/api/users/me/password", async (req, res) => {
-    const raw = (req as any).signedCookies?.[COOKIE_NAME];
-    if (!raw) return res.status(401).json({ error: "Not authenticated" });
-    let userId: number;
-    try {
-      const session = JSON.parse(raw);
-      if (!session?.userId) return res.status(401).json({ error: "Not authenticated" });
-      userId = session.userId;
-    } catch {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+  app.put("/api/users/me/password", requireAuth, async (req: any, res) => {
+    const userId = Number(req.session_user.userId);
 
     const { currentPassword, newPassword, confirmPassword, forced } = req.body ?? {};
     if (!newPassword || !confirmPassword) {
@@ -5018,6 +5081,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const user = (storage as any).getUserByResetToken(token) as any;
     if (!user || !user.reset_token_expiry || user.reset_token_expiry < Date.now()) {
       return res.status(400).send(failHtml("This welcome link is invalid or has expired. Use your temporary password to log in instead, or request a new welcome email from your admin."));
+    }
+    if (!(user.isActive ?? user.is_active)) {
+      return res.status(403).send(failHtml("This account is inactive. Contact your administrator before signing in."));
     }
     // Single-use: consume the token immediately
     try { (storage as any).clearResetToken(user.id); } catch {}
@@ -5358,19 +5424,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // X-Bootstrap-Token (same pattern as /api/admin/import-ethan-outcomes) so
   // bulk imports can be driven from automation without a browser session.
   app.post("/api/loan-officers/import", async (req: any, res) => {
-    const bootstrap = req.headers["x-bootstrap-token"];
-    const isBootstrap = typeof bootstrap === "string" && (!!process.env.BOOTSTRAP_TOKEN && bootstrap === process.env.BOOTSTRAP_TOKEN);
-    if (!isBootstrap) {
-      const raw = (req as any).signedCookies?.[COOKIE_NAME];
-      if (!raw) return res.status(401).json({ error: "Unauthorized" });
-      try {
-        const session = JSON.parse(raw);
-        const me = session?.userId ? (storage.getUserById(session.userId) as any) : null;
-        if (!me || (me.role !== "admin" && !me.superAdmin)) {
-          return res.status(403).json({ error: "Admin only" });
-        }
-      } catch {
-        return res.status(401).json({ error: "Unauthorized" });
+    if (!hasValidBootstrapToken(req)) {
+      const session = freshSessionFromSignedCookie(req);
+      if (!session) return res.status(401).json({ error: "Unauthorized" });
+      if (session.role !== "admin" && !session.superAdmin) {
+        return res.status(403).json({ error: "Admin only" });
       }
     }
     try {
@@ -5498,19 +5556,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Loan Officer Assistants (LOAs): name-only assistants under a parent LO ──
-  app.get("/api/loan-officer-assistants", (req, res) => {
-    const loId = req.query.loId ? parseInt(String(req.query.loId)) : undefined;
+  app.get("/api/loan-officer-assistants", requireAuth, (req, res) => {
+    const rawLoId = req.query.loId;
+    const loId = rawLoId == null || rawLoId === "" ? undefined : Number(rawLoId);
+    if (loId !== undefined && (!Number.isInteger(loId) || loId <= 0)) {
+      return res.status(400).json({ error: "loId must be a positive integer" });
+    }
     res.json(storageExtra.getLoanOfficerAssistants(loId));
   });
-  app.post("/api/loan-officer-assistants", (req, res) => {
-    const { loId, fullName } = req.body as { loId: number; fullName: string };
-    if (!loId || !fullName || !String(fullName).trim()) {
-      return res.status(400).json({ error: "loId and fullName are required" });
+  app.post("/api/loan-officer-assistants", requireAuth, (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const parsed = z.object({
+      loId: z.coerce.number().int().positive(),
+      fullName: z.string().trim().min(1).max(160),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "A valid loId and fullName are required" });
     }
-    res.json(storageExtra.createLoanOfficerAssistant({ loId: Number(loId), fullName: String(fullName).trim() }));
+    try {
+      res.json(storageExtra.createLoanOfficerAssistant(parsed.data));
+    } catch (e: any) {
+      const message = e?.message ?? "Could not create loan officer assistant";
+      res.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
   });
-  app.delete("/api/loan-officer-assistants/:id", (req, res) => {
-    storageExtra.deleteLoanOfficerAssistant(parseInt(req.params.id));
+  app.delete("/api/loan-officer-assistants/:id", requireAuth, (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "id must be a positive integer" });
+    }
+    if (!storageExtra.deleteLoanOfficerAssistant(id)) {
+      return res.status(404).json({ error: "Loan officer assistant not found" });
+    }
     res.json({ ok: true });
   });
 
@@ -8346,6 +8424,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     storage.createNotification({
       userId: null,
       type: "assignment_ready",
+      portal: "c3",
       title: "Daily Assignments Ready",
       message: `${topRanked.length} LOs have been ranked and assigned for ${date}.`,
       isRead: false,
@@ -8652,7 +8731,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const message = (detail ? detail + " — " : "") + "Keep the momentum going!";
     recentCelebrations.push({ id: ++celebSeq, orgId: clrOrg, title, message, createdAt: new Date().toISOString() });
     if (recentCelebrations.length > 100) recentCelebrations.splice(0, recentCelebrations.length - 100);
-    if (users.length) sendPushToUsers(users.map((u: any) => u.id), { title, body: message, url: "/#/leaderboard" }).catch(() => {});
+    if (users.length) {
+      sendPushToUsers(users.map((u: any) => u.id), {
+        title,
+        body: message,
+        url: "/#/leaderboard",
+        portal: "c3",
+      }).catch(() => {});
+    }
   }
 
   // Ephemeral celebration feed (org-scoped). Returns recent celebrations and the
@@ -9000,75 +9086,100 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Notifications ────────────────────────────────────────────────────────────
-  app.get("/api/notifications", (req: any, res) => {
+  function notificationPortalForRequest(req: any, res: Response): CommunicationPortal | null {
+    const raw = req.query?.portal;
+    if (raw == null || raw === "") return "c3";
+    if (raw === "c3" || raw === "lap") return raw;
+    res.status(400).json({ error: "portal must be c3 or lap" });
+    return null;
+  }
+
+  app.get("/api/notifications", requireAuth, (req: any, res) => {
     // Always scope to the logged-in user (personal + broadcasts). Never trust a
     // query param — otherwise everyone could read everyone else's notifications.
     const userId = req.session_user?.userId;
-    if (!userId) return res.json([]);
-    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    const portal = notificationPortalForRequest(req, res);
+    if (!portal) return;
     res.json(storage.getNotifications(userId, portal));
   });
 
-  app.get("/api/notifications/unread-count", (req: any, res) => {
+  app.get("/api/notifications/unread-count", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
-    if (!userId) return res.json({ count: 0 });
-    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    const portal = notificationPortalForRequest(req, res);
+    if (!portal) return;
     res.json({ count: storage.getUnreadCount(userId, portal) });
   });
 
-  app.post("/api/notifications", async (req: any, res) => {
+  app.post("/api/notifications", requireAuth, async (req: any, res) => {
     // Creating notifications / push for others is a manager/admin action —
     // otherwise any user could spam or phish arbitrary (incl. cross-org) users
     // through the trusted in-app + push channel.
-    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers/admins only" });
-    const body = req.body ?? {};
+    if (!requireManagerOrAdmin(req, res)) return;
+    const parsed = z.object({
+      userId: z.number().int().positive().nullable().optional(),
+      type: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+      title: z.string().trim().min(1).max(160),
+      message: z.string().trim().min(1).max(1000),
+      portal: z.enum(["c3", "lap"]).nullable().optional(),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid notification", details: parsed.error.flatten() });
+    }
+    const body = parsed.data;
+    const notificationPortal = body.portal === null ? null : body.portal ?? "c3";
     // A targeted notification must be for a user in the caller's own org.
     if (body.userId) {
       const target = storage.getUserById(Number(body.userId)) as any;
       const callerOrg = Number(req.session_user?.orgId ?? 1) || 1;
       const targetOrg = Number(target?.orgId ?? target?.org_id ?? 1) || 1;
-      if (!target || targetOrg !== callerOrg) return res.status(404).json({ error: "Target user not found in your organization" });
+      if (!target || !(target.isActive ?? target.is_active) || targetOrg !== callerOrg) {
+        return res.status(404).json({ error: "Target user not found in your organization" });
+      }
     }
     const notif = storage.createNotification({
       userId: body.userId ?? null,
+      orgId: Number(req.session_user?.orgId ?? 1) || 1,
       type: body.type,
       title: body.title,
       message: body.message,
-      portal: body.portal === "lap" || body.portal === "c3" ? body.portal : null,
+      portal: notificationPortal,
     } as any);
     // Mirror as push
     try {
-      const notificationPortal: CommunicationPortal | undefined = notif.portal === "lap" || notif.portal === "c3"
+      const pushPortal: CommunicationPortal | undefined = notif.portal === "lap" || notif.portal === "c3"
         ? notif.portal
         : undefined;
       const payload = {
         title: notif.title,
         body: notif.message,
-        url: notificationPortal === "lap" ? "/#/lap" : "/",
-        ...(notificationPortal ? { portal: notificationPortal } : {}),
+        url: pushPortal === "lap" ? "/#/lap" : "/#/",
+        ...(pushPortal ? { portal: pushPortal } : {}),
       };
       if (notif.userId) {
         sendPushToUser(notif.userId, payload).catch(() => {});
       } else {
         // Broadcast: send to all active users in the caller's org (getUsers is org-scoped)
-        const all = (storage.getUsers() as any[]).filter((u: any) => u.isActive);
+        const all = (storage.getUsers() as any[]).filter((u: any) => u.isActive ?? u.is_active);
         sendPushToUsers(all.map((u: any) => u.id), payload).catch(() => {});
       }
     } catch {}
     res.json(notif);
   });
 
-  app.patch("/api/notifications/:id/read", (req: any, res) => {
+  app.patch("/api/notifications/:id/read", requireAuth, (req: any, res) => {
     // Scope to the caller so a user can't flip another user's notification read.
-    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
-    storage.markNotificationRead(parseInt(req.params.id), Number(req.session_user?.userId), portal);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid notification id" });
+    const portal = notificationPortalForRequest(req, res);
+    if (!portal) return;
+    storage.markNotificationRead(id, Number(req.session_user?.userId), portal);
     res.json({ ok: true });
   });
 
-  app.post("/api/notifications/mark-all-read", (req: any, res) => {
+  app.post("/api/notifications/mark-all-read", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
-    if (!userId) return res.json({ ok: true });
-    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    const portal = notificationPortalForRequest(req, res);
+    if (!portal) return;
     storage.markAllNotificationsRead(userId, portal);
     res.json({ ok: true });
   });
@@ -10173,13 +10284,40 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Algorithm Settings ────────────────────────────────────────────────────────
-  app.get("/api/settings/algorithm", (req, res) => {
+  app.get("/api/settings/algorithm", requireAuth, (_req, res) => {
     res.json(storage.getAlgorithmSettings());
   });
 
-  app.patch("/api/settings/algorithm", (req, res) => {
-    const settings = storage.updateAlgorithmSettings(req.body);
-    audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "settings", entityId: settings.id, entityLabel: "Algorithm Settings", details: JSON.stringify(req.body) });
+  app.patch("/api/settings/algorithm", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const weight = z.number().finite().min(0).max(1).optional();
+    const parsed = z.object({
+      weightDaysSinceWorked: weight,
+      weightFrequency: weight,
+      weightAvailability: weight,
+      weightBoost: weight,
+      weightPriorityTier: weight,
+      weightRecentTransfers: weight,
+      maxLosPerAssistant: z.number().int().min(1).max(100).optional(),
+      roundRobinEnabled: z.boolean().optional(),
+      transferPreference: z.enum(["fewer", "more", "none"]).optional(),
+    }).strict().refine((data) => Object.keys(data).length > 0, {
+      message: "At least one setting is required",
+    }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid algorithm settings", details: parsed.error.flatten() });
+    }
+    const settings = storage.updateAlgorithmSettings(parsed.data as any);
+    const actor = storage.getUserById(req.session_user.userId) as any;
+    audit({
+      userId: actor?.id ?? req.session_user.userId,
+      userName: actor?.name ?? "Unknown",
+      action: "update",
+      entityType: "settings",
+      entityId: settings.id,
+      entityLabel: "Algorithm Settings",
+      details: JSON.stringify(parsed.data),
+    });
     res.json(settings);
   });
 
@@ -10189,8 +10327,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get(["/api/chat", "/api/lap/chat"], requireAuth, (req: any, res) => {
     const portal = communicationPortalForRequest(req);
     const orgId = communicationOrgId(req);
-    const limit = parseInt((req.query.limit as string) || "80");
-    const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
+    const requestedLimit = Number(req.query.limit ?? 80);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(200, Math.max(1, Math.trunc(requestedLimit)))
+      : 80;
+    const requestedBeforeId = Number(req.query.beforeId);
+    const beforeId = Number.isInteger(requestedBeforeId) && requestedBeforeId > 0
+      ? requestedBeforeId
+      : undefined;
     const messages = storageExtra.getChatMessages(limit, beforeId, portal, orgId).reverse();
     const myId = req.session_user?.userId;
     const ids = messages.map((m: any) => m.id);
@@ -10280,6 +10424,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // CORS, keeps the meme permanent) after allowlisting the host to prevent SSRF.
   app.post(["/api/chat/meme", "/api/lap/chat/meme"], requireAuth, async (req: any, res) => {
     const portal = communicationPortalForRequest(req);
+    if (portal === "lap") return res.status(404).json({ error: "Memes are only available in C3 chat." });
     const orgId = communicationOrgId(req);
     const comm = communicationContext(portal);
     const url = String(req.body?.url ?? "").trim();
@@ -10349,6 +10494,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Send a Giphy GIF as a chat image. Allowlisted to *.giphy.com to prevent SSRF.
   app.post(["/api/chat/gif", "/api/lap/chat/gif"], requireAuth, async (req: any, res) => {
     const portal = communicationPortalForRequest(req);
+    if (portal === "lap") return res.status(404).json({ error: "GIFs are only available in C3 chat." });
     const orgId = communicationOrgId(req);
     const comm = communicationContext(portal);
     const url = String(req.body?.url ?? "").trim();
@@ -10430,6 +10576,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!text && !imgData) return res.status(400).json({ error: "Message cannot be empty" });
     if (text.length > 1000) return res.status(400).json({ error: "Message too long (max 1000 chars)" });
     const grabIt = req.body?.grabIt === true || req.body?.grabIt === 1 || req.body?.grabIt === "1";
+    if (portal === "lap" && grabIt) {
+      return res.status(400).json({ error: "Grab It posts are only available in C3 chat." });
+    }
     const user = storage.getUserById(req.session_user!.userId) as any;
     const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime, grabIt, portal, orgId);
 
@@ -10506,6 +10655,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id, 10);
     const userId = Number(req.session_user?.userId);
     const portal = communicationPortalForRequest(req);
+    if (portal === "lap") return res.status(404).json({ error: "Grab It is only available in C3 chat." });
     const orgId = communicationOrgId(req);
     const comm = communicationContext(portal);
     const me = storage.getUserById(userId) as any;
@@ -10558,6 +10708,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId);
     const isAdmin = req.session_user?.role === "admin";
     const portal = communicationPortalForRequest(req);
+    if (portal === "lap") return res.status(404).json({ error: "Grab It is only available in C3 chat." });
     const orgId = communicationOrgId(req);
     const { released, reason } = storageExtra.releaseChatMessage(id, userId, isAdmin, portal, orgId);
     if (!released) {
@@ -11600,16 +11751,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
   });
 
-  app.get("/api/audit-logs", (req, res) => {
-    const entityType = req.query.entityType as string | undefined;
-    const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
-    const limitParam = req.query.limit as string | undefined;
-    const limit = limitParam === "all" || limitParam === undefined ? 100 : parseInt(limitParam);
+  app.get("/api/audit-logs", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const rawEntityType = typeof req.query.entityType === "string" ? req.query.entityType.trim() : "";
+    if (rawEntityType && rawEntityType !== "all" && !/^[A-Za-z0-9_-]{1,64}$/.test(rawEntityType)) {
+      return res.status(400).json({ error: "Invalid entityType" });
+    }
+    const userId = req.query.userId == null || req.query.userId === ""
+      ? undefined
+      : Number(req.query.userId);
+    if (userId !== undefined && (!Number.isInteger(userId) || userId <= 0)) {
+      return res.status(400).json({ error: "userId must be a positive integer" });
+    }
+    const rawLimit = req.query.limit === "all" ? 500 : Number(req.query.limit ?? 100);
+    const limit = Number.isFinite(rawLimit) ? Math.min(500, Math.max(1, Math.trunc(rawLimit))) : 100;
+    const allowedUserIds = new Set((storage.getUsers() as any[]).map((u: any) => Number(u.id)));
+    if (userId !== undefined && !allowedUserIds.has(userId)) {
+      return res.status(404).json({ error: "User not found in your organization" });
+    }
     const logs = storage.getAuditLogs({
-      entityType: entityType && entityType !== "all" ? entityType : undefined,
+      entityType: rawEntityType && rawEntityType !== "all" ? rawEntityType : undefined,
       userId,
-      limit: isNaN(limit) ? 100 : limit,
-    });
+      limit,
+    }).filter((log: any) => log.userId != null && allowedUserIds.has(Number(log.userId)));
     res.json(logs);
   });
 
@@ -11750,7 +11914,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return null;
     }
     const user = storage.getUserById(userId) as any;
-    if (!user) {
+    if (!user || !(user.isActive ?? user.is_active)) {
       res.status(401).json({ error: "Unauthorized" });
       return null;
     }
@@ -12276,6 +12440,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           storage.createNotification({
             userId: matched.id,
             type: "announcement",
+            portal: "c3",
             title: "Bonzo stage change",
             message: `Bonzo: ${prospectName} moved to ${stageName}`,
             isRead: false,
@@ -12660,7 +12825,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Email Settings ────────────────────────────────────────────────────────────
-  app.get("/api/settings/email", requireAuth, (_req, res) => {
+  app.get("/api/settings/email", requireAuth, (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     const s = storageExtra.getEmailSettings() as any;
     // Mask the API key
     const key = s.resend_api_key || "";
@@ -12708,6 +12874,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   app.post("/api/settings/email/test", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     // Send a real test email to the logged-in user
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -13111,6 +13278,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     storage.createNotification({
       userId: null,
       type: "assignment_ready",
+      portal: "c3",
       title: "Assignments Regenerated (Admin Override)",
       message: `${user.name} regenerated today's assignments. Reason: ${reason}`,
       isRead: false,
@@ -13123,101 +13291,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(storageExtra.getAssignmentOverrides());
   });
 
-  // ── Hot-patch: pull latest dist from GitHub and overwrite local static files ──
-  app.post("/api/admin/hotpatch", async (req, res) => {
-    const session = (req as any).signedCookies?.[COOKIE_NAME];
-    let sessionData: any = null;
-    try { sessionData = JSON.parse(session); } catch {}
-    if (!sessionData?.userId) return res.status(401).json({ error: "Unauthorized" });
-    const callerUser = storage.getUserById(sessionData.userId) as any;
-    if (!callerUser || callerUser.role !== "admin") return res.status(403).json({ error: "Admin only" });
-
-    const fs = await import("fs");
-    const path = await import("path");
-    const https = await import("https");
-    const distPath = path.resolve(__dirname, "public");
-
-    // Accept optional GitHub token for private repo access
-    const ghToken: string | undefined = req.body?.token;
-
-    function fetchRaw(url: string): Promise<Buffer> {
-      return new Promise((resolve, reject) => {
-        const headers: Record<string, string> = { "User-Agent": "clr-hotpatch" };
-        if (ghToken) headers["Authorization"] = `token ${ghToken}`;
-        if (ghToken) headers["Accept"] = "application/vnd.github.raw";
-        const doReq = (rawUrl: string) => https.get(rawUrl, { headers }, (r) => {
-          if (r.statusCode === 302 || r.statusCode === 301) { doReq(r.headers.location!); return; }
-          const chunks: Buffer[] = [];
-          r.on("data", (c: Buffer) => chunks.push(c));
-          r.on("end", () => resolve(Buffer.concat(chunks)));
-          r.on("error", reject);
-        }).on("error", reject);
-        doReq(url);
-      });
-    }
-
-    const REPO = "EthanWood14/clr-connection-center";
-    const BRANCH = "main";
-    // Use GitHub API if token provided (supports private repos), else raw.githubusercontent.com
-    const RAW = ghToken
-      ? `https://git-agent-proxy.perplexity.ai/api/v3/repos/${REPO}/contents`
-      : `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
-
-    function fileUrl(filePath: string): string {
-      if (ghToken) return `${RAW}/${filePath}?ref=${BRANCH}`;
-      return `${RAW}/${filePath}`;
-    }
-
-    try {
-      // Fetch index.html first to discover asset filenames
-      const indexBuf = await fetchRaw(fileUrl("dist/public/index.html"));
-      const indexHtml = indexBuf.toString("utf8");
-
-      // Parse asset filenames from index.html
-      const jsMatch = indexHtml.match(/assets\/(index-[^"']+\.js)/);
-      const cssMatch = indexHtml.match(/assets\/(index-[^"']+\.css)/);
-      if (!jsMatch || !cssMatch) return res.status(500).json({ error: "Could not parse asset filenames from index.html. Content starts: " + indexHtml.slice(0, 200) });
-
-      const jsFile = jsMatch[1];
-      const cssFile = cssMatch[1];
-
-      // Download assets in parallel
-      const [jsBuf, cssBuf] = await Promise.all([
-        fetchRaw(fileUrl(`dist/public/assets/${jsFile}`)),
-        fetchRaw(fileUrl(`dist/public/assets/${cssFile}`)),
-      ]);
-
-      // Wipe old assets and write new ones
-      const assetsDir = path.join(distPath, "assets");
-      if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-      for (const fname of fs.readdirSync(assetsDir)) {
-        if (fname.startsWith("index-")) fs.unlinkSync(path.join(assetsDir, fname));
-      }
-      fs.writeFileSync(path.join(assetsDir, jsFile), jsBuf);
-      fs.writeFileSync(path.join(assetsDir, cssFile), cssBuf);
-      fs.writeFileSync(path.join(distPath, "index.html"), indexHtml, "utf8");
-
-      // Also fetch manifest.json, sw.js, favicon-192.png
-      const extras: Array<[string, string]> = [
-        ["dist/public/manifest.json", "manifest.json"],
-        ["dist/public/sw.js", "sw.js"],
-        ["dist/public/favicon-192.png", "favicon-192.png"],
-      ];
-      const extraResults: string[] = [];
-      for (const [src, dest] of extras) {
-        try {
-          const buf = await fetchRaw(fileUrl(src));
-          fs.writeFileSync(path.join(distPath, dest), buf);
-          extraResults.push(dest);
-        } catch (ex: any) {
-          extraResults.push(`${dest}:SKIP(${ex.message})`);
-        }
-      }
-
-      res.json({ ok: true, js: jsFile, css: cssFile, extras: extraResults });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+  // Legacy hot-patch endpoint is intentionally disabled; releases use the
+  // normal verified deployment pipeline.
+  app.post("/api/admin/hotpatch", requireAuth, (_req, res) => {
+    res.status(410).json({
+      error: "Hot-patching is disabled. Deploy through the verified release pipeline.",
+    });
   });
 
     // ── EOD Reports ───────────────────────────────────────────────────────────────────
@@ -16431,10 +16510,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   function requireSuperAdmin(req: any, res: any, next: any) {
     const session = req.session_user;
-    if (session?.superAdmin) return next();
-    // Fallback: re-check DB so newly-granted super_admin takes effect without re-login
     const u = storage.getUserById(session?.userId) as any;
-    if (u && !!(u.superAdmin ?? u.super_admin)) {
+    // Never trust the seven-day cookie for an authorization grant. Re-check
+    // the active database row so revocation takes effect immediately.
+    if (u && (u.isActive ?? u.is_active) && !!(u.superAdmin ?? u.super_admin)) {
       session.superAdmin = true;
       return next();
     }
@@ -16844,67 +16923,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     sendCsv(res, `daily_call_logs_${from}_to_${to}.csv`, csv);
   });
 
-  // ── One-time auto-restore of Bonzo passwords on boot ───────────────────────
-  // The user asked us to restore the corrupted Bonzo passwords from the master
-  // sheet. The HTTP endpoint requires an admin session, which we can't produce
-  // from the agent context, so this fires automatically once on next deploy.
-  // Idempotent: writes an audit-log marker after success and skips on subsequent
-  // boots.
-  setTimeout(() => {
-    try {
-      const MARKER_ACTION = "bonzo_password_autorestore_v1";
-      const sqlite = storageExtra.getSqlite();
-      const existing = sqlite.prepare(
-        `SELECT 1 FROM audit_logs WHERE action = ? LIMIT 1`
-      ).get(MARKER_ACTION) as any;
-      if (existing) {
-        console.log("[bonzo-autorestore] marker present — skipping");
-        return;
-      }
-      const RESTORE_MAP: Record<string, string> = {
-        "bneessen@westcapitallending.com":   "ChBn100215#N",
-        "ktabrizi@westcapitallending.com":   "Jonah#525252",
-        "smurphy@westcapitallending.com":    "Operator1991!!",
-        "dbaker@westcapitallending.com":     "$Herbalife247",
-        "imilitello@westcapitallending.com": "December#417",
-        "cfairon@westcapitallending.com":    "Bheart2026$$!!",
-        "jmcgowan@westcapitallending.com":   "Bonzo#051996",
-        "dbullen@westcapitallending.com":    "#Everett12!!",
-        "gdawson@westcapitallending.com":    "LAChargersKings$1",
-        "asalazar@westcapitallending.com":   "Wesleycap23$",
-        "sripperger@westcapitallending.com": "Ranierbeer14!",
-      };
-      const los = storage.getLoanOfficers() as any[];
-      const results: { email: string; loId?: number; name?: string; status: string }[] = [];
-      for (const [email, password] of Object.entries(RESTORE_MAP)) {
-        const lo = los.find((l: any) => {
-          const e = String(l.email ?? l.email_address ?? "").toLowerCase().trim();
-          return e === email;
-        });
-        if (!lo) { results.push({ email, status: "not_found" }); continue; }
-        try {
-          storage.updateLoanOfficer(lo.id, { bonzoPassword: password } as any);
-          results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: "updated" });
-        } catch (e: any) {
-          results.push({ email, loId: lo.id, name: lo.fullName ?? lo.full_name, status: `error: ${e?.message ?? e}` });
-        }
-      }
-      const updatedCount = results.filter(r => r.status === "updated").length;
-      try {
-        storage.createAuditLog({
-          userId: 1,
-          userName: "system",
-          action: MARKER_ACTION,
-          entityType: "loan_officer",
-          entityLabel: `${updatedCount} LOs updated (auto-restore on boot)`,
-          details: JSON.stringify(results),
-        } as any);
-      } catch (e) { console.error("[bonzo-autorestore] failed to write marker:", e); }
-      console.log(`[bonzo-autorestore] restored ${updatedCount}/${Object.keys(RESTORE_MAP).length} Bonzo passwords on boot`);
-    } catch (e: any) {
-      console.error("[bonzo-autorestore] failed:", e?.message ?? e);
-    }
-  }, 3000); // tiny delay so DB / migrations are fully ready
+  // Bonzo credentials are managed through authenticated settings and are never
+  // embedded in the application bundle.
 
 }
 

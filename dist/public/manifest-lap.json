@@ -9,15 +9,14 @@
   "display_override": ["standalone", "minimal-ui"],
   "background_color": "#FFF9F4",
   "theme_color": "#3B111A",
-  "orientation": "portrait-primary",
   "categories": ["business", "productivity", "finance"],
   "icons": [
-    {
-      "src": "/lap-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    { "src": "/lap-icon-96.png", "sizes": "96x96", "type": "image/png", "purpose": "any" },
+    { "src": "/lap-icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/lap-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/lap-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/lap-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
   "shortcuts": [
     {
@@ -25,21 +24,21 @@
       "short_name": "Results",
       "description": "Add or review a loan result package",
       "url": "/#/lap/results",
-      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+      "icons": [{ "src": "/lap-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Check-In",
       "short_name": "Check-In",
       "description": "Open LAP check-in",
       "url": "/#/lap/check-ins",
-      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+      "icons": [{ "src": "/lap-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Time Clock",
       "short_name": "Clock",
       "description": "Open the LAP time clock",
       "url": "/#/lap/time-clock",
-      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+      "icons": [{ "src": "/lap-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ],
   "prefer_related_applications": false

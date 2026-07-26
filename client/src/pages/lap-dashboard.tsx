@@ -72,7 +72,11 @@ function SummaryCard({
 function ResultRow({ result }: { result: LapResult }) {
   const completeDocuments = LAP_DOCUMENTS.filter((document) => !!result.files?.[document.key]).length;
   return (
-    <div className="flex items-center gap-3 border-b py-3 last:border-0">
+    <Link
+      href={`/results/${result.id}`}
+      className="flex items-center gap-3 rounded-lg border-b px-2 py-3 transition-colors last:border-0 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={`Open result package for ${result.borrowerName}`}
+    >
       <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
         result.complete
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
@@ -97,7 +101,8 @@ function ResultRow({ result }: { result: LapResult }) {
       >
         {result.complete ? "Complete" : `${completeDocuments}/3`}
       </Badge>
-    </div>
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+    </Link>
   );
 }
 
@@ -199,7 +204,17 @@ export default function LapDashboard() {
         </div>
       </div>
 
-      {statsQuery.isError ? (
+      {statsQuery.isLoading ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Loading LAP summary">
+          {[0, 1, 2, 3].map((item) => (
+            <Card key={item}>
+              <CardContent className="p-5">
+                <div className="h-20 animate-pulse rounded-lg bg-muted" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : statsQuery.isError ? (
         <Card>
           <CardContent className="flex items-center justify-between gap-4 p-5">
             <div>
@@ -255,6 +270,15 @@ export default function LapDashboard() {
               <div className="space-y-2">
                 {[0, 1, 2, 3].map((item) => <div key={item} className="h-14 animate-pulse rounded-lg bg-muted" />)}
               </div>
+            ) : resultsQuery.isError && recent.length === 0 ? (
+              <div className="flex min-h-48 flex-col items-center justify-center gap-2 py-8 text-center">
+                <FileSearch className="h-8 w-8 text-destructive/70" />
+                <p className="text-sm font-medium">Couldn&apos;t load recent packages</p>
+                <p className="text-xs text-muted-foreground">Retry without leaving your dashboard.</p>
+                <Button type="button" size="sm" variant="outline" className="mt-1 gap-1.5" onClick={() => resultsQuery.refetch()}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Retry
+                </Button>
+              </div>
             ) : recent.length ? (
               recent.map((result) => <ResultRow key={result.id} result={result} />)
             ) : (
@@ -275,9 +299,22 @@ export default function LapDashboard() {
               <CardDescription>Uploaded files across the selected period</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <CoverageBar label="Credit Reports" value={stats.creditReports} total={stats.total} />
-              <CoverageBar label="AUS findings" value={stats.aus} total={stats.total} />
-              <CoverageBar label="Formal Quotes" value={stats.formalQuotes} total={stats.total} />
+              {statsQuery.isLoading ? (
+                [0, 1, 2].map((item) => <div key={item} className="h-9 animate-pulse rounded-lg bg-muted" />)
+              ) : statsQuery.isError ? (
+                <div className="py-4 text-center">
+                  <p className="text-xs text-muted-foreground">Coverage is unavailable until the summary reconnects.</p>
+                  <Button type="button" size="sm" variant="ghost" className="mt-2 gap-1.5" onClick={() => statsQuery.refetch()}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Retry
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <CoverageBar label="Credit Reports" value={stats.creditReports} total={stats.total} />
+                  <CoverageBar label="AUS findings" value={stats.aus} total={stats.total} />
+                  <CoverageBar label="Formal Quotes" value={stats.formalQuotes} total={stats.total} />
+                </>
+              )}
             </CardContent>
           </Card>
 

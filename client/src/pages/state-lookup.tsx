@@ -124,7 +124,8 @@ export default function StateLookup() {
 
   const { user } = useAuth();
   const myRole = (user as any)?.role ?? null;
-  const isAdminOrManager = myRole === "admin" || myRole === "manager";
+  const isAdminOrManager =
+    myRole === "admin" || myRole === "manager" || !!(user as any)?.isManager || !!user?.superAdmin;
 
   // Filter state list by search
   const filteredStates = useMemo(() => {
@@ -497,7 +498,7 @@ export default function StateLookup() {
                       <Link href="/lo-profiles">
                         <span className="text-primary underline cursor-pointer">Review LO Profiles</span>
                       </Link>
-                      {" "}and update licensing through the approved administrator workflow.
+                      , then coordinate the licensing update through the approved administrator workflow.
                     </>
                   ) : "Ask an administrator to update their licensing coverage."}
                 </>

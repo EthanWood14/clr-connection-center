@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import {
   UserCheck, ChevronLeft, ChevronRight, MapPin, CheckCircle2, XCircle, MinusCircle,
   Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw, MessageSquareText,
-  Send, ShieldCheck,
+  Send, ShieldCheck, RefreshCw,
 } from "lucide-react";
 // Check-ins use the PLAIN local calendar date — deliberately NOT the shared
 // business-day helper, which rolls forward at 7pm and would point the roster at
@@ -431,8 +431,14 @@ export default function CheckIns() {
   const { user } = useAuth();
   const isManager = user?.role === "admin" || (user as any)?.isManager || !!user?.superAdmin;
   const isAdmin = user?.role === "admin" || !!user?.superAdmin;
+  const isLapPortal = typeof window !== "undefined" && window.location.hash.startsWith("#/lap");
 
-  const { data: me, isLoading: meLoading } = useQuery<MineResp>({ queryKey: ["/api/checkin"] });
+  const {
+    data: me,
+    isLoading: meLoading,
+    isError: meError,
+    refetch: refetchMe,
+  } = useQuery<MineResp>({ queryKey: ["/api/checkin"] });
   const [locating, setLocating] = useState(false);
   const [lateRequestReason, setLateRequestReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -544,11 +550,21 @@ export default function CheckIns() {
       toast({ title: "Couldn't copy the link", description: "Select the address and copy it manually.", variant: "destructive" });
     }
   }
-  const { data: adminData, isLoading: adminLoading } = useQuery<AdminResp>({
+  const {
+    data: adminData,
+    isLoading: adminLoading,
+    isError: adminError,
+    refetch: refetchAdmin,
+  } = useQuery<AdminResp>({
     queryKey: ["/api/checkin/admin", date],
     queryFn: () => apiRequest("GET", `/api/checkin/admin?date=${date}`),
   });
-  const { data: attendanceRequestData, isLoading: attendanceRequestsLoading } = useQuery<{ requests: AttendanceRequest[] }>({
+  const {
+    data: attendanceRequestData,
+    isLoading: attendanceRequestsLoading,
+    isError: attendanceRequestsError,
+    refetch: refetchAttendanceRequests,
+  } = useQuery<{ requests: AttendanceRequest[] }>({
     queryKey: ["/api/checkin/attendance-requests"],
     queryFn: () => apiRequest("GET", "/api/checkin/attendance-requests"),
     enabled: !!isManager,
@@ -629,7 +645,8 @@ export default function CheckIns() {
 
       {me && !me.enabled && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 text-[13px] text-amber-900 dark:text-amber-200">
-          Check-ins are currently disabled — an admin can enable them (and set the office location) in Settings → Morning Check-In.
+          Check-ins are currently disabled — an admin can enable them and set the office location in{" "}
+          {isLapPortal ? "LAP Settings → Workspace" : "Settings → Morning Check-In"}.
         </div>
       )}
 
@@ -642,7 +659,16 @@ export default function CheckIns() {
           {/* Order matters: an existing check-in always wins (so a check-in on a
               day off is still shown), and a failed load must not masquerade as a
               scheduled day off. */}
-          {meLoading || !me ? (
+          {meError ? (
+            <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-5 text-center">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              <p className="text-sm font-medium">Couldn&apos;t load today&apos;s check-in</p>
+              <p className="text-xs text-muted-foreground">Your status has not been changed. Try loading it again.</p>
+              <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetchMe()}>
+                <RefreshCw className="h-3.5 w-3.5" /> Retry
+              </Button>
+            </div>
+          ) : meLoading || !me ? (
             <Skeleton className="h-20 w-full" />
           ) : mine ? (
             <div className="space-y-2">
@@ -978,7 +1004,16 @@ export default function CheckIns() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {attendanceRequestsLoading ? (
+            {attendanceRequestsError ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+                <p className="text-sm font-medium">Couldn&apos;t load attendance requests</p>
+                <p className="text-xs text-muted-foreground">Retry before deciding whether the queue is clear.</p>
+                <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetchAttendanceRequests()}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Retry
+                </Button>
+              </div>
+            ) : attendanceRequestsLoading ? (
               <div className="space-y-2">
                 {[0, 1].map((key) => <Skeleton key={key} className="h-36 w-full" />)}
               </div>
@@ -1003,7 +1038,7 @@ export default function CheckIns() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">{request.subjectName}</p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            {request.subjectType === "user" ? "CLR" : request.subjectType.toUpperCase()}
+                            {request.subjectType === "user" ? (isLapPortal ? "LO Assistant" : "CLR") : request.subjectType.toUpperCase()}
                             {" · "}{fmtDay(request.attendanceDate)}
                             {request.expectedStart ? ` · due ${fmtHm(request.expectedStart)}` : ""}
                           </p>
@@ -1164,15 +1199,23 @@ export default function CheckIns() {
                 <Button variant="outline" size="icon" className="h-8 w-8" disabled={date >= todayLocal()} onClick={() => setDate(d => shiftDate(d, 1))}><ChevronRight className="w-4 h-4" /></Button>
               </div>
               <div className="text-xs text-muted-foreground">
-                {totalCheckedIn}/{totalPeople} checked in · {onTimeCount} on time · {lateTodayCount} late
+                {adminError
+                  ? "Attendance data unavailable"
+                  : `${totalCheckedIn}/${totalPeople} checked in · ${onTimeCount} on time · ${lateTodayCount} late`}
               </div>
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted-foreground">
-              <span className="rounded-full border bg-background px-2 py-1">CLRs {checkedIn}/{clrs.length}</span>
+            {!adminError && <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted-foreground">
+              <span className="rounded-full border bg-background px-2 py-1">
+                {isLapPortal ? "LO Assistants" : "CLRs"} {checkedIn}/{clrs.length}
+              </span>
               <span className="rounded-full border bg-background px-2 py-1">LOs {los.filter((r) => r.checkin).length}/{los.length}</span>
               <span className="rounded-full border bg-background px-2 py-1">LOAs {loas.filter((r) => r.checkin).length}/{loas.length}</span>
-              {inAreaCount > 0 && <span className="rounded-full border bg-background px-2 py-1">{inAreaCount} CLR{inAreaCount === 1 ? "" : "s"} in office</span>}
-            </div>
+              {inAreaCount > 0 && (
+                <span className="rounded-full border bg-background px-2 py-1">
+                  {inAreaCount} {isLapPortal ? `LO Assistant${inAreaCount === 1 ? "" : "s"}` : `CLR${inAreaCount === 1 ? "" : "s"}`} in office
+                </span>
+              )}
+            </div>}
 
             {adminData && (
               <section className="rounded-xl border bg-muted/25 p-3" aria-label="Team rolling late standing" data-testid="team-late-summary">
@@ -1203,10 +1246,21 @@ export default function CheckIns() {
             )}
 
             <div className="rounded-md border divide-y">
-              {adminLoading ? (
+              {adminError ? (
+                <div className="flex flex-col items-center gap-2 p-6 text-center">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                  <p className="text-sm font-medium">Couldn&apos;t load team check-ins</p>
+                  <p className="text-xs text-muted-foreground">Retry before relying on today&apos;s attendance totals.</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => refetchAdmin()}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Retry
+                  </Button>
+                </div>
+              ) : adminLoading ? (
                 <div className="p-4 space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
               ) : clrs.length === 0 ? (
-                <p className="p-6 text-sm text-muted-foreground text-center">No active CLRs.</p>
+                <p className="p-6 text-sm text-muted-foreground text-center">
+                  No active {isLapPortal ? "LO Assistants" : "CLRs"}.
+                </p>
               ) : (
                 clrs.map((c) => {
                   const ci = c.checkin;

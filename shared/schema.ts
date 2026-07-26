@@ -249,6 +249,7 @@ export type DailyCallLog = typeof dailyCallLogs.$inferSelect;
 // ── Notifications ──────────────────────────────────────────────────────────────
 export const notifications = sqliteTable("notifications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  orgId: integer("org_id").notNull().default(1),
   userId: integer("user_id"), // null = broadcast to all
   type: text("type").notNull(), // license_alert | assignment_ready | eod_reminder | follow_up | announcement
   title: text("title").notNull(),

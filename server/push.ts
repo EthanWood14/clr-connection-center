@@ -67,11 +67,20 @@ export function saveSubscription(userId: number, orgId: number, sub: { endpoint:
   const sqlite = getSqlite();
   const now = new Date().toISOString();
   try {
-    sqlite.prepare(
-      `INSERT INTO push_subscriptions (user_id, org_id, endpoint, p256dh, auth, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth`
-    ).run(userId, orgId, sub.endpoint, sub.keys.p256dh, sub.keys.auth, now);
+    const rebind = sqlite.transaction(() => {
+      sqlite.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id <> ?`)
+        .run(sub.endpoint, userId);
+      sqlite.prepare(
+        `INSERT INTO push_subscriptions (user_id, org_id, endpoint, p256dh, auth, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, endpoint) DO UPDATE SET
+           org_id=excluded.org_id,
+           p256dh=excluded.p256dh,
+           auth=excluded.auth,
+           created_at=excluded.created_at`
+      ).run(userId, orgId, sub.endpoint, sub.keys.p256dh, sub.keys.auth, now);
+    });
+    rebind();
   } catch (e: any) {
     console.error("[push] saveSubscription error:", e?.message ?? e);
     throw e;

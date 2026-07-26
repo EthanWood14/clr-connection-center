@@ -18,9 +18,14 @@ import {
 } from "@/components/ui/dialog";
 import { RefreshCw, Sparkles } from "lucide-react";
 
-export function UpdatePrompt() {
+type UpdatePromptProps = {
+  portal?: "c3" | "lap";
+};
+
+export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   const [latest, setLatest] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
+  const productName = portal === "lap" ? "LAP" : "C3";
 
   useEffect(() => {
     let active = true;
@@ -58,7 +63,7 @@ export function UpdatePrompt() {
             Update available
           </DialogTitle>
           <DialogDescription>
-            A new version of C3{latest ? ` (v${latest})` : ""} is ready. Refresh to get the latest
+            A new version of {productName}{latest ? ` (v${latest})` : ""} is ready. Refresh to get the latest
             features and fixes.
           </DialogDescription>
         </DialogHeader>

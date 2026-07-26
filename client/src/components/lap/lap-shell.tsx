@@ -2,7 +2,9 @@ import { useEffect } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
+import { applyProductMetadata } from "@/lib/product-metadata";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
+import { UpdatePrompt } from "@/components/update-prompt";
 import { LapSidebar } from "./lap-sidebar";
 import { LapMobileNav } from "./lap-mobile-nav";
 import { LapFooter } from "./lap-footer";
@@ -57,82 +59,11 @@ function lapTitle(location: string) {
   return "LAP · LO Assistant Portal";
 }
 
-function setMetaContent(selector: string, content: string) {
-  const element = document.head.querySelector<HTMLMetaElement>(selector);
-  if (!element) return null;
-  const previous = element.content;
-  element.content = content;
-  return () => { element.content = previous; };
-}
-
 function useLapProductMetadata() {
   const [location] = useLocation();
 
   useEffect(() => {
-    const root = document.documentElement;
-    const originalTitle = document.title;
-    const manifest = document.head.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    const originalManifestHref = manifest?.getAttribute("href") ?? null;
-    const iconLinks = Array.from(document.head.querySelectorAll<HTMLLinkElement>(
-      'link[rel="icon"], link[rel="apple-touch-icon"], link[rel="mask-icon"]',
-    ));
-    const originalIcons = iconLinks.map((link) => ({
-      link,
-      href: link.getAttribute("href"),
-      color: link.getAttribute("color"),
-      type: link.getAttribute("type"),
-      sizes: link.getAttribute("sizes"),
-    }));
-
-    root.classList.add("lap-mode");
-    try {
-      const lapTheme = localStorage.getItem("lap.theme");
-      const useDark = lapTheme === "dark"
-        || (lapTheme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      root.classList.toggle("dark", useDark);
-    } catch {}
-
-    if (manifest) manifest.setAttribute("href", "/manifest-lap.json");
-    for (const link of iconLinks) {
-      link.setAttribute("href", "/lap-icon.svg");
-      link.setAttribute("type", "image/svg+xml");
-      link.setAttribute("sizes", "any");
-      if (link.rel === "mask-icon") link.setAttribute("color", "#6E1F2B");
-    }
-
-    const restoreMeta = [
-      setMetaContent('meta[name="theme-color"]', "#3B111A"),
-      setMetaContent('meta[name="apple-mobile-web-app-title"]', "LAP"),
-      setMetaContent('meta[name="application-name"]', "LAP"),
-      setMetaContent('meta[name="msapplication-TileColor"]', "#3B111A"),
-      setMetaContent('meta[name="msapplication-TileImage"]', "/lap-icon.svg"),
-    ].filter(Boolean) as Array<() => void>;
-
-    return () => {
-      root.classList.remove("lap-mode");
-      try {
-        const c3Theme = localStorage.getItem("theme");
-        const useDark = c3Theme === "dark"
-          || (c3Theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        root.classList.toggle("dark", useDark);
-      } catch {}
-      if (manifest) {
-        if (originalManifestHref == null) manifest.removeAttribute("href");
-        else manifest.setAttribute("href", originalManifestHref);
-      }
-      for (const item of originalIcons) {
-        if (item.href == null) item.link.removeAttribute("href");
-        else item.link.setAttribute("href", item.href);
-        if (item.color == null) item.link.removeAttribute("color");
-        else item.link.setAttribute("color", item.color);
-        if (item.type == null) item.link.removeAttribute("type");
-        else item.link.setAttribute("type", item.type);
-        if (item.sizes == null) item.link.removeAttribute("sizes");
-        else item.link.setAttribute("sizes", item.sizes);
-      }
-      for (const restore of restoreMeta) restore();
-      document.title = originalTitle;
-    };
+    applyProductMetadata("lap");
   }, []);
 
   useEffect(() => {
@@ -214,8 +145,9 @@ function LapAuthenticatedShell() {
 
   return (
     <SidebarProvider defaultOpen style={style}>
+      <UpdatePrompt portal="lap" />
       <div className="lap-shell flex h-screen w-full flex-col overflow-hidden">
-        <ImpersonationBanner />
+        <ImpersonationBanner returnLabel="Exit organization view" />
         <div className="flex min-h-0 flex-1 overflow-hidden p-0 md:gap-3 md:p-3">
           <LapSidebar />
           <div className="flex min-w-0 flex-1 flex-col gap-2 md:gap-3">

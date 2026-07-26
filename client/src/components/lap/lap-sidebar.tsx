@@ -23,7 +23,6 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { APP_VERSION } from "@shared/version";
 import {
   Sidebar,
@@ -81,7 +80,7 @@ const resourceItems: NavItem[] = [
 ];
 
 export function LapSidebar() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [location] = useLocation();
   const { isMobile, setOpenMobile, toggleSidebar } = useSidebar();
   const isAdmin = user?.role === "admin" || !!user?.superAdmin;
@@ -141,13 +140,6 @@ export function LapSidebar() {
     });
   }
 
-  async function signOut() {
-    await apiRequest("POST", "/api/auth/logout", {}).catch(() => {});
-    queryClient.clear();
-    window.location.hash = "#/lap";
-    window.location.reload();
-  }
-
   return (
     <Sidebar
       collapsible="offcanvas"
@@ -201,7 +193,9 @@ export function LapSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border/80 p-3">
         <a
-          href="#/"
+          href="/#/"
+          target="_blank"
+          rel="noopener noreferrer"
           className="mb-2 flex items-center gap-2 rounded-lg border border-sidebar-border/80 px-2.5 py-2 text-xs text-sidebar-foreground/65 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
           <Landmark className="h-3.5 w-3.5" />
@@ -219,7 +213,7 @@ export function LapSidebar() {
           </div>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void logout()}
             className="rounded-md p-1.5 text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
             aria-label="Sign out"
           >
