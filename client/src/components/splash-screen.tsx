@@ -1,25 +1,34 @@
 import { useEffect, useState } from "react";
 
-const SESSION_KEY = "splash_shown";
+const isLap = () => {
+  try {
+    const hash = window.location.hash || "";
+    return hash === "#/lap" || hash.startsWith("#/lap/");
+  } catch {
+    return false;
+  }
+};
 
 // The public LO/LOA portal is for external people — never flash the internal
 // "Team Members Only" splash there.
 const isPortal = () => { try { return (window.location.hash || "").startsWith("#/portal/"); } catch { return false; } };
 
 export function SplashScreen() {
+  const [lap] = useState(isLap);
+  const sessionKey = lap ? "lap.splash_shown" : "splash_shown";
   const [show, setShow] = useState(() => {
     if (isPortal()) return false;
-    try { return sessionStorage.getItem(SESSION_KEY) !== "1"; } catch { return true; }
+    try { return sessionStorage.getItem(sessionKey) !== "1"; } catch { return true; }
   });
   const [fading, setFading] = useState(false);
 
   useEffect(() => {
     if (!show) return;
-    try { sessionStorage.setItem(SESSION_KEY, "1"); } catch {}
+    try { sessionStorage.setItem(sessionKey, "1"); } catch {}
     const fadeTimer = setTimeout(() => setFading(true), 1850);
     const unmountTimer = setTimeout(() => setShow(false), 2200);
     return () => { clearTimeout(fadeTimer); clearTimeout(unmountTimer); };
-  }, [show]);
+  }, [show, sessionKey]);
 
   if (!show) return null;
 
@@ -27,9 +36,10 @@ export function SplashScreen() {
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
-        background:
-          "radial-gradient(ellipse at center, #1a2540 0%, #0d1520 55%, #080d14 100%)",
-        backgroundColor: "#0d1520",
+        background: lap
+          ? "radial-gradient(ellipse at center, #6E1F2B 0%, #3B111A 56%, #18090D 100%)"
+          : "radial-gradient(ellipse at center, #1a2540 0%, #0d1520 55%, #080d14 100%)",
+        backgroundColor: lap ? "#3B111A" : "#0d1520",
         display: "flex", alignItems: "center", justifyContent: "center",
         flexDirection: "column",
         opacity: fading ? 0 : 1,
@@ -51,9 +61,9 @@ export function SplashScreen() {
         }}
       />
 
-      {/* Rolling CC³ logo */}
+      {/* Product mark */}
       <img
-        src="/logo-icon.png"
+        src={lap ? "/lap-icon.svg" : "/logo-icon.png"}
         alt=""
         style={{
           width: 180, height: 180,
@@ -61,7 +71,7 @@ export function SplashScreen() {
           transform: "translateX(-300px) rotate(-360deg)",
           animation: "splash-logo-roll 0.95s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s forwards",
           willChange: "transform",
-          borderRadius: "50%",
+          borderRadius: lap ? "26%" : "50%",
           overflow: "hidden",
           boxShadow:
             "inset -4px -4px 12px rgba(0,0,0,0.4), inset 4px 4px 12px rgba(255,255,255,0.08), 0 8px 32px rgba(0,0,0,0.5)",
@@ -85,14 +95,14 @@ export function SplashScreen() {
           position: "relative", zIndex: 1,
         }}
       >
-        CLR Connection Center
+        {lap ? "LO Assistant Portal" : "CLR Connection Center"}
       </div>
 
       {/* Subtitle */}
       <div
         style={{
           marginTop: 12,
-          color: "#8899aa",
+          color: lap ? "#E8B8BE" : "#8899aa",
           fontSize: 13,
           fontWeight: 500,
           letterSpacing: "0.2em",
@@ -103,7 +113,7 @@ export function SplashScreen() {
           position: "relative", zIndex: 1,
         }}
       >
-        WCL Team: Team Members Only
+        {lap ? "Focused support. Clear handoffs." : "WCL Team: Team Members Only"}
       </div>
 
       {/* Bottom progress bar */}
@@ -120,7 +130,9 @@ export function SplashScreen() {
         <div
           style={{
             width: "100%", height: "100%",
-            background: "linear-gradient(90deg, #3e5379 0%, #6b85b0 100%)",
+            background: lap
+              ? "linear-gradient(90deg, #8B2F3F 0%, #E8B8BE 100%)"
+              : "linear-gradient(90deg, #3e5379 0%, #6b85b0 100%)",
             transformOrigin: "left center",
             transform: "scaleX(0)",
             animation: "splash-bar-fill 0.6s cubic-bezier(0.4, 0, 0.2, 1) 1.25s forwards",

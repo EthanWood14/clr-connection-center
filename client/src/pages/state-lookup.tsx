@@ -84,6 +84,8 @@ export default function StateLookup() {
   const [stateSearch, setStateSearch] = useState("");
   const [selectedState, setSelectedState] = useState<{ abbr: string; name: string } | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const isLapPortal = typeof window !== "undefined" && window.location.hash.startsWith("#/lap");
+  const loanOfficersEndpoint = isLapPortal ? "/api/lap/loan-officers" : "/api/loan-officers";
 
   const handleStateSelect = useCallback((state: { abbr: string; name: string }) => {
     setSelectedState(state);
@@ -93,7 +95,7 @@ export default function StateLookup() {
   }, []);
 
   const { data: allLOs = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/loan-officers"],
+    queryKey: [loanOfficersEndpoint],
   });
 
   // Treat missing/null internalStatus as "active" so newly-added LOs aren't
@@ -207,9 +209,9 @@ export default function StateLookup() {
             </p>
           </div>
           {isAdminOrManager && (
-            <Link href="/directory">
+            <Link href={isLapPortal ? "/lo-profiles" : "/directory"}>
               <Button variant="outline" size="sm" className="shrink-0">
-                Open Directory
+                {isLapPortal ? "Review LO Profiles" : "Open Directory"}
               </Button>
             </Link>
           )}
@@ -378,7 +380,9 @@ export default function StateLookup() {
                       No LOs are currently licensed in {selectedState.name}.
                     </p>
                     <p className="text-xs text-muted-foreground/60 mt-1">
-                      Update an LO's licensed states in the Directory.
+                      {isLapPortal
+                        ? "Ask an administrator to update the Loan Officer's licensed states."
+                        : "Update an LO's licensed states in the Directory."}
                     </p>
                   </CardContent>
                 </Card>
@@ -474,7 +478,7 @@ export default function StateLookup() {
       </div>
 
       {/* Needs state licensing — always visible (when non-empty) so unmapped
-         LOs don’t silently disappear from the Directory → State Lookup link. */}
+         LOs do not silently disappear from state coverage. */}
       {!isLoading && unmappedLOs.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -485,12 +489,28 @@ export default function StateLookup() {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground mb-3">
-              These loan officers are active in the directory but have no states selected,
-              so they won’t show up when CLRs click a state on the map. {isAdminOrManager && (
-                <Link href="/directory">
-                  <span className="text-primary underline cursor-pointer">Open Directory</span>
-                </Link>
-              )} to fill in their licenses.
+              {isLapPortal ? (
+                <>
+                  These Loan Officers are active but have no states recorded, so they will not appear
+                  when a team member selects a state. {isAdminOrManager ? (
+                    <>
+                      <Link href="/lo-profiles">
+                        <span className="text-primary underline cursor-pointer">Review LO Profiles</span>
+                      </Link>
+                      {" "}and update licensing through the approved administrator workflow.
+                    </>
+                  ) : "Ask an administrator to update their licensing coverage."}
+                </>
+              ) : (
+                <>
+                  These loan officers are active in the directory but have no states selected,
+                  so they will not show up when CLRs click a state on the map. {isAdminOrManager && (
+                    <Link href="/directory">
+                      <span className="text-primary underline cursor-pointer">Open Directory</span>
+                    </Link>
+                  )} to fill in their licenses.
+                </>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               {unmappedLOs.map((lo) => (

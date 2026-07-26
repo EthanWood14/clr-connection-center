@@ -10,10 +10,12 @@ export function serveStatic(app: Express) {
     );
   }
 
-  // Serve manifest.json with the correct MIME type Chrome requires for PWA install
-  app.get("/manifest.json", (_req, res) => {
+  // Serve both product manifests with the MIME type Chrome requires for PWA
+  // installation. LAP remains a side-by-side product on the same origin.
+  app.get(["/manifest.json", "/manifest-lap.json"], (req, res) => {
     res.setHeader("Content-Type", "application/manifest+json");
-    res.sendFile(path.resolve(distPath, "manifest.json"));
+    const filename = req.path === "/manifest-lap.json" ? "manifest-lap.json" : "manifest.json";
+    res.sendFile(path.resolve(distPath, filename));
   });
 
   app.use(express.static(distPath, {

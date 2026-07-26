@@ -79,6 +79,7 @@ import InviteAccept from "@/pages/invite";
 import Portal from "@/pages/portal";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
+import { LapApp } from "@/components/lap/lap-shell";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -311,6 +312,9 @@ export default function App() {
               <Route path="/reset-password" component={ResetPassword} />
               <Route path="/invite/:token" component={InviteAccept} />
               <Route path="/portal/:code" component={Portal} />
+              <Route path="/lap" nest>
+                <LapApp />
+              </Route>
               <Route>
                 <AuthenticatedApp />
               </Route>

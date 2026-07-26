@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import { raw, type Express, type Request, type Response, type NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import * as storageExtra from "./storage";
@@ -4852,7 +4852,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // ── Forgot password: send reset link ──────────────────────────────────────
   app.post("/api/auth/forgot-password", async (req, res) => {
-    const { email } = req.body ?? {};
+    const { email, portal } = req.body ?? {};
+    const fromLap = typeof portal === "string" && portal.toLowerCase() === "lap";
     const genericResponse = { message: "If an account exists, a reset link was sent." };
     if (!email || typeof email !== "string") {
       console.log(`[forgot-password] missing/invalid email field`);
@@ -4878,23 +4879,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const expiry = Date.now() + 60 * 60 * 1000; // 1 hour
       (storage as any).setResetToken(user.id, token, expiry);
 
-      const resetUrl = `https://www.westcapitallending.center/#/reset-password?token=${token}`;
+      const productName = fromLap ? "LO Assistant Portal (LAP)" : "CLR Connection Center";
+      const resetUrl = `https://www.westcapitallending.center/#/reset-password?token=${token}${fromLap ? "&portal=lap" : ""}`;
+      const resetUrlHtml = resetUrl.replace(/&/g, "&amp;");
+      const primaryColor = fromLap ? "#6E1F2B" : "#0F182D";
+      const linkColor = fromLap ? "#8B2F3F" : "#1A2B4A";
       const resetBody = `
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
           Hi <strong style="color:#1e293b">${user.name}</strong>,
         </p>
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
-          We received a request to reset your <strong style="color:#1e293b">CLR Connection Center</strong> password.
+          We received a request to reset your <strong style="color:#1e293b">${productName}</strong> password.
           Click the button below to choose a new password.
         </p>
         <div style="text-align:center;margin:24px 0">
-          <a href="${resetUrl}" style="display:inline-block;background:#0F182D;color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
+          <a href="${resetUrlHtml}" style="display:inline-block;background:${primaryColor};color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px">
             Reset My Password
           </a>
         </div>
         <p style="margin:0 0 12px;color:#64748b;font-size:12px;line-height:1.7">
           Or copy &amp; paste this link into your browser:<br />
-          <a href="${resetUrl}" style="color:#1A2B4A;word-break:break-all">${resetUrl}</a>
+          <a href="${resetUrlHtml}" style="color:${linkColor};word-break:break-all">${resetUrlHtml}</a>
         </p>
         <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin:20px 0">
           <p style="margin:0;font-size:12px;color:#92400e">
@@ -4905,10 +4910,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       await sendEmail({
         to: user.email,
-        subject: "Reset your CLR Connection Center password",
+        subject: `Reset your ${productName} password`,
         html: buildEmail({
           subject: "Reset your password",
-          preheader: "Click the link to reset your CLR Connection Center password. Expires in 1 hour.",
+          preheader: `Click the link to reset your ${productName} password. Expires in 1 hour.`,
           body: resetBody,
         }),
       });
@@ -11415,8 +11420,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const b = req.body ?? {};
     const patch: any = {};
     if (b.enabled !== undefined) patch.checkinEnabled = b.enabled ? 1 : 0;
-    if (b.lat !== undefined) patch.checkinLat = Number.isFinite(Number(b.lat)) ? Number(b.lat) : null;
-    if (b.lng !== undefined) patch.checkinLng = Number.isFinite(Number(b.lng)) ? Number(b.lng) : null;
+    if (b.lat !== undefined) {
+      const lat = Number(b.lat);
+      if (b.lat === null || b.lat === "") patch.checkinLat = null;
+      else if (Number.isFinite(lat) && lat >= -90 && lat <= 90) patch.checkinLat = lat;
+    }
+    if (b.lng !== undefined) {
+      const lng = Number(b.lng);
+      if (b.lng === null || b.lng === "") patch.checkinLng = null;
+      else if (Number.isFinite(lng) && lng >= -180 && lng <= 180) patch.checkinLng = lng;
+    }
     if (b.radiusM !== undefined) { const r = Math.round(Number(b.radiusM)); if (Number.isFinite(r) && r >= 25 && r <= 50000) patch.checkinRadiusM = r; }
     // No org-wide start time: each CLR's expected start comes from their weekly
     // schedule. (checkin_start is left in the DB but no longer read.)
@@ -11609,6 +11622,403 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     return { user: u };
   }
+
+  // ── LAP result packages ───────────────────────────────────────────────────
+  // LAP shares C3 authentication and organization context, but keeps its loan
+  // result records and document versions in dedicated, organization-scoped
+  // tables. Binary files are parsed only on the upload routes so they never
+  // pass through the global JSON/base64 body path.
+  type LapSessionContext = {
+    userId: number;
+    orgId: number;
+    user: any;
+    isAdmin: boolean;
+  };
+
+  function lapSessionContext(req: any, res: Response): LapSessionContext | null {
+    const userId = Number(req.session_user?.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      res.status(401).json({ error: "Unauthorized" });
+      return null;
+    }
+    const user = storage.getUserById(userId) as any;
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return null;
+    }
+    const orgId = Number(currentOrgId() ?? req.session_user?.orgId ?? user.orgId ?? user.org_id ?? 1);
+    const userOrgId = Number(user.orgId ?? user.org_id ?? orgId);
+    const superAdmin = !!(user.superAdmin ?? user.super_admin);
+    if (!Number.isInteger(orgId) || orgId <= 0 || (!superAdmin && userOrgId !== orgId)) {
+      res.status(403).json({ error: "Organization access denied" });
+      return null;
+    }
+    return {
+      userId,
+      orgId,
+      user,
+      isAdmin: user.role === "admin" || superAdmin,
+    };
+  }
+
+  function lapPositiveRouteId(value: unknown): number | null {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  }
+
+  function lapIsoDate(value: unknown): value is string {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }
+
+  function sendLapError(res: Response, error: unknown, fallback: string): void {
+    if (error instanceof storageExtra.LapResultStorageError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[lap] ${fallback}:`, message);
+    res.status(500).json({ error: fallback });
+  }
+
+  const lapNullableText = (max: number) =>
+    z.union([z.string().trim().max(max), z.null()]).optional();
+  const lapNullableId = z.union([z.number().int().positive(), z.null()]).optional();
+  const lapResultCreateSchema = z.object({
+    borrowerName: z.string().trim().min(1, "Borrower name is required.").max(160),
+    dealReference: lapNullableText(120),
+    loanOfficerId: lapNullableId,
+    notes: lapNullableText(4000),
+    resultDate: z.union([z.string().trim(), z.null()]).optional(),
+  }).strict();
+  const lapResultPatchSchema = z.object({
+    borrowerName: z.string().trim().min(1, "Borrower name is required.").max(160).optional(),
+    dealReference: lapNullableText(120),
+    loanOfficerId: lapNullableId,
+    notes: lapNullableText(4000),
+    resultDate: z.union([z.string().trim(), z.null()]).optional(),
+  }).strict();
+
+  app.get("/api/lap/loan-officers", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    try {
+      const rows = storageExtra.getRawSqlite().prepare(`
+        SELECT
+          id,
+          full_name,
+          nmls_id,
+          phone,
+          email,
+          licensed_states,
+          notes,
+          special_requests,
+          internal_status,
+          priority_tier,
+          snooze_until,
+          tags
+        FROM loan_officers
+        WHERE org_id = ?
+        ORDER BY
+          CASE WHEN COALESCE(internal_status, 'active') = 'active' THEN 0 ELSE 1 END,
+          full_name COLLATE NOCASE
+      `).all(ctx.orgId) as any[];
+      res.json(rows.map((row) => ({
+        id: Number(row.id),
+        fullName: String(row.full_name ?? ""),
+        nmlsId: row.nmls_id == null ? null : String(row.nmls_id),
+        phone: row.phone == null ? null : String(row.phone),
+        email: row.email == null ? null : String(row.email),
+        licensedStates: row.licensed_states ?? "[]",
+        notes: row.notes || row.special_requests || null,
+        internalStatus: String(row.internal_status ?? "active"),
+        priorityTier: row.priority_tier == null ? null : Number(row.priority_tier),
+        snoozeUntil: row.snooze_until == null ? null : String(row.snooze_until),
+        tags: row.tags ?? "[]",
+      })));
+    } catch (error) {
+      sendLapError(res, error, "Unable to load Loan Officer profiles.");
+    }
+  });
+
+  app.get("/api/lap/results", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const search = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 160) : "";
+    const status = req.query.status == null ? undefined : String(req.query.status);
+    const documentType = req.query.type == null ? undefined : String(req.query.type);
+    const from = req.query.from == null ? undefined : String(req.query.from);
+    const to = req.query.to == null ? undefined : String(req.query.to);
+    if (status !== undefined && status !== "complete" && status !== "incomplete") {
+      return res.status(400).json({ error: "Status must be complete or incomplete." });
+    }
+    if (documentType !== undefined && !storageExtra.isLapDocumentType(documentType)) {
+      return res.status(400).json({ error: "Unsupported LAP document type." });
+    }
+    if ((from !== undefined && !lapIsoDate(from)) || (to !== undefined && !lapIsoDate(to))) {
+      return res.status(400).json({ error: "Dates must use YYYY-MM-DD." });
+    }
+    if (from && to && from > to) {
+      return res.status(400).json({ error: "The from date must be on or before the to date." });
+    }
+    try {
+      res.json(storageExtra.listLapResultPackages({
+        orgId: ctx.orgId,
+        search: search || undefined,
+        status: status as "complete" | "incomplete" | undefined,
+        documentType: documentType as storageExtra.LapDocumentType | undefined,
+        from,
+        to,
+        limit: Number(req.query.limit),
+        offset: Number(req.query.offset),
+      }));
+    } catch (error) {
+      sendLapError(res, error, "Unable to load LAP result packages.");
+    }
+  });
+
+  app.get("/api/lap/results/:id", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
+    try {
+      const result = storageExtra.getLapResultPackage(ctx.orgId, packageId);
+      if (!result) return res.status(404).json({ error: "LAP result package was not found." });
+      res.json({ result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to load the LAP result package.");
+    }
+  });
+
+  app.post("/api/lap/results", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const parsed = lapResultCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: parsed.error.issues[0]?.message ?? "Invalid result package.",
+      });
+    }
+    const body = parsed.data;
+    const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const resultDate = body.resultDate === undefined || body.resultDate === "" ? today : body.resultDate;
+    if (!lapIsoDate(resultDate)) {
+      return res.status(400).json({ error: "Result date must use YYYY-MM-DD." });
+    }
+    try {
+      const result = storageExtra.createLapResultPackage({
+        orgId: ctx.orgId,
+        actorUserId: ctx.userId,
+        borrowerName: body.borrowerName,
+        dealReference: body.dealReference || null,
+        loanOfficerId: body.loanOfficerId ?? null,
+        notes: body.notes ?? "",
+        resultDate,
+      });
+      res.status(201).json({ result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to create the LAP result package.");
+    }
+  });
+
+  app.patch("/api/lap/results/:id", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
+    const parsed = lapResultPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: parsed.error.issues[0]?.message ?? "Invalid result package update.",
+      });
+    }
+    const body = parsed.data;
+    if (!Object.keys(body).length) {
+      return res.status(400).json({ error: "No supported fields were provided." });
+    }
+    if (body.resultDate === null || (body.resultDate !== undefined && !lapIsoDate(body.resultDate))) {
+      return res.status(400).json({ error: "Result date must use YYYY-MM-DD." });
+    }
+    const resultDate = body.resultDate;
+    try {
+      const result = storageExtra.updateLapResultPackage({
+        orgId: ctx.orgId,
+        packageId,
+        actorUserId: ctx.userId,
+        borrowerName: body.borrowerName,
+        dealReference: body.dealReference === undefined ? undefined : (body.dealReference || null),
+        loanOfficerId: body.loanOfficerId,
+        notes: body.notes === undefined ? undefined : (body.notes ?? ""),
+        resultDate,
+      });
+      res.json({ result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to update the LAP result package.");
+    }
+  });
+
+  function lapSafeFilename(value: unknown, mime: string): string {
+    const headerValue = Array.isArray(value) ? value[0] : value;
+    const flattened = String(headerValue ?? "document")
+      .replace(/\\/g, "/")
+      .split("/")
+      .pop()!
+      .replace(/[\u0000-\u001f\u007f"<>:|?*]/g, "_")
+      .trim()
+      .slice(0, 180) || "document";
+    const extension = mime === "application/pdf" ? ".pdf" : mime === "image/png" ? ".png" : ".jpg";
+    const hasSafeExtension = mime === "application/pdf"
+      ? /\.pdf$/i.test(flattened)
+      : mime === "image/png"
+        ? /\.png$/i.test(flattened)
+        : /\.jpe?g$/i.test(flattened);
+    return hasSafeExtension ? flattened : `${flattened}${extension}`;
+  }
+
+  const lapRawUpload = raw({
+    type: () => true,
+    limit: storageExtra.LAP_RESULT_FILE_MAX_BYTES,
+  });
+
+  function uploadLapResultFile(req: any, res: Response): void {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    const documentType = String(req.params.documentType ?? "");
+    if (!packageId) {
+      res.status(400).json({ error: "Invalid result package id." });
+      return;
+    }
+    if (!storageExtra.isLapDocumentType(documentType)) {
+      res.status(400).json({ error: "Unsupported LAP document type." });
+      return;
+    }
+    const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!data.length) {
+      res.status(400).json({ error: "Choose a file to upload." });
+      return;
+    }
+    const mime = storageExtra.detectLapResultFileMime(data);
+    if (!mime) {
+      res.status(415).json({ error: "Upload a valid PDF, PNG, or JPEG file." });
+      return;
+    }
+    let declaredMime = String(req.headers["content-type"] ?? "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (declaredMime === "image/jpg") declaredMime = "image/jpeg";
+    if (declaredMime && declaredMime !== "application/octet-stream" && declaredMime !== mime) {
+      res.status(415).json({ error: "The uploaded file type does not match its contents." });
+      return;
+    }
+    try {
+      const file = storageExtra.replaceLapResultFile({
+        orgId: ctx.orgId,
+        packageId,
+        actorUserId: ctx.userId,
+        documentType,
+        filename: lapSafeFilename(req.headers["x-file-name"], mime),
+        mime,
+        data,
+      });
+      const result = storageExtra.getLapResultPackage(ctx.orgId, packageId);
+      res.status(201).json({ file, result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to upload the LAP result document.");
+    }
+  }
+
+  app.post(
+    "/api/lap/results/:id/files/:documentType",
+    requireAuth,
+    lapRawUpload,
+    uploadLapResultFile,
+  );
+  app.put(
+    "/api/lap/results/:id/files/:documentType",
+    requireAuth,
+    lapRawUpload,
+    uploadLapResultFile,
+  );
+
+  app.delete("/api/lap/result-files/:fileId", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const fileId = lapPositiveRouteId(req.params.fileId);
+    if (!fileId) return res.status(400).json({ error: "Invalid result file id." });
+    try {
+      const result = storageExtra.softDeleteLapResultFile({
+        orgId: ctx.orgId,
+        fileId,
+        actorUserId: ctx.userId,
+      });
+      res.json({ ok: true, result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to remove the LAP result document.");
+    }
+  });
+
+  app.get("/api/lap/result-files/:fileId/download", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Admin access is required to download LAP documents." });
+    const fileId = lapPositiveRouteId(req.params.fileId);
+    if (!fileId) return res.status(400).json({ error: "Invalid result file id." });
+    try {
+      const file = storageExtra.getLapResultFileForDownload({
+        orgId: ctx.orgId,
+        fileId,
+        actorUserId: ctx.userId,
+      });
+      if (!file) return res.status(404).json({ error: "LAP result document was not found." });
+      const fallbackName = file.filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+      const encodedName = encodeURIComponent(file.filename).replace(/['()*]/g, (char) =>
+        `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+      res.set({
+        "Cache-Control": "private, no-store, max-age=0",
+        "Content-Disposition": `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+        "Content-Length": String(file.sizeBytes),
+        "Content-Type": file.mime,
+        "X-Content-Type-Options": "nosniff",
+      });
+      res.status(200).end(file.data);
+    } catch (error) {
+      sendLapError(res, error, "Unable to download the LAP result document.");
+    }
+  });
+
+  app.get("/api/lap/stats", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    try {
+      const today = businessTodayForRequest(req, storageExtra.getRawSqlite());
+      const anchor = new Date(`${today}T12:00:00.000Z`);
+      const daysSinceMonday = (anchor.getUTCDay() + 6) % 7;
+      const weekStart = addIsoDays(today, -daysSinceMonday);
+      const monthStart = `${today.slice(0, 8)}01`;
+      res.json(storageExtra.getLapResultStats({
+        orgId: ctx.orgId,
+        today,
+        weekStart,
+        monthStart,
+      }));
+    } catch (error) {
+      sendLapError(res, error, "Unable to load LAP statistics.");
+    }
+  });
+
+  app.get("/api/lap/team-stats", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    try {
+      res.json(storageExtra.getLapTeamStats(ctx.orgId));
+    } catch (error) {
+      sendLapError(res, error, "Unable to load LAP team statistics.");
+    }
+  });
 
   function verifyWebhookSecret(header: string | undefined, stored: string | null | undefined): boolean {
     if (!stored) return true; // no secret configured → skip verification

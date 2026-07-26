@@ -1,0 +1,46 @@
+{
+  "id": "/lap",
+  "name": "LAP — LO Assistant Portal",
+  "short_name": "LAP",
+  "description": "West Capital Lending's focused workspace for loan officer assistants.",
+  "start_url": "/#/lap",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#FFF9F4",
+  "theme_color": "#3B111A",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/lap-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Input Results",
+      "short_name": "Results",
+      "description": "Add or review a loan result package",
+      "url": "/#/lap/results",
+      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Check-In",
+      "short_name": "Check-In",
+      "description": "Open LAP check-in",
+      "url": "/#/lap/check-ins",
+      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Time Clock",
+      "short_name": "Clock",
+      "description": "Open the LAP time clock",
+      "url": "/#/lap/time-clock",
+      "icons": [{ "src": "/lap-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ],
+  "prefer_related_applications": false
+}

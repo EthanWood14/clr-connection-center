@@ -1,6 +1,16 @@
 import { useState, FormEvent, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Lock, ArrowRight, AlertTriangle, CheckCircle2, KeyRound } from "lucide-react";
+import { LapBrand } from "@/components/lap/lap-brand";
+
+function isLapRecoveryContext(): boolean {
+  const search = new URLSearchParams(window.location.search);
+  if (search.get("portal")?.toLowerCase() === "lap") return true;
+  const hash = window.location.hash || "";
+  const queryIndex = hash.indexOf("?");
+  if (queryIndex === -1) return false;
+  return new URLSearchParams(hash.slice(queryIndex + 1)).get("portal")?.toLowerCase() === "lap";
+}
 
 function getTokenFromUrl(): string {
   // main.tsx normalizes "#/reset-password?token=XYZ" by moving the query string
@@ -16,6 +26,16 @@ function getTokenFromUrl(): string {
 
 export default function ResetPassword() {
   const [, navigate] = useLocation();
+  const lap = isLapRecoveryContext();
+  const forgotHref = lap
+    ? `${window.location.pathname}?portal=lap#/forgot-password`
+    : "#/forgot-password";
+  const primaryButtonClass = lap
+    ? "bg-[#6E1F2B] hover:bg-[#5B1823] active:bg-[#3B111A]"
+    : "bg-[#1A2B4A] hover:bg-[#243a63] active:bg-[#131f35]";
+  const inputFocusClass = lap
+    ? "focus:ring-[#8B2F3F]/20 focus:border-[#6E1F2B]"
+    : "focus:ring-[#1A2B4A]/20 focus:border-[#1A2B4A]";
   const [token, setToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -55,7 +75,13 @@ export default function ResetPassword() {
         setError(data?.error ?? "This reset link is invalid or has expired.");
       } else {
         setSuccess(true);
-        setTimeout(() => { navigate("/"); }, 1500);
+        setTimeout(() => {
+          if (lap) {
+            window.location.assign(`${window.location.pathname}#/lap`);
+          } else {
+            navigate("/");
+          }
+        }, 1500);
       }
     } catch {
       setError("An unexpected error occurred. Please try again.");
@@ -67,22 +93,33 @@ export default function ResetPassword() {
   const invalidToken = !token;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f0f4f8] px-4">
+    <div className={`min-h-screen flex items-center justify-center px-4 ${
+      lap ? "bg-[#F7EEE8]" : "bg-[#f0f4f8]"
+    }`}>
       <div className="w-full max-w-md">
-        <div className="bg-[#1A2B4A] rounded-2xl p-8 mb-1 shadow-2xl text-white">
+        <div className={`rounded-2xl p-8 mb-1 shadow-2xl text-white ${
+          lap ? "bg-[#3B111A]" : "bg-[#1A2B4A]"
+        }`}>
+          {lap && <LapBrand inverse className="h-11 mb-6" />}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center flex-shrink-0">
               <KeyRound className="w-5 h-5" />
             </div>
             <div>
               <div className="font-bold text-lg leading-tight">Set New Password</div>
-              <div className="text-blue-200 text-xs">CLR Connection Center</div>
+              <div className={lap ? "text-[#E8B8BE] text-xs" : "text-blue-200 text-xs"}>
+                {lap ? "LO Assistant Portal" : "CLR Connection Center"}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
-          <h2 className="text-lg font-bold text-[#1A2B4A] mb-1">Choose a new password</h2>
+        <div className={`rounded-2xl shadow-xl p-8 border ${
+          lap ? "bg-[#FFF9F4] border-[#DDBFC3]" : "bg-white border-slate-100"
+        }`}>
+          <h2 className={`text-lg font-bold mb-1 ${lap ? "text-[#3B111A]" : "text-[#1A2B4A]"}`}>
+            Choose a new password
+          </h2>
           <p className="text-slate-500 text-sm mb-6">
             Enter a new password for your account.
           </p>
@@ -94,11 +131,10 @@ export default function ResetPassword() {
                 <span>This reset link is invalid or has expired.</span>
               </div>
               <a
-                href="#/forgot-password"
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg
-                  bg-[#1A2B4A] hover:bg-[#243a63] active:bg-[#131f35]
+                href={forgotHref}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg
                   text-white text-sm font-semibold tracking-wide
-                  transition-all duration-150 shadow-md hover:shadow-lg"
+                  transition-all duration-150 shadow-md hover:shadow-lg ${primaryButtonClass}`}
               >
                 Request a new link
                 <ArrowRight className="w-4 h-4" />
@@ -119,8 +155,10 @@ export default function ResetPassword() {
                     value={newPassword}
                     onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
                     placeholder="At least 8 characters"
-                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400
-                      focus:outline-none focus:ring-2 focus:ring-[#1A2B4A]/20 focus:border-[#1A2B4A] focus:bg-white transition-all"
+                    className={`w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder:text-slate-400
+                      focus:outline-none focus:ring-2 focus:bg-white transition-all ${inputFocusClass} ${
+                        lap ? "border-[#D8B7BC]" : "border-slate-200"
+                      }`}
                   />
                 </div>
               </div>
@@ -138,8 +176,10 @@ export default function ResetPassword() {
                     value={confirmPassword}
                     onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
                     placeholder="Repeat new password"
-                    className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400
-                      focus:outline-none focus:ring-2 focus:ring-[#1A2B4A]/20 focus:border-[#1A2B4A] focus:bg-white transition-all"
+                    className={`w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder:text-slate-400
+                      focus:outline-none focus:ring-2 focus:bg-white transition-all ${inputFocusClass} ${
+                        lap ? "border-[#D8B7BC]" : "border-slate-200"
+                      }`}
                   />
                 </div>
               </div>
@@ -154,18 +194,19 @@ export default function ResetPassword() {
               {success && (
                 <div className="flex items-start gap-2.5 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-700">
                   <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>Password updated! Redirecting to login…</span>
+                  <span>
+                    Password updated! Redirecting to {lap ? "LAP" : "login"}…
+                  </span>
                 </div>
               )}
 
               <button
                 type="submit"
                 disabled={loading || success}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg
-                  bg-[#1A2B4A] hover:bg-[#243a63] active:bg-[#131f35]
+                className={`w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg
                   disabled:opacity-60 disabled:cursor-not-allowed
                   text-white text-sm font-semibold tracking-wide
-                  transition-all duration-150 shadow-md hover:shadow-lg"
+                  transition-all duration-150 shadow-md hover:shadow-lg ${primaryButtonClass}`}
               >
                 {loading ? "Updating…" : (
                   <>

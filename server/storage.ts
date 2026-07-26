@@ -2531,6 +2531,77 @@ function runNewMigrations() {
   } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)`); } catch {}
 
+  // LAP files are intentionally isolated from C3 outcomes and attachments.
+  // Replacing a document creates an immutable version while a partial unique
+  // index guarantees that only one live version occupies each document slot.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS lap_result_packages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      borrower_name TEXT NOT NULL,
+      deal_reference TEXT,
+      loan_officer_id INTEGER,
+      notes TEXT NOT NULL DEFAULT '',
+      result_date TEXT NOT NULL,
+      created_by INTEGER NOT NULL,
+      updated_by INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT,
+      FOREIGN KEY (loan_officer_id) REFERENCES loan_officers(id),
+      FOREIGN KEY (created_by) REFERENCES users(id),
+      FOREIGN KEY (updated_by) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS lap_result_file_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      package_id INTEGER NOT NULL,
+      document_type TEXT NOT NULL
+        CHECK (document_type IN ('credit_report', 'aus', 'formal_quote')),
+      version INTEGER NOT NULL,
+      is_current INTEGER NOT NULL DEFAULT 1,
+      original_filename TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      data_blob BLOB NOT NULL,
+      uploaded_by INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      removed_by INTEGER,
+      removed_at TEXT,
+      UNIQUE (org_id, package_id, document_type, version),
+      FOREIGN KEY (package_id) REFERENCES lap_result_packages(id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id),
+      FOREIGN KEY (removed_by) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS lap_result_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      package_id INTEGER NOT NULL,
+      file_id INTEGER,
+      actor_user_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (package_id) REFERENCES lap_result_packages(id) ON DELETE CASCADE,
+      FOREIGN KEY (file_id) REFERENCES lap_result_file_versions(id),
+      FOREIGN KEY (actor_user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lap_packages_org_date
+      ON lap_result_packages(org_id, result_date DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lap_packages_org_updated
+      ON lap_result_packages(org_id, updated_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_lap_files_package
+      ON lap_result_file_versions(org_id, package_id, document_type, version DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lap_files_current
+      ON lap_result_file_versions(org_id, package_id, document_type)
+      WHERE is_current = 1 AND removed_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_lap_events_package
+      ON lap_result_events(org_id, package_id, created_at DESC);
+  `);
+
   // ── Glossary terms (admin-editable, per-org) ────────────────────────────
   try {
     sqlite.exec(`
@@ -5971,4 +6042,853 @@ export function cancelAdminAbsenceExcuse(
   });
 
   return tx.immediate();
+}
+
+// ── LAP result packages ──────────────────────────────────────────────────────
+
+export const LAP_DOCUMENT_TYPES = [
+  "credit_report",
+  "aus",
+  "formal_quote",
+] as const;
+export type LapDocumentType = (typeof LAP_DOCUMENT_TYPES)[number];
+export const LAP_RESULT_FILE_MAX_BYTES = 12 * 1024 * 1024;
+
+export type LapResultFileMetadata = {
+  id: number;
+  documentType: LapDocumentType;
+  version: number;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedBy: number;
+  uploadedByName: string | null;
+  uploadedAt: string;
+};
+
+export type LapResultPackage = {
+  id: number;
+  borrowerName: string;
+  dealReference: string | null;
+  loanOfficerId: number | null;
+  loanOfficerName: string | null;
+  notes: string;
+  resultDate: string;
+  status: "complete" | "incomplete";
+  complete: boolean;
+  createdBy: number;
+  createdByName: string | null;
+  updatedBy: number;
+  updatedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  files: {
+    creditReport: LapResultFileMetadata | null;
+    aus: LapResultFileMetadata | null;
+    formalQuote: LapResultFileMetadata | null;
+  };
+};
+
+export class LapResultStorageError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "LapResultStorageError";
+    this.status = status;
+  }
+}
+
+export function isLapDocumentType(value: unknown): value is LapDocumentType {
+  return typeof value === "string"
+    && (LAP_DOCUMENT_TYPES as readonly string[]).includes(value);
+}
+
+export function detectLapResultFileMime(
+  data: Buffer,
+): "application/pdf" | "image/png" | "image/jpeg" | null {
+  if (!Buffer.isBuffer(data)) return null;
+  if (data.length >= 8
+    && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47
+    && data[4] === 0x0d && data[5] === 0x0a && data[6] === 0x1a && data[7] === 0x0a) {
+    return "image/png";
+  }
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (data.length >= 5 && data.subarray(0, 5).toString("ascii") === "%PDF-") {
+    return "application/pdf";
+  }
+  return null;
+}
+
+function lapPositiveId(value: unknown, label: string): number {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new LapResultStorageError(400, `${label} must be a positive integer.`);
+  }
+  return id;
+}
+
+function assertLapActorInOrg(orgId: number, userId: number): void {
+  const actor = sqlite.prepare(`
+    SELECT 1
+    FROM users
+    WHERE id = ? AND (org_id = ? OR super_admin = 1)
+  `).get(userId, orgId);
+  if (!actor) {
+    throw new LapResultStorageError(403, "User is not a member of this organization.");
+  }
+}
+
+function assertLapLoanOfficerInOrg(orgId: number, loanOfficerId: number | null): void {
+  if (loanOfficerId == null) return;
+  const row = sqlite.prepare(`
+    SELECT 1 FROM loan_officers WHERE id = ? AND org_id = ?
+  `).get(loanOfficerId, orgId);
+  if (!row) {
+    throw new LapResultStorageError(400, "Loan officer was not found in this organization.");
+  }
+}
+
+function writeLapResultEvent(input: {
+  orgId: number;
+  packageId: number;
+  fileId?: number | null;
+  actorUserId: number;
+  action: string;
+  createdAt?: string;
+}): void {
+  sqlite.prepare(`
+    INSERT INTO lap_result_events
+      (org_id, package_id, file_id, actor_user_id, action, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    input.orgId,
+    input.packageId,
+    input.fileId ?? null,
+    input.actorUserId,
+    input.action,
+    input.createdAt ?? new Date().toISOString(),
+  );
+}
+
+const LAP_PACKAGE_SELECT = `
+  SELECT
+    p.id,
+    p.borrower_name,
+    p.deal_reference,
+    p.loan_officer_id,
+    p.notes,
+    p.result_date,
+    p.created_by,
+    p.updated_by,
+    p.created_at,
+    p.updated_at,
+    lo.full_name AS loan_officer_name,
+    creator.name AS created_by_name,
+    updater.name AS updated_by_name
+  FROM lap_result_packages p
+  LEFT JOIN loan_officers lo
+    ON lo.id = p.loan_officer_id AND lo.org_id = p.org_id
+  LEFT JOIN users creator ON creator.id = p.created_by
+  LEFT JOIN users updater ON updater.id = p.updated_by
+`;
+
+function mapLapFileMetadata(row: any): LapResultFileMetadata {
+  return {
+    id: Number(row.id),
+    documentType: row.document_type as LapDocumentType,
+    version: Number(row.version),
+    filename: String(row.original_filename),
+    mime: String(row.mime),
+    sizeBytes: Number(row.size_bytes),
+    sha256: String(row.sha256),
+    uploadedBy: Number(row.uploaded_by),
+    uploadedByName: row.uploaded_by_name == null ? null : String(row.uploaded_by_name),
+    uploadedAt: String(row.created_at),
+  };
+}
+
+function hydrateLapPackages(orgId: number, rows: any[]): LapResultPackage[] {
+  if (!rows.length) return [];
+  const ids = rows.map((row) => Number(row.id));
+  const placeholders = ids.map(() => "?").join(",");
+  const fileRows = sqlite.prepare(`
+    SELECT
+      f.id,
+      f.package_id,
+      f.document_type,
+      f.version,
+      f.original_filename,
+      f.mime,
+      f.size_bytes,
+      f.sha256,
+      f.uploaded_by,
+      f.created_at,
+      uploader.name AS uploaded_by_name
+    FROM lap_result_file_versions f
+    LEFT JOIN users uploader ON uploader.id = f.uploaded_by
+    WHERE f.org_id = ?
+      AND f.package_id IN (${placeholders})
+      AND f.is_current = 1
+      AND f.removed_at IS NULL
+    ORDER BY f.package_id, f.document_type
+  `).all(orgId, ...ids) as any[];
+
+  const filesByPackage = new Map<number, Map<LapDocumentType, LapResultFileMetadata>>();
+  for (const row of fileRows) {
+    const packageId = Number(row.package_id);
+    if (!filesByPackage.has(packageId)) filesByPackage.set(packageId, new Map());
+    filesByPackage.get(packageId)!.set(
+      row.document_type as LapDocumentType,
+      mapLapFileMetadata(row),
+    );
+  }
+
+  return rows.map((row) => {
+    const files = filesByPackage.get(Number(row.id)) ?? new Map();
+    const creditReport = files.get("credit_report") ?? null;
+    const aus = files.get("aus") ?? null;
+    const formalQuote = files.get("formal_quote") ?? null;
+    const complete = !!creditReport && !!aus && !!formalQuote;
+    return {
+      id: Number(row.id),
+      borrowerName: String(row.borrower_name),
+      dealReference: row.deal_reference == null ? null : String(row.deal_reference),
+      loanOfficerId: row.loan_officer_id == null ? null : Number(row.loan_officer_id),
+      loanOfficerName: row.loan_officer_name == null ? null : String(row.loan_officer_name),
+      notes: String(row.notes ?? ""),
+      resultDate: String(row.result_date),
+      status: complete ? "complete" : "incomplete",
+      complete,
+      createdBy: Number(row.created_by),
+      createdByName: row.created_by_name == null ? null : String(row.created_by_name),
+      updatedBy: Number(row.updated_by),
+      updatedByName: row.updated_by_name == null ? null : String(row.updated_by_name),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      files: { creditReport, aus, formalQuote },
+    };
+  });
+}
+
+function getLapPackageRow(orgId: number, packageId: number): any | null {
+  return sqlite.prepare(`
+    ${LAP_PACKAGE_SELECT}
+    WHERE p.id = ? AND p.org_id = ? AND p.archived_at IS NULL
+  `).get(packageId, orgId) as any ?? null;
+}
+
+export function getLapResultPackage(
+  orgIdInput: number,
+  packageIdInput: number,
+): LapResultPackage | null {
+  const orgId = lapPositiveId(orgIdInput, "Organization id");
+  const packageId = lapPositiveId(packageIdInput, "Package id");
+  const row = getLapPackageRow(orgId, packageId);
+  return row ? hydrateLapPackages(orgId, [row])[0] : null;
+}
+
+export function listLapResultPackages(input: {
+  orgId: number;
+  search?: string;
+  documentType?: LapDocumentType;
+  status?: "complete" | "incomplete";
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}): { results: LapResultPackage[]; total: number } {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const params: Record<string, unknown> = { orgId };
+  const where = ["p.org_id = @orgId", "p.archived_at IS NULL"];
+
+  if (input.search) {
+    where.push(`(
+      p.borrower_name LIKE @search
+      OR COALESCE(p.deal_reference, '') LIKE @search
+      OR COALESCE(p.notes, '') LIKE @search
+      OR EXISTS (
+        SELECT 1
+        FROM loan_officers lo_search
+        WHERE lo_search.id = p.loan_officer_id
+          AND lo_search.org_id = p.org_id
+          AND lo_search.full_name LIKE @search
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM users user_search
+        WHERE user_search.org_id = p.org_id
+          AND user_search.id IN (p.created_by, p.updated_by)
+          AND user_search.name LIKE @search
+      )
+    )`);
+    params.search = `%${input.search}%`;
+  }
+  if (input.documentType) {
+    where.push(`
+      EXISTS (
+        SELECT 1 FROM lap_result_file_versions f
+        WHERE f.org_id = p.org_id AND f.package_id = p.id
+          AND f.document_type = @documentType
+          AND f.is_current = 1 AND f.removed_at IS NULL
+      )
+    `);
+    params.documentType = input.documentType;
+  }
+
+  const completeSql = `(
+    SELECT COUNT(DISTINCT f.document_type)
+    FROM lap_result_file_versions f
+    WHERE f.org_id = p.org_id AND f.package_id = p.id
+      AND f.is_current = 1 AND f.removed_at IS NULL
+  ) = 3`;
+  if (input.status === "complete") where.push(completeSql);
+  if (input.status === "incomplete") where.push(`NOT (${completeSql})`);
+  if (input.from) {
+    where.push("p.result_date >= @from");
+    params.from = input.from;
+  }
+  if (input.to) {
+    where.push("p.result_date <= @to");
+    params.to = input.to;
+  }
+
+  const limit = Math.min(Math.max(Math.trunc(Number(input.limit) || 100), 1), 200);
+  const offset = Math.max(Math.trunc(Number(input.offset) || 0), 0);
+  const whereSql = where.join(" AND ");
+  const count = sqlite.prepare(`
+    SELECT COUNT(*) AS count
+    FROM lap_result_packages p
+    WHERE ${whereSql}
+  `).get(params) as any;
+  const rows = sqlite.prepare(`
+    ${LAP_PACKAGE_SELECT}
+    WHERE ${whereSql}
+    ORDER BY p.result_date DESC, p.updated_at DESC, p.id DESC
+    LIMIT @limit OFFSET @offset
+  `).all({ ...params, limit, offset }) as any[];
+
+  return {
+    results: hydrateLapPackages(orgId, rows),
+    total: Number(count?.count ?? 0),
+  };
+}
+
+export function createLapResultPackage(input: {
+  orgId: number;
+  actorUserId: number;
+  borrowerName: string;
+  dealReference?: string | null;
+  loanOfficerId?: number | null;
+  notes?: string;
+  resultDate: string;
+}): LapResultPackage {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+  const loanOfficerId = input.loanOfficerId == null
+    ? null
+    : lapPositiveId(input.loanOfficerId, "Loan officer id");
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    assertLapLoanOfficerInOrg(orgId, loanOfficerId);
+    const now = new Date().toISOString();
+    const created = sqlite.prepare(`
+      INSERT INTO lap_result_packages (
+        org_id, borrower_name, deal_reference, loan_officer_id, notes,
+        result_date, created_by, updated_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      orgId,
+      input.borrowerName,
+      input.dealReference ?? null,
+      loanOfficerId,
+      input.notes ?? "",
+      input.resultDate,
+      actorUserId,
+      actorUserId,
+      now,
+      now,
+    );
+    const packageId = Number(created.lastInsertRowid);
+    writeLapResultEvent({
+      orgId,
+      packageId,
+      actorUserId,
+      action: "package_created",
+      createdAt: now,
+    });
+    return packageId;
+  });
+
+  const packageId = tx.immediate();
+  return getLapResultPackage(orgId, packageId)!;
+}
+
+export function updateLapResultPackage(input: {
+  orgId: number;
+  packageId: number;
+  actorUserId: number;
+  borrowerName?: string;
+  dealReference?: string | null;
+  loanOfficerId?: number | null;
+  notes?: string;
+  resultDate?: string;
+}): LapResultPackage {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const packageId = lapPositiveId(input.packageId, "Package id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const existing = sqlite.prepare(`
+      SELECT id FROM lap_result_packages
+      WHERE id = ? AND org_id = ? AND archived_at IS NULL
+    `).get(packageId, orgId);
+    if (!existing) throw new LapResultStorageError(404, "LAP result was not found.");
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (input.borrowerName !== undefined) {
+      fields.push("borrower_name = ?");
+      values.push(input.borrowerName);
+    }
+    if (input.dealReference !== undefined) {
+      fields.push("deal_reference = ?");
+      values.push(input.dealReference);
+    }
+    if (input.loanOfficerId !== undefined) {
+      const loanOfficerId = input.loanOfficerId == null
+        ? null
+        : lapPositiveId(input.loanOfficerId, "Loan officer id");
+      assertLapLoanOfficerInOrg(orgId, loanOfficerId);
+      fields.push("loan_officer_id = ?");
+      values.push(loanOfficerId);
+    }
+    if (input.notes !== undefined) {
+      fields.push("notes = ?");
+      values.push(input.notes);
+    }
+    if (input.resultDate !== undefined) {
+      fields.push("result_date = ?");
+      values.push(input.resultDate);
+    }
+    if (!fields.length) {
+      throw new LapResultStorageError(400, "No supported fields were provided.");
+    }
+
+    const now = new Date().toISOString();
+    fields.push("updated_by = ?", "updated_at = ?");
+    values.push(actorUserId, now, packageId, orgId);
+    sqlite.prepare(`
+      UPDATE lap_result_packages
+      SET ${fields.join(", ")}
+      WHERE id = ? AND org_id = ? AND archived_at IS NULL
+    `).run(...values);
+    writeLapResultEvent({
+      orgId,
+      packageId,
+      actorUserId,
+      action: "package_updated",
+      createdAt: now,
+    });
+  });
+
+  tx.immediate();
+  return getLapResultPackage(orgId, packageId)!;
+}
+
+export function replaceLapResultFile(input: {
+  orgId: number;
+  packageId: number;
+  actorUserId: number;
+  documentType: LapDocumentType;
+  filename: string;
+  mime: string;
+  data: Buffer;
+}): LapResultFileMetadata {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const packageId = lapPositiveId(input.packageId, "Package id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+  if (!isLapDocumentType(input.documentType)) {
+    throw new LapResultStorageError(400, "Unsupported LAP document type.");
+  }
+  if (!Buffer.isBuffer(input.data) || input.data.length === 0) {
+    throw new LapResultStorageError(400, "A file is required.");
+  }
+  if (input.data.length > LAP_RESULT_FILE_MAX_BYTES) {
+    throw new LapResultStorageError(413, "File is larger than 12 MiB.");
+  }
+  const detectedMime = detectLapResultFileMime(input.data);
+  if (!detectedMime || input.mime !== detectedMime) {
+    throw new LapResultStorageError(415, "File contents are not a valid PDF, PNG, or JPEG.");
+  }
+  if (!input.filename.trim() || input.filename.length > 200) {
+    throw new LapResultStorageError(400, "File name must be between 1 and 200 characters.");
+  }
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const parent = sqlite.prepare(`
+      SELECT id FROM lap_result_packages
+      WHERE id = ? AND org_id = ? AND archived_at IS NULL
+    `).get(packageId, orgId);
+    if (!parent) throw new LapResultStorageError(404, "LAP result was not found.");
+
+    const previous = sqlite.prepare(`
+      SELECT COALESCE(MAX(version), 0) AS version
+      FROM lap_result_file_versions
+      WHERE org_id = ? AND package_id = ? AND document_type = ?
+    `).get(orgId, packageId, input.documentType) as any;
+    const version = Number(previous?.version ?? 0) + 1;
+    const now = new Date().toISOString();
+    sqlite.prepare(`
+      UPDATE lap_result_file_versions
+      SET is_current = 0
+      WHERE org_id = ? AND package_id = ? AND document_type = ?
+        AND is_current = 1 AND removed_at IS NULL
+    `).run(orgId, packageId, input.documentType);
+    const inserted = sqlite.prepare(`
+      INSERT INTO lap_result_file_versions (
+        org_id, package_id, document_type, version, is_current,
+        original_filename, mime, size_bytes, sha256, data_blob,
+        uploaded_by, created_at
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      orgId,
+      packageId,
+      input.documentType,
+      version,
+      input.filename,
+      input.mime,
+      input.data.length,
+      crypto.createHash("sha256").update(input.data).digest("hex"),
+      input.data,
+      actorUserId,
+      now,
+    );
+    const fileId = Number(inserted.lastInsertRowid);
+    sqlite.prepare(`
+      UPDATE lap_result_packages
+      SET updated_by = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(actorUserId, now, packageId, orgId);
+    writeLapResultEvent({
+      orgId,
+      packageId,
+      fileId,
+      actorUserId,
+      action: version === 1 ? "file_uploaded" : "file_replaced",
+      createdAt: now,
+    });
+    return fileId;
+  });
+
+  const fileId = tx.immediate();
+  const row = sqlite.prepare(`
+    SELECT
+      f.id, f.document_type, f.version, f.original_filename, f.mime,
+      f.size_bytes, f.sha256, f.uploaded_by, f.created_at,
+      uploader.name AS uploaded_by_name
+    FROM lap_result_file_versions f
+    LEFT JOIN users uploader ON uploader.id = f.uploaded_by
+    WHERE f.id = ? AND f.org_id = ?
+  `).get(fileId, orgId) as any;
+  return mapLapFileMetadata(row);
+}
+
+export function softDeleteLapResultFile(input: {
+  orgId: number;
+  fileId: number;
+  actorUserId: number;
+}): LapResultPackage {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const fileId = lapPositiveId(input.fileId, "File id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const file = sqlite.prepare(`
+      SELECT f.package_id
+      FROM lap_result_file_versions f
+      INNER JOIN lap_result_packages p
+        ON p.id = f.package_id AND p.org_id = f.org_id
+      WHERE f.id = ? AND f.org_id = ?
+        AND f.is_current = 1 AND f.removed_at IS NULL
+        AND p.archived_at IS NULL
+    `).get(fileId, orgId) as any;
+    if (!file) throw new LapResultStorageError(404, "Current LAP file was not found.");
+
+    const packageId = Number(file.package_id);
+    const now = new Date().toISOString();
+    sqlite.prepare(`
+      UPDATE lap_result_file_versions
+      SET is_current = 0, removed_by = ?, removed_at = ?
+      WHERE id = ? AND org_id = ?
+        AND is_current = 1 AND removed_at IS NULL
+    `).run(actorUserId, now, fileId, orgId);
+    sqlite.prepare(`
+      UPDATE lap_result_packages
+      SET updated_by = ?, updated_at = ?
+      WHERE id = ? AND org_id = ?
+    `).run(actorUserId, now, packageId, orgId);
+    writeLapResultEvent({
+      orgId,
+      packageId,
+      fileId,
+      actorUserId,
+      action: "file_removed",
+      createdAt: now,
+    });
+    return packageId;
+  });
+
+  const packageId = tx.immediate();
+  return getLapResultPackage(orgId, packageId)!;
+}
+
+export function getLapResultFileForDownload(input: {
+  orgId: number;
+  fileId: number;
+  actorUserId: number;
+}): {
+  packageId: number;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  data: Buffer;
+} | null {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const fileId = lapPositiveId(input.fileId, "File id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const row = sqlite.prepare(`
+      SELECT
+        f.package_id,
+        f.original_filename,
+        f.mime,
+        f.size_bytes,
+        f.data_blob
+      FROM lap_result_file_versions f
+      INNER JOIN lap_result_packages p
+        ON p.id = f.package_id AND p.org_id = f.org_id
+      WHERE f.id = ? AND f.org_id = ?
+        AND f.removed_at IS NULL
+        AND p.archived_at IS NULL
+    `).get(fileId, orgId) as any;
+    if (!row) return null;
+    writeLapResultEvent({
+      orgId,
+      packageId: Number(row.package_id),
+      fileId,
+      actorUserId,
+      action: "file_downloaded",
+    });
+    return {
+      packageId: Number(row.package_id),
+      filename: String(row.original_filename),
+      mime: String(row.mime),
+      sizeBytes: Number(row.size_bytes),
+      data: Buffer.from(row.data_blob),
+    };
+  });
+
+  return tx.immediate();
+}
+
+type LapStatsBucket = {
+  packages: number;
+  complete: number;
+  incomplete: number;
+  creditReports: number;
+  aus: number;
+  formalQuotes: number;
+};
+
+function lapStatsBucket(orgId: number, from?: string, to?: string): LapStatsBucket {
+  const params: Record<string, unknown> = { orgId };
+  const where = ["p.org_id = @orgId", "p.archived_at IS NULL"];
+  if (from) {
+    where.push("p.result_date >= @from");
+    params.from = from;
+  }
+  if (to) {
+    where.push("p.result_date <= @to");
+    params.to = to;
+  }
+  const row = sqlite.prepare(`
+    WITH scoped AS (
+      SELECT
+        p.id,
+        MAX(CASE WHEN f.document_type = 'credit_report' THEN 1 ELSE 0 END) AS credit_report,
+        MAX(CASE WHEN f.document_type = 'aus' THEN 1 ELSE 0 END) AS aus,
+        MAX(CASE WHEN f.document_type = 'formal_quote' THEN 1 ELSE 0 END) AS formal_quote
+      FROM lap_result_packages p
+      LEFT JOIN lap_result_file_versions f
+        ON f.package_id = p.id AND f.org_id = p.org_id
+        AND f.is_current = 1 AND f.removed_at IS NULL
+      WHERE ${where.join(" AND ")}
+      GROUP BY p.id
+    )
+    SELECT
+      COUNT(*) AS packages,
+      COALESCE(SUM(
+        CASE WHEN credit_report = 1 AND aus = 1 AND formal_quote = 1
+          THEN 1 ELSE 0 END
+      ), 0) AS complete,
+      COALESCE(SUM(credit_report), 0) AS credit_reports,
+      COALESCE(SUM(aus), 0) AS aus_count,
+      COALESCE(SUM(formal_quote), 0) AS formal_quotes
+    FROM scoped
+  `).get(params) as any;
+  const packages = Number(row?.packages ?? 0);
+  const complete = Number(row?.complete ?? 0);
+  return {
+    packages,
+    complete,
+    incomplete: packages - complete,
+    creditReports: Number(row?.credit_reports ?? 0),
+    aus: Number(row?.aus_count ?? 0),
+    formalQuotes: Number(row?.formal_quotes ?? 0),
+  };
+}
+
+export function getLapResultStats(input: {
+  orgId: number;
+  today: string;
+  weekStart: string;
+  monthStart: string;
+}): {
+  periods: {
+    today: LapStatsBucket;
+    week: LapStatsBucket;
+    month: LapStatsBucket;
+    allTime: LapStatsBucket;
+  };
+  totals: LapStatsBucket;
+  recent: LapResultPackage[];
+} {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const periods = {
+    today: lapStatsBucket(orgId, input.today, input.today),
+    week: lapStatsBucket(orgId, input.weekStart, input.today),
+    month: lapStatsBucket(orgId, input.monthStart, input.today),
+    allTime: lapStatsBucket(orgId),
+  };
+  return {
+    periods,
+    totals: periods.allTime,
+    recent: listLapResultPackages({ orgId, limit: 6 }).results,
+  };
+}
+
+export function getLapTeamStats(orgIdInput: number): {
+  members: Array<{
+    userId: number;
+    userName: string;
+    packagesCreated: number;
+    completePackages: number;
+    filesUploaded: number;
+    creditReports: number;
+    aus: number;
+    formalQuotes: number;
+  }>;
+  totals: {
+    packagesCreated: number;
+    completePackages: number;
+    filesUploaded: number;
+    creditReports: number;
+    aus: number;
+    formalQuotes: number;
+  };
+} {
+  const orgId = lapPositiveId(orgIdInput, "Organization id");
+  const rows = sqlite.prepare(`
+    WITH current_docs AS (
+      SELECT
+        f.package_id,
+        f.uploaded_by,
+        f.document_type
+      FROM lap_result_file_versions f
+      INNER JOIN lap_result_packages p
+        ON p.id = f.package_id AND p.org_id = f.org_id
+      WHERE f.org_id = @orgId
+        AND f.is_current = 1 AND f.removed_at IS NULL
+        AND p.archived_at IS NULL
+    ),
+    complete_packages AS (
+      SELECT package_id
+      FROM current_docs
+      GROUP BY package_id
+      HAVING COUNT(DISTINCT document_type) = 3
+    ),
+    package_counts AS (
+      SELECT
+        p.created_by AS user_id,
+        COUNT(*) AS packages_created,
+        SUM(CASE WHEN cp.package_id IS NOT NULL THEN 1 ELSE 0 END) AS complete_packages
+      FROM lap_result_packages p
+      LEFT JOIN complete_packages cp ON cp.package_id = p.id
+      WHERE p.org_id = @orgId AND p.archived_at IS NULL
+      GROUP BY p.created_by
+    ),
+    file_counts AS (
+      SELECT
+        uploaded_by AS user_id,
+        COUNT(*) AS files_uploaded,
+        SUM(CASE WHEN document_type = 'credit_report' THEN 1 ELSE 0 END) AS credit_reports,
+        SUM(CASE WHEN document_type = 'aus' THEN 1 ELSE 0 END) AS aus_count,
+        SUM(CASE WHEN document_type = 'formal_quote' THEN 1 ELSE 0 END) AS formal_quotes
+      FROM current_docs
+      GROUP BY uploaded_by
+    )
+    SELECT
+      u.id AS user_id,
+      u.name AS user_name,
+      COALESCE(pc.packages_created, 0) AS packages_created,
+      COALESCE(pc.complete_packages, 0) AS complete_packages,
+      COALESCE(fc.files_uploaded, 0) AS files_uploaded,
+      COALESCE(fc.credit_reports, 0) AS credit_reports,
+      COALESCE(fc.aus_count, 0) AS aus_count,
+      COALESCE(fc.formal_quotes, 0) AS formal_quotes
+    FROM users u
+    LEFT JOIN package_counts pc ON pc.user_id = u.id
+    LEFT JOIN file_counts fc ON fc.user_id = u.id
+    WHERE u.org_id = @orgId
+      AND (u.is_active = 1 OR pc.user_id IS NOT NULL OR fc.user_id IS NOT NULL)
+    ORDER BY complete_packages DESC, files_uploaded DESC, u.name COLLATE NOCASE
+  `).all({ orgId }) as any[];
+
+  const members = rows.map((row) => ({
+    userId: Number(row.user_id),
+    userName: String(row.user_name),
+    packagesCreated: Number(row.packages_created),
+    completePackages: Number(row.complete_packages),
+    filesUploaded: Number(row.files_uploaded),
+    creditReports: Number(row.credit_reports),
+    aus: Number(row.aus_count),
+    formalQuotes: Number(row.formal_quotes),
+  }));
+  const totals = members.reduce((sum, row) => ({
+    packagesCreated: sum.packagesCreated + row.packagesCreated,
+    completePackages: sum.completePackages + row.completePackages,
+    filesUploaded: sum.filesUploaded + row.filesUploaded,
+    creditReports: sum.creditReports + row.creditReports,
+    aus: sum.aus + row.aus,
+    formalQuotes: sum.formalQuotes + row.formalQuotes,
+  }), {
+    packagesCreated: 0,
+    completePackages: 0,
+    filesUploaded: 0,
+    creditReports: 0,
+    aus: 0,
+    formalQuotes: 0,
+  });
+
+  return { members, totals };
 }

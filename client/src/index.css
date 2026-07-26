@@ -630,3 +630,245 @@
   100% { transform: scaleX(1); }
 }
 
+/* ============================================================================
+   LAP — LO Assistant Portal
+   ----------------------------------------------------------------------------
+   LAP is a sibling product rendered inside the same SPA. Its product class is
+   mounted on <html> only while /lap is active, which keeps C3's navy/gold
+   defaults untouched and lets Radix portals inherit the LAP palette.
+   ========================================================================== */
+html.lap-mode {
+  --background: 28 55% 96%;
+  --foreground: 347 55% 15%;
+  --card: 30 70% 99%;
+  --card-foreground: 347 55% 15%;
+  --popover: 30 70% 99%;
+  --popover-foreground: 347 55% 15%;
+  --primary: 351 56% 28%;
+  --primary-foreground: 27 100% 98%;
+  --secondary: 350 23% 92%;
+  --secondary-foreground: 347 55% 18%;
+  --muted: 24 25% 91%;
+  --muted-foreground: 348 15% 39%;
+  --accent: 350 33% 87%;
+  --accent-foreground: 347 55% 18%;
+  --destructive: 3 68% 43%;
+  --destructive-foreground: 27 100% 98%;
+  --border: 350 20% 82%;
+  --input: 350 20% 80%;
+  --ring: 350 49% 36%;
+
+  --brand-navy: 347 55% 15%;
+  --brand-navy-2: 351 56% 28%;
+  --brand-gold: 350 38% 60%;
+  --brand-gold-2: 350 49% 36%;
+
+  --surface-rgb: 255 249 244;
+  --surface-bg-rgb: 247 238 232;
+  --surface-ink-rgb: 59 17 26;
+  --hairline-rgb: 255 255 255;
+  --hairline-alpha: 0.72;
+
+  --chart-1: 351 56% 32%;
+  --chart-2: 350 49% 45%;
+  --chart-3: 16 45% 48%;
+  --chart-4: 336 35% 42%;
+  --chart-5: 28 42% 46%;
+}
+
+html.dark.lap-mode {
+  --background: 347 45% 6%;
+  --foreground: 28 38% 91%;
+  --card: 347 43% 9%;
+  --card-foreground: 28 38% 91%;
+  --popover: 347 43% 9%;
+  --popover-foreground: 28 38% 91%;
+  --primary: 350 48% 62%;
+  --primary-foreground: 347 55% 9%;
+  --secondary: 348 32% 14%;
+  --secondary-foreground: 28 38% 91%;
+  --muted: 348 27% 13%;
+  --muted-foreground: 350 12% 66%;
+  --accent: 349 42% 18%;
+  --accent-foreground: 350 55% 78%;
+  --destructive: 3 68% 58%;
+  --destructive-foreground: 28 38% 95%;
+  --border: 348 30% 18%;
+  --input: 348 30% 20%;
+  --ring: 350 48% 62%;
+
+  --brand-navy: 347 55% 10%;
+  --brand-navy-2: 351 56% 24%;
+  --brand-gold: 350 48% 68%;
+  --brand-gold-2: 350 48% 58%;
+
+  --surface-rgb: 40 15 22;
+  --surface-bg-rgb: 24 9 13;
+  --surface-ink-rgb: 0 0 0;
+  --hairline-rgb: 255 255 255;
+  --hairline-alpha: 0.09;
+
+  --chart-1: 350 55% 68%;
+  --chart-2: 10 58% 63%;
+  --chart-3: 334 45% 67%;
+  --chart-4: 28 50% 64%;
+  --chart-5: 358 38% 76%;
+}
+
+html.lap-mode::before {
+  background-image:
+    radial-gradient(1000px 680px at 4% -12%, rgba(139,47,63,0.22), transparent 58%),
+    radial-gradient(850px 620px at 108% 10%, rgba(110,31,43,0.18), transparent 62%),
+    radial-gradient(1200px 800px at 50% 115%, rgba(59,17,26,0.10), transparent 60%);
+}
+
+html.dark.lap-mode::before {
+  background-image:
+    radial-gradient(1050px 700px at 2% -12%, rgba(139,47,63,0.28), transparent 58%),
+    radial-gradient(900px 650px at 108% 8%, rgba(110,31,43,0.34), transparent 60%),
+    radial-gradient(1200px 800px at 50% 118%, rgba(59,17,26,0.88), transparent 58%);
+}
+
+html.lap-mode .glass-rail {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01) 30%, rgba(59,17,26,0.91)),
+    rgba(59,17,26,0.94) !important;
+  border-color: rgba(255,249,244,0.09) !important;
+  color: #F8E7E2;
+}
+
+html.lap-mode [data-sidebar="sidebar"] {
+  --sidebar: 347 55% 15%;
+  --sidebar-background: hsl(347, 55%, 15%);
+  --sidebar-foreground: hsl(28, 45%, 92%);
+  --sidebar-primary: hsl(350, 48%, 72%);
+  --sidebar-primary-foreground: hsl(347, 55%, 10%);
+  --sidebar-accent: hsl(350, 49%, 27%);
+  --sidebar-accent-foreground: hsl(28, 48%, 94%);
+  --sidebar-border: hsl(350, 38%, 25%);
+  --sidebar-ring: hsl(350, 48%, 66%);
+}
+
+html.dark.lap-mode [data-sidebar="sidebar"] {
+  --sidebar: 347 55% 10%;
+  --sidebar-background: hsl(347, 55%, 10%);
+  --sidebar-foreground: hsl(28, 38%, 89%);
+  --sidebar-primary: hsl(350, 48%, 68%);
+  --sidebar-primary-foreground: hsl(347, 55%, 8%);
+  --sidebar-accent: hsl(350, 44%, 21%);
+  --sidebar-accent-foreground: hsl(28, 42%, 92%);
+  --sidebar-border: hsl(350, 34%, 19%);
+  --sidebar-ring: hsl(350, 48%, 62%);
+}
+
+html.lap-mode .lap-mobile-nav {
+  background: rgba(59, 17, 26, 0.97);
+  border-color: rgba(255, 249, 244, 0.12);
+  box-shadow: 0 -14px 34px -20px rgba(59, 17, 26, 0.8);
+}
+
+html.lap-mode .lap-login {
+  background:
+    radial-gradient(900px 620px at 5% -8%, rgba(139,47,63,0.16), transparent 58%),
+    radial-gradient(760px 540px at 105% 105%, rgba(110,31,43,0.14), transparent 62%),
+    #F7EEE8;
+}
+
+html.dark.lap-mode .lap-login {
+  background:
+    radial-gradient(900px 620px at 5% -8%, rgba(139,47,63,0.22), transparent 58%),
+    radial-gradient(760px 540px at 105% 105%, rgba(110,31,43,0.20), transparent 62%),
+    #18090D;
+}
+
+html.lap-mode .lap-login-grid {
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(110,31,43,0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110,31,43,0.14) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 78%);
+}
+
+html.lap-mode .brand-text,
+html.lap-mode .brand-text-soft {
+  color: #6E1F2B;
+}
+
+html.dark.lap-mode .brand-text,
+html.dark.lap-mode .brand-text-soft {
+  color: #E8B8BE;
+}
+
+/* Reused C3 pages contain a few fixed navy/sky presentation colors. Replace
+   those only while LAP is mounted; semantic success/warning/error colors stay
+   distinct and readable. */
+html.lap-mode .from-\[\#1A2B4A\],
+html.lap-mode .from-\[\#0ea5e9\] {
+  --tw-gradient-from: #8B2F3F var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(139 47 63 / 0) var(--tw-gradient-to-position) !important;
+}
+
+html.lap-mode .via-\[\#22325a\],
+html.lap-mode .via-\[\#2563eb\] {
+  --tw-gradient-to: rgb(110 31 43 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), #6E1F2B var(--tw-gradient-via-position), var(--tw-gradient-to) !important;
+}
+
+html.lap-mode .to-\[\#0F182D\],
+html.lap-mode .to-\[\#1A2B4A\] {
+  --tw-gradient-to: #3B111A var(--tw-gradient-to-position) !important;
+}
+
+html.lap-mode [style*="#C49A3C"] {
+  color: #E3ADB5 !important;
+}
+
+html.lap-mode [style*="rgba(196,154,60"] {
+  background-color: rgba(227, 173, 181, 0.16) !important;
+}
+
+html.lap-mode [class*="text-blue-"],
+html.lap-mode [class*="text-sky-"],
+html.lap-mode [class*="text-indigo-"] {
+  color: #8B2F3F !important;
+}
+
+html.dark.lap-mode [class*="text-blue-"],
+html.dark.lap-mode [class*="text-sky-"],
+html.dark.lap-mode [class*="text-indigo-"] {
+  color: #E8B8BE !important;
+}
+
+html.lap-mode [class*="bg-blue-"],
+html.lap-mode [class*="bg-sky-"],
+html.lap-mode [class*="bg-indigo-"] {
+  background-color: rgba(139, 47, 63, 0.12) !important;
+}
+
+html.dark.lap-mode [class*="bg-blue-"],
+html.dark.lap-mode [class*="bg-sky-"],
+html.dark.lap-mode [class*="bg-indigo-"] {
+  background-color: rgba(139, 47, 63, 0.22) !important;
+}
+
+html.lap-mode [class*="border-blue-"],
+html.lap-mode [class*="border-sky-"],
+html.lap-mode [class*="border-indigo-"] {
+  border-color: rgba(139, 47, 63, 0.34) !important;
+}
+
+html.lap-mode [class*="from-blue-"],
+html.lap-mode [class*="from-sky-"],
+html.lap-mode [class*="from-indigo-"] {
+  --tw-gradient-from: #8B2F3F var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(139 47 63 / 0) var(--tw-gradient-to-position) !important;
+}
+
+html.lap-mode [class*="to-blue-"],
+html.lap-mode [class*="to-sky-"],
+html.lap-mode [class*="to-indigo-"] {
+  --tw-gradient-to: #3B111A var(--tw-gradient-to-position) !important;
+}
+
