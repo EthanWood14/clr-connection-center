@@ -64,15 +64,26 @@ interface ForumAnswer {
   has_upvoted?: number;
 }
 
-export default function Forum() {
+type ForumProps = {
+  portal?: "c3" | "lap";
+  // Wouter supplies route params when mounted directly; LAP's wrapper only
+  // supplies the portal discriminator.
+  params?: unknown;
+};
+
+export default function Forum({ portal = "c3" }: ForumProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const isAdmin = user?.role === "admin";
+  const isLap = portal === "lap";
+  const apiBase = isLap ? "/api/lap/forum" : "/api/forum";
+  const postsApi = `${apiBase}/posts`;
+  const forumLabel = isLap ? "LAP Forum" : "Community Forum";
 
   useEffect(() => {
-    document.title = "Forum · WCLCC";
-  }, []);
+    document.title = isLap ? "Forum · LAP" : "Forum · WCLCC";
+  }, [isLap]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -87,17 +98,17 @@ export default function Forum() {
   const [newAnswer, setNewAnswer] = useState("");
 
   const { data: listData, isLoading: loadingList } = useQuery<{ posts: ForumPost[] }>({
-    queryKey: ["/api/forum/posts", search],
+    queryKey: [postsApi, search],
     queryFn: () => {
       const qs = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
-      return apiRequest("GET", `/api/forum/posts${qs}`);
+      return apiRequest("GET", `${postsApi}${qs}`);
     },
     refetchInterval: selectedId ? false : 30000,
   });
 
   const { data: detailData } = useQuery<{ post: ForumPost }>({
-    queryKey: ["/api/forum/posts", selectedId],
-    queryFn: () => apiRequest("GET", `/api/forum/posts/${selectedId}`),
+    queryKey: [postsApi, selectedId],
+    queryFn: () => apiRequest("GET", `${postsApi}/${selectedId}`),
     enabled: !!selectedId,
     refetchInterval: selectedId ? 30000 : false,
   });
@@ -107,9 +118,9 @@ export default function Forum() {
 
   const createPost = useMutation({
     mutationFn: (data: { title: string; body: string }) =>
-      apiRequest("POST", "/api/forum/posts", data),
+      apiRequest("POST", postsApi, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       setAskOpen(false);
       setAskTitle("");
       setAskBody("");
@@ -120,18 +131,18 @@ export default function Forum() {
 
   const updatePost = useMutation({
     mutationFn: ({ id, data }: { id: number; data: any }) =>
-      apiRequest("PATCH", `/api/forum/posts/${id}`, data),
+      apiRequest("PATCH", `${postsApi}/${id}`, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       setEditPostId(null);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deletePost = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/forum/posts/${id}`),
+    mutationFn: (id: number) => apiRequest("DELETE", `${postsApi}/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       setSelectedId(null);
       toast({ title: "Post deleted" });
     },
@@ -139,20 +150,20 @@ export default function Forum() {
   });
 
   const upvotePost = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/forum/posts/${id}/upvote`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/forum/posts"] }),
+    mutationFn: (id: number) => apiRequest("POST", `${postsApi}/${id}/upvote`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [postsApi] }),
   });
 
   const subscribePost = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/forum/posts/${id}/subscribe`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/forum/posts"] }),
+    mutationFn: (id: number) => apiRequest("POST", `${postsApi}/${id}/subscribe`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [postsApi] }),
   });
 
   const addAnswer = useMutation({
     mutationFn: ({ postId, body }: { postId: number; body: string }) =>
-      apiRequest("POST", `/api/forum/posts/${postId}/answers`, { body }),
+      apiRequest("POST", `${postsApi}/${postId}/answers`, { body }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       setNewAnswer("");
       toast({ title: "Answer posted" });
     },
@@ -161,30 +172,30 @@ export default function Forum() {
 
   const updateAnswer = useMutation({
     mutationFn: ({ id, data }: { id: number; data: any }) =>
-      apiRequest("PATCH", `/api/forum/answers/${id}`, data),
+      apiRequest("PATCH", `${apiBase}/answers/${id}`, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       setEditAnswerId(null);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteAnswer = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/forum/answers/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/forum/posts"] }),
+    mutationFn: (id: number) => apiRequest("DELETE", `${apiBase}/answers/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [postsApi] }),
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const upvoteAnswer = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/forum/answers/${id}/upvote`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/forum/posts"] }),
+    mutationFn: (id: number) => apiRequest("POST", `${apiBase}/answers/${id}/upvote`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [postsApi] }),
   });
 
   const acceptAnswer = useMutation({
     mutationFn: ({ postId, answerId }: { postId: number; answerId: number }) =>
-      apiRequest("POST", `/api/forum/posts/${postId}/accept-answer/${answerId}`),
+      apiRequest("POST", `${postsApi}/${postId}/accept-answer/${answerId}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/forum/posts"] });
+      qc.invalidateQueries({ queryKey: [postsApi] });
       toast({ title: "Answer accepted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -201,7 +212,7 @@ export default function Forum() {
           className="mb-4"
           data-testid="button-forum-back"
         >
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Forum
+          <ArrowLeft className="w-4 h-4 mr-2" /> Back to {forumLabel}
         </Button>
 
         <Card className="mb-4">
@@ -448,7 +459,7 @@ export default function Forum() {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold">Community Forum</h1>
+          <h1 className="text-2xl font-bold">{forumLabel}</h1>
         </div>
         <Button onClick={() => setAskOpen(true)} data-testid="button-ask-question">
           Ask a Question

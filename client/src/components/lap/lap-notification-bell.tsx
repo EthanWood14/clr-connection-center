@@ -47,9 +47,11 @@ export function LapNotificationBell() {
   const [, navigate] = useLocation();
   const [open, setOpen] = useState(false);
   const uid = user?.id ?? 0;
+  const notificationsKey = `/api/notifications?portal=lap&userId=${uid}`;
+  const unreadKey = `/api/notifications/unread-count?portal=lap&userId=${uid}`;
 
   const { data = [] } = useQuery<any[]>({
-    queryKey: [`/api/notifications?userId=${uid}`],
+    queryKey: [notificationsKey],
     enabled: uid > 0,
     refetchInterval: 30000,
   });
@@ -61,10 +63,10 @@ export function LapNotificationBell() {
   const unreadCount = notifications.filter((item) => !item.isRead).length;
 
   const markRead = useMutation({
-    mutationFn: (id: number) => apiRequest("PATCH", `/api/notifications/${id}/read`, {}),
+    mutationFn: (id: number) => apiRequest("PATCH", `/api/notifications/${id}/read?portal=lap`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${uid}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${uid}`] });
+      queryClient.invalidateQueries({ queryKey: [notificationsKey] });
+      queryClient.invalidateQueries({ queryKey: [unreadKey] });
     },
   });
 

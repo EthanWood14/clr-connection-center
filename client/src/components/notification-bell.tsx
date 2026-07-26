@@ -55,21 +55,23 @@ export function NotificationBell() {
   const uid = user?.id ?? 0;
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
+  const notificationsKey = `/api/notifications?userId=${uid}`;
+  const unreadKey = `/api/notifications/unread-count?userId=${uid}`;
 
   const { data: notifications = [] } = useQuery<any[]>({
-    queryKey: [`/api/notifications?userId=${uid}`],
+    queryKey: [notificationsKey],
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
-    queryKey: [`/api/notifications/unread-count?userId=${uid}`],
+    queryKey: [unreadKey],
     refetchInterval: 30000,
   });
 
   const markRead = useMutation({
-    mutationFn: (id: number) => apiRequest("PATCH", `/api/notifications/${id}/read`, {}),
+    mutationFn: (id: number) => apiRequest("PATCH", `/api/notifications/${id}/read?portal=c3`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${uid}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${uid}`] });
+      queryClient.invalidateQueries({ queryKey: [notificationsKey] });
+      queryClient.invalidateQueries({ queryKey: [unreadKey] });
     },
   });
 
@@ -84,10 +86,10 @@ export function NotificationBell() {
   }
 
   const markAllRead = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/notifications/mark-all-read", { userId: uid }),
+    mutationFn: () => apiRequest("POST", "/api/notifications/mark-all-read?portal=c3", { userId: uid }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications?userId=${uid}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/notifications/unread-count?userId=${uid}`] });
+      queryClient.invalidateQueries({ queryKey: [notificationsKey] });
+      queryClient.invalidateQueries({ queryKey: [unreadKey] });
     },
   });
 

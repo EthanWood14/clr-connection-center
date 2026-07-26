@@ -1,6 +1,13 @@
 import webpush from "web-push";
 import { getSqlite, getWebhookSettings } from "./storage";
 
+export type PushPayload = {
+  title: string;
+  body: string;
+  url?: string;
+  portal?: "c3" | "lap";
+};
+
 let initialized = false;
 let publicKey: string | null = null;
 
@@ -90,7 +97,7 @@ export function getUserSubscriptions(userId: number): Array<{ id: number; endpoi
 
 export async function sendPushToUser(
   userId: number,
-  payload: { title: string; body: string; url?: string }
+  payload: PushPayload
 ): Promise<{ sent: number; failed: number }> {
   if (!initialized) return { sent: 0, failed: 0 };
   // Respect quiet hours — no pushes between 9 PM and 8 AM (recipient's tz).
@@ -123,7 +130,7 @@ export async function sendPushToUser(
 
 export async function sendPushToUsers(
   userIds: number[],
-  payload: { title: string; body: string; url?: string }
+  payload: PushPayload
 ): Promise<{ sent: number; failed: number }> {
   let sent = 0;
   let failed = 0;

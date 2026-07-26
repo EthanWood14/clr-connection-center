@@ -356,8 +356,12 @@ function buildEmail(opts: {
   subject: string;
   preheader?: string;
   body: string;
+  portal?: "c3" | "lap";
 }): string {
-  const { subject, preheader = "", body } = opts;
+  const { subject, preheader = "", body, portal = "c3" } = opts;
+  const productName = portal === "lap" ? "LO Assistant Portal" : "CLR Connection Center";
+  const headerColor = portal === "lap" ? "#7f1d2d" : "#0F182D";
+  const accentColor = portal === "lap" ? "#991b35" : "#1A2B4A";
   // Escape the subject/preheader before they land in <title>/<h1>/preheader —
   // they can be derived from user-controlled names. `body` is intentional HTML
   // assembled by callers (already escaped at their own sinks).
@@ -381,7 +385,7 @@ function buildEmail(opts: {
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%">
         <!-- Header -->
         <tr>
-          <td style="background:#0F182D;border-radius:12px 12px 0 0;padding:28px 36px">
+          <td style="background:${headerColor};border-radius:12px 12px 0 0;padding:28px 36px">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td>
@@ -390,7 +394,7 @@ function buildEmail(opts: {
                        style="display:block;filter:brightness(0) invert(1);opacity:0.95" />
                 </td>
                 <td align="right" style="vertical-align:middle">
-                  <span style="background:rgba(255,255,255,0.12);color:#e2e8f0;font-size:11px;font-weight:bold;letter-spacing:0.5px;padding:4px 12px;border-radius:20px;text-transform:uppercase">CLR Connection Center</span>
+                  <span style="background:rgba(255,255,255,0.12);color:#e2e8f0;font-size:11px;font-weight:bold;letter-spacing:0.5px;padding:4px 12px;border-radius:20px;text-transform:uppercase">${productName}</span>
                 </td>
               </tr>
             </table>
@@ -410,10 +414,10 @@ function buildEmail(opts: {
         <tr>
           <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:18px 36px">
             <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.7">
-              <strong style="color:#64748b">CLR Connection Center</strong> &mdash; West Capital Lending<br />
-              Sent from <a href="mailto:reports@westcapitallending.center" style="color:#1A2B4A;text-decoration:none">reports@westcapitallending.center</a>.
+              <strong style="color:#64748b">${productName}</strong> &mdash; West Capital Lending<br />
+              Sent from <a href="mailto:reports@westcapitallending.center" style="color:${accentColor};text-decoration:none">reports@westcapitallending.center</a>.
               If you didn't expect this, check your spam folder.<br />
-              To use a custom sender, log in to <a href="https://resend.com" style="color:#1A2B4A">resend.com</a> and configure your own domain.
+              To use a custom sender, log in to <a href="https://resend.com" style="color:${accentColor}">resend.com</a> and configure your own domain.
             </p>
           </td>
         </tr>
@@ -3106,7 +3110,40 @@ cron.schedule("5 19 * * 1-5", async () => {
 
 // Chat email throttle — suppress flood of per-message emails during active chat sessions.
 // We send at most one email per CHAT_EMAIL_THROTTLE_MS window.
-let lastChatEmailAt = 0;
+type CommunicationPortal = "c3" | "lap";
+
+function communicationPortalForRequest(req: Request): CommunicationPortal {
+  return req.path.startsWith("/api/lap/") ? "lap" : "c3";
+}
+
+function communicationContext(portal: CommunicationPortal) {
+  const lap = portal === "lap";
+  return {
+    portal,
+    chatUrl: lap ? "/#/lap/chat" : "/#/chat",
+    forumUrl: lap ? "/#/lap/forum" : "/#/forum",
+    chatLabel: lap ? "LAP Team Chat" : "Team Chat",
+    forumLabel: lap ? "LAP Forum" : "Forum",
+  };
+}
+
+function communicationOrgId(req: any): number {
+  return Number(req.session_user?.orgId ?? 1) || 1;
+}
+
+function chatNotificationsMuted(user: any, portal: CommunicationPortal): boolean {
+  return portal === "lap"
+    ? !!(user.muteLapChatNotifications ?? user.mute_lap_chat_notifications)
+    : !!(user.muteChatNotifications ?? user.mute_chat_notifications);
+}
+
+function forumNotificationsMuted(user: any, portal: CommunicationPortal): boolean {
+  return portal === "lap"
+    ? !!(user.muteLapForumNotifications ?? user.mute_lap_forum_notifications)
+    : !!(user.muteForumNotifications ?? user.mute_forum_notifications);
+}
+
+const lastChatEmailAt = new Map<string, number>();
 const CHAT_EMAIL_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes
 
 // ── Time-off decision email to the requester (acceptance on approval) ─────────
@@ -4466,6 +4503,24 @@ export function registerRoutes(httpServer: Server, app: Express) {
       res.json({ ok: true, muted });
     } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
   });
+  app.patch("/api/users/me/mute-lap-chat", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const muted = !!req.body?.muted;
+    try {
+      (require("./storage").getRawSqlite() as any).prepare(`UPDATE users SET mute_lap_chat_notifications = ? WHERE id = ?`).run(muted ? 1 : 0, userId);
+      res.json({ ok: true, muted });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
+  });
+  app.patch("/api/users/me/mute-lap-forum", requireAuth, (req: any, res) => {
+    const userId = req.session_user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const muted = !!req.body?.muted;
+    try {
+      (require("./storage").getRawSqlite() as any).prepare(`UPDATE users SET mute_lap_forum_notifications = ? WHERE id = ?`).run(muted ? 1 : 0, userId);
+      res.json({ ok: true, muted });
+    } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to update" }); }
+  });
   // Opt in/out of team transfer-celebration alerts (off by default).
   app.patch("/api/users/me/transfer-notifications", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
@@ -4592,7 +4647,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), muteLapChatNotifications: !!(u.muteLapChatNotifications ?? u.mute_lap_chat_notifications), muteLapForumNotifications: !!(u.muteLapForumNotifications ?? u.mute_lap_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -8950,13 +9005,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // query param — otherwise everyone could read everyone else's notifications.
     const userId = req.session_user?.userId;
     if (!userId) return res.json([]);
-    res.json(storage.getNotifications(userId));
+    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    res.json(storage.getNotifications(userId, portal));
   });
 
   app.get("/api/notifications/unread-count", (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.json({ count: 0 });
-    res.json({ count: storage.getUnreadCount(userId) });
+    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    res.json({ count: storage.getUnreadCount(userId, portal) });
   });
 
   app.post("/api/notifications", async (req: any, res) => {
@@ -8977,10 +9034,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       type: body.type,
       title: body.title,
       message: body.message,
+      portal: body.portal === "lap" || body.portal === "c3" ? body.portal : null,
     } as any);
     // Mirror as push
     try {
-      const payload = { title: notif.title, body: notif.message, url: "/" };
+      const notificationPortal: CommunicationPortal | undefined = notif.portal === "lap" || notif.portal === "c3"
+        ? notif.portal
+        : undefined;
+      const payload = {
+        title: notif.title,
+        body: notif.message,
+        url: notificationPortal === "lap" ? "/#/lap" : "/",
+        ...(notificationPortal ? { portal: notificationPortal } : {}),
+      };
       if (notif.userId) {
         sendPushToUser(notif.userId, payload).catch(() => {});
       } else {
@@ -8994,14 +9060,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.patch("/api/notifications/:id/read", (req: any, res) => {
     // Scope to the caller so a user can't flip another user's notification read.
-    storage.markNotificationRead(parseInt(req.params.id), Number(req.session_user?.userId));
+    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    storage.markNotificationRead(parseInt(req.params.id), Number(req.session_user?.userId), portal);
     res.json({ ok: true });
   });
 
   app.post("/api/notifications/mark-all-read", (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.json({ ok: true });
-    storage.markAllNotificationsRead(userId);
+    const portal: CommunicationPortal = req.query?.portal === "lap" ? "lap" : "c3";
+    storage.markAllNotificationsRead(userId, portal);
     res.json({ ok: true });
   });
 
@@ -10118,10 +10186,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Audit Logs ───────────────────────────────────────────────────────────────
 
   // ── Team Chat ──────────────────────────────────────────────────────────────────
-  app.get("/api/chat", requireAuth, (req: any, res) => {
+  app.get(["/api/chat", "/api/lap/chat"], requireAuth, (req: any, res) => {
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
     const limit = parseInt((req.query.limit as string) || "80");
     const beforeId = req.query.beforeId ? parseInt(req.query.beforeId as string) : undefined;
-    const messages = storageExtra.getChatMessages(limit, beforeId).reverse();
+    const messages = storageExtra.getChatMessages(limit, beforeId, portal, orgId).reverse();
     const myId = req.session_user?.userId;
     const ids = messages.map((m: any) => m.id);
     const reactions = storageExtra.getChatReactionsForMessages(ids);
@@ -10151,15 +10221,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Serve a chat message's image blob (lazy-loaded by the client so the polled
   // message list stays light). Auth-gated like the rest of chat; a claimed Grab
   // It image is only served to its claimer (or an admin).
-  app.get("/api/chat/:id/image", requireAuth, (req: any, res) => {
+  app.get(["/api/chat/:id/image", "/api/lap/chat/:id/image"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
-    try {
-      const meta = storageExtra.getRawSqlite().prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=?`).get(id) as any;
-      if (meta?.grab_it && meta.claimed_by != null && meta.claimed_by !== req.session_user?.userId) {
-        return res.status(404).send("Not found");
-      }
-    } catch {}
-    const row = storageExtra.getChatImage(id);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const meta = storageExtra.getChatMessageById(id, portal, orgId);
+    if (!meta) return res.status(404).send("Not found");
+    if (meta.grab_it && meta.claimed_by != null && meta.claimed_by !== req.session_user?.userId) {
+      return res.status(404).send("Not found");
+    }
+    const row = storageExtra.getChatImage(id, portal, orgId);
     if (!row || !row.image_data || !row.image_mime) return res.status(404).send("Not found");
     try {
       const buf = Buffer.from(row.image_data, "base64");
@@ -10207,7 +10278,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Send a meme as a chat image. Fetches the memegen image server-side (avoids
   // CORS, keeps the meme permanent) after allowlisting the host to prevent SSRF.
-  app.post("/api/chat/meme", requireAuth, async (req: any, res) => {
+  app.post(["/api/chat/meme", "/api/lap/chat/meme"], requireAuth, async (req: any, res) => {
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const url = String(req.body?.url ?? "").trim();
     if (!/^https:\/\/api\.memegen\.link\/images\/[A-Za-z0-9_\-/.]+\.(png|jpg|jpeg|gif|webp)$/i.test(url)) {
       return res.status(400).json({ error: "Invalid meme URL" });
@@ -10222,16 +10296,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const base64 = Buffer.from(ab).toString("base64");
       const mime = ct.split(";")[0].trim();
       const user = storage.getUserById(req.session_user!.userId) as any;
-      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime);
+      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime, false, portal, orgId);
       // Push + in-app notify other active users in the org (email intentionally skipped for memes).
       try {
-        const orgId = req.session_user!.orgId ?? 1;
         const senderName = user?.name ?? "Someone";
         const others = storage.getUsers().filter((u: any) =>
           u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
-          && !(u.muteChatNotifications ?? u.mute_chat_notifications));
-        const payload = { title: `💬 ${senderName}`, body: "📷 Meme", url: "/#/chat" };
-        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, isRead: false });
+          && !chatNotificationsMuted(u, portal));
+        const payload = { title: `💬 ${senderName}`, body: "📷 Meme", url: comm.chatUrl, portal };
+        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, portal, isRead: false });
         sendPushToUsers(others.map((u: any) => u.id), payload).catch(() => {});
       } catch (e) { console.error("meme notify failed:", e); }
       res.json({ message: msg });
@@ -10274,7 +10347,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Send a Giphy GIF as a chat image. Allowlisted to *.giphy.com to prevent SSRF.
-  app.post("/api/chat/gif", requireAuth, async (req: any, res) => {
+  app.post(["/api/chat/gif", "/api/lap/chat/gif"], requireAuth, async (req: any, res) => {
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const url = String(req.body?.url ?? "").trim();
     // Allowlist *.giphy.com to prevent SSRF. Giphy CDN URLs carry a ?cid=…&ct=g
     // query string, so parse the URL rather than regex-matching the whole thing.
@@ -10296,15 +10372,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const base64 = Buffer.from(ab).toString("base64");
       const mime = ct.split(";")[0].trim();
       const user = storage.getUserById(req.session_user!.userId) as any;
-      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime);
+      const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", "", base64, mime, false, portal, orgId);
       try {
-        const orgId = req.session_user!.orgId ?? 1;
         const senderName = user?.name ?? "Someone";
         const others = storage.getUsers().filter((u: any) =>
           u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
-          && !(u.muteChatNotifications ?? u.mute_chat_notifications));
-        const payload = { title: `💬 ${senderName}`, body: "📷 GIF", url: "/#/chat" };
-        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, isRead: false });
+          && !chatNotificationsMuted(u, portal));
+        const payload = { title: `💬 ${senderName}`, body: "📷 GIF", url: comm.chatUrl, portal };
+        for (const u of others) storage.createNotification({ userId: u.id, type: "chat", title: payload.title, message: payload.body, portal, isRead: false });
         sendPushToUsers(others.map((u: any) => u.id), payload).catch(() => {});
       } catch (e) { console.error("gif notify failed:", e); }
       res.json({ message: msg });
@@ -10313,19 +10388,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Toggle an emoji reaction on a chat message.
   const CHAT_EMOJIS = new Set(["👍", "❤️", "😂", "🎉", "😮", "👏", "🙏", "🔥", "✅"]);
-  app.post("/api/chat/:id/react", requireAuth, (req: any, res) => {
+  app.post(["/api/chat/:id/react", "/api/lap/chat/:id/react"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     const emoji = String(req.body?.emoji ?? "");
     if (!CHAT_EMOJIS.has(emoji)) return res.status(400).json({ error: "Unsupported reaction" });
     try {
-      const result = storageExtra.toggleChatReaction(id, userId, emoji);
+      const result = storageExtra.toggleChatReaction(
+        id,
+        userId,
+        emoji,
+        communicationPortalForRequest(req),
+        communicationOrgId(req),
+      );
+      if (result.notFound) return res.status(404).json({ error: "Message not found" });
       res.json({ ok: true, ...result });
     } catch (e: any) { res.status(500).json({ error: e?.message ?? "Failed to react" }); }
   });
 
-  app.post("/api/chat", requireAuth, (req: any, res) => {
+  app.post(["/api/chat", "/api/lap/chat"], requireAuth, (req: any, res) => {
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const { message, imageBase64, imageMime } = req.body;
     const text = typeof message === "string" ? message.trim() : "";
     // Optional pasted/attached image (e.g. a screenshot).
@@ -10346,28 +10431,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (text.length > 1000) return res.status(400).json({ error: "Message too long (max 1000 chars)" });
     const grabIt = req.body?.grabIt === true || req.body?.grabIt === 1 || req.body?.grabIt === "1";
     const user = storage.getUserById(req.session_user!.userId) as any;
-    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime, grabIt);
+    const msg = storageExtra.postChatMessage(req.session_user!.userId, user?.name ?? "Unknown", text, imgData, imgMime, grabIt, portal, orgId);
 
     // Push + in-app notify all other active users in the org. Grab It leads
     // are urgent (first to claim calls it) so they bypass chat-mute and get a
     // louder title.
     try {
-      const orgId = req.session_user!.orgId ?? 1;
       const senderName = user?.name ?? "Someone";
       const allUsers = storage.getUsers().filter((u: any) =>
         u.isActive && u.id !== req.session_user!.userId && (u.orgId ?? 1) === orgId
-        && (grabIt || !(u.muteChatNotifications ?? u.mute_chat_notifications))
+        && (grabIt || !chatNotificationsMuted(u, portal))
       );
       const trimmed = text || (imgData ? "📷 Photo" : "");
       const preview = trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
       const pushPayload = grabIt ? {
         title: `🎯 Lead up for grabs — ${senderName}`,
         body: `First to claim calls it. ${preview}`.trim(),
-        url: `/#/chat`,
+        url: comm.chatUrl,
+        portal,
       } : {
         title: `💬 ${senderName}`,
         body: preview,
-        url: `/#/chat`,
+        url: comm.chatUrl,
+        portal,
       };
       for (const u of allUsers) {
         storage.createNotification({
@@ -10375,6 +10461,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           type: "chat",
           title: pushPayload.title,
           message: pushPayload.body,
+          portal,
           isRead: false,
         });
       }
@@ -10383,8 +10470,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Email notification — throttled to one per 15-minute window to avoid flooding
       // CLRs during an active chat session. Uses the module-level lastChatEmailAt guard.
       const nowMs = Date.now();
-      if (nowMs - lastChatEmailAt > CHAT_EMAIL_THROTTLE_MS) {
-        lastChatEmailAt = nowMs;
+      const throttleKey = `${orgId}:${portal}`;
+      if (nowMs - (lastChatEmailAt.get(throttleKey) ?? 0) > CHAT_EMAIL_THROTTLE_MS) {
+        lastChatEmailAt.set(throttleKey, nowMs);
         const emailTargets = allUsers.filter((u: any) => u.email && String(u.email).includes("@"));
         if (emailTargets.length > 0) {
           const toAddrs: string[] = emailTargets.map((u: any) => u.email);
@@ -10392,16 +10480,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           const snippet = trimmed.length > 500 ? trimmed.slice(0, 500) + "…" : trimmed;
           const body = `
             <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
-              <strong>${htmlEsc(senderName)}</strong> sent a message in Team Chat:
+              <strong>${htmlEsc(senderName)}</strong> sent a message in ${comm.chatLabel}:
             </p>
             <div style="background:#f8fafc;border-left:4px solid #1A2B4A;border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
               <p style="margin:0;font-size:14px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(snippet)}</p>
             </div>
             <p style="margin:0;font-size:13px;color:#64748b">
-              <a href="https://www.westcapitallending.center/#/chat" style="color:#1A2B4A;font-weight:600;text-decoration:none">Open Team Chat →</a>
+              <a href="https://www.westcapitallending.center${comm.chatUrl}" style="color:${portal === "lap" ? "#991b35" : "#1A2B4A"};font-weight:600;text-decoration:none">Open ${comm.chatLabel} →</a>
             </p>`;
-          const subject = `💬 ${senderName} in Team Chat`;
-          const html = buildEmail({ subject, preheader: preview, body });
+          const subject = `💬 ${senderName} in ${comm.chatLabel}`;
+          const html = buildEmail({ subject, preheader: preview, body, portal });
           sendEmail({ to: toAddrs, subject, html }).catch((err: any) =>
             console.error("[chat-email] send failed:", err?.message ?? err)
           );
@@ -10414,16 +10502,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Claim a "Grab It" lead — first come, first served (atomic in storage).
   // The claimer commits to calling the lead; the poster gets notified.
-  app.post("/api/chat/:id/claim", requireAuth, (req: any, res) => {
+  app.post(["/api/chat/:id/claim", "/api/lap/chat/:id/claim"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id, 10);
     const userId = Number(req.session_user?.userId);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const me = storage.getUserById(userId) as any;
-    const { claimed, row } = storageExtra.claimChatMessage(id, userId, me?.name ?? "Unknown");
+    const { claimed, row } = storageExtra.claimChatMessage(id, userId, me?.name ?? "Unknown", portal, orgId);
     if (!row || !row.grab_it) return res.status(404).json({ error: "Not a Grab It post." });
     if (!claimed) {
+      const visibleRow = row.claimed_by === userId
+        ? row
+        : {
+            id: row.id,
+            grab_it: row.grab_it,
+            claimed_by: row.claimed_by,
+            claimed_by_name: row.claimed_by_name,
+            claimed_at: row.claimed_at,
+            portal: row.portal,
+            message: "",
+            hidden: true,
+          };
       return res.status(409).json({
         error: row.claimed_by === userId ? "You already claimed this one." : `Already claimed by ${row.claimed_by_name ?? "someone"}.`,
-        message: row,
+        message: visibleRow,
       });
     }
     // Tell the poster their lead was grabbed (in-app + push).
@@ -10433,12 +10536,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           userId: row.user_id, type: "chat",
           title: `🎯 ${me?.name ?? "Someone"} grabbed your lead`,
           message: `They're calling: ${String(row.message || "").slice(0, 80) || "(image lead)"}`,
+          portal,
           isRead: false,
         });
         sendPushToUser(row.user_id, {
           title: `🎯 ${me?.name ?? "Someone"} grabbed your lead`,
           body: "They're on it — check chat for details.",
-          url: "/#/chat",
+          url: comm.chatUrl,
+          portal,
         }).catch(() => {});
       } catch {}
     }
@@ -10448,11 +10553,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Release a claimed Grab It lead — the claimer (or an admin) puts it back up
   // for grabs; its content becomes visible again for everyone.
-  app.post("/api/chat/:id/release", requireAuth, (req: any, res) => {
+  app.post(["/api/chat/:id/release", "/api/lap/chat/:id/release"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id, 10);
     const userId = Number(req.session_user?.userId);
     const isAdmin = req.session_user?.role === "admin";
-    const { released, reason } = storageExtra.releaseChatMessage(id, userId, isAdmin);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const { released, reason } = storageExtra.releaseChatMessage(id, userId, isAdmin, portal, orgId);
     if (!released) {
       const msg = reason === "not_yours" ? "Only the person who claimed it (or an admin) can release it."
         : reason === "not_claimed" ? "This lead isn't claimed."
@@ -10464,16 +10571,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
-  app.delete("/api/chat/:id", requireAuth, (req, res) => {
+  app.delete(["/api/chat/:id", "/api/lap/chat/:id"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user!;
-    const allMsgs = storageExtra.getChatMessages(1000);
-    const msg = allMsgs.find((m: any) => m.id === id);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const msg = storageExtra.getChatMessageById(id, portal, orgId);
     if (!msg) return res.status(404).json({ error: "Message not found" });
     if (msg.user_id !== user.userId && user.role !== "admin") {
       return res.status(403).json({ error: "Not authorized" });
     }
-    storageExtra.deleteChatMessage(id);
+    storageExtra.deleteChatMessage(id, portal, orgId);
     res.json({ ok: true });
   });
 
@@ -12403,10 +12511,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const periodKey = getNmlsPeriodKey();
     storageExtra.confirmNmlsCheck(loId, periodKey, userId);
     // Mark all nmls_check notifications for this user as read
-    const notifs = storage.getNotifications(userId);
+    const notifs = storage.getNotifications(userId, "c3");
     for (const n of notifs) {
       if ((n.type === "nmls_check" || n.type === "nmls_escalation") && !n.isRead) {
-        storage.markNotificationRead(n.id);
+        storage.markNotificationRead(n.id, userId, "c3");
       }
     }
     audit({ userId, userName: req.session_user?.name ?? "User", action: "confirm", entityType: "nmls_check", entityId: loId, entityLabel: `NMLS check LO #${loId}`, details: JSON.stringify({ periodKey }) });
@@ -16029,14 +16137,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Forum routes ─────────────────────────────────────────────────────────
-  app.get("/api/forum/posts", requireAuth, (req: any, res) => {
+  app.get(["/api/forum/posts", "/api/lap/forum/posts"], requireAuth, (req: any, res) => {
     const userId = req.session_user.userId;
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
     const search = (req.query.search as string | undefined)?.trim() || undefined;
-    const posts = storageExtra.listForumPosts(userId, search);
+    const posts = storageExtra.listForumPosts(userId, search, portal, orgId);
     res.json({ posts });
   });
 
-  app.post("/api/forum/posts", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/posts", "/api/lap/forum/posts"], requireAuth, (req: any, res) => {
     const { title, body } = req.body;
     if (!title || typeof title !== "string" || !title.trim()) {
       return res.status(400).json({ error: "Title is required" });
@@ -16045,6 +16155,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(400).json({ error: "Body is required" });
     }
     const userId = req.session_user.userId;
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const user = storage.getUserById(userId) as any;
     const authorName = user?.name ?? "Unknown";
     const post = storageExtra.createForumPost({
@@ -16052,29 +16165,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       body: body.trim(),
       authorId: userId,
       authorName,
+      orgId,
+      portal,
     });
     // In-app notify admins; push to ALL other active org users
     try {
-      const orgId = (req.session_user as any).orgId ?? 1;
       const pushPayload = {
         title: `New Forum Question: ${post.title}`,
         body: `${authorName} asked: ${post.title}`,
-        url: `/#/forum`,
+        url: comm.forumUrl,
+        portal,
       };
       const allUsers = storage.getUsers();
-      const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId && !(u.muteForumNotifications ?? u.mute_forum_notifications));
+      const admins = allUsers.filter((u: any) => u.role === "admin" && u.isActive && u.id !== userId && !forumNotificationsMuted(u, portal));
       for (const admin of admins) {
         storage.createNotification({
           userId: admin.id,
           type: "forum",
           title: pushPayload.title,
           message: pushPayload.body,
+          portal,
           isRead: false,
         });
       }
       const pushTargets = allUsers.filter((u: any) =>
         u.isActive && u.id !== userId && (u.orgId ?? 1) === orgId
-        && !(u.muteForumNotifications ?? u.mute_forum_notifications)
+        && !forumNotificationsMuted(u, portal)
       );
       sendPushToUsers(pushTargets.map((u: any) => u.id), pushPayload).catch(() => {});
 
@@ -16086,17 +16202,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const bodySnippet = post.body ? (post.body.length > 300 ? post.body.slice(0, 297) + "…" : post.body) : "";
         const forumBody = `
           <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
-            <strong>${htmlEsc(authorName)}</strong> posted a new question in the Forum:
+            <strong>${htmlEsc(authorName)}</strong> posted a new question in the ${comm.forumLabel}:
           </p>
           <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
             <p style="margin:0 0 8px;font-size:15px;font-weight:700;color:#1A2B4A">${htmlEsc(post.title)}</p>
             ${bodySnippet ? `<p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(bodySnippet)}</p>` : ""}
           </div>
           <p style="margin:0;font-size:13px;color:#64748b">
-            <a href="https://www.westcapitallending.center/#/forum" style="color:#1A2B4A;font-weight:600;text-decoration:none">View and answer in the Forum →</a>
+            <a href="https://www.westcapitallending.center${comm.forumUrl}" style="color:${portal === "lap" ? "#991b35" : "#1A2B4A"};font-weight:600;text-decoration:none">View and answer in the ${comm.forumLabel} →</a>
           </p>`;
-        const forumSubject = `❓ ${authorName} asked: ${post.title}`;
-        const forumHtml = buildEmail({ subject: forumSubject, preheader: bodySnippet, body: forumBody });
+        const forumSubject = portal === "lap"
+          ? `❓ ${authorName} asked in LAP Forum: ${post.title}`
+          : `❓ ${authorName} asked: ${post.title}`;
+        const forumHtml = buildEmail({ subject: forumSubject, preheader: bodySnippet, body: forumBody, portal });
         sendEmail({ to: toAddrsForum, subject: forumSubject, html: forumHtml }).catch((err: any) =>
           console.error("[forum-email] send failed:", err?.message ?? err)
         );
@@ -16105,18 +16223,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ post });
   });
 
-  app.get("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+  app.get(["/api/forum/posts/:id", "/api/lap/forum/posts/:id"], requireAuth, (req: any, res) => {
     const userId = req.session_user.userId;
     const id = parseInt(req.params.id);
-    const post = storageExtra.getForumPostById(id, userId);
+    const post = storageExtra.getForumPostById(id, userId, communicationPortalForRequest(req), communicationOrgId(req));
     if (!post) return res.status(404).json({ error: "Post not found" });
     res.json({ post });
   });
 
-  app.patch("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+  app.patch(["/api/forum/posts/:id", "/api/lap/forum/posts/:id"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user;
-    const existing = storageExtra.getForumPostById(id, user.userId);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const existing = storageExtra.getForumPostById(id, user.userId, portal, orgId);
     if (!existing) return res.status(404).json({ error: "Post not found" });
     const isAuthor = existing.author_id === user.userId;
     const isAdmin = user.role === "admin";
@@ -16126,47 +16246,55 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (typeof title === "string" && title.trim()) updates.title = title.trim();
     if (typeof body === "string" && body.trim()) updates.body = body.trim();
     if (isAdmin && (is_pinned === 0 || is_pinned === 1)) updates.is_pinned = is_pinned;
-    const updated = storageExtra.updateForumPost(id, updates);
+    const updated = storageExtra.updateForumPost(id, updates, portal, orgId);
     res.json({ post: updated });
   });
 
-  app.delete("/api/forum/posts/:id", requireAuth, (req: any, res) => {
+  app.delete(["/api/forum/posts/:id", "/api/lap/forum/posts/:id"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user;
-    const existing = storageExtra.getForumPostById(id, user.userId);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const existing = storageExtra.getForumPostById(id, user.userId, portal, orgId);
     if (!existing) return res.status(404).json({ error: "Post not found" });
     const isAuthor = existing.author_id === user.userId;
     const isAdmin = user.role === "admin";
     if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
-    storageExtra.deleteForumPost(id);
+    storageExtra.deleteForumPost(id, portal, orgId);
     res.json({ ok: true });
   });
 
-  app.post("/api/forum/posts/:id/answers", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/posts/:id/answers", "/api/lap/forum/posts/:id/answers"], requireAuth, (req: any, res) => {
     const postId = parseInt(req.params.id);
     const { body } = req.body;
     if (!body || typeof body !== "string" || !body.trim()) {
       return res.status(400).json({ error: "Body is required" });
     }
     const userId = req.session_user.userId;
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const comm = communicationContext(portal);
     const userObj = storage.getUserById(userId) as any;
     const authorName = userObj?.name ?? "Unknown";
-    const post = storageExtra.getForumPostById(postId, userId);
+    const post = storageExtra.getForumPostById(postId, userId, portal, orgId);
     if (!post) return res.status(404).json({ error: "Post not found" });
     const answer = storageExtra.createForumAnswer({
       postId,
       body: body.trim(),
       authorId: userId,
       authorName,
+      orgId,
+      portal,
     });
     // Notify all subscribers except the answerer
     try {
-      const mutedForum = new Set((storage.getUsers() as any[]).filter((u: any) => (u.muteForumNotifications ?? u.mute_forum_notifications)).map((u: any) => u.id));
-      const subscriberIds = storageExtra.getForumSubscribers(postId).filter((uid) => uid !== userId && !mutedForum.has(uid));
+      const mutedForum = new Set((storage.getUsers() as any[]).filter((u: any) => forumNotificationsMuted(u, portal)).map((u: any) => u.id));
+      const subscriberIds = storageExtra.getForumSubscribers(postId, portal, orgId).filter((uid) => uid !== userId && !mutedForum.has(uid));
       const pushPayload = {
         title: `New answer on: ${post.title}`,
         body: `${authorName} answered your question`,
-        url: `/#/forum`,
+        url: comm.forumUrl,
+        portal,
       };
       for (const subId of subscriberIds) {
         storage.createNotification({
@@ -16174,6 +16302,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           type: "forum",
           title: pushPayload.title,
           message: pushPayload.body,
+          portal,
           isRead: false,
         });
       }
@@ -16190,17 +16319,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           const bodySnippet = body.length > 300 ? body.slice(0, 297) + "…" : body;
           const answerBody = `
             <p style="margin:0 0 16px;font-size:15px;color:#1A2B4A">
-              <strong>${htmlEsc(authorName)}</strong> answered a question you're following:
+              <strong>${htmlEsc(authorName)}</strong> answered a question you're following in ${comm.forumLabel}:
             </p>
             <p style="margin:0 0 12px;font-size:14px;font-weight:700;color:#1A2B4A">${htmlEsc(post.title)}</p>
             <div style="background:#f8fafc;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:20px">
               <p style="margin:0;font-size:13px;color:#334155;line-height:1.6;white-space:pre-wrap">${htmlEsc(bodySnippet)}</p>
             </div>
             <p style="margin:0;font-size:13px;color:#64748b">
-              <a href="https://www.westcapitallending.center/#/forum" style="color:#1A2B4A;font-weight:600;text-decoration:none">View the full answer →</a>
+              <a href="https://www.westcapitallending.center${comm.forumUrl}" style="color:${portal === "lap" ? "#991b35" : "#1A2B4A"};font-weight:600;text-decoration:none">View the full answer →</a>
             </p>`;
-          const answerSubject = `✅ New answer on: ${post.title}`;
-          const answerHtml = buildEmail({ subject: answerSubject, preheader: `${authorName} answered your question`, body: answerBody });
+          const answerSubject = portal === "lap" ? `✅ New LAP Forum answer on: ${post.title}` : `✅ New answer on: ${post.title}`;
+          const answerHtml = buildEmail({ subject: answerSubject, preheader: `${authorName} answered your question`, body: answerBody, portal });
           sendEmail({ to: subscriberEmails, subject: answerSubject, html: answerHtml }).catch((err: any) =>
             console.error("[forum-answer-email] send failed:", err?.message ?? err)
           );
@@ -16210,10 +16339,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ answer });
   });
 
-  app.patch("/api/forum/answers/:id", requireAuth, (req: any, res) => {
+  app.patch(["/api/forum/answers/:id", "/api/lap/forum/answers/:id"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user;
-    const existing = storageExtra.getForumAnswerById(id);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const existing = storageExtra.getForumAnswerById(id, portal, orgId);
     if (!existing) return res.status(404).json({ error: "Answer not found" });
     const isAuthor = existing.author_id === user.userId;
     const isAdmin = user.role === "admin";
@@ -16223,58 +16354,66 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (typeof body === "string" && body.trim()) updates.body = body.trim();
     if (isAdmin && (is_accepted === 0 || is_accepted === 1)) {
       if (is_accepted === 1) {
-        storageExtra.acceptForumAnswer(existing.post_id, id);
+        storageExtra.acceptForumAnswer(existing.post_id, id, portal, orgId);
       } else {
         updates.is_accepted = 0;
       }
     }
-    if (Object.keys(updates).length > 0) storageExtra.updateForumAnswer(id, updates);
-    res.json({ answer: storageExtra.getForumAnswerById(id) });
+    if (Object.keys(updates).length > 0) storageExtra.updateForumAnswer(id, updates, portal, orgId);
+    res.json({ answer: storageExtra.getForumAnswerById(id, portal, orgId) });
   });
 
-  app.delete("/api/forum/answers/:id", requireAuth, (req: any, res) => {
+  app.delete(["/api/forum/answers/:id", "/api/lap/forum/answers/:id"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const user = req.session_user;
-    const existing = storageExtra.getForumAnswerById(id);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const existing = storageExtra.getForumAnswerById(id, portal, orgId);
     if (!existing) return res.status(404).json({ error: "Answer not found" });
     const isAuthor = existing.author_id === user.userId;
     const isAdmin = user.role === "admin";
     if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
-    storageExtra.deleteForumAnswer(id);
+    storageExtra.deleteForumAnswer(id, portal, orgId);
     res.json({ ok: true });
   });
 
-  app.post("/api/forum/posts/:id/upvote", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/posts/:id/upvote", "/api/lap/forum/posts/:id/upvote"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const userId = req.session_user.userId;
-    const result = storageExtra.toggleForumVote("post", id, userId);
+    const result = storageExtra.toggleForumVote("post", id, userId, communicationPortalForRequest(req), communicationOrgId(req));
+    if (result.notFound) return res.status(404).json({ error: "Post not found" });
     res.json(result);
   });
 
-  app.post("/api/forum/answers/:id/upvote", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/answers/:id/upvote", "/api/lap/forum/answers/:id/upvote"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const userId = req.session_user.userId;
-    const result = storageExtra.toggleForumVote("answer", id, userId);
+    const result = storageExtra.toggleForumVote("answer", id, userId, communicationPortalForRequest(req), communicationOrgId(req));
+    if (result.notFound) return res.status(404).json({ error: "Answer not found" });
     res.json(result);
   });
 
-  app.post("/api/forum/posts/:id/subscribe", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/posts/:id/subscribe", "/api/lap/forum/posts/:id/subscribe"], requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     const userId = req.session_user.userId;
-    const result = storageExtra.toggleForumSubscription(id, userId);
+    const result = storageExtra.toggleForumSubscription(id, userId, communicationPortalForRequest(req), communicationOrgId(req));
+    if (result.notFound) return res.status(404).json({ error: "Post not found" });
     res.json(result);
   });
 
-  app.post("/api/forum/posts/:id/accept-answer/:answerId", requireAuth, (req: any, res) => {
+  app.post(["/api/forum/posts/:id/accept-answer/:answerId", "/api/lap/forum/posts/:id/accept-answer/:answerId"], requireAuth, (req: any, res) => {
     const postId = parseInt(req.params.id);
     const answerId = parseInt(req.params.answerId);
     const user = req.session_user;
-    const post = storageExtra.getForumPostById(postId, user.userId);
+    const portal = communicationPortalForRequest(req);
+    const orgId = communicationOrgId(req);
+    const post = storageExtra.getForumPostById(postId, user.userId, portal, orgId);
     if (!post) return res.status(404).json({ error: "Post not found" });
     const isAuthor = post.author_id === user.userId;
     const isAdmin = user.role === "admin";
     if (!isAuthor && !isAdmin) return res.status(403).json({ error: "Not authorized" });
-    storageExtra.acceptForumAnswer(postId, answerId);
+    const accepted = storageExtra.acceptForumAnswer(postId, answerId, portal, orgId);
+    if (!accepted) return res.status(404).json({ error: "Answer not found for this post" });
     res.json({ ok: true });
   });
 

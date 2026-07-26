@@ -40,19 +40,32 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-export default function Chat() {
+type ChatProps = {
+  portal?: "c3" | "lap";
+  // Wouter supplies route params when this component is mounted directly by a
+  // <Route>. LAP mounts it through a wrapper and only supplies `portal`.
+  params?: unknown;
+};
+
+export default function Chat({ portal = "c3" }: ChatProps) {
   const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const isLap = portal === "lap";
+  const apiBase = isLap ? "/api/lap/chat" : "/api/chat";
+  const chatQueryKey = [apiBase];
+  const chatLabel = isLap ? "LAP Team Chat" : "Team Chat";
   const [draft, setDraft] = useState("");
   const [pendingImage, setPendingImage] = useState<{ dataUrl: string; base64: string; mime: string } | null>(null);
-  const chatMuted = !!(user as any)?.muteChatNotifications;
+  const chatMuted = isLap
+    ? !!(user as any)?.muteLapChatNotifications
+    : !!(user as any)?.muteChatNotifications;
   const [muting, setMuting] = useState(false);
   async function toggleChatMute() {
     const nextMuted = !chatMuted;
     setMuting(true);
     try {
-      const r = await fetch("/api/users/me/mute-chat", {
+      const r = await fetch(isLap ? "/api/users/me/mute-lap-chat" : "/api/users/me/mute-chat", {
         method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ muted: nextMuted }),
       });
@@ -74,7 +87,7 @@ export default function Chat() {
   const [autoScroll, setAutoScroll] = useState(true);
 
   const { data, isLoading } = useQuery<{ messages: any[] }>({
-    queryKey: ["/api/chat"],
+    queryKey: chatQueryKey,
     refetchInterval: 3000, // poll every 3s
   });
 
@@ -92,9 +105,9 @@ export default function Chat() {
   const [grabIt, setGrabIt] = useState(false);
   const sendMsg = useMutation({
     mutationFn: (payload: { message: string; image: { base64: string; mime: string } | null; grabIt?: boolean }) =>
-      apiRequest("POST", "/api/chat", { message: payload.message, imageBase64: payload.image?.base64, imageMime: payload.image?.mime, grabIt: !!payload.grabIt }),
+      apiRequest("POST", apiBase, { message: payload.message, imageBase64: payload.image?.base64, imageMime: payload.image?.mime, grabIt: !!payload.grabIt }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      qc.invalidateQueries({ queryKey: chatQueryKey });
       setDraft("");
       setPendingImage(null);
       setGrabIt(false);
@@ -105,21 +118,21 @@ export default function Chat() {
   });
 
   const claimMsg = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/chat/${id}/claim`, {}),
+    mutationFn: (id: number) => apiRequest("POST", `${apiBase}/${id}/claim`, {}),
     onSuccess: () => {
       toast({ title: "🎯 It's yours", description: "You claimed this lead — go call it!" });
-      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      qc.invalidateQueries({ queryKey: chatQueryKey });
     },
     onError: (e: any) => {
       toast({ title: "Too slow", description: e.message, variant: "destructive" });
-      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      qc.invalidateQueries({ queryKey: chatQueryKey });
     },
   });
   const releaseMsg = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/chat/${id}/release`, {}),
+    mutationFn: (id: number) => apiRequest("POST", `${apiBase}/${id}/release`, {}),
     onSuccess: () => {
       toast({ title: "Released", description: "The lead is back up for grabs." });
-      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      qc.invalidateQueries({ queryKey: chatQueryKey });
     },
     onError: (e: any) => toast({ title: "Couldn't release", description: e.message, variant: "destructive" }),
   });
@@ -160,9 +173,9 @@ export default function Chat() {
     staleTime: 6 * 60 * 60 * 1000,
   });
   const sendMeme = useMutation({
-    mutationFn: (url: string) => apiRequest("POST", "/api/chat/meme", { url }),
+    mutationFn: (url: string) => apiRequest("POST", `${apiBase}/meme`, { url }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/chat"] });
+      qc.invalidateQueries({ queryKey: chatQueryKey });
       setMemeOpen(false); setMemeSearch(""); setAutoScroll(true);
     },
     onError: (e: any) => toast({ title: "Couldn't send meme", description: e.message, variant: "destructive" }),
@@ -237,21 +250,21 @@ export default function Chat() {
     return out;
   }, [gifPages]);
   const sendGif = useMutation({
-    mutationFn: (url: string) => apiRequest("POST", "/api/chat/gif", { url }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/chat"] }); setMemeOpen(false); setMemeSearch(""); setAutoScroll(true); },
+    mutationFn: (url: string) => apiRequest("POST", `${apiBase}/gif`, { url }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: chatQueryKey }); setMemeOpen(false); setMemeSearch(""); setAutoScroll(true); },
     onError: (e: any) => toast({ title: "Couldn't send GIF", description: e.message, variant: "destructive" }),
   });
 
   const deleteMsg = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/chat/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/chat"] }),
+    mutationFn: (id: number) => apiRequest("DELETE", `${apiBase}/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: chatQueryKey }),
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const reactMsg = useMutation({
-    mutationFn: (v: { id: number; emoji: string }) => apiRequest("POST", `/api/chat/${v.id}/react`, { emoji: v.emoji }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/chat"] }),
+    mutationFn: (v: { id: number; emoji: string }) => apiRequest("POST", `${apiBase}/${v.id}/react`, { emoji: v.emoji }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: chatQueryKey }),
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   function react(id: number, emoji: string) { setPickerFor(null); reactMsg.mutate({ id, emoji }); }
@@ -300,7 +313,7 @@ export default function Chat() {
           <ArrowLeft className="w-4 h-4" />
           <span>Home</span>
         </Link>
-        <h1 className="absolute left-1/2 -translate-x-1/2 text-sm font-semibold">Team Chat</h1>
+        <h1 className="absolute left-1/2 -translate-x-1/2 text-sm font-semibold">{chatLabel}</h1>
         <button
           type="button"
           onClick={toggleChatMute}
@@ -322,12 +335,12 @@ export default function Chat() {
         </div>
         <div className="flex-1">
           <h1 className="text-xl font-bold leading-tight flex items-center gap-2">
-            Team Chat
-            <HelpIcon title="Team Chat">
-              Team-wide chat channel. All users can send and receive messages.
+            {chatLabel}
+            <HelpIcon title={chatLabel}>
+              {isLap ? "LAP-only chat channel. Messages stay separate from C3." : "Team-wide C3 chat channel. All users can send and receive messages."}
             </HelpIcon>
           </h1>
-          <p className="text-xs text-muted-foreground">All users · Updates every 3 seconds</p>
+          <p className="text-xs text-muted-foreground">{isLap ? "LAP workspace only" : "C3 workspace"} · Updates every 3 seconds</p>
         </div>
         <Button
           variant={chatMuted ? "default" : "outline"}
@@ -414,9 +427,9 @@ export default function Chat() {
                             </div>
                           )}
                           {m.image_mime && (
-                            <a href={`/api/chat/${m.id}/image`} target="_blank" rel="noreferrer" className="block">
+                            <a href={`${apiBase}/${m.id}/image`} target="_blank" rel="noreferrer" className="block">
                               <img
-                                src={`/api/chat/${m.id}/image`}
+                                src={`${apiBase}/${m.id}/image`}
                                 alt="shared image"
                                 loading="lazy"
                                 className={`rounded-lg max-w-[240px] max-h-[300px] object-contain ${m.message ? "mb-1.5" : ""}`}

@@ -174,6 +174,14 @@ function LapNotFound() {
   );
 }
 
+function LapForum() {
+  return <Forum portal="lap" />;
+}
+
+function LapChat() {
+  return <Chat portal="lap" />;
+}
+
 function LapRouter() {
   return (
     <Switch>
@@ -187,8 +195,8 @@ function LapRouter() {
       <Route path="/my-schedule" component={WeeklySchedule} />
       <Route path="/comp-requests" component={CompRequests} />
       <Route path="/team-stats" component={TeamStats} />
-      <Route path="/forum" component={Forum} />
-      <Route path="/chat" component={Chat} />
+      <Route path="/forum" component={LapForum} />
+      <Route path="/chat" component={LapChat} />
       <Route path="/lo-profiles" component={LapLoProfiles} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />

@@ -69,6 +69,8 @@ export const users = sqliteTable("users", {
   smsRemindersEnabled: integer("sms_reminders_enabled", { mode: "boolean" }).notNull().default(false),
   muteChatNotifications: integer("mute_chat_notifications", { mode: "boolean" }).notNull().default(false),
   muteForumNotifications: integer("mute_forum_notifications", { mode: "boolean" }).notNull().default(false),
+  muteLapChatNotifications: integer("mute_lap_chat_notifications", { mode: "boolean" }).notNull().default(false),
+  muteLapForumNotifications: integer("mute_lap_forum_notifications", { mode: "boolean" }).notNull().default(false),
   // Team "🎉 got a transfer!" celebration alerts — OFF by default (opt-in).
   transferNotificationsEnabled: integer("transfer_notifications_enabled", { mode: "boolean" }).notNull().default(false),
   timezone: text("timezone").notNull().default("America/Los_Angeles"),
@@ -251,6 +253,8 @@ export const notifications = sqliteTable("notifications", {
   type: text("type").notNull(), // license_alert | assignment_ready | eod_reminder | follow_up | announcement
   title: text("title").notNull(),
   message: text("message").notNull(),
+  // null = shared operational alert; c3/lap = product-specific alert.
+  portal: text("portal"),
   isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });

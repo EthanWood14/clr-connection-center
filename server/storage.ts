@@ -3,6 +3,8 @@ import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { currentOrgId } from "./orgContext";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
@@ -28,13 +30,9 @@ const dbPath = process.env.DATABASE_PATH ?? "clr.db";
 // Creating the dir here lets the process boot; if the volume is missing, the
 // data lives only in the container until the volume is reattached.
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const path = require("path");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fs = require("fs");
-  const parentDir = path.dirname(path.resolve(dbPath));
-  if (parentDir && parentDir !== "." && !fs.existsSync(parentDir)) {
-    fs.mkdirSync(parentDir, { recursive: true });
+  const parentDir = dirname(resolve(dbPath));
+  if (parentDir && parentDir !== "." && !existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
     console.warn(`[storage] Created missing DB parent directory: ${parentDir} (volume may not be mounted)`);
   }
 } catch (e: any) {
@@ -85,6 +83,8 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_chat_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_forum_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_lap_chat_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_lap_forum_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
 // Transfer-celebration alerts: OFF by default (opt-in). One-shot seed turns
 // them ON for user #1 (Ethan) so the owner keeps getting them.
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN transfer_notifications_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -263,6 +263,7 @@ sqlite.exec(`
     type TEXT NOT NULL,
     title TEXT NOT NULL,
     message TEXT NOT NULL,
+    portal TEXT,
     is_read INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -318,6 +319,13 @@ try {
 }
 
 // ── Migration: add has_seen_intro to users if missing ─────────────────────────
+try { sqlite.exec(`ALTER TABLE notifications ADD COLUMN portal TEXT`); } catch {}
+try {
+  sqlite.prepare(`UPDATE notifications SET portal = 'c3' WHERE portal IS NULL AND type IN ('chat', 'forum')`).run();
+  sqlite.prepare(`UPDATE notifications SET portal = 'lap' WHERE type IN ('lap_result', 'lap_results')`).run();
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_user_portal_read ON notifications(user_id, portal, is_read)`);
+} catch {}
+
 try {
   sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0;`);
 } catch {
@@ -819,7 +827,8 @@ try {
         is_pinned INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        org_id INTEGER NOT NULL DEFAULT 1
+        org_id INTEGER NOT NULL DEFAULT 1,
+        portal TEXT NOT NULL DEFAULT 'c3'
       )`);
       sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_answers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1139,11 +1148,11 @@ export interface IStorage {
   deleteLeadOutcome(id: number): void;
 
   // Notifications
-  getNotifications(userId?: number): Notification[];
+  getNotifications(userId?: number, portal?: CommunicationPortal): Notification[];
   createNotification(data: InsertNotification): Notification;
-  markNotificationRead(id: number, userId?: number): void;
-  markAllNotificationsRead(userId: number): void;
-  getUnreadCount(userId: number): number;
+  markNotificationRead(id: number, userId?: number, portal?: CommunicationPortal): void;
+  markAllNotificationsRead(userId: number, portal?: CommunicationPortal): void;
+  getUnreadCount(userId: number, portal?: CommunicationPortal): number;
 
   // Algorithm Settings
   getAlgorithmSettings(): AlgorithmSettings;
@@ -1441,37 +1450,47 @@ export class Storage implements IStorage {
     db.delete(leadOutcomes).where(eq(leadOutcomes.id, id)).run();
   }
 
-  getNotifications(userId?: number) {
+  getNotifications(userId?: number, portal?: CommunicationPortal) {
     if (userId !== undefined) {
       // Return notifications for this user (personal + broadcasts)
       return db.select().from(notifications)
-        .where(sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
+        .where(portal
+          ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
+          : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
         .orderBy(desc(notifications.createdAt)).all();
     }
-    return db.select().from(notifications).orderBy(desc(notifications.createdAt)).all();
+    return portal
+      ? db.select().from(notifications).where(sql`${notifications.portal} IS NULL OR ${notifications.portal} = ${portal}`).orderBy(desc(notifications.createdAt)).all()
+      : db.select().from(notifications).orderBy(desc(notifications.createdAt)).all();
   }
   createNotification(data: InsertNotification) {
     return db.insert(notifications).values({ ...data, createdAt: new Date().toISOString() }).returning().get();
   }
-  markNotificationRead(id: number, userId?: number) {
+  markNotificationRead(id: number, userId?: number, portal?: CommunicationPortal) {
     // When a userId is supplied, only the recipient (or a broadcast row, userId
     // NULL) can be marked read — prevents flipping another user's notification.
     if (userId != null) {
       db.update(notifications).set({ isRead: true })
-        .where(sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
+        .where(portal
+          ? sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
+          : sql`${notifications.id} = ${id} AND (${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
         .run();
       return;
     }
     db.update(notifications).set({ isRead: true }).where(eq(notifications.id, id)).run();
   }
-  markAllNotificationsRead(userId: number) {
+  markAllNotificationsRead(userId: number, portal?: CommunicationPortal) {
     db.update(notifications).set({ isRead: true })
-      .where(sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
+      .where(portal
+        ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
+        : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL)`)
       .run();
   }
-  getUnreadCount(userId: number) {
+  getUnreadCount(userId: number, portal?: CommunicationPortal) {
     const result = db.select({ count: sql<number>`count(*)` }).from(notifications)
-      .where(sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND ${notifications.isRead} = 0`)
+      .where(portal
+        ? sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND ${notifications.isRead} = 0 AND (${notifications.portal} IS NULL OR ${notifications.portal} = ${portal})`
+        : sql`(${notifications.userId} = ${userId} OR ${notifications.userId} IS NULL) AND ${notifications.isRead} = 0`)
       .get();
     return result?.count ?? 0;
   }
@@ -2161,9 +2180,11 @@ function runNewMigrations() {
   // Chat messages table
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
     user_id INTEGER NOT NULL,
     user_name TEXT NOT NULL,
     message TEXT NOT NULL,
+    portal TEXT NOT NULL DEFAULT 'c3',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   // Optional pasted/attached image on a chat message (base64 + mime). Kept in a
@@ -2176,6 +2197,11 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_by INTEGER`); } catch {}
   try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_by_name TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN claimed_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+  // C3 and LAP share the same communications engine, but their conversation
+  // streams are intentionally separate. Existing rows remain in C3.
+  try { sqlite.exec(`ALTER TABLE chat_messages ADD COLUMN portal TEXT NOT NULL DEFAULT 'c3'`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_org_portal_id ON chat_messages(org_id, portal, id)`); } catch {}
   // Emoji reactions on chat messages (one row per user+emoji+message).
   sqlite.exec(`CREATE TABLE IF NOT EXISTS chat_reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2471,10 +2497,28 @@ function runNewMigrations() {
       upvotes INTEGER DEFAULT 0,
       is_answered INTEGER DEFAULT 0,
       is_pinned INTEGER DEFAULT 0,
+      org_id INTEGER NOT NULL DEFAULT 1,
+      portal TEXT NOT NULL DEFAULT 'c3',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
   } catch {}
+  try { sqlite.exec(`ALTER TABLE forum_posts ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+  try { sqlite.exec(`ALTER TABLE forum_posts ADD COLUMN portal TEXT NOT NULL DEFAULT 'c3'`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_forum_posts_org_portal_created ON forum_posts(org_id, portal, created_at)`); } catch {}
+  try {
+    const migration = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'communication_portal_scope_v1'`).get();
+    if (!migration) {
+      sqlite.exec(`
+        UPDATE chat_messages
+        SET org_id = COALESCE((SELECT users.org_id FROM users WHERE users.id = chat_messages.user_id), org_id, 1);
+        UPDATE forum_posts
+        SET org_id = COALESCE((SELECT users.org_id FROM users WHERE users.id = forum_posts.author_id), org_id, 1);
+      `);
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("communication_portal_scope_v1", new Date().toISOString());
+    }
+  } catch (e) { console.error("[communications] scope migration failed:", e); }
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS forum_answers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2746,11 +2790,18 @@ function seedGlossaryTerms() {
 }
 
 // ── Forum storage helpers ──────────────────────────────────────────────────
-export function listForumPosts(currentUserId: number, search?: string) {
+export type CommunicationPortal = "c3" | "lap";
+
+function normalizedCommunicationPortal(portal?: CommunicationPortal): CommunicationPortal {
+  return portal === "lap" ? "lap" : "c3";
+}
+
+export function listForumPosts(currentUserId: number, search?: string, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
   const searchLike = search ? `%${search.toLowerCase()}%` : null;
   const rows = searchLike
-    ? sqlite.prepare(`SELECT * FROM forum_posts WHERE LOWER(title) LIKE ? OR LOWER(body) LIKE ? ORDER BY is_pinned DESC, created_at DESC`).all(searchLike, searchLike)
-    : sqlite.prepare(`SELECT * FROM forum_posts ORDER BY is_pinned DESC, created_at DESC`).all();
+    ? sqlite.prepare(`SELECT * FROM forum_posts WHERE org_id = ? AND portal = ? AND (LOWER(title) LIKE ? OR LOWER(body) LIKE ?) ORDER BY is_pinned DESC, created_at DESC`).all(orgId, scopedPortal, searchLike, searchLike)
+    : sqlite.prepare(`SELECT * FROM forum_posts WHERE org_id = ? AND portal = ? ORDER BY is_pinned DESC, created_at DESC`).all(orgId, scopedPortal);
   return (rows as any[]).map((p) => {
     const answerCount = (sqlite.prepare(`SELECT COUNT(*) as c FROM forum_answers WHERE post_id = ?`).get(p.id) as any).c;
     const hasAccepted = (sqlite.prepare(`SELECT COUNT(*) as c FROM forum_answers WHERE post_id = ? AND is_accepted = 1`).get(p.id) as any).c > 0;
@@ -2760,8 +2811,9 @@ export function listForumPosts(currentUserId: number, search?: string) {
   });
 }
 
-export function getForumPostById(id: number, currentUserId: number) {
-  const post = sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(id) as any;
+export function getForumPostById(id: number, currentUserId: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const post = sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(id, orgId, scopedPortal) as any;
   if (!post) return null;
   const answers = sqlite.prepare(`SELECT * FROM forum_answers WHERE post_id = ? ORDER BY is_accepted DESC, upvotes DESC, created_at ASC`).all(id) as any[];
   const isSubscribed = (sqlite.prepare(`SELECT 1 FROM forum_subscriptions WHERE post_id = ? AND user_id = ?`).get(id, currentUserId) as any) ? 1 : 0;
@@ -2773,16 +2825,19 @@ export function getForumPostById(id: number, currentUserId: number) {
   return { ...post, is_subscribed: isSubscribed, has_upvoted: hasUpvoted, answers: enrichedAnswers };
 }
 
-export function createForumPost(data: { title: string; body: string; authorId: number; authorName: string }) {
+export function createForumPost(data: { title: string; body: string; authorId: number; authorName: string; orgId?: number; portal?: CommunicationPortal }) {
   const now = new Date().toISOString();
-  const info = sqlite.prepare(`INSERT INTO forum_posts (title, body, author_id, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(data.title, data.body, data.authorId, data.authorName, now, now);
+  const portal = normalizedCommunicationPortal(data.portal);
+  const orgId = Number(data.orgId ?? 1);
+  const info = sqlite.prepare(`INSERT INTO forum_posts (title, body, author_id, author_name, org_id, portal, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(data.title, data.body, data.authorId, data.authorName, orgId, portal, now, now);
   sqlite.prepare(`INSERT OR IGNORE INTO forum_subscriptions (post_id, user_id, created_at) VALUES (?, ?, ?)`)
     .run(info.lastInsertRowid, data.authorId, now);
-  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(info.lastInsertRowid) as any;
+  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(info.lastInsertRowid, orgId, portal) as any;
 }
 
-export function updateForumPost(id: number, data: Partial<{ title: string; body: string; is_pinned: number; is_answered: number }>) {
+export function updateForumPost(id: number, data: Partial<{ title: string; body: string; is_pinned: number; is_answered: number }>, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
   const fields: string[] = [];
   const vals: any[] = [];
   for (const k of Object.keys(data)) {
@@ -2793,29 +2848,45 @@ export function updateForumPost(id: number, data: Partial<{ title: string; body:
   fields.push(`updated_at = ?`);
   vals.push(new Date().toISOString());
   vals.push(id);
-  sqlite.prepare(`UPDATE forum_posts SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
-  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ?`).get(id) as any;
+  vals.push(orgId);
+  vals.push(scopedPortal);
+  sqlite.prepare(`UPDATE forum_posts SET ${fields.join(', ')} WHERE id = ? AND org_id = ? AND portal = ?`).run(...vals);
+  return sqlite.prepare(`SELECT * FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(id, orgId, scopedPortal) as any;
 }
 
-export function deleteForumPost(id: number) {
+export function deleteForumPost(id: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const exists = sqlite.prepare(`SELECT 1 FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(id, orgId, scopedPortal);
+  if (!exists) return;
   sqlite.prepare(`DELETE FROM forum_answers WHERE post_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM forum_subscriptions WHERE post_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM forum_votes WHERE entity_type='post' AND entity_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM forum_posts WHERE id = ?`).run(id);
 }
 
-export function createForumAnswer(data: { postId: number; body: string; authorId: number; authorName: string }) {
+export function createForumAnswer(data: { postId: number; body: string; authorId: number; authorName: string; orgId?: number; portal?: CommunicationPortal }) {
   const now = new Date().toISOString();
+  const portal = normalizedCommunicationPortal(data.portal);
+  const orgId = Number(data.orgId ?? 1);
+  const parent = sqlite.prepare(`SELECT 1 FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(data.postId, orgId, portal);
+  if (!parent) return null;
   const info = sqlite.prepare(`INSERT INTO forum_answers (post_id, body, author_id, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(data.postId, data.body, data.authorId, data.authorName, now, now);
   return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(info.lastInsertRowid) as any;
 }
 
-export function getForumAnswerById(id: number) {
-  return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(id) as any;
+export function getForumAnswerById(id: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  return sqlite.prepare(`
+    SELECT answer.*
+    FROM forum_answers answer
+    JOIN forum_posts post ON post.id = answer.post_id
+    WHERE answer.id = ? AND post.org_id = ? AND post.portal = ?
+  `).get(id, orgId, normalizedCommunicationPortal(portal)) as any;
 }
 
-export function updateForumAnswer(id: number, data: Partial<{ body: string; is_accepted: number }>) {
+export function updateForumAnswer(id: number, data: Partial<{ body: string; is_accepted: number }>, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  if (!getForumAnswerById(id, scopedPortal, orgId)) return;
   const fields: string[] = [];
   const vals: any[] = [];
   for (const k of Object.keys(data)) {
@@ -2827,17 +2898,27 @@ export function updateForumAnswer(id: number, data: Partial<{ body: string; is_a
   vals.push(new Date().toISOString());
   vals.push(id);
   sqlite.prepare(`UPDATE forum_answers SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
-  return sqlite.prepare(`SELECT * FROM forum_answers WHERE id = ?`).get(id) as any;
+  return getForumAnswerById(id, scopedPortal, orgId);
 }
 
-export function deleteForumAnswer(id: number) {
-  const a = sqlite.prepare(`SELECT post_id FROM forum_answers WHERE id = ?`).get(id) as any;
+export function deleteForumAnswer(id: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const a = getForumAnswerById(id, portal, orgId);
+  if (!a) return null;
   sqlite.prepare(`DELETE FROM forum_votes WHERE entity_type='answer' AND entity_id = ?`).run(id);
   sqlite.prepare(`DELETE FROM forum_answers WHERE id = ?`).run(id);
   return a;
 }
 
-export function toggleForumVote(entityType: "post" | "answer", entityId: number, userId: number) {
+export function toggleForumVote(entityType: "post" | "answer", entityId: number, userId: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const valid = entityType === "post"
+    ? sqlite.prepare(`SELECT 1 FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`).get(entityId, orgId, scopedPortal)
+    : sqlite.prepare(`
+        SELECT 1 FROM forum_answers answer
+        JOIN forum_posts post ON post.id = answer.post_id
+        WHERE answer.id = ? AND post.org_id = ? AND post.portal = ?
+      `).get(entityId, orgId, scopedPortal);
+  if (!valid) return { upvoted: false, notFound: true };
   const existing = sqlite.prepare(`SELECT id FROM forum_votes WHERE entity_type = ? AND entity_id = ? AND user_id = ?`).get(entityType, entityId, userId) as any;
   const table = entityType === "post" ? "forum_posts" : "forum_answers";
   if (existing) {
@@ -2851,7 +2932,10 @@ export function toggleForumVote(entityType: "post" | "answer", entityId: number,
   return { upvoted: true };
 }
 
-export function toggleForumSubscription(postId: number, userId: number) {
+export function toggleForumSubscription(postId: number, userId: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const valid = sqlite.prepare(`SELECT 1 FROM forum_posts WHERE id = ? AND org_id = ? AND portal = ?`)
+    .get(postId, orgId, normalizedCommunicationPortal(portal));
+  if (!valid) return { subscribed: false, notFound: true };
   const existing = sqlite.prepare(`SELECT id FROM forum_subscriptions WHERE post_id = ? AND user_id = ?`).get(postId, userId) as any;
   if (existing) {
     sqlite.prepare(`DELETE FROM forum_subscriptions WHERE id = ?`).run(existing.id);
@@ -2862,15 +2946,34 @@ export function toggleForumSubscription(postId: number, userId: number) {
   return { subscribed: true };
 }
 
-export function getForumSubscribers(postId: number): number[] {
-  const rows = sqlite.prepare(`SELECT user_id FROM forum_subscriptions WHERE post_id = ?`).all(postId) as any[];
+export function getForumSubscribers(postId: number, portal: CommunicationPortal = "c3", orgId = 1): number[] {
+  const rows = sqlite.prepare(`
+    SELECT subscription.user_id
+    FROM forum_subscriptions subscription
+    JOIN forum_posts post ON post.id = subscription.post_id
+    JOIN users subscriber_user ON subscriber_user.id = subscription.user_id
+    WHERE subscription.post_id = ?
+      AND post.org_id = ?
+      AND post.portal = ?
+      AND subscriber_user.org_id = ?
+      AND subscriber_user.is_active = 1
+  `).all(postId, orgId, normalizedCommunicationPortal(portal), orgId) as any[];
   return rows.map((r) => r.user_id);
 }
 
-export function acceptForumAnswer(postId: number, answerId: number) {
+export function acceptForumAnswer(postId: number, answerId: number, portal: CommunicationPortal = "c3", orgId = 1) {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const valid = sqlite.prepare(`
+    SELECT 1
+    FROM forum_answers answer
+    JOIN forum_posts post ON post.id = answer.post_id
+    WHERE answer.id = ? AND answer.post_id = ? AND post.org_id = ? AND post.portal = ?
+  `).get(answerId, postId, orgId, scopedPortal);
+  if (!valid) return false;
   sqlite.prepare(`UPDATE forum_answers SET is_accepted = 0 WHERE post_id = ?`).run(postId);
   sqlite.prepare(`UPDATE forum_answers SET is_accepted = 1 WHERE id = ?`).run(answerId);
-  sqlite.prepare(`UPDATE forum_posts SET is_answered = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), postId);
+  sqlite.prepare(`UPDATE forum_posts SET is_answered = 1, updated_at = ? WHERE id = ? AND org_id = ? AND portal = ?`).run(new Date().toISOString(), postId, orgId, scopedPortal);
+  return true;
 }
 
 
@@ -3065,47 +3168,59 @@ export function escalateNmlsCheck(id: number) {
 }
 
 // ── Chat Messages storage ──────────────────────────────────────────────────────
-export function getChatMessages(limit = 100, beforeId?: number): any[] {
+export function getChatMessages(limit = 100, beforeId?: number, portal: CommunicationPortal = "c3", orgId = 1): any[] {
+  const scopedPortal = normalizedCommunicationPortal(portal);
   // Exclude the heavy image_data blob from the polled list — the client loads
   // images lazily via GET /api/chat/:id/image. image_mime flags that one exists.
-  const cols = `id, user_id, user_name, message, image_mime, created_at, grab_it, claimed_by, claimed_by_name, claimed_at`;
+  const cols = `id, user_id, user_name, message, image_mime, created_at, grab_it, claimed_by, claimed_by_name, claimed_at, portal`;
   if (beforeId) {
     return sqlite.prepare(
-      `SELECT ${cols} FROM chat_messages WHERE id < ? ORDER BY id DESC LIMIT ?`
-    ).all(beforeId, limit) as any[];
+      `SELECT ${cols} FROM chat_messages WHERE org_id = ? AND portal = ? AND id < ? ORDER BY id DESC LIMIT ?`
+    ).all(orgId, scopedPortal, beforeId, limit) as any[];
   }
   return sqlite.prepare(
-    `SELECT ${cols} FROM chat_messages ORDER BY id DESC LIMIT ?`
-  ).all(limit) as any[];
+    `SELECT ${cols} FROM chat_messages WHERE org_id = ? AND portal = ? ORDER BY id DESC LIMIT ?`
+  ).all(orgId, scopedPortal, limit) as any[];
 }
-export function postChatMessage(userId: number, userName: string, message: string, imageData?: string | null, imageMime?: string | null, grabIt?: boolean): any {
+export function getChatMessageById(id: number, portal: CommunicationPortal = "c3", orgId = 1): any {
+  return sqlite.prepare(`
+    SELECT id, user_id, user_name, message, image_mime, created_at, grab_it,
+           claimed_by, claimed_by_name, claimed_at, portal
+    FROM chat_messages
+    WHERE id = ? AND org_id = ? AND portal = ?
+  `).get(id, orgId, normalizedCommunicationPortal(portal)) as any;
+}
+export function postChatMessage(userId: number, userName: string, message: string, imageData?: string | null, imageMime?: string | null, grabIt?: boolean, portal: CommunicationPortal = "c3", orgId = 1): any {
+  const scopedPortal = normalizedCommunicationPortal(portal);
   const result = sqlite.prepare(
-    `INSERT INTO chat_messages (user_id, user_name, message, image_data, image_mime, grab_it) VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(userId, userName, message, imageData ?? null, imageMime ?? null, grabIt ? 1 : 0);
+    `INSERT INTO chat_messages (org_id, user_id, user_name, message, image_data, image_mime, grab_it, portal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(orgId, userId, userName, message, imageData ?? null, imageMime ?? null, grabIt ? 1 : 0, scopedPortal);
   // Return the row WITHOUT the blob (client fetches the image via its endpoint).
-  return sqlite.prepare(`SELECT id, user_id, user_name, message, image_mime, created_at, grab_it FROM chat_messages WHERE id=?`).get(result.lastInsertRowid) as any;
+  return sqlite.prepare(`SELECT id, user_id, user_name, message, image_mime, created_at, grab_it, portal FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).get(result.lastInsertRowid, orgId, scopedPortal) as any;
 }
 // First-come-first-served claim of a Grab It lead. The UPDATE only lands when
 // nobody has claimed yet, so two simultaneous grabs can't both win.
-export function claimChatMessage(id: number, userId: number, userName: string): { claimed: boolean; row: any } {
+export function claimChatMessage(id: number, userId: number, userName: string, portal: CommunicationPortal = "c3", orgId = 1): { claimed: boolean; row: any } {
+  const scopedPortal = normalizedCommunicationPortal(portal);
   const r = sqlite.prepare(
-    `UPDATE chat_messages SET claimed_by=?, claimed_by_name=?, claimed_at=? WHERE id=? AND grab_it=1 AND claimed_by IS NULL`
-  ).run(userId, userName, new Date().toISOString(), id);
-  const row = sqlite.prepare(`SELECT id, user_id, user_name, message, grab_it, claimed_by, claimed_by_name, claimed_at FROM chat_messages WHERE id=?`).get(id) as any;
+    `UPDATE chat_messages SET claimed_by=?, claimed_by_name=?, claimed_at=? WHERE id=? AND org_id=? AND portal=? AND grab_it=1 AND claimed_by IS NULL`
+  ).run(userId, userName, new Date().toISOString(), id, orgId, scopedPortal);
+  const row = sqlite.prepare(`SELECT id, user_id, user_name, message, grab_it, claimed_by, claimed_by_name, claimed_at, portal FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).get(id, orgId, scopedPortal) as any;
   return { claimed: r.changes > 0, row };
 }
 // Release a claim — the claimer (or an admin) hands the lead back so it's up
 // for grabs again and its content becomes visible to everyone once more.
-export function releaseChatMessage(id: number, userId: number, isAdmin: boolean): { released: boolean; reason?: string } {
-  const row = sqlite.prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=?`).get(id) as any;
+export function releaseChatMessage(id: number, userId: number, isAdmin: boolean, portal: CommunicationPortal = "c3", orgId = 1): { released: boolean; reason?: string } {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const row = sqlite.prepare(`SELECT grab_it, claimed_by FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).get(id, orgId, scopedPortal) as any;
   if (!row || !row.grab_it) return { released: false, reason: "not_grab_it" };
   if (row.claimed_by == null) return { released: false, reason: "not_claimed" };
   if (row.claimed_by !== userId && !isAdmin) return { released: false, reason: "not_yours" };
-  sqlite.prepare(`UPDATE chat_messages SET claimed_by=NULL, claimed_by_name=NULL, claimed_at=NULL WHERE id=?`).run(id);
+  sqlite.prepare(`UPDATE chat_messages SET claimed_by=NULL, claimed_by_name=NULL, claimed_at=NULL WHERE id=? AND org_id=? AND portal=?`).run(id, orgId, scopedPortal);
   return { released: true };
 }
-export function getChatImage(id: number): { image_data: string | null; image_mime: string | null } | undefined {
-  return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=?`).get(id) as any;
+export function getChatImage(id: number, portal: CommunicationPortal = "c3", orgId = 1): { image_data: string | null; image_mime: string | null } | undefined {
+  return sqlite.prepare(`SELECT image_data, image_mime FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).get(id, orgId, normalizedCommunicationPortal(portal)) as any;
 }
 
 // ── Time clock storage ──────────────────────────────────────────────────────
@@ -3168,11 +3283,16 @@ export function resolvePayRate(userId?: number): { rateCents: number; seRate: nu
   }
   return { rateCents, seRate };
 }
-export function deleteChatMessage(id: number): void {
-  sqlite.prepare(`DELETE FROM chat_messages WHERE id=?`).run(id);
+export function deleteChatMessage(id: number, portal: CommunicationPortal = "c3", orgId = 1): void {
+  const scopedPortal = normalizedCommunicationPortal(portal);
+  const message = sqlite.prepare(`SELECT 1 FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).get(id, orgId, scopedPortal);
+  if (!message) return;
+  sqlite.prepare(`DELETE FROM chat_messages WHERE id=? AND org_id=? AND portal=?`).run(id, orgId, scopedPortal);
   try { sqlite.prepare(`DELETE FROM chat_reactions WHERE message_id=?`).run(id); } catch {}
 }
-export function toggleChatReaction(messageId: number, userId: number, emoji: string): { added: boolean } {
+export function toggleChatReaction(messageId: number, userId: number, emoji: string, portal: CommunicationPortal = "c3", orgId = 1): { added: boolean; notFound?: boolean } {
+  const message = getChatMessageById(messageId, portal, orgId);
+  if (!message) return { added: false, notFound: true };
   const existing = sqlite.prepare(`SELECT id FROM chat_reactions WHERE message_id=? AND user_id=? AND emoji=?`).get(messageId, userId, emoji) as any;
   if (existing) { sqlite.prepare(`DELETE FROM chat_reactions WHERE id=?`).run(existing.id); return { added: false }; }
   sqlite.prepare(`INSERT INTO chat_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)`).run(messageId, userId, emoji);

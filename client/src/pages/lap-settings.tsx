@@ -68,8 +68,8 @@ export default function LapSettings() {
 
   const [timezone, setTimezone] = useState(user?.timezone ?? "America/Los_Angeles");
   const [savingTimezone, setSavingTimezone] = useState(false);
-  const [chatNotifications, setChatNotifications] = useState(!user?.muteChatNotifications);
-  const [forumNotifications, setForumNotifications] = useState(!user?.muteForumNotifications);
+  const [chatNotifications, setChatNotifications] = useState(!user?.muteLapChatNotifications);
+  const [forumNotifications, setForumNotifications] = useState(!user?.muteLapForumNotifications);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -89,9 +89,9 @@ export default function LapSettings() {
 
   useEffect(() => {
     setTimezone(user?.timezone ?? "America/Los_Angeles");
-    setChatNotifications(!user?.muteChatNotifications);
-    setForumNotifications(!user?.muteForumNotifications);
-  }, [user?.timezone, user?.muteChatNotifications, user?.muteForumNotifications]);
+    setChatNotifications(!user?.muteLapChatNotifications);
+    setForumNotifications(!user?.muteLapForumNotifications);
+  }, [user?.timezone, user?.muteLapChatNotifications, user?.muteLapForumNotifications]);
 
   useEffect(() => {
     const config = checkinConfigQuery.data?.config;
@@ -128,7 +128,7 @@ export default function LapSettings() {
     setter(enabled);
     setNotificationBusy(kind);
     try {
-      await lapRequest("PATCH", `/api/users/me/mute-${kind}`, { muted: !enabled });
+      await lapRequest("PATCH", `/api/users/me/mute-lap-${kind}`, { muted: !enabled });
       await refetchUser();
       toast({ title: `${kind === "chat" ? "Chat" : "Forum"} notifications ${enabled ? "enabled" : "muted"}` });
     } catch (error: any) {

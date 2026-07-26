@@ -57,6 +57,18 @@ type FormState = {
   resultDate: string;
 };
 
+type CreateFileState = Record<LapFileKey, File | null>;
+
+type CreatedPackageUploadError = Error & {
+  createdResult: LapResult;
+  failedDocumentLabel: string;
+  uploadedCount: number;
+};
+
+const LAP_FILE_MAX_BYTES = 12 * 1024 * 1024;
+const LAP_FILE_ACCEPT = ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg";
+const LAP_ALLOWED_FILE_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"]);
+
 const emptyForm = (): FormState => ({
   borrowerName: "",
   dealReference: "",
@@ -64,6 +76,23 @@ const emptyForm = (): FormState => ({
   notes: "",
   resultDate: new Date().toLocaleDateString("en-CA"),
 });
+
+const emptyCreateFiles = (): CreateFileState => ({
+  creditReport: null,
+  aus: null,
+  formalQuote: null,
+});
+
+function validateLapFile(file: File): { title: string; description: string } | null {
+  const extensionAllowed = /\.(pdf|png|jpe?g)$/i.test(file.name);
+  if (!LAP_ALLOWED_FILE_TYPES.has(file.type.toLowerCase()) && !(file.type === "" && extensionAllowed)) {
+    return { title: "Unsupported file type", description: "Upload a PDF, PNG, or JPEG file." };
+  }
+  if (file.size > LAP_FILE_MAX_BYTES) {
+    return { title: "File is too large", description: "LAP files must be 12 MB or smaller." };
+  }
+  return null;
+}
 
 function formFromResult(result: LapResult): FormState {
   return {
@@ -108,6 +137,131 @@ function DocumentIcon({ documentKey }: { documentKey: LapFileKey }) {
   return <FileCheck2 className="h-5 w-5" />;
 }
 
+function RequiredDocumentPicker({
+  documentKey,
+  label,
+  description,
+  file,
+  disabled,
+  onSelect,
+}: {
+  documentKey: LapFileKey;
+  label: string;
+  description: string;
+  file: File | null;
+  disabled: boolean;
+  onSelect: (file: File | null) => void;
+}) {
+  const { toast } = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+
+  function acceptFile(nextFile?: File) {
+    if (!nextFile || disabled) return;
+    const validationError = validateLapFile(nextFile);
+    if (validationError) {
+      toast({ ...validationError, variant: "destructive" });
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+    onSelect(nextFile);
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function openPicker() {
+    if (!disabled) inputRef.current?.click();
+  }
+
+  return (
+    <div
+      className={`relative rounded-xl border p-4 transition-colors ${
+        disabled
+          ? "cursor-not-allowed opacity-70"
+          : dragging
+            ? "cursor-pointer border-primary bg-primary/10"
+            : file
+              ? "cursor-pointer border-emerald-300/80 bg-emerald-50/40 hover:border-emerald-400 dark:border-emerald-900 dark:bg-emerald-950/10"
+              : "cursor-pointer border-dashed bg-muted/20 hover:border-primary/60 hover:bg-primary/5"
+      }`}
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={`${file ? "Replace" : "Attach"} required ${label}`}
+      onClick={openPicker}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openPicker();
+        }
+      }}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        if (!disabled) setDragging(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        acceptFile(event.dataTransfer.files?.[0]);
+      }}
+      data-testid={`lap-create-document-${documentKey}`}
+    >
+      <input
+        ref={inputRef}
+        className="hidden"
+        type="file"
+        accept={LAP_FILE_ACCEPT}
+        disabled={disabled}
+        onChange={(event) => acceptFile(event.target.files?.[0])}
+      />
+      <div className="flex items-start gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+          file ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300" : "bg-primary/10 text-primary"
+        }`}>
+          {file ? <Check className="h-5 w-5" /> : <DocumentIcon documentKey={documentKey} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold">{label}</p>
+            <Badge variant="outline" className="h-5 border-primary/30 text-[10px] text-primary">Required</Badge>
+          </div>
+          {file ? (
+            <>
+              <p className="mt-1 truncate text-sm font-medium" title={file.name}>{file.name}</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {formatLapBytes(file.size)} · Click or drop to replace
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+              <p className="mt-2 text-[11px] font-medium text-primary">Click to choose or drop a PDF, PNG, or JPEG</p>
+            </>
+          )}
+        </div>
+        {file && !disabled && (
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 shrink-0"
+            aria-label={`Remove selected ${label}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (inputRef.current) inputRef.current.value = "";
+              onSelect(null);
+            }}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DocumentSlot({
   resultId,
   documentType,
@@ -138,13 +292,9 @@ function DocumentSlot({
 
   async function acceptFile(nextFile?: File) {
     if (!nextFile) return;
-    const allowedTypes = new Set(["application/pdf", "image/png", "image/jpeg"]);
-    if (nextFile.type && !allowedTypes.has(nextFile.type)) {
-      toast({ title: "Unsupported file type", description: "Upload a PDF, PNG, or JPEG file.", variant: "destructive" });
-      return;
-    }
-    if (nextFile.size > 12 * 1024 * 1024) {
-      toast({ title: "File is too large", description: "LAP files must be 12 MB or smaller.", variant: "destructive" });
+    const validationError = validateLapFile(nextFile);
+    if (validationError) {
+      toast({ ...validationError, variant: "destructive" });
       return;
     }
     setBusy("upload");
@@ -211,7 +361,7 @@ function DocumentSlot({
         ref={inputRef}
         className="hidden"
         type="file"
-        accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+        accept={LAP_FILE_ACCEPT}
         onChange={(event) => void acceptFile(event.target.files?.[0])}
       />
       <div className="flex items-start gap-3">
@@ -390,8 +540,10 @@ function ResultEditor({
       <div>
         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h3 className="font-semibold">Package documents</h3>
-            <p className="text-xs text-muted-foreground">Drop a replacement into any slot to keep the package current.</p>
+            <h3 className="font-semibold">Required attachments</h3>
+            <p className="text-xs text-muted-foreground">
+              Credit Report, AUS, and Formal Quote are all required. Click or drop a file into any slot to replace it.
+            </p>
           </div>
           {isAdmin && (
             <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -435,6 +587,7 @@ export default function LapResults() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState<FormState>(() => emptyForm());
+  const [createFiles, setCreateFiles] = useState<CreateFileState>(() => emptyCreateFiles());
   const deferredSearch = useDeferredValue(search.trim());
   const [matchesResultRoute, resultRouteParams] = useRoute<{ resultId: string }>("/results/:resultId");
   const requestedResultId = matchesResultRoute ? Number(resultRouteParams?.resultId) : 0;
@@ -503,19 +656,80 @@ export default function LapResults() {
     ? requestedResult
     : results.find((result) => result.id === selectedId) ?? null;
 
+  const allCreateFilesSelected = LAP_DOCUMENTS.every((document) => !!createFiles[document.key]);
+
+  function resetCreateDialog() {
+    setCreateForm(emptyForm());
+    setCreateFiles(emptyCreateFiles());
+  }
+
   const createMutation = useMutation({
-    mutationFn: () => lapRequest("POST", "/api/lap/results", payloadFromForm(createForm)),
-    onSuccess: async (response) => {
+    mutationFn: async () => {
+      const missingDocument = LAP_DOCUMENTS.find((document) => !createFiles[document.key]);
+      if (missingDocument) throw new Error(`${missingDocument.label} is required.`);
+
+      const response = await lapRequest("POST", "/api/lap/results", payloadFromForm(createForm));
       const result = unwrapLapResult(response);
-      toast({ title: "Result package created", description: "Add the three documents to complete the package." });
+
+      for (let index = 0; index < LAP_DOCUMENTS.length; index += 1) {
+        const document = LAP_DOCUMENTS[index];
+        const file = createFiles[document.key];
+        if (!file) continue;
+        try {
+          await uploadLapResultFile(result.id, document.type, file);
+        } catch (error: any) {
+          const uploadError = Object.assign(
+            new Error(error?.message || `Could not upload ${document.label}.`),
+            {
+              createdResult: result,
+              failedDocumentLabel: document.label,
+              uploadedCount: index,
+            },
+          ) as CreatedPackageUploadError;
+          throw uploadError;
+        }
+      }
+
+      return result;
+    },
+    onSuccess: async (result) => {
       setCreating(false);
-      setCreateForm(emptyForm());
-      await queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/lap/stats"] });
+      resetCreateDialog();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/team-stats"] }),
+      ]);
       setSelectedId(result.id);
       navigate(`/results/${result.id}`);
+      toast({
+        title: "Complete result package created",
+        description: "Credit Report, AUS, and Formal Quote were uploaded.",
+      });
     },
-    onError: (error: any) => toast({ title: "Could not create package", description: error?.message, variant: "destructive" }),
+    onError: async (error: any) => {
+      const partialUploadError = error as Partial<CreatedPackageUploadError>;
+      if (partialUploadError.createdResult && partialUploadError.failedDocumentLabel) {
+        const result = partialUploadError.createdResult;
+        const uploadedCount = Number(partialUploadError.uploadedCount ?? 0);
+        setCreating(false);
+        resetCreateDialog();
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] }),
+          queryClient.invalidateQueries({ queryKey: ["/api/lap/stats"] }),
+          queryClient.invalidateQueries({ queryKey: ["/api/lap/team-stats"] }),
+        ]);
+        setSelectedId(result.id);
+        navigate(`/results/${result.id}`);
+        toast({
+          title: `Package saved, but ${partialUploadError.failedDocumentLabel} did not upload`,
+          description: `${uploadedCount} of 3 required attachments uploaded. Open Required attachments and retry ${partialUploadError.failedDocumentLabel}. ${error?.message || ""}`.trim(),
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({ title: "Could not create package", description: error?.message, variant: "destructive" });
+    },
   });
 
   const completeCount = results.filter((result) => result.complete).length;
@@ -699,12 +913,19 @@ export default function LapResults() {
         </Card>
       </div>
 
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="sm:max-w-[620px]">
+      <Dialog
+        open={creating}
+        onOpenChange={(open) => {
+          if (createMutation.isPending) return;
+          setCreating(open);
+          if (!open) resetCreateDialog();
+        }}
+      >
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-[900px]">
           <DialogHeader>
             <DialogTitle>Create result package</DialogTitle>
             <DialogDescription>
-              Add a clear borrower or deal reference first. Documents can be dropped in immediately afterward.
+              Enter the package details and attach all three required files before creating it.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2 sm:grid-cols-2">
@@ -740,7 +961,7 @@ export default function LapResults() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="lap-create-date">Result date</Label>
+              <Label htmlFor="lap-create-date">Result date *</Label>
               <Input
                 id="lap-create-date"
                 type="date"
@@ -759,14 +980,50 @@ export default function LapResults() {
                 rows={3}
               />
             </div>
+            <div className="space-y-3 border-t pt-4 sm:col-span-2">
+              <div>
+                <h3 className="text-sm font-semibold">Required attachments</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  All three files are required. PDF, PNG, or JPEG · 12 MB maximum per file.
+                </p>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {LAP_DOCUMENTS.map((document) => (
+                  <RequiredDocumentPicker
+                    key={document.type}
+                    documentKey={document.key}
+                    label={document.label}
+                    description={document.description}
+                    file={createFiles[document.key]}
+                    disabled={createMutation.isPending}
+                    onSelect={(file) => setCreateFiles((current) => ({ ...current, [document.key]: file }))}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+            <Button
+              variant="ghost"
+              disabled={createMutation.isPending}
+              onClick={() => {
+                setCreating(false);
+                resetCreateDialog();
+              }}
+            >
+              Cancel
+            </Button>
             <Button
               onClick={() => createMutation.mutate()}
-              disabled={!createForm.borrowerName.trim() || !createForm.resultDate || createMutation.isPending}
+              disabled={
+                !createForm.borrowerName.trim()
+                || !createForm.resultDate
+                || !allCreateFilesSelected
+                || createMutation.isPending
+              }
             >
-              {createMutation.isPending ? <RefreshCw className="animate-spin" /> : <Plus />} Create package
+              {createMutation.isPending ? <RefreshCw className="animate-spin" /> : <UploadCloud />}
+              {createMutation.isPending ? "Creating and uploading…" : "Create complete package"}
             </Button>
           </DialogFooter>
         </DialogContent>

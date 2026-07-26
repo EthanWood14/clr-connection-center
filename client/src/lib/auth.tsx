@@ -24,6 +24,8 @@ export interface AuthUser {
   smsRemindersEnabled?: boolean;
   muteChatNotifications?: boolean;
   muteForumNotifications?: boolean;
+  muteLapChatNotifications?: boolean;
+  muteLapForumNotifications?: boolean;
   phone?: string | null;
   timezone?: string;
 }
