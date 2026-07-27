@@ -228,6 +228,13 @@ function AuthenticatedApp() {
     }
   }, [isLoading, user, navigate]);
 
+  // LAP accounts belong to outside assistants and have no business in the C3
+  // shell. The server refuses their API calls either way; this keeps them from
+  // landing on a broken-looking C3 page.
+  useEffect(() => {
+    if (!isLoading && user?.portal === "lap") navigate("/lap");
+  }, [isLoading, user, navigate]);
+
   useEffect(() => {
     if (!isLoading && user?.mustChangePassword && location !== "/change-password") {
       navigate("/change-password");

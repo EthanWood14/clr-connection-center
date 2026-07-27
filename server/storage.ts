@@ -41,6 +41,24 @@ try {
 
 const sqlite = new Database(dbPath);
 
+// ── LAP document blobs live in a SIDECAR database ────────────────────────────
+// backup.ts copies the whole of clr.db and keeps 10 rotations on the same
+// Railway volume, so every byte stored in clr.db costs ~11x on disk. LAP
+// uploads are 12 MB PDFs; leaving them in clr.db would fill the volume after a
+// few dozen documents, and once /data is full EVERY SQLite write fails — all of
+// C3, not just LAP. Keeping the bytes in a sidecar file (metadata stays in
+// clr.db) keeps backups small. The sidecar is deliberately NOT backed up; the
+// source documents are re-uploadable and the metadata still records what was
+// there.
+const lapBlobPath = resolve(dirname(resolve(dbPath)), "lap-files.db");
+sqlite.exec(`ATTACH DATABASE '${lapBlobPath.replace(/'/g, "''")}' AS lapfiles`);
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS lapfiles.lap_result_file_blobs (
+    file_id INTEGER PRIMARY KEY,
+    data BLOB NOT NULL
+  )
+`);
+
 // ── Critical pre-Drizzle migrations ──────────────────────────────────────────
 // These MUST run before `drizzle(sqlite)` prepares any statements referencing
 // columns defined in the Drizzle schema. Otherwise Drizzle compiles SELECTs
@@ -2716,6 +2734,13 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_auth_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_from_number TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+  // ── Portal membership ──────────────────────────────────────────────────
+  // LAP accounts belong to outside loan-officer assistants. Without this the
+  // only thing distinguishing them from an internal CLR is the URL they happen
+  // to be looking at, which is not authorization — a LAP cookie is a C3 cookie.
+  // NULL/'c3' = internal staff (every pre-existing row); 'lap' = LAP-only.
+  try { sqlite.exec(`ALTER TABLE users ADD COLUMN portal TEXT`); } catch {}
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2777,7 +2802,6 @@ function runNewMigrations() {
       mime TEXT NOT NULL,
       size_bytes INTEGER NOT NULL,
       sha256 TEXT NOT NULL,
-      data_blob BLOB NOT NULL,
       uploaded_by INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       removed_by INTEGER,
@@ -2813,6 +2837,26 @@ function runNewMigrations() {
     CREATE INDEX IF NOT EXISTS idx_lap_events_package
       ON lap_result_events(org_id, package_id, created_at DESC);
   `);
+
+  // Move LAP document bytes out of clr.db into the sidecar (see the ATTACH near
+  // the top of this file for why). Idempotent: only runs while the legacy
+  // data_blob column still exists, and copies any rows written before the split.
+  try {
+    const hasBlobColumn = (sqlite.prepare(`PRAGMA table_info(lap_result_file_versions)`).all() as any[])
+      .some((c) => String(c.name) === "data_blob");
+    if (hasBlobColumn) {
+      sqlite.transaction(() => {
+        sqlite.exec(`
+          INSERT OR IGNORE INTO lapfiles.lap_result_file_blobs (file_id, data)
+            SELECT id, data_blob FROM lap_result_file_versions WHERE data_blob IS NOT NULL;
+          ALTER TABLE lap_result_file_versions DROP COLUMN data_blob;
+        `);
+      })();
+      console.log("[migration] lap_blobs_to_sidecar_v1: LAP document bytes moved out of clr.db");
+    }
+  } catch (e: any) {
+    console.error("lap_blobs_to_sidecar_v1 failed:", e?.message ?? e);
+  }
 
   // ── Glossary terms (admin-editable, per-org) ────────────────────────────
   try {
@@ -6876,9 +6920,9 @@ export function replaceLapResultFile(input: {
     const inserted = sqlite.prepare(`
       INSERT INTO lap_result_file_versions (
         org_id, package_id, document_type, version, is_current,
-        original_filename, mime, size_bytes, sha256, data_blob,
+        original_filename, mime, size_bytes, sha256,
         uploaded_by, created_at
-      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
     `).run(
       orgId,
       packageId,
@@ -6888,11 +6932,14 @@ export function replaceLapResultFile(input: {
       input.mime,
       input.data.length,
       crypto.createHash("sha256").update(input.data).digest("hex"),
-      input.data,
       actorUserId,
       now,
     );
     const fileId = Number(inserted.lastInsertRowid);
+    // Bytes go to the sidecar DB; this runs inside the same transaction, which
+    // SQLite spans across attached databases, so metadata and blob commit together.
+    sqlite.prepare(`INSERT INTO lapfiles.lap_result_file_blobs (file_id, data) VALUES (?, ?)`)
+      .run(fileId, input.data);
     sqlite.prepare(`
       UPDATE lap_result_packages
       SET updated_by = ?, updated_at = ?
@@ -6995,8 +7042,9 @@ export function getLapResultFileForDownload(input: {
         f.original_filename,
         f.mime,
         f.size_bytes,
-        f.data_blob
+        b.data AS data_blob
       FROM lap_result_file_versions f
+      INNER JOIN lapfiles.lap_result_file_blobs b ON b.file_id = f.id
       INNER JOIN lap_result_packages p
         ON p.id = f.package_id AND p.org_id = f.org_id
       WHERE f.id = ? AND f.org_id = ?

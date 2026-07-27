@@ -172,6 +172,34 @@ must never be printed in output.
 - Match the surrounding file's style; comments explain **why**, not what.
 - Bump `shared/version.ts` on every user-facing change so the deploy is verifiable.
 
+## LAP (LO Assistant Portal)
+
+A second product served from the same Express app and the same React bundle, at
+`/#/lap`. Loan-officer assistants file **result packages** (borrower + three
+required documents: credit report, AUS, formal quote). Client code lives in
+`client/src/pages/lap-*.tsx` + `client/src/components/lap/`; API is `/api/lap/*`;
+storage helpers are the `lap*` functions in `storage.ts`.
+
+Two things to know before touching it:
+
+- **LAP accounts share C3's login and session.** There is no separate identity
+  system. What separates them is `users.portal`: `null`/`'c3'` = internal staff,
+  `'lap'` = an outside assistant. A **deny-by-default guard** right after the
+  `/api` auth middleware in `routes.ts` confines `portal='lap'` accounts to
+  `/api/lap/*` plus a short allowlist. If you add a LAP feature that calls a new
+  shared endpoint, you must add it to that allowlist or it will 403. Never widen
+  the allowlist to a route that returns C3 data. `portal` is a PRIVILEGED column
+  (self-edit is stripped) — that is the whole boundary, so keep it that way.
+- **Uploaded bytes do NOT live in `clr.db`.** They go to a sidecar database,
+  `lap-files.db`, attached as schema `lapfiles` (see the `ATTACH` at the top of
+  `storage.ts`). `backup.ts` copies `clr.db` and keeps 10 rotations on the same
+  ~880 MB volume, so anything stored in `clr.db` costs ~11× on disk — 12 MB PDFs
+  there would fill the volume and take **all** of C3 down with it. Metadata
+  (name, mime, size, sha256) stays in `clr.db`; only the blob is in the sidecar,
+  and the sidecar is deliberately not backed up.
+
+`tests/lap-portal-confinement.test.ts` locks both properties down.
+
 ## Known external limits
 
 - The **Bonzo API cannot set pipeline stages** (verified across many endpoint

@@ -37,6 +37,9 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   role: text("role").notNull().default("assistant"), // admin | assistant | viewer
+  // Which product this account may use. null/'c3' = internal staff (full C3);
+  // 'lap' = outside loan-officer assistant, confined to the LAP portal.
+  portal: text("portal"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   isClr: integer("is_clr", { mode: "boolean" }).notNull().default(true), // admins: true = also a CLR, included in assignments
   // false = skip this CLR in daily assignment generation (auto-generate, regenerate,

@@ -18,7 +18,6 @@ import {
   ShieldCheck,
   Trash2,
   UploadCloud,
-  UserRound,
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -426,11 +425,9 @@ function DocumentSlot({
 
 function ResultEditor({
   result,
-  loanOfficers,
   isAdmin,
 }: {
   result: LapResult;
-  loanOfficers: any[];
   isAdmin: boolean;
 }) {
   const { toast } = useToast();
@@ -462,7 +459,6 @@ function ResultEditor({
           </div>
           <h2 className="truncate text-2xl font-bold tracking-tight">{result.borrowerName}</h2>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><UserRound className="h-3.5 w-3.5" /> {result.loanOfficerName || "No LO selected"}</span>
             <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {formatLapDate(result.resultDate || result.createdAt)}</span>
           </div>
         </div>
@@ -490,18 +486,6 @@ function ResultEditor({
                 onChange={(event) => setForm({ ...form, dealReference: event.target.value })}
                 placeholder="Loan number, CRM ID, or internal reference"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Loan officer</Label>
-              <Select value={form.loanOfficerId} onValueChange={(value) => setForm({ ...form, loanOfficerId: value })}>
-                <SelectTrigger><SelectValue placeholder="Select an LO" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No LO selected</SelectItem>
-                  {loanOfficers.map((lo) => (
-                    <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName ?? lo.full_name ?? lo.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`lap-date-${result.id}`}>Result date</Label>
@@ -621,13 +605,6 @@ export default function LapResults() {
     queryKey: ["/api/lap/results", "detail", requestedResultId],
     queryFn: () => lapRequest<unknown>("GET", `/api/lap/results/${requestedResultId}`),
     enabled: hasValidRequestedResultId,
-  });
-  const loanOfficersQuery = useQuery<any[]>({
-    queryKey: ["/api/lap/loan-officers"],
-    queryFn: async () => {
-      const response = await lapRequest<any>("GET", "/api/lap/loan-officers");
-      return Array.isArray(response) ? response : (response?.loanOfficers ?? response?.items ?? []);
-    },
   });
 
   const results = useMemo(() => unwrapLapResults(resultsQuery.data), [resultsQuery.data]);
@@ -844,7 +821,7 @@ export default function LapResults() {
                         <ResultStatus result={result} compact />
                       </div>
                       <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                        {result.loanOfficerName || "No LO"}{result.dealReference ? ` · ${result.dealReference}` : ""}
+                        {result.dealReference || "No reference"}
                       </p>
                       <p className="mt-1 text-[10px] text-muted-foreground">{formatLapDate(result.updatedAt, true)}</p>
                     </div>
@@ -914,7 +891,7 @@ export default function LapResults() {
                 </Button>
               </div>
             ) : selected ? (
-              <ResultEditor result={selected} loanOfficers={loanOfficersQuery.data ?? []} isAdmin={isAdmin} />
+              <ResultEditor result={selected} isAdmin={isAdmin} />
             ) : (
               <div className="flex min-h-[560px] flex-col items-center justify-center text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -965,18 +942,6 @@ export default function LapResults() {
                 onChange={(event) => setCreateForm({ ...createForm, dealReference: event.target.value })}
                 placeholder="Loan number, CRM ID, or internal reference"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Loan officer</Label>
-              <Select value={createForm.loanOfficerId} onValueChange={(value) => setCreateForm({ ...createForm, loanOfficerId: value })}>
-                <SelectTrigger><SelectValue placeholder="Select an LO" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No LO selected</SelectItem>
-                  {(loanOfficersQuery.data ?? []).map((lo) => (
-                    <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName ?? lo.full_name ?? lo.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="lap-create-date">Result date *</Label>

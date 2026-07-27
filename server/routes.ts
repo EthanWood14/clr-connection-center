@@ -91,6 +91,9 @@ function freshSessionFromSignedCookie(req: Request): any | null {
       ...session,
       userId,
       role: user.role,
+      // Portal membership is authorization, so it comes from the DB too — a
+      // cookie minted before an account was confined to LAP must not keep C3.
+      portal: (user.portal ?? null) as string | null,
       orgId,
       superAdmin,
       isImpersonating,
@@ -4728,7 +4731,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), muteLapChatNotifications: !!(u.muteLapChatNotifications ?? u.mute_lap_chat_notifications), muteLapForumNotifications: !!(u.muteLapForumNotifications ?? u.mute_lap_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), muteLapChatNotifications: !!(u.muteLapChatNotifications ?? u.mute_lap_chat_notifications), muteLapForumNotifications: !!(u.muteLapForumNotifications ?? u.mute_lap_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", portal: u.portal ?? null, superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -5128,6 +5131,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     requireAuth(req, res, next);
   });
 
+  // ── Portal confinement ───────────────────────────────────────────────────────
+  // A LAP account is an ordinary users row, so without this it satisfies every
+  // requireAuth route in C3 — including the ones that hand out LO credentials.
+  // Deny by default: LAP accounts may reach only their own portal plus the
+  // handful of shared self-service endpoints the LAP client actually calls.
+  // Internal staff (portal NULL or 'c3') are unaffected.
+  const LAP_ALLOWED_EXACT = new Set([
+    "/version", "/health",
+    "/users/me/password", "/users/me/seen-intro", "/users/me/seen-pipeline-sop",
+    "/checkin", "/checkin/settings",
+  ]);
+  const LAP_ALLOWED_PREFIXES = ["/lap/", "/auth/", "/push/", "/notifications"];
+  app.use("/api", (req: any, res: Response, next: NextFunction) => {
+    const portal = String(req.session_user?.portal ?? "").toLowerCase();
+    if (portal !== "lap") return next();
+    const path = req.path;
+    const ok = LAP_ALLOWED_EXACT.has(path)
+      || LAP_ALLOWED_PREFIXES.some((p) => path.startsWith(p))
+      || path.startsWith("/checkin/");
+    if (ok) return next();
+    return res.status(403).json({ error: "This account is limited to the LO Assistant Portal." });
+  });
+
   // ── Users ────────────────────────────────────────────────────────────────────
   app.get("/api/users", (req, res) => {
     res.json(storage.getUsers());
@@ -5148,6 +5174,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isSuper) {
       delete createData.superAdmin; delete createData.super_admin;
       createData.orgId = Number(me?.orgId ?? me?.org_id ?? req.session_user?.orgId ?? 1) || 1;
+    }
+    // A LAP account is for someone outside the company. Never let one be minted
+    // with C3 powers — those flags are what the portal guard is protecting.
+    if (String(createData.portal ?? "").toLowerCase() === "lap") {
+      createData.portal = "lap";
+      createData.role = "assistant";
+      createData.isClr = false;
+      createData.isManager = false;
+      createData.inDailyAssignments = false;
+      createData.excludeFromStats = true;
+      delete createData.superAdmin; delete createData.super_admin;
+    } else {
+      createData.portal = null;
     }
     // Default the employment start date to today (the account is being made
     // because they're starting), so CLR profiles never show a blank. An admin
@@ -5270,6 +5309,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       "isActive", "is_active", "orgId", "org_id", "mustChangePassword", "must_change_password",
       // Employment start date is an HR field — nobody sets their own.
       "startDate", "start_date",
+      // Portal membership is the LAP confinement boundary — self-edit would be
+      // a straight escape hatch out of the portal guard.
+      "portal",
     ];
     if (!isAdmin) for (const k of PRIVILEGED) delete (rest as any)[k];
     if (!isSuper) { delete (rest as any).superAdmin; delete (rest as any).super_admin; }
@@ -6099,23 +6141,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ minCalls: MIN_CALLS, rows });
   });
 
-  app.get("/api/loan-officers/:id", (req, res) => {
-    const lo = storage.getLoanOfficerById(parseInt(req.params.id));
+  app.get("/api/loan-officers/:id", (req: any, res) => {
+    const lo = storage.getLoanOfficerById(parseInt(req.params.id)) as any;
     if (!lo) return res.status(404).json({ error: "Not found" });
-    res.json(lo);
+    // Mask credentials exactly like the list endpoint above. Plaintext lives
+    // only behind /api/loan-officers/:id/credentials, which is role-gated.
+    res.json({
+      ...lo,
+      bonzoPassword: lo.bonzoPassword ? "••••••••" : null,
+      leadMailboxPassword: lo.leadMailboxPassword ? "••••••••" : null,
+      otherCredentials: undefined,
+    });
   });
 
-  app.post("/api/loan-officers", (req, res) => {
+  app.post("/api/loan-officers", (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     try {
+      const me = storage.getUserById(Number(req.session_user?.userId)) as any;
       const lo = storage.createLoanOfficer(req.body);
-      audit({ userId: 1, userName: "Ethan Wood", action: "create", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: null });
+      audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "create", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: null });
       res.json(lo);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  app.patch("/api/loan-officers/:id", (req, res) => {
+  app.patch("/api/loan-officers/:id", (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
     const id = parseInt(req.params.id);
     // Defense in depth: the list endpoint masks passwords as "••••••••". If a
     // client somehow round-trips the masked value back to us, drop it so we
@@ -6124,7 +6176,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (body.bonzoPassword === "••••••••") delete body.bonzoPassword;
     if (body.leadMailboxPassword === "••••••••") delete body.leadMailboxPassword;
     const lo = storage.updateLoanOfficer(id, body);
-    if (lo) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(body) });
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (lo) audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(body) });
     res.json(lo);
   });
 
@@ -6298,12 +6351,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(lo);
   });
 
-  app.delete("/api/loan-officers/:id", (req, res) => {
+  app.delete("/api/loan-officers/:id", (req: any, res) => {
+    // Role check first: this archives a record AND writes a full-DB backup, so
+    // an unguarded route is both a data risk and a disk-exhaustion lever.
+    if (!requireManagerOrAdmin(req, res)) return;
     createBackup('pre-delete');
     const id = parseInt(req.params.id);
     const lo = storage.getLoanOfficerById(id);
     storage.archiveLoanOfficer(id);
-    audit({ userId: 1, userName: "Ethan Wood", action: "delete", entityType: "loan_officer", entityId: id, entityLabel: lo?.fullName ?? null, details: null });
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "delete", entityType: "loan_officer", entityId: id, entityLabel: lo?.fullName ?? null, details: null });
     res.json({ ok: true });
   });
 
