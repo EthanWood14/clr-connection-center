@@ -118,6 +118,10 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT '
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_dismissed INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN getting_started_completed TEXT NOT NULL DEFAULT '[]'`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN archived_at TEXT`); } catch {}
+// Portal membership. MUST stay in this pre-Drizzle block: it is part of the
+// Drizzle users schema, so Drizzle names it in every users SELECT from the
+// first query onward. NULL/'c3' = internal staff; 'lap' = LAP-only account.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN portal TEXT`); } catch {}
 // 2026-05-05: appointment reminder email opt-in. Defaults to ON for all CLRs
 // so the 30-minute appointment reminder cron actually fires emails. Previously
 // this column was referenced in the SELECT but never existed, so it returned
@@ -2734,13 +2738,6 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_auth_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN twilio_from_number TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
-
-  // ── Portal membership ──────────────────────────────────────────────────
-  // LAP accounts belong to outside loan-officer assistants. Without this the
-  // only thing distinguishing them from an internal CLR is the URL they happen
-  // to be looking at, which is not authorization — a LAP cookie is a C3 cookie.
-  // NULL/'c3' = internal staff (every pre-existing row); 'lap' = LAP-only.
-  try { sqlite.exec(`ALTER TABLE users ADD COLUMN portal TEXT`); } catch {}
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
