@@ -81,3 +81,19 @@ test("LAP document bytes are stored outside the backed-up database", () => {
   assert.match(storage, /ALTER TABLE lap_result_file_versions DROP COLUMN data_blob/,
     "existing installs must be migrated off the in-DB blob");
 });
+
+test("a LAP account is provisioned and onboarded into LAP, not C3", () => {
+  // Magic link must not drop a LAP user on C3's root — the portal guard would
+  // immediately 403 every call the C3 shell makes.
+  const welcome = routes.slice(
+    routes.indexOf(`app.get("/api/auth/welcome-login"`),
+    routes.indexOf(`app.post("/api/users"`),
+  );
+  assert.match(welcome, /portal\s*\?\?\s*""\)\s*===\s*"lap"\s*\?\s*"\/#\/lap"/,
+    "welcome magic link must land LAP accounts in the portal");
+
+  // Admins need a real control, not a hand-crafted API call.
+  const team = readFileSync(join(root, "client/src/components/team-management.tsx"), "utf8");
+  assert.match(team, /data-testid="select-account-portal"/, "team management needs an account-type control");
+  assert.match(team, /apiRequest\("POST", "\/api\/users", \{[\s\S]*?portal,/, "create must send the chosen portal");
+});

@@ -5105,8 +5105,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
     audit({ userId: user.id, userName: user.name, action: "welcome_login", entityType: "auth", entityId: user.id, entityLabel: user.email, details: JSON.stringify({ via: "magic_link" }) });
     // mustChangePassword stays true; the SPA will route them to the change-password
-    // screen on first load.
-    return res.redirect(302, "/");
+    // screen on first load. LAP accounts go to their own portal — C3's root would
+    // bounce them straight back out via the portal guard.
+    return res.redirect(302, String(user.portal ?? "") === "lap" ? "/#/lap" : "/");
   });
 
   // ── Auth guard for all /api/* routes except /api/auth/* and /api/invite/* ──
@@ -5225,14 +5226,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const sendWelcome = !!(req.body?.sendWelcome ?? true);
       welcomeRequested = sendWelcome;
       if (!sendWelcome) throw new Error("welcome_email_disabled");
-      const roleLabel = (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
+      const isLapAccount = createData.portal === "lap";
+      const roleLabel = isLapAccount
+        ? "Loan Officer Assistant"
+        : (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
       const welcomeBody = `
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
           Hi <strong style="color:#1e293b">${newUser.name}</strong>,
         </p>
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
-          Welcome to the <strong style="color:#1e293b">CLR Connection Center</strong> — the internal platform for the West Capital Lending Irvine branch team.
-          Your account has been created and you're ready to log in.
+          ${isLapAccount
+            ? `Welcome to <strong style="color:#1e293b">LAP</strong> — West Capital Lending's portal for loan officer assistants. Your account has been created and you're ready to log in.`
+            : `Welcome to the <strong style="color:#1e293b">CLR Connection Center</strong> — the internal platform for the West Capital Lending Irvine branch team. Your account has been created and you're ready to log in.`}
         </p>
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:24px">
           <p style="margin:0 0 8px;font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Your Login Details</p>
@@ -5269,9 +5274,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       `;
       await sendEmail({
         to: newUser.email,
-        subject: `Welcome to CLR Connection Center, ${newUser.name}!`,
+        subject: isLapAccount
+          ? `Welcome to LAP, ${newUser.name}!`
+          : `Welcome to CLR Connection Center, ${newUser.name}!`,
         html: buildEmail({
-          subject: `Welcome to CLR Connection Center!`,
+          subject: isLapAccount ? `Welcome to LAP!` : `Welcome to CLR Connection Center!`,
           preheader: `Your account is ready — log in to get started.`,
           body: welcomeBody,
         }),

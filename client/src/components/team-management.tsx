@@ -67,6 +67,8 @@ interface User {
   isClr: boolean;
   inDailyAssignments: boolean;
   excludeFromStats?: boolean;
+  /** 'lap' = LO Assistant Portal login; null/'c3' = internal C3 staff. */
+  portal?: string | null;
   createdAt: string;
 }
 
@@ -104,6 +106,10 @@ function UserDialog({
   // true = "non-counted": still logs/EODs, but out of team totals, leaderboard,
   // and daily assignments; shown as a separate group in reports.
   const [excludeFromStats, setExcludeFromStats] = useState(editUser?.excludeFromStats ?? false);
+  // Which product this login is for. LAP accounts belong to outside assistants
+  // and are confined to /api/lap/* by the server's portal guard.
+  const [portal, setPortal] = useState<"c3" | "lap">(editUser?.portal === "lap" ? "lap" : "c3");
+  const isLap = portal === "lap";
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -116,7 +122,16 @@ function UserDialog({
   const watchedRole = form.watch("role");
 
   const createMutation = useMutation({
-    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", { ...data, isClr, inDailyAssignments: inAssignments, excludeFromStats, sendWelcome }),
+    mutationFn: (data: UserFormValues) => apiRequest("POST", "/api/users", {
+      ...data,
+      portal,
+      // The server re-forces these for LAP accounts; send the safe values anyway
+      // so the request never *asks* for a LAP login with C3 privileges.
+      isClr: isLap ? false : isClr,
+      inDailyAssignments: isLap ? false : inAssignments,
+      excludeFromStats: isLap ? true : excludeFromStats,
+      sendWelcome,
+    }),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       if (res?.emailRequested) {
@@ -145,7 +160,12 @@ function UserDialog({
 
   const updateMutation = useMutation({
     mutationFn: (data: UserFormValues) => {
-      const payload: any = { name: data.name, email: data.email, role: data.role, isClr, inDailyAssignments: inAssignments, excludeFromStats };
+      const payload: any = {
+        name: data.name, email: data.email, role: isLap ? "assistant" : data.role, portal,
+        isClr: isLap ? false : isClr,
+        inDailyAssignments: isLap ? false : inAssignments,
+        excludeFromStats: isLap ? true : excludeFromStats,
+      };
       if (data.newPassword?.trim()) payload.newPassword = data.newPassword.trim();
       return apiRequest("PATCH", `/api/users/${editUser!.id}`, payload);
     },
@@ -199,6 +219,27 @@ function UserDialog({
                 </FormItem>
               )}
             />
+            {/* Account type decides which product this login can reach at all. */}
+            <FormItem>
+              <FormLabel>Account type</FormLabel>
+              <Select value={portal} onValueChange={(v) => setPortal(v as "c3" | "lap")}>
+                <FormControl>
+                  <SelectTrigger data-testid="select-account-portal">
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectItem value="c3">C3 — internal team member</SelectItem>
+                  <SelectItem value="lap">LAP — loan officer assistant</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {isLap
+                  ? "Signs in at the LO Assistant Portal and can only reach LAP. No access to C3 pages, the LO directory, or team data."
+                  : "Full C3 team member."}
+              </p>
+            </FormItem>
+            {!isLap && (
             <FormField
               control={form.control}
               name="role"
@@ -221,6 +262,7 @@ function UserDialog({
                 </FormItem>
               )}
             />
+            )}
             {isEditing && (
               <FormField
                 control={form.control}
@@ -239,7 +281,7 @@ function UserDialog({
               />
             )}
             {/* CLR toggle — only relevant for admin role */}
-            {watchedRole === "admin" && (
+            {!isLap && watchedRole === "admin" && (
               <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
                 <div>
                   <p className="text-sm font-medium">Also a CLR</p>
@@ -249,7 +291,7 @@ function UserDialog({
               </div>
             )}
             {/* Daily assignment opt-out — any CLR (assistant, or admin marked as CLR) */}
-            {(watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
+            {!isLap && (watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
               <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
                 <div>
                   <p className="text-sm font-medium">Daily Assignments</p>
@@ -261,7 +303,7 @@ function UserDialog({
               </div>
             )}
             {/* Non-counted CLR — excluded from totals/leaderboard/assignments, separate group in reports */}
-            {(watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
+            {!isLap && (watchedRole === "assistant" || (watchedRole === "admin" && isClr)) && (
               <div className="flex items-center justify-between rounded-lg border px-4 py-3 bg-muted/40">
                 <div>
                   <p className="text-sm font-medium">Exclude from stats (non-counted)</p>
@@ -441,13 +483,23 @@ export function TeamManagement() {
                     <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs font-medium ${roleBadgeStyles[user.role]}`}
-                          data-testid={`badge-role-${user.id}`}
-                        >
-                          {user.role === "admin" ? (user.isClr ? "Admin (CLR)" : "Admin") : user.role}
-                        </Badge>
+                        {user.portal === "lap" ? (
+                          <Badge
+                            variant="outline"
+                            className="text-xs font-medium bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-700"
+                            data-testid={`badge-portal-${user.id}`}
+                          >
+                            LAP
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className={`text-xs font-medium ${roleBadgeStyles[user.role]}`}
+                            data-testid={`badge-role-${user.id}`}
+                          >
+                            {user.role === "admin" ? (user.isClr ? "Admin (CLR)" : "Admin") : user.role}
+                          </Badge>
+                        )}
                         {(user.role === "assistant" || (user.role === "admin" && user.isClr)) &&
                           user.inDailyAssignments === false && (
                             <Badge
