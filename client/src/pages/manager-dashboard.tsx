@@ -557,17 +557,26 @@ export default function ManagerDashboard() {
       const arr = (s as any)[clrTrendMetric] as number[];
       row[`u${s.userId}`] = arr[i] ?? 0;
     }
-    // Benchmark mean = average per CLR across the WHOLE team (every CLR in the
-    // series, including zero days), not just the shown lines. So the dashed line
-    // reads as the typical CLR's daily output and doesn't move when you toggle
-    // individual lines on/off.
-    let teamSum = 0, teamN = 0;
+    // Benchmark mean = average per CLR across the WHOLE team, not just the shown
+    // lines, so the dashed line doesn't move when you toggle individual lines.
+    //
+    // Days a CLR did not work are excluded rather than counted as a zero. With
+    // no calls AND no transfers there is nothing to average — they were out, and
+    // folding that in drags the benchmark down until it measures attendance
+    // instead of performance. A real zero (someone in the office who logged
+    // calls but got no transfers) still counts.
+    let teamSum = 0, teamN = 0, teamAbsent = 0;
     for (const s of clrTrendSeries) {
+      const calls = ((s as any).calls as number[] | undefined)?.[i] ?? 0;
+      const transfers = ((s as any).transfers as number[] | undefined)?.[i] ?? 0;
+      if (calls === 0 && transfers === 0) { teamAbsent++; continue; }
       const arr = (s as any)[clrTrendMetric] as number[];
       teamSum += arr[i] ?? 0;
       teamN++;
     }
-    row.__mean = teamN > 0 ? teamSum / teamN : 0; // avg metric per CLR that day
+    row.__mean = teamN > 0 ? teamSum / teamN : 0; // avg metric per WORKING CLR
+    row.__worked = teamN;
+    row.__absent = teamAbsent;
     return row;
   });
   // Overlay a trailing rolling average of the per-day mean (window in business days,
@@ -577,7 +586,13 @@ export default function ManagerDashboard() {
   const clrTrendChartData = clrTrendRows.map((row: any, i: number) => {
     const start = Math.max(0, i - clrTrendWindow + 1);
     let acc = 0, cnt = 0;
-    for (let j = start; j <= i; j++) { acc += clrTrendRows[j].__mean; cnt++; }
+    for (let j = start; j <= i; j++) {
+      // A day when nobody worked (holiday, closure) has no mean to contribute —
+      // averaging its 0 in would dent the line for the rest of the window.
+      if ((clrTrendRows[j].__worked ?? 0) === 0) continue;
+      acc += clrTrendRows[j].__mean;
+      cnt++;
+    }
     return { ...row, __avg: cnt > 0 ? Math.round((acc / cnt) * 100) / 100 : 0 };
   });
   // Stable color palette for CLR lines.
@@ -1062,6 +1077,16 @@ export default function ManagerDashboard() {
                         border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`,
                         color: isDark ? "#e4e4e7" : "#0f172a",
                       }}
+                      // Say how many CLRs the day's average was taken over, so a
+                      // benchmark that moves because people were out is legible
+                      // rather than mysterious.
+                      labelFormatter={(label: any, payload: any) => {
+                        const row = payload?.[0]?.payload;
+                        const worked = row?.__worked;
+                        const absent = row?.__absent ?? 0;
+                        if (worked == null) return label;
+                        return `${label} · ${worked} working${absent ? `, ${absent} out` : ""}`;
+                      }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     {clrTrendSeries
@@ -1085,7 +1110,7 @@ export default function ManagerDashboard() {
                         strokeWidth={2.5}
                         strokeDasharray="6 4"
                         dot={false}
-                        name={`Avg per CLR · ${clrTrendWindow}d`}
+                        name={`Avg per working CLR · ${clrTrendWindow}d`}
                       />
                     )}
                   </LineChart>
