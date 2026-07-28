@@ -18,6 +18,7 @@ import LapLoProfiles from "@/pages/lap-lo-profiles";
 import LapInstall from "@/pages/lap-install";
 import LapResources from "@/pages/lap-resources";
 import LapSettings from "@/pages/lap-settings";
+import LapUsers from "@/pages/lap-users";
 import CheckIns from "@/pages/check-ins";
 import WeeklySchedule from "@/pages/weekly-schedule";
 import Forum from "@/pages/forum";
@@ -48,6 +49,7 @@ const LAP_TITLES: Record<string, string> = {
   "/call-hours": "Call Hours",
   "/install": "Install LAP",
   "/resources": "LO Resources",
+  "/users": "Users",
   "/settings": "Settings",
 };
 
@@ -130,6 +132,7 @@ function LapRouter() {
       <Route path="/call-hours" component={CallHours} />
       <Route path="/install" component={LapInstall} />
       <Route path="/resources" component={LapResources} />
+      <Route path="/users" component={LapUsers} />
       <Route path="/settings" component={LapSettings} />
       <Route component={LapNotFound} />
     </Switch>

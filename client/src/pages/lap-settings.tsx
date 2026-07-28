@@ -30,7 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PushNotificationsCard } from "@/components/push-notifications-card";
-import { LapPortalUsersCard } from "@/components/lap/lap-portal-users-card";
+import { LapEmailSettingsCard } from "@/components/lap/lap-email-settings-card";
 import { lapRequest } from "@/lib/lap-api";
 import { queryClient } from "@/lib/queryClient";
 
@@ -494,7 +494,7 @@ export default function LapSettings() {
               </CardContent>
             </Card>
 
-            <LapPortalUsersCard />
+            <LapEmailSettingsCard />
 
             <Card>
               <CardHeader>

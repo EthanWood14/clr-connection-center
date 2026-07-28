@@ -461,7 +461,14 @@ function buildEmail(opts: {
 const DEFAULT_RESEND_KEY = process.env.RESEND_API_KEY || "";
 const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>";
 
-type EmailPayload = { to: string | string[]; subject: string; html: string };
+type EmailPayload = {
+  to: string | string[];
+  subject: string;
+  html: string;
+  /** Display name on the From header. The address itself stays on the verified domain. */
+  fromName?: string;
+  replyTo?: string;
+};
 
 // ── Deferred email dispatch ───────────────────────────────────────────────────
 // Every outbound email is held for EMAIL_SEND_DELAY_MS before it actually goes
@@ -601,7 +608,7 @@ async function sendEmail(payload: EmailPayload, meta?: { cancelKey?: string; imm
 
 // Low-level immediate send (the actual Resend call). Prefer sendEmail(); this is
 // what fires after the delay window, and directly for { immediate: true } sends.
-async function dispatchEmailNow({ to, subject, html }: EmailPayload): Promise<string> {
+async function dispatchEmailNow({ to, subject, html, fromName, replyTo }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
   // Old installs sometimes have a non-empty but revoked key in the DB, which
@@ -624,13 +631,21 @@ async function dispatchEmailNow({ to, subject, html }: EmailPayload): Promise<st
   // Same logic for the From address — only use a DB-configured value when it
   // is non-empty AND plausibly an email; otherwise fall back to the default.
   const dbFrom = String(s.from_address_resend || "").trim();
-  const from = dbFrom.includes("@") ? dbFrom : DEFAULT_FROM;
+  const baseFrom = dbFrom.includes("@") ? dbFrom : DEFAULT_FROM;
+  // Swap only the display name when a portal supplies one, so LAP/LOP mail is
+  // recognisably theirs while still sending from the verified domain.
+  const from = fromName
+    ? `${fromName.replace(/[<>"]/g, "")} <${(baseFrom.match(/<([^>]+)>/)?.[1] ?? baseFrom).trim()}>`
+    : baseFrom;
   const toArr = Array.isArray(to) ? to : [to];
   console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}… keySource=${apiKey === DEFAULT_RESEND_KEY ? "default" : "db"}`);
   let result: any;
   try {
     const resend = new Resend(apiKey);
-    result = await resend.emails.send({ from, to: toArr, subject, html });
+    result = await resend.emails.send({
+      from, to: toArr, subject, html,
+      ...(replyTo && replyTo.includes("@") ? { replyTo } : {}),
+    });
   } catch (err: any) {
     console.error(`[sendEmail] SDK threw:`, err?.message ?? err);
     throw new Error(`Resend SDK error: ${err?.message ?? "unknown"}`);
@@ -5417,13 +5432,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     try { (storage as any).setResetToken(id, welcomeToken, welcomeExpiry); } catch (e) { console.error("setResetToken (resend-welcome) failed:", e); }
     const welcomeLoginUrl = `https://www.westcapitallending.center/api/auth/welcome-login?token=${welcomeToken}`;
 
-    const roleLabel = user.role === "admin" ? "Administrator" : user.role === "assistant" ? "CLR Assistant" : "Viewer";
+    // A portal account must never be told about the CLR Connection Center — it
+    // is a product they cannot reach, and the link would bounce off the guard.
+    const userPortal = String((user as any).portal ?? "").toLowerCase();
+    const isPortalUser = userPortal === "lap" || userPortal === "lop";
+    const productName = isPortalUser ? userPortal.toUpperCase() : "CLR Connection Center";
+    const identity = isPortalUser ? portalEmailIdentity(userPortal as "lap" | "lop") : null;
+    const roleLabel = isPortalUser
+      ? (userPortal === "lop" ? "Loan Officer" : "Loan Officer Assistant")
+      : user.role === "admin" ? "Administrator" : user.role === "assistant" ? "CLR Assistant" : "Viewer";
     const welcomeBody = `
       <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
         Hi <strong style="color:#1e293b">${user.name}</strong>,
       </p>
       <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
-        Your access to the <strong style="color:#1e293b">CLR Connection Center</strong> has been refreshed. Use the credentials below to log in.
+        Your access to <strong style="color:#1e293b">${productName}</strong> has been refreshed. Use the credentials below to log in.
         You will be prompted to set a new password on first login.
       </p>
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:24px">
@@ -5462,9 +5485,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     try {
       await sendEmail({
         to: user.email,
-        subject: `Your CLR Connection Center access — ${user.name}`,
+        fromName: identity?.fromName,
+        replyTo: identity?.replyTo,
+        subject: `Your ${productName} access — ${user.name}`,
         html: buildEmail({
-          subject: "CLR Connection Center Access",
+          subject: `${productName} Access`,
           preheader: "Your login details are ready.",
           body: welcomeBody,
         }),
@@ -6067,6 +6092,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Managers: their organization's shared link (minted on first view). Admins can rotate it.
+  /** The sender identity a portal's mail goes out under. */
+  function portalEmailIdentity(portal: "lap" | "lop"): { fromName: string; replyTo?: string; sendWelcome: boolean } {
+    const s = storageExtra.getEmailSettings() as any;
+    const label = portal.toUpperCase();
+    return {
+      fromName: String(s[`${portal}_from_name`] || `${label} — West Capital Lending`),
+      replyTo: String(s[`${portal}_reply_to`] || "").trim() || undefined,
+      sendWelcome: s[`${portal}_send_welcome`] == null ? true : !!s[`${portal}_send_welcome`],
+    };
+  }
+
   /**
    * Create one LAP/LOP login and queue its welcome email.
    *
@@ -6114,8 +6150,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const url = `https://www.westcapitallending.center/api/auth/welcome-login?token=${welcomeToken}`;
     let emailQueued = false;
     try {
+      const identity = portalEmailIdentity(input.portal);
+      if (!identity.sendWelcome) throw new Error("welcome_disabled");
       await sendEmail({
         to: input.email,
+        fromName: identity.fromName,
+        replyTo: identity.replyTo,
         subject: `Welcome to ${portalName}, ${input.name}!`,
         html: buildEmail({
           subject: `Welcome to ${portalName}!`,
@@ -6140,7 +6180,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       });
       emailQueued = true;
     } catch (e: any) {
-      console.error("[provisioning] welcome email failed:", e?.message ?? e);
+      if (e?.message !== "welcome_disabled") {
+        console.error("[provisioning] welcome email failed:", e?.message ?? e);
+      }
     }
 
     audit({
@@ -6151,6 +6193,60 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
     return { id: newUser.id, emailQueued };
   }
+
+  // ── Portal email identity ────────────────────────────────────────────────
+  // LAP and LOP send their own welcome/invite mail. The Resend key and the
+  // verified sending domain stay shared — only the display name, reply-to and
+  // the auto-welcome toggle are per portal.
+  app.get("/api/portal-email-settings/:portal", requireAuth, (req: any, res) => {
+    const portal = String(req.params.portal || "").toLowerCase();
+    if (portal !== "lap" && portal !== "lop") return res.status(400).json({ error: "Unknown portal." });
+    const id = portalEmailIdentity(portal);
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome });
+  });
+  app.patch("/api/portal-email-settings/:portal", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const portal = String(req.params.portal || "").toLowerCase();
+    if (portal !== "lap" && portal !== "lop") return res.status(400).json({ error: "Unknown portal." });
+    const parsed = z.object({
+      fromName: z.string().trim().min(1).max(120).optional(),
+      replyTo: z.union([z.string().trim().email(), z.literal("")]).optional(),
+      sendWelcome: z.boolean().optional(),
+    }).strict().safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fromName, replyTo and/or sendWelcome." });
+    const patch: any = {};
+    if (parsed.data.fromName !== undefined) patch[`${portal}FromName`] = parsed.data.fromName;
+    if (parsed.data.replyTo !== undefined) patch[`${portal}ReplyTo`] = parsed.data.replyTo;
+    if (parsed.data.sendWelcome !== undefined) patch[`${portal}SendWelcome`] = parsed.data.sendWelcome ? 1 : 0;
+    storageExtra.updateEmailSettings(patch);
+    const id = portalEmailIdentity(portal);
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome });
+  });
+  // Proves the portal's identity works before it is used on a real person.
+  app.post("/api/portal-email-settings/:portal/test", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const portal = String(req.params.portal || "").toLowerCase();
+    if (portal !== "lap" && portal !== "lop") return res.status(400).json({ error: "Unknown portal." });
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!me?.email) return res.status(400).json({ error: "Your account has no email address." });
+    const identity = portalEmailIdentity(portal as any);
+    try {
+      await sendEmail({
+        to: me.email,
+        fromName: identity.fromName,
+        replyTo: identity.replyTo,
+        subject: `${portal.toUpperCase()} test email`,
+        html: buildEmail({
+          subject: `${portal.toUpperCase()} test email`,
+          preheader: "Checking the portal sender identity.",
+          body: `<p style="margin:0;color:#475569;font-size:14px;line-height:1.7">This is a test from ${portal.toUpperCase()}. If the sender name and reply-to look right, portal mail is configured.</p>`,
+        }),
+      }, { immediate: true });
+      res.json({ ok: true, to: me.email });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Could not send the test email." });
+    }
+  });
 
   // ── Portal provisioning ──────────────────────────────────────────────────
   // Who on the check-in roster has a portal login, who is ready to be invited,

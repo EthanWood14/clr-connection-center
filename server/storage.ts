@@ -1954,6 +1954,26 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'helper_name')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN helper_name TEXT NOT NULL DEFAULT 'Elleine'`);
   }
+  // 2026-07: LAP and LOP send their own mail. The From *address* has to stay on
+  // the verified Resend domain, so what is configurable per portal is the
+  // display name and the reply-to — enough that a portal's mail reads as its
+  // own product rather than as C3.
+  for (const [col, def] of [
+    ['lap_from_name', "'LAP — West Capital Lending'"],
+    ['lap_reply_to', "''"],
+    ['lop_from_name', "'LOP — West Capital Lending'"],
+    ['lop_reply_to', "''"],
+  ] as const) {
+    if (!emailCols.find(c => c.name === col)) {
+      sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ${def}`);
+    }
+  }
+  // Whether creating a portal login mails a welcome automatically.
+  for (const col of ['lap_send_welcome', 'lop_send_welcome']) {
+    if (!emailCols.find(c => c.name === col)) {
+      sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 1`);
+    }
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00

@@ -152,17 +152,17 @@ test("the loan-officer link grants visibility in one direction only", () => {
 });
 
 test("portal logins are managed from the portal without opening new server surface", () => {
-  const card = readFileSync(join(root, "client/src/components/lap/lap-portal-users-card.tsx"), "utf8");
+  const page = readFileSync(join(root, "client/src/pages/lap-users.tsx"), "utf8");
   // Reuses existing admin endpoints; the portal guard already excludes portal
   // accounts from them, so no allowlist entry was added for this feature.
-  assert.match(card, /apiRequest\("POST", "\/api\/users"/);
-  assert.match(card, /apiRequest\("PATCH", `\/api\/users\/\$\{v\.id\}`/);
+  assert.match(page, /apiRequest\("POST", "\/api\/users"/);
+  assert.match(page, /apiRequest\("PATCH", `\/api\/users\/\$\{v\.id\}`/);
   const guard = routes.slice(routes.indexOf("// ── Portal confinement"), routes.indexOf("// ── Users ───"));
   assert.ok(!guard.includes("/users\"") && !guard.includes("/loan-officers"),
     "managing portal users must not require exposing those routes to portal accounts");
-  // Email only leaves on an explicit create, never on render.
-  assert.ok(!/useEffect\([^)]*sendWelcome/.test(card), "welcome mail must not fire from an effect");
-  assert.match(card, /onClick=\{\(\) => create\.mutate\(\)\}/, "creation is an explicit button press");
+  // Email only leaves on an explicit action, never on render.
+  assert.ok(!/useEffect\([^)]*sendWelcome/.test(page), "welcome mail must not fire from an effect");
+  assert.match(page, /onClick=\{\(\) => save\.mutate\(\)\}/, "creation is an explicit button press");
 });
 
 test("LO credentials are stripped in every key casing, not just camelCase", () => {

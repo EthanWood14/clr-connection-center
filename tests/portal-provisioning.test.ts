@@ -71,7 +71,7 @@ test("the welcome email is reported as queued, not delivered", () => {
   // sendEmail() holds messages for EMAIL_SEND_DELAY_MS, so "sent" overstates it.
   const post = routes.slice(routes.indexOf(`app.post("/api/users"`), routes.indexOf(`app.patch("/api/users/:id"`));
   assert.match(post, /emailQueued: emailSent/, "the response must expose the honest field");
-  for (const f of ["client/src/components/team-management.tsx", "client/src/components/lap/lap-portal-users-card.tsx"]) {
+  for (const f of ["client/src/components/team-management.tsx", "client/src/pages/lap-users.tsx"]) {
     const src = read(f);
     assert.ok(!/Welcome email sent\./.test(src), `${f} must not claim delivery`);
     assert.match(src, /queued/i, `${f} should say the mail is queued`);
@@ -110,5 +110,58 @@ test("LAP nav offers nothing whose API the portal guard refuses", () => {
   for (const dead of ["/time-clock", "/time-off", "/reports-archive"]) {
     assert.ok(!sidebar.includes(dead), `LAP nav must not link to ${dead}`);
     assert.ok(!shell.includes(dead), `LAP router must not mount ${dead}`);
+  }
+});
+
+test("each portal sends mail under its own identity", () => {
+  // The Resend key and verified domain stay shared with C3 on purpose; only the
+  // visible sender name and reply-to are per portal.
+  assert.match(routes, /function portalEmailIdentity/);
+  const dispatch = routes.slice(routes.indexOf("async function dispatchEmailNow"), routes.indexOf("type ReportOptions"));
+  assert.match(dispatch, /fromName\s*\?/, "a portal name must be able to override the display name");
+  assert.match(dispatch, /replyTo && replyTo\.includes\("@"\)/, "reply-to must be validated before it is set");
+  // The address itself must still come from the verified domain.
+  assert.match(dispatch, /baseFrom\.match\(\/<\(\[\^>\]\+\)>\//, "only the display name is swapped, never the address");
+});
+
+test("portal email settings are admin-gated and bounded", () => {
+  const patch = routes.slice(
+    routes.indexOf(`app.patch("/api/portal-email-settings/:portal"`),
+    routes.indexOf(`app.post("/api/portal-email-settings/:portal/test"`),
+  );
+  assert.match(patch, /requireAdminSession\(req, res\)/);
+  assert.match(patch, /portal !== "lap" && portal !== "lop"/, "the portal name must be validated, not interpolated blindly");
+  assert.match(patch, /z\.string\(\)\.trim\(\)\.email\(\)/, "reply-to must be a real address");
+});
+
+test("a resent welcome never advertises C3 to a portal account", () => {
+  const route = routes.slice(
+    routes.indexOf(`app.post("/api/users/:id/resend-welcome"`),
+    routes.indexOf(`app.post("/api/users/:id/restore"`),
+  );
+  assert.match(route, /const isPortalUser = userPortal === "lap" \|\| userPortal === "lop"/);
+  assert.match(route, /productName = isPortalUser \? userPortal\.toUpperCase\(\)/,
+    "the email must name the product the recipient can actually reach");
+  assert.match(route, /fromName: identity\?\.fromName/, "and go out under that portal's identity");
+});
+
+test("portal user management lives in the portal and stays admin-only", () => {
+  const page = read("client/src/pages/lap-users.tsx");
+  assert.match(page, /const isAdmin = user\?\.role === "admin"/);
+  assert.match(page, /Administrators only/, "non-admins must be told, not shown an empty page");
+  // The full set of account actions C3 has.
+  assert.match(page, /resend-welcome/, "resend welcome");
+  assert.match(page, /isActive: !u\.isActive/, "deactivate/reactivate");
+  assert.match(page, /apiRequest\("POST", "\/api\/users"/, "create");
+  assert.match(page, /apiRequest\("PATCH", `\/api\/users\/\$\{editUser!\.id\}`/, "edit");
+  // Only this portal's accounts, never C3 staff.
+  assert.match(page, /String\(u\.portal \?\? ""\)\.toLowerCase\(\) === product/);
+});
+
+test("the portal users page did not widen the guard", () => {
+  const guard = routes.slice(routes.indexOf("// ── Portal confinement"), routes.indexOf("// ── Users ───"));
+  for (const forbidden of ['"/users"', "/loan-officers", "/portal-email-settings", "/portal-provisioning"]) {
+    assert.ok(!guard.includes(forbidden),
+      `${forbidden} must stay unreachable for portal accounts — admins reach it as C3 users`);
   }
 });
