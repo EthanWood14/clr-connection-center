@@ -44,7 +44,8 @@ test("portal cannot be self-assigned through a profile edit", () => {
 
 test("creating a LAP account strips C3 privileges", () => {
   const create = routes.slice(routes.indexOf(`app.post("/api/users"`), routes.indexOf(`const newUser = storage.createUser(createData)`));
-  assert.match(create, /portal\s*\?\?\s*""\)\.toLowerCase\(\)\s*===\s*"lap"/);
+  assert.match(create, /requestedPortal === "lap" \|\| requestedPortal === "lop"/,
+    "both portal types must be recognised at creation");
   for (const stripped of ["createData.role", "createData.isClr", "createData.isManager"]) {
     assert.ok(create.includes(stripped), `${stripped} must be forced for LAP accounts`);
   }
@@ -89,8 +90,9 @@ test("a LAP account is provisioned and onboarded into LAP, not C3", () => {
     routes.indexOf(`app.get("/api/auth/welcome-login"`),
     routes.indexOf(`app.post("/api/users"`),
   );
-  assert.match(welcome, /portal\s*\?\?\s*""\)\s*===\s*"lap"\s*\?\s*"\/#\/lap"/,
-    "welcome magic link must land LAP accounts in the portal");
+  assert.match(welcome, /userPortal === "lap" \|\| userPortal === "lop"/,
+    "welcome magic link must land portal accounts in their own portal");
+  assert.match(welcome, /`\/#\/\$\{userPortal\}`/, "…and at the matching hash route");
 
   // Admins need a real control, not a hand-crafted API call.
   const team = readFileSync(join(root, "client/src/components/team-management.tsx"), "utf8");
@@ -111,4 +113,30 @@ test("comp requests and team stats are not reachable from LAP", () => {
     assert.ok(!src.replace(/\/api\/lap\/team-stats/g, "").includes("/team-stats"),
       `LAP ${label} must not route to the C3 team stats page`);
   }
+});
+
+test("LOP is confined and scoped the same way LAP is", () => {
+  const guard = routes.slice(routes.indexOf("// ── Portal confinement"), routes.indexOf("// ── Users ───"));
+  assert.match(guard, /CONFINED_PORTALS = new Set\(\["lap", "lop"\]\)/,
+    "a lop account must be confined too, or it roams all of C3");
+  assert.match(guard, /!CONFINED_PORTALS\.has\(portal\)/);
+
+  // Visibility: admins see everything, everyone else only their own work.
+  assert.match(routes, /function lapVisibilityFor[\s\S]*?if \(ctx\.isAdmin\) return null;/,
+    "administrators are the only unrestricted readers");
+  assert.match(routes, /getPortalUserIdsForLoanOfficer/,
+    "an LO must also see the packages their assistants created");
+
+  // Mutations must not bypass the read scope.
+  assert.match(routes, /if \(!lapPackageVisible\(ctx, packageId\)\)/, "patch/upload must check visibility");
+  assert.match(routes, /const ownerPackageId = storageExtra\.getLapFilePackageId/,
+    "file delete must resolve its parent package and check visibility");
+  assert.match(routes, /if \(!ctx\.isAdmin\) return res\.status\(403\)/,
+    "org-wide team stats must be admin-only");
+});
+
+test("package visibility never silently falls back to everything", () => {
+  const clause = storage.slice(storage.indexOf("function lapVisibilityClause"), storage.indexOf("const LAP_PACKAGE_SELECT"));
+  assert.match(clause, /if \(!ids\.length\) return " AND 0 = 1"/,
+    "an unresolved identity must show nothing, not the whole org");
 });

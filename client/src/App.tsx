@@ -232,7 +232,7 @@ function AuthenticatedApp() {
   // shell. The server refuses their API calls either way; this keeps them from
   // landing on a broken-looking C3 page.
   useEffect(() => {
-    if (!isLoading && user?.portal === "lap") navigate("/lap");
+    if (!isLoading && (user?.portal === "lap" || user?.portal === "lop")) navigate(`/${user.portal}`);
   }, [isLoading, user, navigate]);
 
   useEffect(() => {
@@ -320,7 +320,12 @@ export default function App() {
               <Route path="/invite/:token" component={InviteAccept} />
               <Route path="/portal/:code" component={Portal} />
               <Route path="/lap" nest>
-                <LapApp />
+                <LapApp product="lap" />
+              </Route>
+              {/* LOP — same application, loan-officer audience. The server
+                  scopes what each account can see; the shell is shared. */}
+              <Route path="/lop" nest>
+                <LapApp product="lop" />
               </Route>
               <Route>
                 <AuthenticatedApp />

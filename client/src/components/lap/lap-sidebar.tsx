@@ -71,7 +71,7 @@ const teamItems: NavItem[] = [
 const resourceItems: NavItem[] = [
   { title: "State Lookup", href: "/state-lookup", icon: MapPin },
   { title: "Call Hours", href: "/call-hours", icon: Clock3 },
-  { title: "Install LAP", href: "/install", icon: Smartphone },
+  { title: "Install", href: "/install", icon: Smartphone },
   { title: "LO Resources", href: "/resources", icon: BookOpenCheck },
 ];
 

@@ -1,17 +1,19 @@
-export type ProductPortal = "c3" | "lap";
+export type ProductPortal = "c3" | "lap" | "lop";
 
 const LAP_HASH = /^#\/lap(?:\/|$|\?)/i;
+const LOP_HASH = /^#\/lop(?:\/|$|\?)/i;
 
 export function detectProductPortal(): ProductPortal {
   if (typeof window === "undefined") return "c3";
   try {
+    if (LOP_HASH.test(window.location.hash || "")) return "lop";
     if (LAP_HASH.test(window.location.hash || "")) return "lap";
     const search = new URLSearchParams(window.location.search);
-    if (search.get("portal")?.toLowerCase() === "lap") return "lap";
+    const q = search.get("portal")?.toLowerCase();
+    if (q === "lap" || q === "lop") return q;
     const hashQuery = (window.location.hash || "").split("?", 2)[1];
-    if (hashQuery && new URLSearchParams(hashQuery).get("portal")?.toLowerCase() === "lap") {
-      return "lap";
-    }
+    const hq = hashQuery ? new URLSearchParams(hashQuery).get("portal")?.toLowerCase() : null;
+    if (hq === "lap" || hq === "lop") return hq;
   } catch {}
   return "c3";
 }
@@ -35,7 +37,7 @@ function setLink(
 
 function applyStoredTheme(portal: ProductPortal) {
   try {
-    const key = portal === "lap" ? "lap.theme" : "theme";
+    const key = portal === "c3" ? "theme" : `${portal}.theme`;
     const stored = localStorage.getItem(key);
     const dark = stored === "dark"
       || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -48,7 +50,10 @@ export function applyProductMetadata(
   options: { updateTitle?: boolean } = {},
 ) {
   if (typeof document === "undefined") return;
-  const lap = portal === "lap";
+  // LOP shares LAP's visual identity and installable assets today; only the
+  // product name differs. Split the icon set here if they ever diverge.
+  const lap = portal !== "c3";
+  const name = portal === "lop" ? "LOP" : "LAP";
 
   document.documentElement.classList.toggle("lap-mode", lap);
   applyStoredTheme(portal);
@@ -80,12 +85,12 @@ export function applyProductMetadata(
   });
 
   setMeta("theme-color", lap ? "#3B111A" : "#3e5379");
-  setMeta("apple-mobile-web-app-title", lap ? "LAP" : "WCLCC");
-  setMeta("application-name", lap ? "LAP" : "WCLCC");
+  setMeta("apple-mobile-web-app-title", lap ? name : "WCLCC");
+  setMeta("application-name", lap ? name : "WCLCC");
   setMeta("msapplication-TileColor", lap ? "#3B111A" : "#3e5379");
   setMeta("msapplication-TileImage", lap ? "/lap-icon-192.png" : "/favicon-192.png");
 
   if (options.updateTitle) {
-    document.title = lap ? "LAP · LO Assistant Portal" : "WCLCC";
+    document.title = portal === "lop" ? "LOP · Loan Officer Portal" : portal === "lap" ? "LAP · LO Assistant Portal" : "WCLCC";
   }
 }

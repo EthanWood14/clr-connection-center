@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { createContext, useContext, useEffect } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
@@ -28,6 +28,16 @@ import StateLookup from "@/pages/state-lookup";
 import CallHours from "@/pages/call-hours";
 import ReportsArchive from "@/pages/reports-archive";
 
+// LAP and LOP are the same application with different audiences and data
+// scope — the server narrows rows per portal, so the shell only differs in
+// naming. One component avoids two copies drifting apart.
+export type PortalProduct = "lap" | "lop";
+const PortalProductContext = createContext<PortalProduct>("lap");
+export const usePortalProduct = () => useContext(PortalProductContext);
+export const productLabel = (p: PortalProduct) => (p === "lop" ? "LOP" : "LAP");
+export const productFullName = (p: PortalProduct) =>
+  p === "lop" ? "Loan Officer Portal" : "LO Assistant Portal";
+
 const LAP_TITLES: Record<string, string> = {
   "/": "Home",
   "/results": "Input Results",
@@ -47,23 +57,24 @@ const LAP_TITLES: Record<string, string> = {
   "/settings": "Settings",
 };
 
-function lapTitle(location: string) {
+function lapTitle(location: string, product: PortalProduct = "lap") {
+  const label = productLabel(product);
   const exact = LAP_TITLES[location];
-  if (exact) return `${exact} · LAP`;
-  if (location.startsWith("/results/")) return "Result Package · LAP";
-  if (location.startsWith("/lo-profiles/")) return "LO Profile · LAP";
-  return "LAP · LO Assistant Portal";
+  if (exact) return `${exact} · ${label}`;
+  if (location.startsWith("/results/")) return `Result Package · ${label}`;
+  if (location.startsWith("/lo-profiles/")) return `LO Profile · ${label}`;
+  return `${label} · ${productFullName(product)}`;
 }
 
-function useLapProductMetadata() {
+function useLapProductMetadata(product: PortalProduct) {
   const [location] = useLocation();
 
   useEffect(() => {
-    applyProductMetadata("lap");
-  }, []);
+    applyProductMetadata(product);
+  }, [product]);
 
   useEffect(() => {
-    const expected = lapTitle(location);
+    const expected = lapTitle(location, product);
     const apply = () => {
       if (document.title !== expected) document.title = expected;
     };
@@ -76,7 +87,7 @@ function useLapProductMetadata() {
       window.clearTimeout(timer);
       observer.disconnect();
     };
-  }, [location]);
+  }, [location, product]);
 }
 
 function LapNotFound() {
@@ -170,8 +181,8 @@ function LapAuthenticatedShell() {
   );
 }
 
-export function LapApp() {
-  useLapProductMetadata();
+export function LapApp({ product = "lap" }: { product?: PortalProduct } = {}) {
+  useLapProductMetadata(product);
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
@@ -179,13 +190,15 @@ export function LapApp() {
       <div className="lap-login flex min-h-screen items-center justify-center">
         <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-xl">
           <span className="h-3 w-3 animate-pulse rounded-full bg-primary" />
-          <span className="text-sm font-medium text-muted-foreground">Opening LAP…</span>
+          <span className="text-sm font-medium text-muted-foreground">Opening {productLabel(product)}…</span>
         </div>
       </div>
     );
   }
 
-  if (!user) return <LapLogin />;
-  if (user.mustChangePassword) return <LapPasswordGate />;
-  return <LapAuthenticatedShell />;
+  return (
+    <PortalProductContext.Provider value={product}>
+      {!user ? <LapLogin /> : user.mustChangePassword ? <LapPasswordGate /> : <LapAuthenticatedShell />}
+    </PortalProductContext.Provider>
+  );
 }

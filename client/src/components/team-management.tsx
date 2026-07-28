@@ -108,8 +108,10 @@ function UserDialog({
   const [excludeFromStats, setExcludeFromStats] = useState(editUser?.excludeFromStats ?? false);
   // Which product this login is for. LAP accounts belong to outside assistants
   // and are confined to /api/lap/* by the server's portal guard.
-  const [portal, setPortal] = useState<"c3" | "lap">(editUser?.portal === "lap" ? "lap" : "c3");
-  const isLap = portal === "lap";
+  const [portal, setPortal] = useState<"c3" | "lap" | "lop">(
+    editUser?.portal === "lap" ? "lap" : editUser?.portal === "lop" ? "lop" : "c3",
+  );
+  const isLap = portal !== "c3";
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -222,7 +224,7 @@ function UserDialog({
             {/* Account type decides which product this login can reach at all. */}
             <FormItem>
               <FormLabel>Account type</FormLabel>
-              <Select value={portal} onValueChange={(v) => setPortal(v as "c3" | "lap")}>
+              <Select value={portal} onValueChange={(v) => setPortal(v as "c3" | "lap" | "lop")}>
                 <FormControl>
                   <SelectTrigger data-testid="select-account-portal">
                     <SelectValue />
@@ -231,11 +233,14 @@ function UserDialog({
                 <SelectContent>
                   <SelectItem value="c3">C3 — internal team member</SelectItem>
                   <SelectItem value="lap">LAP — loan officer assistant</SelectItem>
+                  <SelectItem value="lop">LOP — loan officer</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {isLap
-                  ? "Signs in at the LO Assistant Portal and can only reach LAP. No access to C3 pages, the LO directory, or team data."
+                {portal === "lap"
+                  ? "Signs in at the LO Assistant Portal. Sees only their own result packages — no C3 pages, LO directory, or team data."
+                  : portal === "lop"
+                  ? "Signs in at the Loan Officer Portal. Sees their own result packages plus their assistants' — no C3 pages or team data."
                   : "Full C3 team member."}
               </p>
             </FormItem>
@@ -483,13 +488,13 @@ export function TeamManagement() {
                     <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {user.portal === "lap" ? (
+                        {user.portal === "lap" || user.portal === "lop" ? (
                           <Badge
                             variant="outline"
                             className="text-xs font-medium bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-700"
                             data-testid={`badge-portal-${user.id}`}
                           >
-                            LAP
+                            {user.portal === "lop" ? "LOP" : "LAP"}
                           </Badge>
                         ) : (
                           <Badge

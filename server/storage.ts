@@ -122,6 +122,10 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN archived_at TEXT`); } catch {}
 // Drizzle users schema, so Drizzle names it in every users SELECT from the
 // first query onward. NULL/'c3' = internal staff; 'lap' = LAP-only account.
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN portal TEXT`); } catch {}
+// Which loan officer a portal login belongs to. For a LOP account this is the
+// LO themselves; for a LAP account it is the LO they assist. Package visibility
+// is derived from it, so an LO sees their own desk and nobody else's.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN loan_officer_id INTEGER`); } catch {}
 // 2026-05-05: appointment reminder email opt-in. Defaults to ON for all CLRs
 // so the 30-minute appointment reminder cron actually fires emails. Previously
 // this column was referenced in the SELECT but never existed, so it returned
@@ -6556,6 +6560,18 @@ function writeLapResultEvent(input: {
   );
 }
 
+// Package visibility. `null` means unrestricted (administrators only); any other
+// value limits rows to packages created by that set of users. A LAP assistant
+// sees their own work; an LO sees their own plus their assistants'.
+export type LapVisibility = { userIds: number[] } | null;
+function lapVisibilityClause(visibility: LapVisibility, params: Record<string, unknown>): string {
+  if (!visibility) return "";
+  const ids = [...new Set(visibility.userIds.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return " AND 0 = 1"; // no identity resolved → show nothing, never everything
+  const keys = ids.map((id, i) => { params[`vis${i}`] = id; return `@vis${i}`; });
+  return ` AND p.created_by IN (${keys.join(", ")})`;
+}
+
 const LAP_PACKAGE_SELECT = `
   SELECT
     p.id,
@@ -6656,20 +6672,23 @@ function hydrateLapPackages(orgId: number, rows: any[]): LapResultPackage[] {
   });
 }
 
-function getLapPackageRow(orgId: number, packageId: number): any | null {
+function getLapPackageRow(orgId: number, packageId: number, visibility: LapVisibility = null): any | null {
+  const params: Record<string, unknown> = { packageId, orgId };
+  const clause = lapVisibilityClause(visibility, params);
   return sqlite.prepare(`
     ${LAP_PACKAGE_SELECT}
-    WHERE p.id = ? AND p.org_id = ? AND p.archived_at IS NULL
-  `).get(packageId, orgId) as any ?? null;
+    WHERE p.id = @packageId AND p.org_id = @orgId AND p.archived_at IS NULL${clause}
+  `).get(params) as any ?? null;
 }
 
 export function getLapResultPackage(
   orgIdInput: number,
   packageIdInput: number,
+  visibility: LapVisibility = null,
 ): LapResultPackage | null {
   const orgId = lapPositiveId(orgIdInput, "Organization id");
   const packageId = lapPositiveId(packageIdInput, "Package id");
-  const row = getLapPackageRow(orgId, packageId);
+  const row = getLapPackageRow(orgId, packageId, visibility);
   return row ? hydrateLapPackages(orgId, [row])[0] : null;
 }
 
@@ -6682,10 +6701,13 @@ export function listLapResultPackages(input: {
   to?: string;
   limit?: number;
   offset?: number;
+  visibility?: LapVisibility;
 }): { results: LapResultPackage[]; total: number } {
   const orgId = lapPositiveId(input.orgId, "Organization id");
   const params: Record<string, unknown> = { orgId };
   const where = ["p.org_id = @orgId", "p.archived_at IS NULL"];
+  const visClause = lapVisibilityClause(input.visibility ?? null, params);
+  if (visClause) where.push(visClause.replace(/^ AND /, ""));
 
   if (input.search) {
     where.push(`(
@@ -6985,6 +7007,25 @@ export function replaceLapResultFile(input: {
   return mapLapFileMetadata(row);
 }
 
+// Which package a file belongs to — used by the routes to apply the same
+// visibility rule to file mutations as to the package itself.
+// Portal logins (LAP or LOP) attached to a loan officer — the set whose work an
+// LO is entitled to see.
+export function getPortalUserIdsForLoanOfficer(orgId: number, loanOfficerId: number): number[] {
+  try {
+    return (sqlite.prepare(
+      `SELECT id FROM users WHERE org_id = ? AND loan_officer_id = ? AND is_active = 1`,
+    ).all(Number(orgId), Number(loanOfficerId)) as any[]).map((r) => Number(r.id));
+  } catch { return []; }
+}
+
+export function getLapFilePackageId(orgId: number, fileId: number): number | null {
+  const row = sqlite.prepare(
+    `SELECT package_id FROM lap_result_file_versions WHERE id = ? AND org_id = ?`,
+  ).get(lapPositiveId(fileId, "File id"), lapPositiveId(orgId, "Organization id")) as any;
+  return row ? Number(row.package_id) : null;
+}
+
 export function softDeleteLapResultFile(input: {
   orgId: number;
   fileId: number;
@@ -7096,9 +7137,11 @@ type LapStatsBucket = {
   formalQuotes: number;
 };
 
-function lapStatsBucket(orgId: number, from?: string, to?: string): LapStatsBucket {
+function lapStatsBucket(orgId: number, from?: string, to?: string, visibility: LapVisibility = null): LapStatsBucket {
   const params: Record<string, unknown> = { orgId };
   const where = ["p.org_id = @orgId", "p.archived_at IS NULL"];
+  const visClause = lapVisibilityClause(visibility, params);
+  if (visClause) where.push(visClause.replace(/^ AND /, ""));
   if (from) {
     where.push("p.result_date >= @from");
     params.from = from;
@@ -7149,6 +7192,7 @@ export function getLapResultStats(input: {
   today: string;
   weekStart: string;
   monthStart: string;
+  visibility?: LapVisibility;
 }): {
   periods: {
     today: LapStatsBucket;
@@ -7160,16 +7204,17 @@ export function getLapResultStats(input: {
   recent: LapResultPackage[];
 } {
   const orgId = lapPositiveId(input.orgId, "Organization id");
+  const vis = input.visibility ?? null;
   const periods = {
-    today: lapStatsBucket(orgId, input.today, input.today),
-    week: lapStatsBucket(orgId, input.weekStart, input.today),
-    month: lapStatsBucket(orgId, input.monthStart, input.today),
-    allTime: lapStatsBucket(orgId),
+    today: lapStatsBucket(orgId, input.today, input.today, vis),
+    week: lapStatsBucket(orgId, input.weekStart, input.today, vis),
+    month: lapStatsBucket(orgId, input.monthStart, input.today, vis),
+    allTime: lapStatsBucket(orgId, undefined, undefined, vis),
   };
   return {
     periods,
     totals: periods.allTime,
-    recent: listLapResultPackages({ orgId, limit: 6 }).results,
+    recent: listLapResultPackages({ orgId, limit: 6, visibility: vis }).results,
   };
 }
 

@@ -11,7 +11,7 @@ export function LapBrand({ compact = false, inverse = false, className }: LapBra
     return (
       <img
         src="/lap-icon.svg"
-        alt="LAP"
+        alt="Portal"
         className={cn("h-10 w-10 shrink-0", className)}
       />
     );
@@ -20,7 +20,7 @@ export function LapBrand({ compact = false, inverse = false, className }: LapBra
   return (
     <img
       src={inverse ? "/lap-wordmark-light.svg" : "/lap-wordmark.svg"}
-      alt="LAP — LO Assistant Portal"
+      alt="West Capital Lending portal"
       className={cn("h-11 w-auto", className)}
     />
   );

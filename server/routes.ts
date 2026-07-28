@@ -4732,7 +4732,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const superAdmin = !!(u.superAdmin ?? u.super_admin);
       const isImpersonating = !!(session.superAdmin && session.isImpersonating);
       const impersonatingOrgName = isImpersonating ? (session.impersonatingOrgName ?? null) : null;
-      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), muteLapChatNotifications: !!(u.muteLapChatNotifications ?? u.mute_lap_chat_notifications), muteLapForumNotifications: !!(u.muteLapForumNotifications ?? u.mute_lap_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", portal: u.portal ?? null, superAdmin, orgId, isImpersonating, impersonatingOrgName } });
+      return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, isClr: !!u.isClr, isManager: !!(u.isManager ?? u.is_manager), excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats), hasSeenIntro: !!u.hasSeenIntro, mustChangePassword: !!u.mustChangePassword, hasDismissedSample: !!(u.hasDismissedSample ?? u.has_dismissed_sample), lastSeenPipelineSop: u.lastSeenPipelineSop ?? u.last_seen_pipeline_sop ?? null, createdAt: u.createdAt ?? u.created_at ?? null, phone: u.phone ?? null, scriptCompanyName: u.scriptCompanyName ?? u.script_company_name ?? null, scriptNameOverride: u.scriptNameOverride ?? u.script_name_override ?? null, scriptLoOverride: u.scriptLoOverride ?? u.script_lo_override ?? null, goalCallsWeekly: u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0, goalTransfersWeekly: u.goalTransfersWeekly ?? u.goal_transfers_weekly ?? 0, goalAppointmentsWeekly: u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0, smsRemindersEnabled: !!(u.smsRemindersEnabled ?? u.sms_reminders_enabled), muteChatNotifications: !!(u.muteChatNotifications ?? u.mute_chat_notifications), muteForumNotifications: !!(u.muteForumNotifications ?? u.mute_forum_notifications), muteLapChatNotifications: !!(u.muteLapChatNotifications ?? u.mute_lap_chat_notifications), muteLapForumNotifications: !!(u.muteLapForumNotifications ?? u.mute_lap_forum_notifications), transferNotificationsEnabled: !!(u.transferNotificationsEnabled ?? u.transfer_notifications_enabled), reminderEmailEnabled: (u.reminderEmailEnabled ?? u.reminder_email_enabled) === undefined ? true : !!(u.reminderEmailEnabled ?? u.reminder_email_enabled), timezone: u.timezone ?? "America/Los_Angeles", portal: u.portal ?? null, loanOfficerId: u.loanOfficerId ?? u.loan_officer_id ?? null, superAdmin, orgId, isImpersonating, impersonatingOrgName } });
     } catch {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -5108,7 +5108,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // mustChangePassword stays true; the SPA will route them to the change-password
     // screen on first load. LAP accounts go to their own portal — C3's root would
     // bounce them straight back out via the portal guard.
-    return res.redirect(302, String(user.portal ?? "") === "lap" ? "/#/lap" : "/");
+    const userPortal = String(user.portal ?? "").toLowerCase();
+    return res.redirect(302, userPortal === "lap" || userPortal === "lop" ? `/#/${userPortal}` : "/");
   });
 
   // ── Auth guard for all /api/* routes except /api/auth/* and /api/invite/* ──
@@ -5145,15 +5146,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     "/checkin", "/checkin/settings",
   ]);
   const LAP_ALLOWED_PREFIXES = ["/lap/", "/auth/", "/push/", "/notifications"];
+  // Both portals are confined. LOP shares the /api/lap/* endpoints — the rows it
+  // gets back are narrowed by lapVisibilityFor(), not by a separate API surface.
+  const CONFINED_PORTALS = new Set(["lap", "lop"]);
   app.use("/api", (req: any, res: Response, next: NextFunction) => {
     const portal = String(req.session_user?.portal ?? "").toLowerCase();
-    if (portal !== "lap") return next();
+    if (!CONFINED_PORTALS.has(portal)) return next();
     const path = req.path;
     const ok = LAP_ALLOWED_EXACT.has(path)
       || LAP_ALLOWED_PREFIXES.some((p) => path.startsWith(p))
       || path.startsWith("/checkin/");
     if (ok) return next();
-    return res.status(403).json({ error: "This account is limited to the LO Assistant Portal." });
+    return res.status(403).json({ error: portal === "lop" ? "This account is limited to the Loan Officer Portal." : "This account is limited to the LO Assistant Portal." });
   });
 
   // ── Users ────────────────────────────────────────────────────────────────────
@@ -5179,8 +5183,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     // A LAP account is for someone outside the company. Never let one be minted
     // with C3 powers — those flags are what the portal guard is protecting.
-    if (String(createData.portal ?? "").toLowerCase() === "lap") {
-      createData.portal = "lap";
+    const requestedPortal = String(createData.portal ?? "").toLowerCase();
+    if (requestedPortal === "lap" || requestedPortal === "lop") {
+      createData.portal = requestedPortal;
       createData.role = "assistant";
       createData.isClr = false;
       createData.isManager = false;
@@ -5227,8 +5232,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const sendWelcome = !!(req.body?.sendWelcome ?? true);
       welcomeRequested = sendWelcome;
       if (!sendWelcome) throw new Error("welcome_email_disabled");
-      const isLapAccount = createData.portal === "lap";
-      const roleLabel = isLapAccount
+      const portalName = createData.portal === "lop" ? "LOP" : createData.portal === "lap" ? "LAP" : null;
+      const isLapAccount = !!portalName;
+      const roleLabel = createData.portal === "lop"
+        ? "Loan Officer"
+        : createData.portal === "lap"
         ? "Loan Officer Assistant"
         : (parsed.data.role as string) === "admin" ? "Administrator" : (parsed.data.role as string) === "assistant" ? "CLR Assistant" : "Viewer";
       const welcomeBody = `
@@ -5237,7 +5245,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         </p>
         <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
           ${isLapAccount
-            ? `Welcome to <strong style="color:#1e293b">LAP</strong> — West Capital Lending's portal for loan officer assistants. Your account has been created and you're ready to log in.`
+            ? `Welcome to <strong style="color:#1e293b">${portalName}</strong> — West Capital Lending's portal for ${createData.portal === "lop" ? "loan officers" : "loan officer assistants"}. Your account has been created and you're ready to log in.`
             : `Welcome to the <strong style="color:#1e293b">CLR Connection Center</strong> — the internal platform for the West Capital Lending Irvine branch team. Your account has been created and you're ready to log in.`}
         </p>
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:24px">
@@ -5276,10 +5284,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       await sendEmail({
         to: newUser.email,
         subject: isLapAccount
-          ? `Welcome to LAP, ${newUser.name}!`
+          ? `Welcome to ${portalName}, ${newUser.name}!`
           : `Welcome to CLR Connection Center, ${newUser.name}!`,
         html: buildEmail({
-          subject: isLapAccount ? `Welcome to LAP!` : `Welcome to CLR Connection Center!`,
+          subject: isLapAccount ? `Welcome to ${portalName}!` : `Welcome to CLR Connection Center!`,
           preheader: `Your account is ready — log in to get started.`,
           body: welcomeBody,
         }),
@@ -12021,6 +12029,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     };
   }
 
+  // Who may see which packages. Administrators see the whole org; everyone else
+  // is limited to what they produced. A LOP account (a loan officer) also sees
+  // the work of every portal login attached to them, which is what makes the
+  // portal "their desk" rather than a company-wide feed.
+  function lapVisibilityFor(ctx: LapSessionContext): storageExtra.LapVisibility {
+    if (ctx.isAdmin) return null;
+    const ids = [ctx.userId];
+    const loId = Number(ctx.user?.loanOfficerId ?? ctx.user?.loan_officer_id ?? 0);
+    if (Number.isInteger(loId) && loId > 0) {
+      ids.push(...storageExtra.getPortalUserIdsForLoanOfficer(ctx.orgId, loId));
+    }
+    return { userIds: ids };
+  }
+
+  // Shared precondition for every package mutation: if the caller cannot see it,
+  // they cannot change it either. 404 rather than 403 so ids stay unenumerable.
+  function lapPackageVisible(ctx: LapSessionContext, packageId: number): boolean {
+    return !!storageExtra.getLapResultPackage(ctx.orgId, packageId, lapVisibilityFor(ctx));
+  }
+
   function lapPositiveRouteId(value: unknown): number | null {
     const id = Number(value);
     return Number.isInteger(id) && id > 0 ? id : null;
@@ -12125,6 +12153,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     try {
       res.json(storageExtra.listLapResultPackages({
         orgId: ctx.orgId,
+        visibility: lapVisibilityFor(ctx),
         search: search || undefined,
         status: status as "complete" | "incomplete" | undefined,
         documentType: documentType as storageExtra.LapDocumentType | undefined,
@@ -12144,7 +12173,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const packageId = lapPositiveRouteId(req.params.id);
     if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
     try {
-      const result = storageExtra.getLapResultPackage(ctx.orgId, packageId);
+      const result = storageExtra.getLapResultPackage(ctx.orgId, packageId, lapVisibilityFor(ctx));
       if (!result) return res.status(404).json({ error: "LAP result package was not found." });
       res.json({ result });
     } catch (error) {
@@ -12188,6 +12217,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!ctx) return;
     const packageId = lapPositiveRouteId(req.params.id);
     if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
+    if (!lapPackageVisible(ctx, packageId)) return res.status(404).json({ error: "LAP result package was not found." });
     const parsed = lapResultPatchSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return res.status(400).json({
@@ -12255,6 +12285,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.status(400).json({ error: "Unsupported LAP document type." });
       return;
     }
+    if (!lapPackageVisible(ctx, packageId)) {
+      res.status(404).json({ error: "LAP result package was not found." });
+      return;
+    }
     const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!data.length) {
       res.status(400).json({ error: "Choose a file to upload." });
@@ -12309,6 +12343,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!ctx) return;
     const fileId = lapPositiveRouteId(req.params.fileId);
     if (!fileId) return res.status(400).json({ error: "Invalid result file id." });
+    // Deleting someone else's document was previously possible by walking file
+    // ids — check the parent package against the caller's visibility first.
+    const ownerPackageId = storageExtra.getLapFilePackageId(ctx.orgId, fileId);
+    if (!ownerPackageId || !lapPackageVisible(ctx, ownerPackageId)) {
+      return res.status(404).json({ error: "LAP result file was not found." });
+    }
     try {
       const result = storageExtra.softDeleteLapResultFile({
         orgId: ctx.orgId,
@@ -12361,6 +12401,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const monthStart = `${today.slice(0, 8)}01`;
       res.json(storageExtra.getLapResultStats({
         orgId: ctx.orgId,
+        visibility: lapVisibilityFor(ctx),
         today,
         weekStart,
         monthStart,
@@ -12373,6 +12414,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/lap/team-stats", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
+    // Whole-org, per-person productivity — administrators only.
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
     try {
       res.json(storageExtra.getLapTeamStats(ctx.orgId));
     } catch (error) {
