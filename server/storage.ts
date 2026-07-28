@@ -1969,6 +1969,12 @@ function runNewMigrations() {
     }
   }
   // Whether creating a portal login mails a welcome automatically.
+  // Who receives submitted result documents, per portal. Empty = nobody.
+  for (const col of ['lap_files_recipient', 'lop_files_recipient']) {
+    if (!emailCols.find(c => c.name === col)) {
+      sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+    }
+  }
   for (const col of ['lap_send_welcome', 'lop_send_welcome']) {
     if (!emailCols.find(c => c.name === col)) {
       sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 1`);
@@ -7100,6 +7106,41 @@ export function getPortalUserIdsForLoanOfficer(orgId: number, loanOfficerId: num
       `SELECT id FROM users WHERE org_id = ? AND loan_officer_id = ? AND is_active = 1`,
     ).all(Number(orgId), Number(loanOfficerId)) as any[]).map((r) => Number(r.id));
   } catch { return []; }
+}
+
+/**
+ * The package plus the bytes of its current documents, for emailing a
+ * submission onward. Blobs live in the sidecar DB, so this joins across it.
+ */
+export function getLapPackageForEmail(orgId: number, packageId: number): {
+  borrowerName: string; dealReference: string | null; notes: string; resultDate: string;
+  createdByName: string | null; loanOfficerName: string | null;
+  files: Array<{ documentType: string; filename: string; mime: string; sizeBytes: number; data: Buffer }>;
+} | null {
+  const pkg = getLapPackageRow(orgId, packageId);
+  if (!pkg) return null;
+  const rows = sqlite.prepare(`
+    SELECT f.document_type, f.original_filename, f.mime, f.size_bytes, b.data
+    FROM lap_result_file_versions f
+    INNER JOIN lapfiles.lap_result_file_blobs b ON b.file_id = f.id
+    WHERE f.org_id = ? AND f.package_id = ? AND f.is_current = 1 AND f.removed_at IS NULL
+    ORDER BY f.document_type
+  `).all(orgId, packageId) as any[];
+  return {
+    borrowerName: String(pkg.borrower_name ?? ""),
+    dealReference: pkg.deal_reference ? String(pkg.deal_reference) : null,
+    notes: String(pkg.notes ?? ""),
+    resultDate: String(pkg.result_date ?? ""),
+    createdByName: pkg.created_by_name ? String(pkg.created_by_name) : null,
+    loanOfficerName: pkg.loan_officer_name ? String(pkg.loan_officer_name) : null,
+    files: rows.map((r) => ({
+      documentType: String(r.document_type),
+      filename: String(r.original_filename),
+      mime: String(r.mime),
+      sizeBytes: Number(r.size_bytes),
+      data: Buffer.from(r.data),
+    })),
+  };
 }
 
 export function getLapFilePackageId(orgId: number, fileId: number): number | null {

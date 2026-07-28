@@ -165,3 +165,48 @@ test("the portal users page did not widen the guard", () => {
       `${forbidden} must stay unreachable for portal accounts — admins reach it as C3 users`);
   }
 });
+
+test("submitting documents emails one message per package, not per file", () => {
+  const fn = routes.slice(routes.indexOf("function emailLapSubmission"), routes.indexOf("/** The sender identity"));
+  // Queuing alone does not supersede an earlier message — the pending one for
+  // this package has to be dropped first, or three uploads send three emails.
+  assert.match(fn, /cancelPendingEmails\(cancelKey\)/,
+    "a pending email for the same package must be superseded");
+  assert.match(fn, /lap-submission:\$\{orgId\}:\$\{packageId\}/, "the key must be per package, not global");
+  assert.match(fn, /if \(!to\.includes\("@"\)\) return;/, "no recipient configured means no email");
+  assert.match(fn, /if \(!pkg \|\| !pkg\.files\.length\) return;/, "never send an empty submission");
+  // Oversized attachments degrade to a list rather than a failed send.
+  assert.match(fn, /LAP_EMAIL_ATTACH_MAX_BYTES/);
+  assert.match(fn, /too large to attach/);
+  // Borrower names and notes are user-supplied and land in HTML.
+  assert.match(fn, /const esc = /, "user-supplied values must be escaped");
+});
+
+test("a failed submission email never fails the upload", () => {
+  const upload = routes.slice(routes.indexOf("function uploadLapResultFile"), routes.indexOf("const lapResultCreateSchema") > 0 ? routes.length : routes.length);
+  assert.match(routes, /emailLapSubmission\(ctx\.orgId, packageId, submitterPortal === "lop" \? "lop" : "lap"\)/,
+    "the portal decides which recipient receives it");
+  const fn = routes.slice(routes.indexOf("function emailLapSubmission"), routes.indexOf("/** The sender identity"));
+  assert.match(fn, /try \{/, "the whole build is guarded");
+  assert.match(fn, /\.catch\(\(e\) =>/, "and the send itself cannot reject into the request");
+});
+
+test("each portal has its own document recipient", () => {
+  assert.match(storage, /lap_files_recipient/);
+  assert.match(storage, /lop_files_recipient/);
+  const patch = routes.slice(
+    routes.indexOf(`app.patch("/api/portal-email-settings/:portal"`),
+    routes.indexOf(`app.post("/api/portal-email-settings/:portal/test"`),
+  );
+  assert.match(patch, /filesRecipient/, "it must be settable per portal");
+  assert.match(patch, /z\.literal\(""\)/, "clearing it must be allowed — that switches sending off");
+});
+
+test("both portals are reachable from C3", () => {
+  // LOP existed for a release with no link anywhere, so the only way in was
+  // typing the URL.
+  const sidebar = read("client/src/components/app-sidebar.tsx");
+  assert.match(sidebar, /href: "\/#\/lap"/);
+  assert.match(sidebar, /href: "\/#\/lop"/, "LOP needs an entry point too");
+  assert.match(sidebar, /Open Loan Officer Portal/);
+});

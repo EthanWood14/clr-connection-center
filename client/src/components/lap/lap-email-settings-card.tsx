@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { usePortalProduct, productLabel } from "./lap-shell";
 
-type Settings = { fromName: string; replyTo: string; sendWelcome: boolean };
+type Settings = { fromName: string; replyTo: string; sendWelcome: boolean; filesRecipient: string };
 
 /**
  * How this portal's own mail is addressed.
@@ -33,8 +33,13 @@ export function LapEmailSettingsCard() {
 
   const [fromName, setFromName] = useState("");
   const [replyTo, setReplyTo] = useState("");
+  const [filesTo, setFilesTo] = useState("");
   useEffect(() => {
-    if (q.data) { setFromName(q.data.fromName ?? ""); setReplyTo(q.data.replyTo ?? ""); }
+    if (q.data) {
+      setFromName(q.data.fromName ?? "");
+      setReplyTo(q.data.replyTo ?? "");
+      setFilesTo(q.data.filesRecipient ?? "");
+    }
   }, [q.data]);
 
   const save = useMutation({
@@ -48,8 +53,14 @@ export function LapEmailSettingsCard() {
     onError: (e: any) => toast({ title: "Test email failed", description: e?.message, variant: "destructive" }),
   });
 
-  const dirty = !!q.data && (fromName !== (q.data.fromName ?? "") || replyTo !== (q.data.replyTo ?? ""));
-  const replyToValid = replyTo === "" || /.+@.+\..+/.test(replyTo.trim());
+  const dirty = !!q.data && (
+    fromName !== (q.data.fromName ?? "")
+    || replyTo !== (q.data.replyTo ?? "")
+    || filesTo !== (q.data.filesRecipient ?? "")
+  );
+  const emailish = (v: string) => v === "" || /.+@.+\..+/.test(v.trim());
+  const replyToValid = emailish(replyTo);
+  const filesToValid = emailish(filesTo);
 
   return (
     <Card>
@@ -87,6 +98,19 @@ export function LapEmailSettingsCard() {
                 />
               </div>
             </div>
+            <div className="space-y-1.5 rounded-xl border bg-muted/20 px-4 py-3">
+              <Label className="text-xs" htmlFor="lap-files-to">Email submitted documents to</Label>
+              <Input
+                id="lap-files-to" type="email" className="h-9" value={filesTo}
+                onChange={(e) => setFilesTo(e.target.value)}
+                placeholder="nobody@westcapitallending.com"
+                data-testid="lap-email-files-recipient"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                When a result package's documents are submitted, this person receives them attached,
+                as one email per package. Leave blank to send nothing.
+              </p>
+            </div>
             <div className="flex items-start justify-between gap-4 rounded-xl border bg-muted/20 px-4 py-3">
               <div className="space-y-0.5">
                 <p className="text-sm font-medium">Send a welcome email on new accounts</p>
@@ -113,8 +137,8 @@ export function LapEmailSettingsCard() {
               </Button>
               <Button
                 size="sm"
-                disabled={!dirty || !replyToValid || save.isPending}
-                onClick={() => save.mutate({ fromName: fromName.trim(), replyTo: replyTo.trim() })}
+                disabled={!dirty || !replyToValid || !filesToValid || save.isPending}
+                onClick={() => save.mutate({ fromName: fromName.trim(), replyTo: replyTo.trim(), filesRecipient: filesTo.trim() })}
                 data-testid="lap-email-save"
               >
                 Save

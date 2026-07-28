@@ -468,6 +468,7 @@ type EmailPayload = {
   /** Display name on the From header. The address itself stays on the verified domain. */
   fromName?: string;
   replyTo?: string;
+  attachments?: Array<{ filename: string; content: string }>;
 };
 
 // ── Deferred email dispatch ───────────────────────────────────────────────────
@@ -608,7 +609,7 @@ async function sendEmail(payload: EmailPayload, meta?: { cancelKey?: string; imm
 
 // Low-level immediate send (the actual Resend call). Prefer sendEmail(); this is
 // what fires after the delay window, and directly for { immediate: true } sends.
-async function dispatchEmailNow({ to, subject, html, fromName, replyTo }: EmailPayload): Promise<string> {
+async function dispatchEmailNow({ to, subject, html, fromName, replyTo, attachments }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
   // Old installs sometimes have a non-empty but revoked key in the DB, which
@@ -645,6 +646,7 @@ async function dispatchEmailNow({ to, subject, html, fromName, replyTo }: EmailP
     result = await resend.emails.send({
       from, to: toArr, subject, html,
       ...(replyTo && replyTo.includes("@") ? { replyTo } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     });
   } catch (err: any) {
     console.error(`[sendEmail] SDK threw:`, err?.message ?? err);
@@ -6092,14 +6094,105 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Managers: their organization's shared link (minted on first view). Admins can rotate it.
+  const LAP_DOC_LABELS: Record<string, string> = {
+    credit_report: "Credit report",
+    aus: "AUS",
+    formal_quote: "Formal quote",
+  };
+  // Most mail providers reject well before Resend's own ceiling, and base64
+  // inflates by ~33%. Past this the documents are listed instead of attached.
+  const LAP_EMAIL_ATTACH_MAX_BYTES = 15 * 1024 * 1024;
+
+  /**
+   * Email a submitted result package, with its documents attached, to the one
+   * recipient configured for that portal.
+   *
+   * Queued with a cancel key on the package: uploading the three documents in
+   * quick succession replaces the pending email each time, so one message goes
+   * out with everything rather than three arriving separately.
+   */
+  function emailLapSubmission(orgId: number, packageId: number, portal: "lap" | "lop"): void {
+    try {
+      const settings = storageExtra.getEmailSettings() as any;
+      const to = String(settings[`${portal}_files_recipient`] || "").trim();
+      if (!to.includes("@")) return; // nobody configured for this portal
+      const pkg = storageExtra.getLapPackageForEmail(orgId, packageId);
+      if (!pkg || !pkg.files.length) return;
+
+      const totalBytes = pkg.files.reduce((n, f) => n + f.sizeBytes, 0);
+      const attach = totalBytes <= LAP_EMAIL_ATTACH_MAX_BYTES;
+      const identity = portalEmailIdentity(portal);
+      const label = portal.toUpperCase();
+      const esc = (v: string) => String(v).replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+      const fmtBytes = (n: number) => n >= 1024 * 1024 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+
+      const rows = pkg.files.map((f) => `
+        <tr>
+          <td style="padding:6px 14px 6px 0;color:#64748b;font-size:13px">${esc(LAP_DOC_LABELS[f.documentType] ?? f.documentType)}</td>
+          <td style="padding:6px 0;font-size:13px;color:#1e293b">${esc(f.filename)} <span style="color:#94a3b8">· ${fmtBytes(f.sizeBytes)}</span></td>
+        </tr>`).join("");
+
+      const detail = (k: string, v: string) => `
+        <tr><td style="padding:4px 14px 4px 0;color:#64748b;font-size:13px">${k}</td>
+            <td style="padding:4px 0;font-size:13px;color:#1e293b;font-weight:500">${esc(v)}</td></tr>`;
+
+      const body = `
+        <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+          <strong style="color:#1e293b">${esc(pkg.createdByName ?? "Someone")}</strong> submitted result documents for
+          <strong style="color:#1e293b">${esc(pkg.borrowerName)}</strong>.
+        </p>
+        <table style="border-collapse:collapse;margin:0 0 20px">
+          ${detail("Borrower", pkg.borrowerName)}
+          ${pkg.dealReference ? detail("Reference", pkg.dealReference) : ""}
+          ${pkg.loanOfficerName ? detail("Loan officer", pkg.loanOfficerName) : ""}
+          ${detail("Result date", pkg.resultDate)}
+          ${detail("Documents", `${pkg.files.length} of 3`)}
+        </table>
+        <p style="margin:0 0 8px;color:#1e293b;font-size:13px;font-weight:600">${attach ? "Attached" : "Documents on file"}</p>
+        <table style="border-collapse:collapse;margin:0 0 18px">${rows}</table>
+        ${attach ? "" : `<p style="margin:0 0 18px;color:#b45309;font-size:12px;line-height:1.6">
+            These files total ${fmtBytes(totalBytes)}, too large to attach. Open ${label} to download them.</p>`}
+        ${pkg.notes ? `<p style="margin:0 0 6px;color:#1e293b;font-size:13px;font-weight:600">Notes</p>
+          <p style="margin:0;color:#475569;font-size:13px;line-height:1.7;white-space:pre-wrap">${esc(pkg.notes)}</p>` : ""}`;
+
+      // Queuing alone does not supersede an earlier message, so drop any still
+      // pending for this package first — otherwise three uploads send three
+      // emails, each a snapshot of a partly-filled package.
+      const cancelKey = `lap-submission:${orgId}:${packageId}`;
+      cancelPendingEmails(cancelKey);
+      void sendEmail({
+        to,
+        fromName: identity.fromName,
+        replyTo: identity.replyTo,
+        subject: `${label} — ${pkg.borrowerName}: ${pkg.files.length} of 3 documents`,
+        html: buildEmail({
+          subject: `${label} result documents`,
+          preheader: `${pkg.borrowerName} — ${pkg.files.length} of 3 documents submitted`,
+          body,
+          portal: portal === "lap" ? "lap" : "c3",
+        }),
+        attachments: attach
+          ? pkg.files.map((f) => ({ filename: f.filename, content: f.data.toString("base64") }))
+          : undefined,
+        // Replaces any still-pending email for this same package, so uploading
+        // all three documents produces one message, not three.
+      }, { cancelKey }).catch((e) =>
+        console.error("[lap] submission email failed:", e?.message ?? e));
+    } catch (e: any) {
+      console.error("[lap] could not build the submission email:", e?.message ?? e);
+    }
+  }
+
   /** The sender identity a portal's mail goes out under. */
-  function portalEmailIdentity(portal: "lap" | "lop"): { fromName: string; replyTo?: string; sendWelcome: boolean } {
+  function portalEmailIdentity(portal: "lap" | "lop"): { fromName: string; replyTo?: string; sendWelcome: boolean; filesRecipient: string } {
     const s = storageExtra.getEmailSettings() as any;
     const label = portal.toUpperCase();
     return {
       fromName: String(s[`${portal}_from_name`] || `${label} — West Capital Lending`),
       replyTo: String(s[`${portal}_reply_to`] || "").trim() || undefined,
       sendWelcome: s[`${portal}_send_welcome`] == null ? true : !!s[`${portal}_send_welcome`],
+      filesRecipient: String(s[`${portal}_files_recipient`] || "").trim(),
     };
   }
 
@@ -6202,7 +6295,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const portal = String(req.params.portal || "").toLowerCase();
     if (portal !== "lap" && portal !== "lop") return res.status(400).json({ error: "Unknown portal." });
     const id = portalEmailIdentity(portal);
-    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome });
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient });
   });
   app.patch("/api/portal-email-settings/:portal", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
@@ -6212,15 +6305,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       fromName: z.string().trim().min(1).max(120).optional(),
       replyTo: z.union([z.string().trim().email(), z.literal("")]).optional(),
       sendWelcome: z.boolean().optional(),
+      // Where submitted result documents are emailed. Empty switches it off.
+      filesRecipient: z.union([z.string().trim().email(), z.literal("")]).optional(),
     }).strict().safeParse(req.body ?? {});
-    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fromName, replyTo and/or sendWelcome." });
+    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fromName, replyTo, sendWelcome and/or filesRecipient." });
     const patch: any = {};
     if (parsed.data.fromName !== undefined) patch[`${portal}FromName`] = parsed.data.fromName;
     if (parsed.data.replyTo !== undefined) patch[`${portal}ReplyTo`] = parsed.data.replyTo;
     if (parsed.data.sendWelcome !== undefined) patch[`${portal}SendWelcome`] = parsed.data.sendWelcome ? 1 : 0;
+    if (parsed.data.filesRecipient !== undefined) patch[`${portal}FilesRecipient`] = parsed.data.filesRecipient;
     storageExtra.updateEmailSettings(patch);
     const id = portalEmailIdentity(portal);
-    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome });
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient });
   });
   // Proves the portal's identity works before it is used on a real person.
   app.post("/api/portal-email-settings/:portal/test", requireAuth, async (req: any, res) => {
@@ -12697,6 +12793,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         data,
       });
       const result = storageExtra.getLapResultPackage(ctx.orgId, packageId);
+      // Best-effort and out of band: a mail problem must never fail an upload.
+      const submitterPortal = String(ctx.user?.portal ?? "").toLowerCase();
+      emailLapSubmission(ctx.orgId, packageId, submitterPortal === "lop" ? "lop" : "lap");
       res.status(201).json({ file, result });
     } catch (error) {
       sendLapError(res, error, "Unable to upload the LAP result document.");

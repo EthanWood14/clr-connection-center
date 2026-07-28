@@ -586,15 +586,25 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="p-4 border-t border-sidebar-border">
-        <a
-          href="/#/lap"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mb-3 flex items-center gap-2 rounded-lg border border-sidebar-border px-2.5 py-2 text-xs text-sidebar-foreground/65 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-        >
-          <Landmark className="h-3.5 w-3.5" />
-          Open LO Assistant Portal
-        </a>
+        {/* Both portals get an entry point — LOP existed but nothing linked to
+            it, so the only way in was typing the URL. */}
+        <div className="mb-3 space-y-1.5">
+          {[
+            { href: "/#/lap", label: "Open LO Assistant Portal" },
+            { href: "/#/lop", label: "Open Loan Officer Portal" },
+          ].map((p) => (
+            <a
+              key={p.href}
+              href={p.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 rounded-lg border border-sidebar-border px-2.5 py-2 text-xs text-sidebar-foreground/65 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <Landmark className="h-3.5 w-3.5" />
+              {p.label}
+            </a>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full bg-sidebar-foreground/20 flex items-center justify-center text-xs font-bold text-sidebar-foreground flex-shrink-0">
             {initials}
