@@ -428,6 +428,7 @@ function MorningCheckInSettingsCard() {
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [locating, setLocating] = useState(false);
+  const [locationMode, setLocationMode] = useState<"enforce" | "record" | "off">("enforce");
 
   useEffect(() => {
     const c = adminCfg?.config;
@@ -436,6 +437,7 @@ function MorningCheckInSettingsCard() {
     setRadius(String(c.radiusM ?? 400));
     setLat(c.lat != null ? String(c.lat) : "");
     setLng(c.lng != null ? String(c.lng) : "");
+    setLocationMode((c as any).locationMode ?? "enforce");
   }, [adminCfg]);
 
   const save = useMutation({
@@ -464,6 +466,7 @@ function MorningCheckInSettingsCard() {
       radiusM: parseInt(radius) || 400,
       lat: lat.trim() === "" ? null : parseFloat(lat),
       lng: lng.trim() === "" ? null : parseFloat(lng),
+      locationMode,
     });
   }
 
@@ -489,6 +492,24 @@ function MorningCheckInSettingsCard() {
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
           Start times are per-CLR, pulled from their approved Weekly Schedule. Anyone without a schedule on file still
           checks in — it's recorded, but it can't be scored on time until they have one.
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</label>
+          <Select value={locationMode} onValueChange={(v) => setLocationMode(v as "enforce" | "record" | "off")}>
+            <SelectTrigger className="h-8 text-sm" data-testid="select-checkin-location-mode"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="enforce">Required — block check-ins outside the radius</SelectItem>
+              <SelectItem value="record">Record only — note where they were, never block</SelectItem>
+              <SelectItem value="off">Off — don't ask for location at all</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">
+            {locationMode === "enforce"
+              ? "A check-in is refused without a precise location inside the radius."
+              : locationMode === "record"
+              ? "Everyone can check in. The distance is still saved and shown on the board as In area or Outside, so you can see it without it stopping anyone."
+              : "No location is requested or stored. The board shows no location for these check-ins."}
+          </p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div className="space-y-1.5">

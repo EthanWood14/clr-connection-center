@@ -5951,6 +5951,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       enabled: cfg.enabled,
       graceMin: cfg.graceMin,
       officeSet: cfg.lat != null && cfg.lng != null,
+      locationMode: cfg.locationMode,
       radiusM: cfg.radiusM,
       timeZone: tz,
       timeZoneLabel: "Pacific Time",
@@ -5983,6 +5984,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({
       date, timeZone, timeZoneLabel: "Pacific Time", enabled: cfg.enabled,
       officeSet: cfg.lat != null && cfg.lng != null,
+      locationMode: cfg.locationMode,
       radiusM: cfg.radiusM,
       roster,
     });
@@ -11440,6 +11442,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       radiusM: Number(s?.checkin_radius_m ?? 400) || 400,
       start: typeof s?.checkin_start === "string" && /^\d{2}:\d{2}$/.test(s.checkin_start) ? s.checkin_start : "08:00",
       graceMin: Number(s?.checkin_grace_min ?? 5) || 0,
+      locationMode: (["enforce", "record", "off"] as const).includes(s?.checkin_location_mode)
+        ? (s.checkin_location_mode as "enforce" | "record" | "off")
+        : "enforce",
     };
   }
   function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -11480,9 +11485,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const rawAccuracy = parseNumber(body?.accuracyM);
     const accuracyM = rawAccuracy != null && rawAccuracy > 0 ? Math.round(rawAccuracy) : null;
     const officeSet = Number.isFinite(cfg.lat) && Number.isFinite(cfg.lng);
+    const mode = cfg.locationMode ?? "enforce";
 
-    if (!officeSet) {
+    if (!officeSet || mode === "off") {
       return { ok: true, lat, lng, accuracyM, distanceM: null, inArea: null };
+    }
+    // Record-only: capture whatever the browser gave us — including nothing —
+    // and let the check-in through. Distance and in/out still land on the row so
+    // C3 can show where someone was, which is the point of the mode.
+    if (mode === "record") {
+      const distanceM = lat != null && lng != null
+        ? haversineM(lat, lng, cfg.lat as number, cfg.lng as number)
+        : null;
+      return {
+        ok: true, lat, lng, accuracyM, distanceM,
+        inArea: distanceM == null ? null : (distanceM <= cfg.radiusM ? 1 : 0),
+      };
     }
     if (lat == null || lng == null) {
       return {
@@ -11759,6 +11777,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       working: exp.working,        // false on a day off / with no schedule (never late)
       graceMin: cfg.graceMin,
       officeSet: cfg.lat != null && cfg.lng != null,
+      locationMode: cfg.locationMode,
       radiusM: cfg.radiusM,
       date,
       mine,
@@ -12258,6 +12277,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // No org-wide start time: each CLR's expected start comes from their weekly
     // schedule. (checkin_start is left in the DB but no longer read.)
     if (b.graceMin !== undefined) { const g = Math.round(Number(b.graceMin)); if (Number.isFinite(g) && g >= 0 && g <= 120) patch.checkinGraceMin = g; }
+    if (b.locationMode !== undefined && ["enforce", "record", "off"].includes(String(b.locationMode))) {
+      patch.checkinLocationMode = String(b.locationMode);
+    }
     if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
     res.json(checkinConfig());
   });

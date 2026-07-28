@@ -2356,6 +2356,12 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_radius_m INTEGER NOT NULL DEFAULT 400`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_start TEXT NOT NULL DEFAULT '08:00'`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_grace_min INTEGER NOT NULL DEFAULT 5`); } catch {}
+  // How location is used at check-in:
+  //   enforce — must be inside the radius, otherwise the check-in is refused
+  //   record  — captured and shown in C3, but never blocks anyone
+  //   off     — not requested at all
+  // Defaults to 'enforce' so existing installs keep the behaviour they have.
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_location_mode TEXT NOT NULL DEFAULT 'enforce'`); } catch {}
 
   // Rolling-interval scheduling: checks fire every interval_days from the last
   // round (next_run_at), instead of on fixed odd-month calendar dates.

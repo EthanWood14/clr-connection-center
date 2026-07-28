@@ -62,6 +62,8 @@ type MineResp = {
   graceMin: number;
   officeSet: boolean;
   radiusM: number;
+  /** enforce = must be in the radius · record = noted only · off = not requested */
+  locationMode?: "enforce" | "record" | "off";
   date: string;
   mine: Mine;
   lateStats: LateStats;
@@ -469,10 +471,15 @@ export default function CheckIns() {
   function doCheckIn() {
     checkinMut.reset();
     const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
-    // No office point means there is nothing to verify, so check-in remains
-    // usable without prompting for location.
-    if (!me?.officeSet) return submit({});
+    const mode = me?.locationMode ?? "enforce";
+    // No office point, or location switched off entirely, means there is nothing
+    // to capture — never prompt.
+    if (!me?.officeSet || mode === "off") return submit({});
+    const recordOnly = mode === "record";
     if (!navigator.geolocation) {
+      // Record-only: a browser without geolocation should not stop anyone
+      // clocking in; the row simply carries no position.
+      if (recordOnly) return submit({});
       toast({
         title: "Location is required",
         description: "This browser cannot provide your location. Use a device with Location Services enabled.",
@@ -485,6 +492,7 @@ export default function CheckIns() {
       (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
       () => {
         setLocating(false);
+        if (recordOnly) return submit({});
         toast({
           title: "Couldn't verify your location",
           description: "Enable precise location access for this site, make sure Location Services are on, and try again.",

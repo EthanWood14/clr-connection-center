@@ -59,6 +59,7 @@ type Me = {
   graceMin: number;
   officeSet: boolean;
   radiusM: number;
+  locationMode?: "enforce" | "record" | "off";
   today: TodayCheckin | null;
   expectedStart: string | null;
   working: boolean;
@@ -73,6 +74,7 @@ type RosterResp = {
   enabled: boolean;
   officeSet: boolean;
   radiusM: number;
+  locationMode?: "enforce" | "record" | "off";
   roster: Who[];
 };
 
@@ -340,14 +342,18 @@ export default function Portal() {
   function beginCheckIn() {
     checkIn.reset();
     const officeSet = meQ.data?.officeSet ?? rosterQ.data?.officeSet ?? false;
+    const locationMode = meQ.data?.locationMode ?? rosterQ.data?.locationMode;
     const submit = (location: { lat?: number; lng?: number; accuracyM?: number }) => {
       setLocating(false);
       checkIn.mutate(location);
     };
-    // Organizations without an office point remain usable and do not prompt for
-    // a location they cannot verify.
-    if (!officeSet) return submit({});
+    // Organizations without an office point — or with location switched off —
+    // remain usable and are never prompted for a position.
+    const mode = locationMode ?? "enforce";
+    if (!officeSet || mode === "off") return submit({});
+    const recordOnly = mode === "record";
     if (!navigator.geolocation) {
+      if (recordOnly) return submit({});
       toast({
         title: "Location is required",
         description: "This browser cannot provide your location. Use a device with Location Services enabled.",
@@ -364,6 +370,8 @@ export default function Portal() {
       }),
       () => {
         setLocating(false);
+        // Record-only never blocks: the check-in lands without a position.
+        if (recordOnly) return submit({});
         toast({
           title: "Couldn't verify your location",
           description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
