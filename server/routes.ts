@@ -5192,8 +5192,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       createData.inDailyAssignments = false;
       createData.excludeFromStats = true;
       delete createData.superAdmin; delete createData.super_admin;
+      const linkedLo = Number(createData.loanOfficerId ?? createData.loan_officer_id ?? 0);
+      createData.loanOfficerId = Number.isInteger(linkedLo) && linkedLo > 0 ? linkedLo : null;
     } else {
       createData.portal = null;
+      createData.loanOfficerId = null;
     }
     // Default the employment start date to today (the account is being made
     // because they're starting), so CLR profiles never show a blank. An admin
@@ -5326,8 +5329,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Employment start date is an HR field — nobody sets their own.
       "startDate", "start_date",
       // Portal membership is the LAP confinement boundary — self-edit would be
-      // a straight escape hatch out of the portal guard.
-      "portal",
+      // a straight escape hatch out of the portal guard. The loan-officer link
+      // decides whose packages you can see, so it is equally off-limits.
+      "portal", "loanOfficerId", "loan_officer_id",
     ];
     if (!isAdmin) for (const k of PRIVILEGED) delete (rest as any)[k];
     if (!isSuper) { delete (rest as any).superAdmin; delete (rest as any).super_admin; }
@@ -6067,7 +6071,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const safe = (los as any[]).map(lo => {
       const bonzoPassword = lo.bonzoPassword ?? lo.bonzo_password ?? null;
       const leadMailboxPassword = lo.leadMailboxPassword ?? lo.lead_mailbox_password ?? null;
-      return {
+      return maskLoCredentials({
         ...lo,
         id: lo.id,
         fullName: lo.fullName ?? lo.full_name ?? "",
@@ -6095,11 +6099,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         nmlsLicenseExpiration: lo.nmlsLicenseExpiration ?? lo.nmls_license_expiration ?? null,
         createdAt: lo.createdAt ?? lo.created_at ?? null,
         updatedAt: lo.updatedAt ?? lo.updated_at ?? null,
-        // Strip passwords from list view
-        bonzoPassword: bonzoPassword ? "••••••••" : null,
-        leadMailboxPassword: leadMailboxPassword ? "••••••••" : null,
         recentTransfers: recentTransferCounts.get(lo.id) || 0,
-      };
+      });
     });
     res.json(safe);
   });
@@ -6157,17 +6158,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ minCalls: MIN_CALLS, rows });
   });
 
+  // normalizeLoanOfficer() spreads the raw sqlite row and then ADDS camelCase
+  // aliases, so the snake_case columns survive alongside them. Masking only
+  // `bonzoPassword` therefore still ships `bonzo_password` in clear text. Strip
+  // every casing here; plaintext is served solely by the role-gated
+  // /api/loan-officers/:id/credentials route.
+  function maskLoCredentials(lo: any) {
+    const bonzo = lo?.bonzoPassword ?? lo?.bonzo_password ?? null;
+    const mailbox = lo?.leadMailboxPassword ?? lo?.lead_mailbox_password ?? null;
+    const out: any = { ...lo, bonzoPassword: bonzo ? "••••••••" : null, leadMailboxPassword: mailbox ? "••••••••" : null };
+    delete out.bonzo_password;
+    delete out.lead_mailbox_password;
+    delete out.otherCredentials;
+    delete out.other_credentials;
+    return out;
+  }
+
   app.get("/api/loan-officers/:id", (req: any, res) => {
     const lo = storage.getLoanOfficerById(parseInt(req.params.id)) as any;
     if (!lo) return res.status(404).json({ error: "Not found" });
-    // Mask credentials exactly like the list endpoint above. Plaintext lives
-    // only behind /api/loan-officers/:id/credentials, which is role-gated.
-    res.json({
-      ...lo,
-      bonzoPassword: lo.bonzoPassword ? "••••••••" : null,
-      leadMailboxPassword: lo.leadMailboxPassword ? "••••••••" : null,
-      otherCredentials: undefined,
-    });
+    res.json(maskLoCredentials(lo));
   });
 
   app.post("/api/loan-officers", (req: any, res) => {
@@ -12036,8 +12046,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function lapVisibilityFor(ctx: LapSessionContext): storageExtra.LapVisibility {
     if (ctx.isAdmin) return null;
     const ids = [ctx.userId];
+    // The loan-officer link is deliberately ONE-WAY. An LO sees the desk beneath
+    // them; an assistant sees only their own work. Expanding this for everyone
+    // linked to the same officer would let two assistants under one LO read each
+    // other's borrower documents, and let an assistant read their LO's.
+    const portal = String(ctx.user?.portal ?? ctx.user?.portal_access ?? "").toLowerCase();
     const loId = Number(ctx.user?.loanOfficerId ?? ctx.user?.loan_officer_id ?? 0);
-    if (Number.isInteger(loId) && loId > 0) {
+    if (portal === "lop" && Number.isInteger(loId) && loId > 0) {
       ids.push(...storageExtra.getPortalUserIdsForLoanOfficer(ctx.orgId, loId));
     }
     return { userIds: ids };

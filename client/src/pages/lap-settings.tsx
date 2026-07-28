@@ -30,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PushNotificationsCard } from "@/components/push-notifications-card";
+import { LapPortalUsersCard } from "@/components/lap/lap-portal-users-card";
 import { lapRequest } from "@/lib/lap-api";
 import { queryClient } from "@/lib/queryClient";
 
@@ -493,15 +494,17 @@ export default function LapSettings() {
               </CardContent>
             </Card>
 
+            <LapPortalUsersCard />
+
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base"><FolderLock className="h-4 w-4 text-primary" /> Result package access</CardTitle>
-                <CardDescription>The LAP workspace follows a deliberately simple collaboration model.</CardDescription>
+                <CardDescription>Who can see and change each result package.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { icon: FileCheck2, title: "Team editing", copy: "Authenticated LAP users can create packages, edit details, and replace current files." },
-                  { icon: ShieldCheck, title: "Admin downloads", copy: "Only admins receive direct document download controls in LAP." },
+                  { icon: FileCheck2, title: "Own work only", copy: "A portal user sees, edits, and replaces files on the packages they created — not anyone else's." },
+                  { icon: ShieldCheck, title: "Admins see everything", copy: "Administrators read the whole organisation and are the only ones who can download documents." },
                   { icon: Archive, title: "Audited history", copy: "Package changes and document actions are attributable to a user and timestamp." },
                 ].map(({ icon: Icon, title, copy }) => (
                   <div key={title} className="rounded-xl border bg-muted/15 p-4">

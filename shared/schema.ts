@@ -38,8 +38,13 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   role: text("role").notNull().default("assistant"), // admin | assistant | viewer
   // Which product this account may use. null/'c3' = internal staff (full C3);
-  // 'lap' = outside loan-officer assistant, confined to the LAP portal.
+  // 'lap' = outside loan-officer assistant, 'lop' = loan officer. Both are
+  // confined to their portal by the server guard.
   portal: text("portal"),
+  // Which loan officer a portal login belongs to. For LOP this is the officer
+  // themselves; for LAP it is the officer they assist. Drives who can see whose
+  // result packages.
+  loanOfficerId: integer("loan_officer_id"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   isClr: integer("is_clr", { mode: "boolean" }).notNull().default(true), // admins: true = also a CLR, included in assignments
   // false = skip this CLR in daily assignment generation (auto-generate, regenerate,

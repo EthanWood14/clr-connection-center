@@ -57,9 +57,8 @@ test("LO credentials are never returned unmasked by the by-id endpoint", () => {
     routes.indexOf(`app.post("/api/loan-officers"`),
   );
   assert.ok(!/res\.json\(lo\);/.test(byId), "must not return the raw loan_officers row");
-  assert.match(byId, /bonzoPassword:.*"••••••••"/, "bonzo password must be masked");
-  assert.match(byId, /leadMailboxPassword:.*"••••••••"/, "mailbox password must be masked");
-  assert.match(byId, /otherCredentials:\s*undefined/, "other credentials must be dropped");
+  assert.match(byId, /res\.json\(maskLoCredentials\(lo\)\)/,
+    "credentials must be stripped through the shared helper, which handles every key casing");
 });
 
 test("writing loan officers requires a role and records the real actor", () => {
@@ -139,4 +138,63 @@ test("package visibility never silently falls back to everything", () => {
   const clause = storage.slice(storage.indexOf("function lapVisibilityClause"), storage.indexOf("const LAP_PACKAGE_SELECT"));
   assert.match(clause, /if \(!ids\.length\) return " AND 0 = 1"/,
     "an unresolved identity must show nothing, not the whole org");
+});
+
+test("the loan-officer link grants visibility in one direction only", () => {
+  // An LO sees the desk beneath them. An assistant must NOT gain sight of their
+  // LO's packages, nor of a peer assistant linked to the same officer, just by
+  // sharing a loan_officer_id.
+  const fn = routes.slice(routes.indexOf("function lapVisibilityFor"), routes.indexOf("function lapPackageVisible"));
+  assert.match(fn, /portal === "lop"/,
+    "only a LOP account may expand beyond its own rows");
+  assert.ok(!/if \(Number\.isInteger\(loId\) && loId > 0\) \{\s*ids\.push/.test(fn),
+    "expansion must be gated on the portal type, not on the link alone");
+});
+
+test("portal logins are managed from the portal without opening new server surface", () => {
+  const card = readFileSync(join(root, "client/src/components/lap/lap-portal-users-card.tsx"), "utf8");
+  // Reuses existing admin endpoints; the portal guard already excludes portal
+  // accounts from them, so no allowlist entry was added for this feature.
+  assert.match(card, /apiRequest\("POST", "\/api\/users"/);
+  assert.match(card, /apiRequest\("PATCH", `\/api\/users\/\$\{v\.id\}`/);
+  const guard = routes.slice(routes.indexOf("// ── Portal confinement"), routes.indexOf("// ── Users ───"));
+  assert.ok(!guard.includes("/users\"") && !guard.includes("/loan-officers"),
+    "managing portal users must not require exposing those routes to portal accounts");
+  // Email only leaves on an explicit create, never on render.
+  assert.ok(!/useEffect\([^)]*sendWelcome/.test(card), "welcome mail must not fire from an effect");
+  assert.match(card, /onClick=\{\(\) => create\.mutate\(\)\}/, "creation is an explicit button press");
+});
+
+test("LO credentials are stripped in every key casing, not just camelCase", () => {
+  // normalizeLoanOfficer spreads the raw row then ADDS camelCase aliases, so the
+  // snake_case columns survive. Masking `bonzoPassword` alone still shipped
+  // `bonzo_password` in clear text — this asserts the real behaviour by running
+  // the actual masking function against a row shaped like the DB's.
+  const src = routes.slice(routes.indexOf("function maskLoCredentials"), routes.indexOf("app.get(\"/api/loan-officers/:id\""));
+  const body = src.slice(src.indexOf("{")).split(": any").join("");
+  // eslint-disable-next-line no-new-func
+  const mask = new Function(`return function maskLoCredentials(lo) ${body}`)();
+
+  const row = {
+    id: 7, full_name: "Test LO",
+    bonzo_password: "s3cret-bonzo", bonzoPassword: "s3cret-bonzo",
+    lead_mailbox_password: "s3cret-mail", leadMailboxPassword: "s3cret-mail",
+    other_credentials: '{"vpn":"hunter2"}', otherCredentials: { vpn: "hunter2" },
+  };
+  const out = mask(row);
+  const serialized = JSON.stringify(out);
+  for (const secret of ["s3cret-bonzo", "s3cret-mail", "hunter2"]) {
+    assert.ok(!serialized.includes(secret), `${secret} must never leave the server here`);
+  }
+  assert.equal(out.bonzoPassword, "••••••••", "presence is still signalled to the UI");
+  assert.equal(out.leadMailboxPassword, "••••••••");
+  assert.ok(!("bonzo_password" in out) && !("lead_mailbox_password" in out));
+  assert.ok(!("otherCredentials" in out) && !("other_credentials" in out));
+  assert.equal(out.id, 7, "non-credential fields survive");
+});
+
+test("both loan-officer read endpoints go through the masking helper", () => {
+  const listAndById = routes.slice(routes.indexOf("const safe = (los as any[]).map"), routes.indexOf(`app.post("/api/loan-officers"`));
+  assert.equal((listAndById.match(/maskLoCredentials\(/g) ?? []).length, 3,
+    "list + by-id must both call it (plus the definition)");
 });
