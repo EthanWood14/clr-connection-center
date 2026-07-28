@@ -1928,7 +1928,9 @@ function rebalanceNmlsRoundOnce() {
 
   const periodKey = getNmlsPeriodKey();
   const pool = nmlsAssigneePool();
-  const pending = storageExtra.getNmlsChecksForPeriod(periodKey).filter((c: any) => c.status === "pending");
+  // Anything not yet confirmed still needs chasing — including checks the
+  // escalation cron has already flagged.
+  const pending = storageExtra.getNmlsChecksForPeriod(periodKey).filter((c: any) => c.status !== "confirmed");
   if (pool.length && pending.length) {
     const base = Math.floor(pending.length / pool.length);
     let extras = pending.length % pool.length;
@@ -13281,12 +13283,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const schedule = storageExtra.getNmlsSchedule();
     const escalationDays = schedule.escalation_days ?? 7;
     const daysOverdueOf = (c: any) => Math.floor((Date.now() - new Date(c.assigned_at).getTime()) / 86400000);
+    // A check is outstanding until it is CONFIRMED. Filtering on status
+    // 'pending' alone hid every check the escalation cron had touched — once it
+    // flipped a row to 'escalated' the check fell out of both lists and the page
+    // read "nothing pending, nothing overdue", i.e. done, while the licence was
+    // still unverified. Escalation is meant to raise a check's urgency, not
+    // retire it.
+    const isOpen = (c: any) => c.status !== "confirmed";
     const pending = allChecks
-      .filter((c: any) => c.assigned_to === userId && c.status === "pending")
+      .filter((c: any) => c.assigned_to === userId && isOpen(c))
       .map((c: any) => ({ ...c, lo: los.find((l: any) => l.id === c.lo_id), daysOverdue: daysOverdueOf(c) }));
-    // Escalated checks belonging to someone else — a shared pool anyone can clear.
+    // Checks belonging to someone else that have gone past the escalation
+    // window — a shared pool anyone can clear.
     const overdue = allChecks
-      .filter((c: any) => c.status === "pending" && c.assigned_to !== userId)
+      .filter((c: any) => isOpen(c) && c.assigned_to !== userId)
       .map((c: any) => ({
         ...c,
         lo: los.find((l: any) => l.id === c.lo_id),
