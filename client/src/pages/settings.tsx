@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, MapPin } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, UserPlus, MapPin } from "lucide-react";
 import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
@@ -346,6 +346,66 @@ function BulkTexterCard() {
             </p>
           </div>
           <Switch checked={askOn} onCheckedChange={(v) => save.mutate(v)} disabled={save.isPending} data-testid="toggle-ask-bulk-texter" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Transfer Helper Card ──────────────────────────────────────────────────────
+// Org toggle: when on, the transfer-logging form asks whether a specific person
+// (Elleine) was part of the transfer. She is paid a flat rate per transfer, so
+// the resulting count is what her comp is based on. The name is editable so the
+// question keeps working if that person ever changes.
+function TransferHelperCard() {
+  const { toast } = useToast();
+  const { data: settings } = useQuery<any>({ queryKey: ["/api/settings/email"] });
+  const askOn = !!(settings?.ask_helper);
+  const savedName = String(settings?.helper_name || "Elleine");
+  const [name, setName] = useState(savedName);
+  useEffect(() => { setName(savedName); }, [savedName]);
+  const save = useMutation({
+    mutationFn: (patch: any) => apiRequest("PATCH", "/api/settings/email", patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/email"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/helper"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "Saved" });
+    },
+    onError: (e: any) => toast({ title: "Failed to update", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <UserPlus className="w-4 h-4 text-muted-foreground" />
+          Transfer Helper
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Ask on transfers</p>
+            <p className="text-xs text-muted-foreground">
+              When on, logging a transfer asks "Was {savedName} part of this transfer?" and the running total appears on the dashboard.
+            </p>
+          </div>
+          <Switch checked={askOn} onCheckedChange={(v) => save.mutate({ askHelper: v ? 1 : 0 })} disabled={save.isPending} data-testid="toggle-ask-helper" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Name shown in the question</Label>
+          <div className="flex gap-2">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Elleine" className="h-9" data-testid="input-helper-name" />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9"
+              disabled={save.isPending || !name.trim() || name.trim() === savedName}
+              onClick={() => save.mutate({ helperName: name.trim() })}
+            >
+              Save
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -3029,6 +3089,7 @@ export default function Settings() {
     <div className="space-y-6">
       <PushNotificationsCard />
       {isAdmin && <BulkTexterCard />}
+      {isAdmin && <TransferHelperCard />}
       {isAdmin && <MorningCheckInSettingsCard />}
       {isAdmin && <NmlsScheduleCard />}
       {isAdmin && (

@@ -3785,6 +3785,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
           phoneNumber: o.phone_number ?? o.phoneNumber ?? null,
           transferType: o.transfer_type ?? o.transferType ?? null,
           bulkTexter: o.bulk_texter ?? o.bulkTexter ?? null,
+          helperAssisted: o.helper_assisted ?? o.helperAssisted ?? null,
           appointmentDatetime: o.appointment_datetime ?? o.appointmentDatetime ?? null,
           loId,
           loName: lo?.fullName ?? lo?.full_name ?? null,
@@ -8711,6 +8712,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         outcomeType: o.outcomeType ?? o.outcome_type,
         transferType: o.transferType ?? o.transfer_type ?? null,
         bulkTexter: (o.bulkTexter ?? o.bulk_texter) == null ? null : !!(o.bulkTexter ?? o.bulk_texter),
+        helperAssisted: (o.helperAssisted ?? o.helper_assisted) == null ? null : !!(o.helperAssisted ?? o.helper_assisted),
         borrowerName: o.borrowerName ?? o.borrower_name ?? null,
         followUpDate: o.followUpDate ?? o.follow_up_date ?? null,
         appointmentDatetime: o.appointmentDatetime ?? o.appointment_datetime ?? null,
@@ -8842,9 +8844,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         // appointment-type transfer. Strip any appointment datetime defensively.
         body.appointmentDatetime = null;
         body.bulkTexter = toBulk(body.bulkTexter);
+        body.helperAssisted = toBulk(body.helperAssisted);
       } else {
         body.transferType = null;
         body.bulkTexter = null;
+        body.helperAssisted = null;
       }
       const nullify = (v: any) => (v === undefined || v === '' ? null : v);
       const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
@@ -9002,7 +9006,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isAdmin && !isOwner) {
       const ALLOWED_COMPLETION_FIELDS = new Set([
         "outcomeType", "transferType", "followUpDate", "date",
-        "bulkTexter", "notes", "conversationNotes", "nextSteps",
+        "bulkTexter", "helperAssisted", "notes", "conversationNotes", "nextSteps",
       ]);
       body = Object.fromEntries(Object.entries(body).filter(([k]) => ALLOWED_COMPLETION_FIELDS.has(k)));
     }
@@ -9019,14 +9023,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // A transfer must never schedule a calendar appointment — always clear it.
       body.appointmentDatetime = null;
     } else if (body.outcomeType !== undefined) {
-      // outcomeType is being changed away from transfer — clear transferType + bulk texter
+      // outcomeType is being changed away from transfer — clear transferType,
+      // bulk texter, and the helper flag (they only mean anything on a transfer)
       body.transferType = null;
       body.bulkTexter = null;
+      body.helperAssisted = null;
     }
-    if ("bulkTexter" in body) {
-      body.bulkTexter = (body.bulkTexter === true || body.bulkTexter === 1 || body.bulkTexter === "1") ? 1
-        : (body.bulkTexter === false || body.bulkTexter === 0 || body.bulkTexter === "0") ? 0 : null;
-    }
+    const toTriState = (v: any) => (v === true || v === 1 || v === "1") ? 1
+      : (v === false || v === 0 || v === "0") ? 0 : null;
+    if ("bulkTexter" in body) body.bulkTexter = toTriState(body.bulkTexter);
+    if ("helperAssisted" in body) body.helperAssisted = toTriState(body.helperAssisted);
     const nullify = (v: any) => (v === undefined || v === '' ? null : v);
     const boolToInt = (v: any) => v === true ? 1 : v === false ? 0 : nullify(v);
     const nullableFields = [
@@ -9273,6 +9279,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let dncHitsPeriod = 0;
     let messagesSentPeriod = 0;
     let bulkTexterTransfers = 0;
+    let helperTransfers = 0;
 
     // Sum contacts_reached + dnc_hits from raw call_logs for the period
     const rawLogsInPeriod = storageExtra.getCallLogsByRangeRaw(startDate, endDate) as any[];
@@ -9305,6 +9312,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return Number(row?.n ?? 0);
       } catch { return 0; }
     };
+    // Transfers the named helper (Elleine) was part of. She is paid a flat rate
+    // per transfer, so this count is the basis for her comp.
+    const countHelperSql = (extraWhere: string, params: any[]): number => {
+      try {
+        const row = sqliteDb.prepare(
+          `SELECT COUNT(*) AS n FROM lead_outcomes WHERE outcome_type='transfer' AND helper_assisted=1 AND date >= ? AND date <= ?${extraWhere}${orgClause}`
+        ).get(startDate, endDate, ...params) as any;
+        return Number(row?.n ?? 0);
+      } catch { return 0; }
+    };
 
     if (scope === "team") {
       // Team totals — aggregate across COUNTED CLRs (drop non-counted from every
@@ -9329,6 +9346,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       dncHitsPeriod = teamRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
       messagesSentPeriod = sumMessagesSql(exSql, []);
       bulkTexterTransfers = countBulkTexterSql(exSql, []);
+      helperTransfers = countHelperSql(exSql, []);
     } else if (userId) {
       const myLog = storage.getDailyCallLogs(todayStr).find(
         (l: any) => (l.assistantId ?? l.assistant_id) === userId,
@@ -9346,6 +9364,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       dncHitsPeriod = myRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
       messagesSentPeriod = sumMessagesSql(` AND assistant_id = ?`, [userId]);
       bulkTexterTransfers = countBulkTexterSql(` AND assistant_id = ?`, [userId]);
+      // Elleine's count is org-wide: she assists on other CLRs' transfers too,
+      // so scoping it to the viewer would under-report what she is owed.
+      helperTransfers = countHelperSql("", []);
     }
 
     res.json({
@@ -9361,6 +9382,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       dncHits: dncHitsPeriod,
       messagesSent: messagesSentPeriod,
       bulkTexterTransfers,
+      helperTransfers,
+      helperName: String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine"),
+      askHelper: !!(storageExtra.getEmailSettings() as any)?.ask_helper,
     });
   });
 
@@ -12935,6 +12959,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/settings/bulk-texter", requireAuth, (_req, res) => {
     const s = storageExtra.getEmailSettings() as any;
     res.json({ askBulkTexter: !!s.ask_bulk_texter });
+  });
+
+  // Named transfer helper (Elleine). Same shape as the bulk-texter toggle, plus
+  // the name so the question and the stat tile read naturally.
+  app.get("/api/settings/helper", requireAuth, (_req, res) => {
+    const s = storageExtra.getEmailSettings() as any;
+    res.json({ askHelper: !!s.ask_helper, helperName: String(s.helper_name || "Elleine") });
   });
 
   app.post("/api/settings/email/test", requireAuth, async (req: any, res) => {

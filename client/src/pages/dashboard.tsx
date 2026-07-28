@@ -13,7 +13,7 @@ import {
   ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle,
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
   ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
-  MessageSquare, Zap,
+  MessageSquare, Zap, UserPlus,
   ArrowLeftRight,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -1162,6 +1162,20 @@ function ClrDashboard() {
             <StatCard title={scope === "team" ? "Team Messages Sent" : "Messages Sent"} value={displayStats?.messagesSent ?? 0} icon={MessageSquare} color="primary" accent="teal" sub={scope === "team" ? `team texts ${subLabel}` : `my texts ${subLabel}`} href="/eod-report" />
             {(displayStats?.bulkTexterTransfers ?? 0) > 0 && (
               <StatCard title="Bulk Texter Transfers" value={displayStats?.bulkTexterTransfers ?? 0} icon={Zap} color="success" accent="green" sub={`via Bulk Texter ${subLabel}`} href="/outcomes" />
+            )}
+            {/* Transfers the named helper was part of — org-wide, since she
+                assists across CLRs. Shown whenever the question is switched on,
+                including at zero, so it reads as a running tally. */}
+            {displayStats?.askHelper && (
+              <StatCard
+                title={`${displayStats?.helperName || "Elleine"} Transfers`}
+                value={displayStats?.helperTransfers ?? 0}
+                icon={UserPlus}
+                color="success"
+                accent="green"
+                sub={`assisted ${subLabel}`}
+                href="/outcomes"
+              />
             )}
           </div>
           <GoalStripe />

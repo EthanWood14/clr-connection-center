@@ -1250,6 +1250,7 @@ function CallRecorder({
   const [wizardScheduled, setWizardScheduled] = useState<string>("");
   const [wizardTransferType, setWizardTransferType] = useState<"direct" | "appointment" | "">("");
   const [wizardBulkTexter, setWizardBulkTexter] = useState<boolean>(false);
+  const [wizardHelper, setWizardHelper] = useState<boolean>(false);
   const [wizardNotes, setWizardNotes] = useState<string>("");
   const [wizardBorrower, setWizardBorrower] = useState<string>("");
   const [wizardPhone, setWizardPhone] = useState<string>("");
@@ -1260,6 +1261,9 @@ function CallRecorder({
   const { data: loanOfficers = [] } = useQuery<any[]>({ queryKey: ["/api/loan-officers"] });
   const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
   const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
+  const { data: helperCfg } = useQuery<{ askHelper: boolean; helperName: string }>({ queryKey: ["/api/settings/helper"] });
+  const askHelper = !!helperCfg?.askHelper;
+  const helperName = helperCfg?.helperName || "Elleine";
 
   useEffect(() => {
     if (!isRecording) return;
@@ -1298,6 +1302,7 @@ function CallRecorder({
     setWizardScheduled("");
     setWizardTransferType("");
     setWizardBulkTexter(false);
+    setWizardHelper(false);
     setWizardNotes("");
     setWizardBorrower("");
     setWizardPhone("");
@@ -1413,6 +1418,7 @@ function CallRecorder({
       if (needsTransferConfirm) {
         payload.transferType = wizardTransferType;
         if (askBulkTexter) payload.bulkTexter = wizardBulkTexter;
+        if (askHelper) payload.helperAssisted = wizardHelper;
       }
       if (outcomeChoice.outcomeType === "appointment" && wizardScheduled) {
         payload.appointmentDatetime = wizardScheduled;
@@ -1436,6 +1442,7 @@ function CallRecorder({
       setWizardScheduled("");
       setWizardTransferType("");
       setWizardBulkTexter(false);
+      setWizardHelper(false);
       setWizardNotes("");
       setWizardBorrower("");
       setWizardPhone("");
@@ -1640,6 +1647,12 @@ function CallRecorder({
               <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 cursor-pointer">
                 <span className="text-sm font-medium">Was Bulk Texter part of this transfer?</span>
                 <Switch checked={wizardBulkTexter} onCheckedChange={setWizardBulkTexter} data-testid="wizard-bulk-texter" />
+              </label>
+            )}
+            {needsTransferConfirm && askHelper && (
+              <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 cursor-pointer">
+                <span className="text-sm font-medium">Was {helperName} part of this transfer?</span>
+                <Switch checked={wizardHelper} onCheckedChange={setWizardHelper} data-testid="wizard-helper-assisted" />
               </label>
             )}
             {needsScheduled && (

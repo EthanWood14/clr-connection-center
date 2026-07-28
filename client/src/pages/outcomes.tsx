@@ -183,6 +183,7 @@ const outcomeFormSchema = z.object({
   outcomeType: z.enum(OUTCOME_TYPES),
   transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   bulkTexter: z.boolean().optional().nullable(),
+  helperAssisted: z.boolean().optional().nullable(),
   borrowerName: z.string().optional(),
   journeyId: z.string().optional(),
   phoneNumber: z.string().optional(),
@@ -376,6 +377,7 @@ function OutcomeFormDialog({
       outcomeType: "transfer",
       transferType: null,
       bulkTexter: null,
+      helperAssisted: null,
       borrowerName: "",
       journeyId: "",
       phoneNumber: "",
@@ -403,11 +405,16 @@ function OutcomeFormDialog({
   // Org toggle: ask whether Bulk Texter was part of the transfer.
   const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
   const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
+  // Org toggle: ask whether the named helper (Elleine) was part of the transfer.
+  const { data: helperCfg } = useQuery<{ askHelper: boolean; helperName: string }>({ queryKey: ["/api/settings/helper"] });
+  const askHelper = !!helperCfg?.askHelper;
+  const helperName = helperCfg?.helperName || "Elleine";
   // Step 0 = result picker (always shown first), step 1 = details, step 2/3 = transfer wizard
   const [step, setStep] = useState(0);
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
   const watchedBulkTexter = form.watch("bulkTexter");
+  const watchedHelper = form.watch("helperAssisted");
   const watchedRequiresFollowup = form.watch("requiresFollowup");
   const watchedLeadType = form.watch("leadType");
   const watchedRescheduled = form.watch("rescheduled");
@@ -598,6 +605,19 @@ function OutcomeFormDialog({
                   checked={!!watchedBulkTexter}
                   onCheckedChange={(v) => form.setValue("bulkTexter", v, { shouldDirty: true })}
                   data-testid="toggle-bulk-texter"
+                />
+              </div>
+            )}
+            {isTransfer && askHelper && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Was {helperName} part of this transfer?</p>
+                  <p className="text-xs text-muted-foreground">Counted toward {helperName}'s per-transfer total.</p>
+                </div>
+                <Switch
+                  checked={!!watchedHelper}
+                  onCheckedChange={(v) => form.setValue("helperAssisted", v, { shouldDirty: true })}
+                  data-testid="toggle-helper-assisted"
                 />
               </div>
             )}

@@ -211,6 +211,9 @@ try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_attendance_excuse_subject ON a
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
 // Whether Bulk Texter was part of a transfer (1/0/null). Only set on transfers.
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bulk_texter INTEGER`); } catch {}
+// Whether the org's named transfer helper (Elleine) was part of a transfer
+// (1/0/null). Must be added before drizzle() below compiles its SELECTs.
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN helper_assisted INTEGER`); } catch {}
 
 export const db = drizzle(sqlite);
 
@@ -1934,6 +1937,15 @@ function runNewMigrations() {
   if (!emailCols.find(c => c.name === 'ask_bulk_texter')) {
     sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ask_bulk_texter INTEGER NOT NULL DEFAULT 0`);
   }
+  // 2026-07: same idea for a named person who assists on transfers (Elleine is
+  // paid a flat rate per transfer she is part of, so the count drives her comp).
+  // The name is configurable so the column doesn't rot if the person changes.
+  if (!emailCols.find(c => c.name === 'ask_helper')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ask_helper INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!emailCols.find(c => c.name === 'helper_name')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN helper_name TEXT NOT NULL DEFAULT 'Elleine'`);
+  }
   // 2026-05-05: per-type send times. Defaults match Ethan's spec:
   //   daily → already exists as daily_time (default 08:00)
   //   weekly → Monday 08:00
@@ -3191,11 +3203,18 @@ export function getEmailSettings() {
   return sqlite.prepare(`SELECT * FROM email_settings WHERE id=1`).get() as any ?? {};
 }
 export function updateEmailSettings(data: any) {
-  const fields = Object.keys(data).map(k => {
-    const col = k.replace(/([A-Z])/g, '_$1').toLowerCase();
-    return `${col} = ?`;
-  }).join(', ');
-  const vals = Object.values(data);
+  // Column names are interpolated into the SQL, so they must come from the real
+  // table — never straight from a request body. Anything that isn't an actual
+  // column is dropped rather than concatenated in.
+  const columns = new Set(
+    (sqlite.prepare(`PRAGMA table_info(email_settings)`).all() as any[]).map((c) => String(c.name)),
+  );
+  const entries = Object.entries(data)
+    .map(([k, v]) => [k.replace(/([A-Z])/g, '_$1').toLowerCase(), v] as const)
+    .filter(([col]) => columns.has(col) && col !== "id");
+  if (!entries.length) return getEmailSettings();
+  const fields = entries.map(([col]) => `${col} = ?`).join(', ');
+  const vals = entries.map(([, v]) => v);
   sqlite.prepare(`UPDATE email_settings SET ${fields}, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(...vals);
   return getEmailSettings();
 }

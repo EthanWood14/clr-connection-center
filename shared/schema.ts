@@ -201,6 +201,10 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   outcomeType: text("outcome_type").notNull(),
   transferType: text("transfer_type"), // 'direct' | 'appointment' | null (required when outcomeType='transfer')
   bulkTexter: integer("bulk_texter"), // 1/0/null — whether Bulk Texter was part of the transfer
+  // 1/0/null — whether the org's named transfer helper (Elleine) assisted.
+  // Nullable so historical rows and orgs with the question off stay "unknown"
+  // rather than being counted as a "no".
+  helperAssisted: integer("helper_assisted"),
   journeyId: text("journey_id"),
   phoneNumber: text("phone_number"),
   notes: text("notes"),
