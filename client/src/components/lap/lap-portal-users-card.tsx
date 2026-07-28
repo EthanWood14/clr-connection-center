@@ -67,8 +67,10 @@ export function LapPortalUsersCard() {
       invalidate();
       setName(""); setEmail(""); setLinkedLo("none");
       toast({
-        title: res?.emailSent ? `${label} login created — invite sent` : `${label} login created`,
-        description: res?.emailSent ? undefined : res?.emailError || "The welcome email did not send.",
+        title: `${label} login created`,
+        description: res?.emailSent
+          ? "The welcome email is queued and goes out shortly."
+          : res?.emailError || "The welcome email could not be queued.",
         variant: res?.emailRequested && !res?.emailSent ? "destructive" : undefined,
       });
     },

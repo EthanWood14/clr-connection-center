@@ -139,6 +139,10 @@ sqlite.exec(`CREATE TABLE IF NOT EXISTS loan_officer_assistants (
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT
 )`);
+// Needed to invite an assistant to LAP — without an address there is nowhere to
+// send the login. Nullable: existing rows predate the portal and are filled in
+// as they are onboarded.
+try { sqlite.exec(`ALTER TABLE loan_officer_assistants ADD COLUMN email TEXT`); } catch {}
 
 // ── Self-service check-in / schedule portal for LOs and LOAs ──────────────────
 // LOs and LOAs are not C3 login users. They all share ONE public link carrying an
@@ -4938,7 +4942,7 @@ export function getLoanOfficerAssistant(id: number) {
     LIMIT 1
   `).get(id, orgId));
 }
-export function createLoanOfficerAssistant(data: { loId: number; fullName: string }) {
+export function createLoanOfficerAssistant(data: { loId: number; fullName: string; email?: string | null }) {
   const orgId = currentOrgId() ?? 1;
   const parent = sqlite.prepare(`
     SELECT id FROM loan_officers
@@ -4947,9 +4951,24 @@ export function createLoanOfficerAssistant(data: { loId: number; fullName: strin
   `).get(data.loId, orgId);
   if (!parent) throw new Error("Loan Officer not found in your organization.");
   const info = sqlite.prepare(
-    `INSERT INTO loan_officer_assistants (lo_id, full_name, active, created_at) VALUES (?, ?, 1, ?)`
-  ).run(data.loId, data.fullName, new Date().toISOString());
+    `INSERT INTO loan_officer_assistants (lo_id, full_name, email, active, created_at) VALUES (?, ?, ?, 1, ?)`
+  ).run(data.loId, data.fullName, data.email?.trim() || null, new Date().toISOString());
   return getLoanOfficerAssistant(Number(info.lastInsertRowid));
+}
+
+/** Set or clear an assistant's email so they can be invited to LAP. */
+export function updateLoanOfficerAssistant(id: number, data: { fullName?: string; email?: string | null }) {
+  const orgId = currentOrgId() ?? 1;
+  const sets: string[] = [];
+  const vals: any[] = [];
+  if (typeof data.fullName === "string" && data.fullName.trim()) { sets.push("full_name = ?"); vals.push(data.fullName.trim()); }
+  if (data.email !== undefined) { sets.push("email = ?"); vals.push(data.email?.trim() || null); }
+  if (!sets.length) return getLoanOfficerAssistant(id);
+  sqlite.prepare(
+    `UPDATE loan_officer_assistants SET ${sets.join(", ")}
+      WHERE id = ? AND lo_id IN (SELECT id FROM loan_officers WHERE org_id = ?)`
+  ).run(...vals, id, orgId);
+  return getLoanOfficerAssistant(id);
 }
 export function deleteLoanOfficerAssistant(id: number): boolean {
   const orgId = currentOrgId() ?? 1;
@@ -5014,6 +5033,50 @@ export function listPortalRoster(orgId: number): { type: PortalSubjectType; id: 
   }
   return out;
 }
+/**
+ * The check-in roster joined to portal logins, for provisioning.
+ * `email` comes from the loan_officers / loan_officer_assistants record; a null
+ * one is why somebody cannot be invited yet.
+ */
+export function listPortalProvisioning(orgId: number): Array<{
+  type: PortalSubjectType; id: number; name: string; loName: string | null;
+  email: string | null; userId: number | null; userEmail: string | null; userActive: boolean;
+}> {
+  const users = sqlite.prepare(
+    `SELECT id, email, is_active, portal, loan_officer_id FROM users WHERE org_id = ? AND portal IN ('lap','lop')`,
+  ).all(orgId) as any[];
+  const byEmail = new Map(users.map((u) => [String(u.email || "").toLowerCase(), u]));
+  const out: any[] = [];
+  for (const l of sqlite.prepare(`SELECT id, full_name, email FROM loan_officers
+      WHERE org_id = ? AND internal_status NOT IN ('archived','inactive')
+      ORDER BY full_name COLLATE NOCASE`).all(orgId) as any[]) {
+    const email = String(l.email || "").trim() || null;
+    // Match on the address first, then fall back to the LO link — an account
+    // created before the address was filled in should still count as existing.
+    const u = (email && byEmail.get(email.toLowerCase()))
+      || users.find((x) => x.portal === "lop" && Number(x.loan_officer_id) === Number(l.id));
+    out.push({
+      type: "lo", id: Number(l.id), name: String(l.full_name), loName: null, email,
+      userId: u ? Number(u.id) : null, userEmail: u ? String(u.email) : null, userActive: !!u?.is_active,
+    });
+  }
+  for (const a of sqlite.prepare(`SELECT a.id, a.full_name, a.email, a.lo_id, l.full_name AS lo_name
+      FROM loan_officer_assistants a
+      INNER JOIN loan_officers l ON l.id = a.lo_id
+      WHERE l.org_id = ? AND a.active = 1
+        AND l.internal_status NOT IN ('archived','inactive')
+      ORDER BY a.full_name COLLATE NOCASE`).all(orgId) as any[]) {
+    const email = String(a.email || "").trim() || null;
+    const u = email ? byEmail.get(email.toLowerCase()) : null;
+    out.push({
+      type: "loa", id: Number(a.id), name: String(a.full_name),
+      loName: a.lo_name ? String(a.lo_name) : null, loId: Number(a.lo_id), email,
+      userId: u ? Number(u.id) : null, userEmail: u ? String(u.email) : null, userActive: !!u?.is_active,
+    });
+  }
+  return out;
+}
+
 // Confirms a subject is on the roster — never trust a type/id from the client.
 export function isRosterSubject(orgId: number, type: any, id: any): boolean {
   if (!isSubjectType(type) || !Number.isFinite(Number(id))) return false;

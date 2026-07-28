@@ -14,6 +14,7 @@ import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
 import { PushNotificationsCard } from "@/components/push-notifications-card";
+import { PortalProvisioningCard } from "@/components/portal-provisioning-card";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -3090,6 +3091,7 @@ export default function Settings() {
       <PushNotificationsCard />
       {isAdmin && <BulkTexterCard />}
       {isAdmin && <TransferHelperCard />}
+      {isAdmin && <PortalProvisioningCard />}
       {isAdmin && <MorningCheckInSettingsCard />}
       {isAdmin && <NmlsScheduleCard />}
       {isAdmin && (

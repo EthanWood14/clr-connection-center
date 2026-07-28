@@ -11,8 +11,8 @@
     "test:business-day": "tsx --test tests/business-day.test.ts",
     "test:attendance": "tsx --test tests/attendance-excuse.test.ts",
     "test:lap": "tsx --test tests/lap-results.test.ts",
-    "test:portals": "tsx --test tests/admin-bootstrap-auth.test.ts tests/portal-communications.test.ts tests/pwa-separation.test.ts tests/lap-portal-confinement.test.ts tests/transfer-helper.test.ts",
-    "test": "tsx --test tests/admin-bootstrap-auth.test.ts tests/business-day.test.ts tests/attendance-excuse.test.ts tests/lap-results.test.ts tests/portal-communications.test.ts tests/pwa-separation.test.ts tests/lap-portal-confinement.test.ts tests/transfer-helper.test.ts",
+    "test:portals": "tsx --test tests/admin-bootstrap-auth.test.ts tests/portal-communications.test.ts tests/pwa-separation.test.ts tests/lap-portal-confinement.test.ts tests/transfer-helper.test.ts tests/portal-provisioning.test.ts",
+    "test": "tsx --test tests/admin-bootstrap-auth.test.ts tests/business-day.test.ts tests/attendance-excuse.test.ts tests/lap-results.test.ts tests/portal-communications.test.ts tests/pwa-separation.test.ts tests/lap-portal-confinement.test.ts tests/transfer-helper.test.ts tests/portal-provisioning.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

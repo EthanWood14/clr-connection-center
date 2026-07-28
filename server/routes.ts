@@ -5144,6 +5144,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     "/version", "/health",
     "/users/me/password", "/users/me/seen-intro", "/users/me/seen-pipeline-sop",
     "/checkin", "/checkin/settings",
+    // Portal people set their own weekly schedule — check-in lateness is judged
+    // against it, so this has to work for them. The handler is self-scoped to
+    // the session user; the manager-only /schedule/team and /schedule/:id/decision
+    // sub-paths are deliberately NOT listed.
+    "/schedule",
   ]);
   const LAP_ALLOWED_PREFIXES = ["/lap/", "/auth/", "/push/", "/notifications"];
   // Both portals are confined. LOP shares the /api/lap/* endpoints — the rows it
@@ -5304,7 +5309,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
     }
 
-    res.json({ ...newUser, emailRequested: welcomeRequested, emailSent, emailError });
+    const actor = storage.getUserById(Number(req.session_user?.userId)) as any;
+    audit({
+      userId: actor?.id ?? 0, userName: actor?.name ?? "Unknown",
+      action: "create", entityType: "user", entityId: newUser.id,
+      entityLabel: `${newUser.name} (${createData.portal ?? "c3"})`,
+      details: JSON.stringify({
+        email: newUser.email, portal: createData.portal ?? null, role: createData.role,
+        loanOfficerId: createData.loanOfficerId ?? null, welcomeRequested,
+      }),
+    });
+    // `emailSent` means the send was accepted, not delivered — sendEmail() holds
+    // messages for EMAIL_SEND_DELAY_MS before dispatching. Say "queued" so the UI
+    // does not claim more than we know.
+    res.json({ ...newUser, emailRequested: welcomeRequested, emailQueued: emailSent, emailSent, emailError });
   });
 
   app.patch("/api/users/:id", requireAuth, async (req: any, res) => {
@@ -5339,7 +5357,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const hash = await bcrypt.hash(newPassword.trim(), 10);
       storage.setUserPassword(id, hash);
     }
-    res.json(storage.updateUser(id, rest));
+    const updated = storage.updateUser(id, rest);
+    // Role, portal, the loan-officer link and activation all change what this
+    // account can reach, so the edit needs to be attributable.
+    const PRIV_TOUCHED = ["role", "portal", "loanOfficerId", "loan_officer_id", "isManager", "is_manager", "isActive", "is_active", "orgId", "org_id"];
+    if (PRIV_TOUCHED.some((k) => k in (rest as any))) {
+      const actor = storage.getUserById(requester.userId) as any;
+      audit({
+        userId: actor?.id ?? 0, userName: actor?.name ?? "Unknown",
+        action: "update", entityType: "user", entityId: id,
+        entityLabel: (updated as any)?.name ?? `User #${id}`,
+        details: JSON.stringify(Object.fromEntries(PRIV_TOUCHED.filter((k) => k in (rest as any)).map((k) => [k, (rest as any)[k]]))),
+      });
+    }
+    res.json(updated);
   });
 
   // Toggle is_manager flag (admin only) with auto-sync to scheduled report recipients
@@ -5631,6 +5662,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const parsed = z.object({
       loId: z.coerce.number().int().positive(),
       fullName: z.string().trim().min(1).max(160),
+      // Optional so existing callers keep working, but required in practice to
+      // invite them to LAP — there is nowhere to send a login without it.
+      email: z.string().trim().email().max(200).optional().nullable(),
     }).strict().safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "A valid loId and fullName are required" });
@@ -5641,6 +5675,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const message = e?.message ?? "Could not create loan officer assistant";
       res.status(message.includes("not found") ? 404 : 400).json({ error: message });
     }
+  });
+  app.patch("/api/loan-officer-assistants/:id", requireAuth, (req, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "id must be a positive integer" });
+    const parsed = z.object({
+      fullName: z.string().trim().min(1).max(160).optional(),
+      email: z.string().trim().email().max(200).nullable().optional(),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fullName and/or email" });
+    const updated = storageExtra.updateLoanOfficerAssistant(id, parsed.data);
+    if (!updated) return res.status(404).json({ error: "Loan officer assistant not found" });
+    res.json(updated);
   });
   app.delete("/api/loan-officer-assistants/:id", requireAuth, (req, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
@@ -5694,6 +5741,67 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE org_id=? AND is_active=1 AND (role='admin' OR is_manager=1)
       ORDER BY id`).all(orgId) as any[];
     return excludeUserId ? rows.filter((u) => Number(u.id) !== excludeUserId) : rows;
+  }
+
+  // Which working days/start times actually moved, so the notification says
+  // something useful instead of "a schedule changed".
+  function scheduleDayDiff(before: any, after: any): string[] {
+    const DAY_LABELS: Record<string, string> = {
+      mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun",
+    };
+    const changes: string[] = [];
+    for (const key of Object.keys(DAY_LABELS)) {
+      const a = before?.[key] ?? null;
+      const b = after?.[key] ?? null;
+      const aWorking = !!a?.working, bWorking = !!b?.working;
+      if (!aWorking && !bWorking) continue;
+      if (aWorking !== bWorking) {
+        changes.push(`${DAY_LABELS[key]} ${bWorking ? `now ${b?.start ?? "?"}–${b?.end ?? "?"}` : "now off"}`);
+      } else if (a?.start !== b?.start || a?.end !== b?.end) {
+        changes.push(`${DAY_LABELS[key]} ${a?.start ?? "?"}–${a?.end ?? "?"} → ${b?.start ?? "?"}–${b?.end ?? "?"}`);
+      }
+    }
+    return changes;
+  }
+
+  async function notifyScheduleChange(
+    orgId: number,
+    actorUserId: number,
+    actorName: string,
+    previousDays: any,
+    nextDays: any,
+  ): Promise<void> {
+    const changes = scheduleDayDiff(previousDays, nextDays);
+    // A first-time submission has no prior schedule to diff; still worth telling
+    // managers, since it is what their check-in time will be judged against.
+    const isFirst = !previousDays;
+    if (!isFirst && !changes.length) return; // notes-only edit — not worth a ping
+    const recipients = attendanceManagerUsers(orgId, actorUserId);
+    if (!recipients.length) return;
+    const title = isFirst ? "Weekly schedule submitted" : "Weekly schedule changed";
+    const detail = changes.length ? changes.slice(0, 4).join(", ") : "";
+    const message = isFirst
+      ? `${actorName} set their weekly schedule.${detail ? ` ${detail}.` : ""}`
+      : `${actorName} changed their weekly schedule: ${detail}${changes.length > 4 ? ` (+${changes.length - 4} more)` : ""}.`;
+    for (const manager of recipients) {
+      try {
+        (storage as any).createNotification?.({
+          userId: Number(manager.id),
+          type: "schedule",
+          portal: "c3",
+          title,
+          message,
+        });
+      } catch {}
+    }
+    await Promise.allSettled(recipients.map((manager) =>
+      sendPushToUser(Number(manager.id), {
+        title,
+        body: message,
+        url: "/#/my-schedule",
+        portal: "c3",
+      }),
+    ));
   }
 
   async function notifyAttendanceManagers(
@@ -5959,6 +6067,155 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Managers: their organization's shared link (minted on first view). Admins can rotate it.
+  /**
+   * Create one LAP/LOP login and queue its welcome email.
+   *
+   * Mirrors POST /api/users for portal accounts rather than calling it, because
+   * that handler reads req/res directly. Kept deliberately small: a temp
+   * password, a single-use magic link, and the same forced password change on
+   * first sign-in.
+   */
+  async function provisionPortalLogin(input: {
+    orgId: number; name: string; email: string;
+    portal: "lap" | "lop"; loanOfficerId: number | null; actor: any;
+  }): Promise<{ id: number; emailQueued: boolean }> {
+    const existing = storage.getUserByEmail(input.email) as any;
+    if (existing) throw new Error("That email already has an account.");
+    const newUser = storage.createUser({
+      name: input.name,
+      email: input.email,
+      role: "assistant",
+      portal: input.portal,
+      loanOfficerId: input.loanOfficerId,
+      // Portal people are not CLRs and must never land in C3 reporting.
+      isClr: false,
+      inDailyAssignments: false,
+      excludeFromStats: true,
+      orgId: input.orgId,
+    } as any);
+
+    const WCL_WORDS = ["Lending", "Capital", "Realty", "Connect", "Bridge", "Funded", "Closed"];
+    const WCL_SPECIALS = ["!", "@", "#", "$"];
+    const tempPassword = `WCL${String(Math.floor(1000 + Math.random() * 9000))}`
+      + `${WCL_SPECIALS[Math.floor(Math.random() * WCL_SPECIALS.length)]}`
+      + `${WCL_WORDS[Math.floor(Math.random() * WCL_WORDS.length)]}`;
+    const welcomeToken = crypto.randomBytes(32).toString("hex");
+    try {
+      storage.setUserPassword(newUser.id, await bcrypt.hash(tempPassword, 10));
+      storage.setMustChangePassword(newUser.id, true);
+      (storage as any).setResetToken(newUser.id, welcomeToken, Date.now() + 7 * 24 * 60 * 60 * 1000);
+    } catch (e) {
+      console.error("[provisioning] could not set the temporary password:", e);
+      throw new Error("The account was created but its password could not be set.");
+    }
+
+    const portalName = input.portal === "lop" ? "LOP" : "LAP";
+    const audience = input.portal === "lop" ? "loan officers" : "loan officer assistants";
+    const url = `https://www.westcapitallending.center/api/auth/welcome-login?token=${welcomeToken}`;
+    let emailQueued = false;
+    try {
+      await sendEmail({
+        to: input.email,
+        subject: `Welcome to ${portalName}, ${input.name}!`,
+        html: buildEmail({
+          subject: `Welcome to ${portalName}!`,
+          preheader: "Your account is ready — sign in to get started.",
+          body: `
+            <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">Hi <strong style="color:#1e293b">${input.name}</strong>,</p>
+            <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+              Welcome to <strong style="color:#1e293b">${portalName}</strong> — West Capital Lending's portal for ${audience}.
+              Your account is ready.
+            </p>
+            <p style="margin:0 0 18px;color:#475569;font-size:14px;line-height:1.7">
+              <a href="${url}" style="display:inline-block;background:#C9A24A;color:#0F182D;font-weight:600;padding:10px 22px;border-radius:8px;text-decoration:none">Log In Instantly</a>
+            </p>
+            <p style="margin:0 0 8px;color:#475569;font-size:14px;line-height:1.7">
+              Or sign in with your email and this temporary password:
+            </p>
+            <p style="margin:0 0 18px;font-family:ui-monospace,Menlo,monospace;font-size:15px;color:#1e293b">${tempPassword}</p>
+            <p style="margin:0;color:#64748b;font-size:12px;line-height:1.6">
+              You'll be asked to choose your own password the first time you sign in.
+            </p>`,
+        }),
+      });
+      emailQueued = true;
+    } catch (e: any) {
+      console.error("[provisioning] welcome email failed:", e?.message ?? e);
+    }
+
+    audit({
+      userId: input.actor?.id ?? 0, userName: input.actor?.name ?? "Unknown",
+      action: "create", entityType: "user", entityId: newUser.id,
+      entityLabel: `${portalName} login for ${input.name}`,
+      details: JSON.stringify({ portal: input.portal, loanOfficerId: input.loanOfficerId, emailQueued }),
+    });
+    return { id: newUser.id, emailQueued };
+  }
+
+  // ── Portal provisioning ──────────────────────────────────────────────────
+  // Who on the check-in roster has a portal login, who is ready to be invited,
+  // and who cannot be because we hold no email address for them.
+  app.get("/api/portal-provisioning", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    try {
+      const rows = storageExtra.listPortalProvisioning(orgId).map((r: any) => ({
+        ...r,
+        portal: r.type === "lo" ? "lop" : "lap",
+        status: r.userId ? "has_login" : r.email ? "ready" : "needs_email",
+      }));
+      res.json({
+        rows,
+        summary: {
+          total: rows.length,
+          hasLogin: rows.filter((r: any) => r.status === "has_login").length,
+          ready: rows.filter((r: any) => r.status === "ready").length,
+          needsEmail: rows.filter((r: any) => r.status === "needs_email").length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Could not load portal provisioning" });
+    }
+  });
+
+  // Creates logins and sends welcome emails. Deliberately takes an explicit list
+  // of subjects — there is no "invite everyone" switch, because this mails real
+  // people outside the company and a mis-click is not retractable.
+  app.post("/api/portal-provisioning/invite", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const parsed = z.object({
+      subjects: z.array(z.object({
+        type: z.enum(["lo", "loa"]),
+        id: z.coerce.number().int().positive(),
+      })).min(1).max(50),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Provide the people to invite." });
+
+    const roster = storageExtra.listPortalProvisioning(orgId) as any[];
+    const results: any[] = [];
+    for (const want of parsed.data.subjects) {
+      const row = roster.find((r) => r.type === want.type && Number(r.id) === want.id);
+      if (!row) { results.push({ ...want, ok: false, reason: "Not on the check-in roster." }); continue; }
+      if (row.userId) { results.push({ ...want, name: row.name, ok: false, reason: "Already has a login." }); continue; }
+      if (!row.email) { results.push({ ...want, name: row.name, ok: false, reason: "No email address on file." }); continue; }
+      try {
+        const created = await provisionPortalLogin({
+          orgId,
+          name: row.name,
+          email: row.email,
+          portal: row.type === "lo" ? "lop" : "lap",
+          loanOfficerId: row.type === "lo" ? Number(row.id) : Number(row.loId ?? 0) || null,
+          actor: storage.getUserById(Number(req.session_user?.userId)) as any,
+        });
+        results.push({ ...want, name: row.name, ok: true, userId: created.id, emailQueued: created.emailQueued });
+      } catch (e: any) {
+        results.push({ ...want, name: row.name, ok: false, reason: e?.message ?? "Could not create the login." });
+      }
+    }
+    res.json({ results, invited: results.filter((r) => r.ok).length });
+  });
+
   app.get("/api/portal-link", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -6859,6 +7116,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const nowIso = new Date().toISOString();
     try {
       const db = storageExtra.getRawSqlite();
+      const priorRow = db.prepare("SELECT days FROM weekly_schedules WHERE org_id=? AND user_id=? AND week_start=?")
+        .get(orgId, userId, SCHED_STANDING_KEY) as any;
+      let previousDays: any = null;
+      try { previousDays = priorRow?.days ? JSON.parse(priorRow.days) : null; } catch { previousDays = null; }
       db.prepare(`
         INSERT INTO weekly_schedules (org_id, user_id, week_start, days, notes, status, reviewed_by, reviewer_note, reviewed_at, approval_token, submitted_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'approved', NULL, '', ?, NULL, ?, ?)
@@ -6876,6 +7137,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityType: "weekly_schedule", entityId: row?.id ?? 0,
         entityLabel: "Weekly schedule saved", details: JSON.stringify({ status: "approved" }),
       });
+      // Schedules set each person's expected check-in start, so a change moves
+      // the line their lateness is judged against. Saving takes effect
+      // immediately, which makes telling the managers the only signal there is.
+      // Best-effort: never fail the save because a notification did not send.
+      notifyScheduleChange(orgId, userId, me?.name ?? "A team member", previousDays, clean)
+        .catch((e) => console.error("[schedule] change notification failed:", e?.message ?? e));
       res.json({ ok: true, status: "approved", schedule: mapSchedule(row, schedNameMap()) });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to save schedule" });

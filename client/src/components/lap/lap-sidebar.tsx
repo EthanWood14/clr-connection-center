@@ -51,8 +51,6 @@ const workflowItems: NavItem[] = [
 
 const personalItems: NavItem[] = [
   { title: "Check-In", href: "/check-ins", icon: UserCheck },
-  { title: "Time Clock", href: "/time-clock", icon: Timer },
-  { title: "Time Off", href: "/time-off", icon: Plane },
   { title: "Weekly Schedule", href: "/my-schedule", icon: CalendarDays },
 ];
 
@@ -180,7 +178,6 @@ export function LapSidebar() {
           <SidebarGroupLabel>{canViewArchive ? "Administration" : "Account"}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {canViewArchive && renderItems([{ title: "Report Archive", href: "/reports-archive", icon: FileArchive }])}
               {renderItems([{ title: "Settings", href: "/settings", icon: Settings }])}
             </SidebarMenu>
           </SidebarGroupContent>

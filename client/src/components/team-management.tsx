@@ -138,7 +138,7 @@ function UserDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       if (res?.emailRequested) {
         if (res.emailSent) {
-          toast({ title: "User created. Welcome email sent." });
+          toast({ title: "User created", description: "The welcome email is queued and goes out shortly." });
         } else {
           toast({
             title: "User created. Welcome email failed",

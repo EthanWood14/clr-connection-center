@@ -19,14 +19,11 @@ import LapInstall from "@/pages/lap-install";
 import LapResources from "@/pages/lap-resources";
 import LapSettings from "@/pages/lap-settings";
 import CheckIns from "@/pages/check-ins";
-import TimeClock from "@/pages/time-clock";
-import TimeOff from "@/pages/time-off";
 import WeeklySchedule from "@/pages/weekly-schedule";
 import Forum from "@/pages/forum";
 import Chat from "@/pages/chat";
 import StateLookup from "@/pages/state-lookup";
 import CallHours from "@/pages/call-hours";
-import ReportsArchive from "@/pages/reports-archive";
 
 // LAP and LOP are the same application with different audiences and data
 // scope — the server narrows rows per portal, so the shell only differs in
@@ -43,8 +40,6 @@ const LAP_TITLES: Record<string, string> = {
   "/results": "Input Results",
   "/input-results": "Input Results",
   "/check-ins": "Check-In",
-  "/time-clock": "Time Clock",
-  "/time-off": "Time Off",
   "/my-schedule": "Weekly Schedule",
   "/forum": "Forum",
   "/chat": "Team Chat",
@@ -53,7 +48,6 @@ const LAP_TITLES: Record<string, string> = {
   "/call-hours": "Call Hours",
   "/install": "Install LAP",
   "/resources": "LO Resources",
-  "/reports-archive": "Report Archive",
   "/settings": "Settings",
 };
 
@@ -128,8 +122,6 @@ function LapRouter() {
       <Route path="/results" component={LapResults} />
       <Route path="/input-results" component={LapResults} />
       <Route path="/check-ins" component={CheckIns} />
-      <Route path="/time-clock" component={TimeClock} />
-      <Route path="/time-off" component={TimeOff} />
       <Route path="/my-schedule" component={WeeklySchedule} />
       <Route path="/forum" component={LapForum} />
       <Route path="/chat" component={LapChat} />
@@ -138,7 +130,6 @@ function LapRouter() {
       <Route path="/call-hours" component={CallHours} />
       <Route path="/install" component={LapInstall} />
       <Route path="/resources" component={LapResources} />
-      <Route path="/reports-archive" component={ReportsArchive} />
       <Route path="/settings" component={LapSettings} />
       <Route component={LapNotFound} />
     </Switch>
