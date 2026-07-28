@@ -22,12 +22,10 @@ import CheckIns from "@/pages/check-ins";
 import TimeClock from "@/pages/time-clock";
 import TimeOff from "@/pages/time-off";
 import WeeklySchedule from "@/pages/weekly-schedule";
-import CompRequests from "@/pages/comp-requests";
 import Forum from "@/pages/forum";
 import Chat from "@/pages/chat";
 import StateLookup from "@/pages/state-lookup";
 import CallHours from "@/pages/call-hours";
-import TeamStats from "@/pages/team-stats";
 import ReportsArchive from "@/pages/reports-archive";
 
 const LAP_TITLES: Record<string, string> = {
@@ -38,8 +36,6 @@ const LAP_TITLES: Record<string, string> = {
   "/time-clock": "Time Clock",
   "/time-off": "Time Off",
   "/my-schedule": "Weekly Schedule",
-  "/comp-requests": "Comp Requests",
-  "/team-stats": "Team Stats",
   "/forum": "Forum",
   "/chat": "Team Chat",
   "/lo-profiles": "LO Profiles",
@@ -124,8 +120,6 @@ function LapRouter() {
       <Route path="/time-clock" component={TimeClock} />
       <Route path="/time-off" component={TimeOff} />
       <Route path="/my-schedule" component={WeeklySchedule} />
-      <Route path="/comp-requests" component={CompRequests} />
-      <Route path="/team-stats" component={TeamStats} />
       <Route path="/forum" component={LapForum} />
       <Route path="/chat" component={LapChat} />
       <Route path="/lo-profiles" component={LapLoProfiles} />

@@ -1,6 +1,5 @@
 import {
   Armchair,
-  BarChart3,
   BookOpenCheck,
   CalendarDays,
   Clock3,
@@ -19,7 +18,6 @@ import {
   Timer,
   UserCheck,
   UsersRound,
-  WalletCards,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
@@ -56,11 +54,9 @@ const personalItems: NavItem[] = [
   { title: "Time Clock", href: "/time-clock", icon: Timer },
   { title: "Time Off", href: "/time-off", icon: Plane },
   { title: "Weekly Schedule", href: "/my-schedule", icon: CalendarDays },
-  { title: "Comp Requests", href: "/comp-requests", icon: WalletCards },
 ];
 
 const teamItems: NavItem[] = [
-  { title: "Team Stats", href: "/team-stats", icon: BarChart3 },
   { title: "Forum", href: "/forum", icon: MessagesSquare },
   { title: "Team Chat", href: "/chat", icon: MessageCircle },
   {

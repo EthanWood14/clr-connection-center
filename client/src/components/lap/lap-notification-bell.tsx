@@ -22,6 +22,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
+// Doubles as the allowlist of notification types LAP surfaces at all (see the
+// filter below) — comp requests and team stats are C3-only, so their alerts
+// stay out of the portal bell rather than deep-linking to a route that is gone.
 const LAP_NOTIFICATION_ROUTES: Record<string, string> = {
   announcement: "/",
   chat: "/chat",
@@ -31,13 +34,10 @@ const LAP_NOTIFICATION_ROUTES: Record<string, string> = {
   attendance_excuse: "/check-ins",
   lap_result: "/results",
   lap_results: "/results",
-  comp: "/comp-requests",
-  comp_request: "/comp-requests",
   time_off: "/time-off",
   timeoff: "/time-off",
   time_clock: "/time-clock",
   timeclock: "/time-clock",
-  goal_hit: "/team-stats",
 };
 
 const notificationIcons: Record<string, typeof Bell> = {

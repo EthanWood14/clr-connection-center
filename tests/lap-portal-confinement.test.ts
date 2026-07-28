@@ -97,3 +97,18 @@ test("a LAP account is provisioned and onboarded into LAP, not C3", () => {
   assert.match(team, /data-testid="select-account-portal"/, "team management needs an account-type control");
   assert.match(team, /apiRequest\("POST", "\/api\/users", \{[\s\S]*?portal,/, "create must send the chosen portal");
 });
+
+test("comp requests and team stats are not reachable from LAP", () => {
+  // C3-only features. Leaving the routes mounted meant a LAP user could open
+  // pages whose APIs the portal guard already refuses — a dead end, and comp
+  // data has no business in an outside assistant's portal.
+  const shell = readFileSync(join(root, "client/src/components/lap/lap-shell.tsx"), "utf8");
+  const sidebar = readFileSync(join(root, "client/src/components/lap/lap-sidebar.tsx"), "utf8");
+  const bell = readFileSync(join(root, "client/src/components/lap/lap-notification-bell.tsx"), "utf8");
+  for (const [label, src] of [["shell", shell], ["sidebar", sidebar], ["bell", bell]] as const) {
+    assert.ok(!src.includes("/comp-requests"), `LAP ${label} must not route to comp requests`);
+    // the LAP-specific /api/lap/team-stats endpoint is unrelated to the C3 page
+    assert.ok(!src.replace(/\/api\/lap\/team-stats/g, "").includes("/team-stats"),
+      `LAP ${label} must not route to the C3 team stats page`);
+  }
+});
