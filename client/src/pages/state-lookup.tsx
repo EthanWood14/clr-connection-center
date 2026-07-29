@@ -10,7 +10,6 @@ import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight, AlertTriangle } 
 import { Link } from "wouter";
 import { copyToClipboard } from "@/lib/utils";
 import { businessTodayClient } from "@/lib/business-day";
-import { useAuth } from "@/lib/auth";
 import { UsStateGeoMap } from "@/components/us-state-geo-map";
 
 // Defensive parse of an LO's licensed_states JSON column (string[] or null).
@@ -122,11 +121,6 @@ export default function StateLookup() {
     [activeLOs]
   );
 
-  const { user } = useAuth();
-  const myRole = (user as any)?.role ?? null;
-  const isAdminOrManager =
-    myRole === "admin" || myRole === "manager" || !!(user as any)?.isManager || !!user?.superAdmin;
-
   // Filter state list by search
   const filteredStates = useMemo(() => {
     const q = stateSearch.toLowerCase();
@@ -196,8 +190,8 @@ export default function StateLookup() {
         </p>
       </div>
 
-      {/* Data-hygiene banner: surface any active LOs that have no licensed
-         states. Admins/managers see a Fix link; CLRs just see a notice. */}
+      {/* Data-hygiene banner: every signed-in user can open the appropriate
+          profile screen and fix missing state permissions. */}
       {!isLoading && unmappedLOs.length > 0 && (
         <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-300" />
@@ -209,13 +203,11 @@ export default function StateLookup() {
               They’re listed below under “Needs state licensing”. Until their states are filled in, they won’t appear when you click a state on the map.
             </p>
           </div>
-          {isAdminOrManager && (
-            <Link href={isLapPortal ? "/lo-profiles" : "/directory"}>
-              <Button variant="outline" size="sm" className="shrink-0">
-                {isLapPortal ? "Review LO Profiles" : "Open Directory"}
-              </Button>
-            </Link>
-          )}
+          <Link href={isLapPortal ? "/lo-profiles" : "/directory"}>
+            <Button variant="outline" size="sm" className="shrink-0">
+              Edit state permissions
+            </Button>
+          </Link>
         </div>
       )}
 

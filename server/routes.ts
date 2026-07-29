@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
+import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
@@ -6633,6 +6634,50 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(maskLoCredentials(lo));
   });
 
+  // State permissions are collaborative operational data. Keep this endpoint
+  // deliberately narrow so every signed-in user can maintain licensing
+  // coverage without gaining access to other LO profile fields.
+  function updateLicensedStates(req: any, res: Response) {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "Invalid Loan Officer id." });
+    }
+    const parsed = normalizeLicensedStates(req.body?.states);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const before = storage.getLoanOfficerById(id) as any;
+    if (!before) return res.status(404).json({ error: "Loan Officer not found." });
+
+    const lo = storage.updateLoanOfficer(id, {
+      licensedStates: JSON.stringify(parsed.states),
+    } as any) as any;
+    if (!lo) return res.status(404).json({ error: "Loan Officer not found." });
+
+    const actor = storage.getUserById(Number(req.session_user?.userId)) as any;
+    let previousStates: string[] = [];
+    try {
+      const value = JSON.parse(before.licensedStates ?? before.licensed_states ?? "[]");
+      if (Array.isArray(value)) previousStates = value.map(String);
+    } catch {}
+    audit({
+      userId: Number(req.session_user?.userId) || 0,
+      userName: actor?.name ?? "Unknown",
+      action: "update_state_permissions",
+      entityType: "loan_officer",
+      entityId: lo.id,
+      entityLabel: lo.fullName ?? lo.full_name ?? `LO #${lo.id}`,
+      details: JSON.stringify({ before: previousStates, after: parsed.states }),
+    });
+    return res.json({
+      id: Number(lo.id),
+      fullName: lo.fullName ?? lo.full_name,
+      licensedStates: parsed.states,
+    });
+  }
+
+  app.patch("/api/loan-officers/:id/licensed-states", requireAuth, updateLicensedStates);
+
   app.post("/api/loan-officers", (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     try {
@@ -12626,6 +12671,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (error) {
       sendLapError(res, error, "Unable to load Loan Officer profiles.");
     }
+  });
+
+  app.patch("/api/lap/loan-officers/:id/licensed-states", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    return updateLicensedStates(req, res);
   });
 
   app.get("/api/lap/results", requireAuth, (req: any, res) => {

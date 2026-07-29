@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LicensedStatesEditor } from "@/components/licensed-states-editor";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { lapRequest } from "@/lib/lap-api";
 
@@ -118,7 +119,7 @@ export default function LapLoProfiles() {
             </div>
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">LO Profiles</h1>
             <p className="mt-2 max-w-2xl text-sm text-primary-foreground/80">
-              A clean, read-only reference for Loan Officer contact details, licensing coverage, and current availability.
+              A clean reference for Loan Officer contact details, licensing coverage, and current availability. State permissions can be maintained by every signed-in user.
             </p>
           </div>
           <div className="flex gap-3">
@@ -232,8 +233,18 @@ export default function LapLoProfiles() {
                 </div>
 
                 <div className="border-t pt-4">
-                  <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    <MapPin className="h-3.5 w-3.5" /> Licensed states
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5" /> Licensed states
+                    </div>
+                    <LicensedStatesEditor
+                      loId={profile.id}
+                      loName={profile.fullName}
+                      states={profile.licensedStates}
+                      endpoint={`/api/lap/loan-officers/${profile.id}/licensed-states`}
+                      queryKeys={["/api/lap/loan-officers"]}
+                      compact
+                    />
                   </div>
                   {profile.licensedStates.length ? (
                     <div className="flex flex-wrap gap-1.5">

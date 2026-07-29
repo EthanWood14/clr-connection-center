@@ -32,6 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { LoCsvImport } from "@/components/lo-csv-import";
 import { LoStatusBadge } from "@/components/lo-status-badge";
+import { LicensedStatesEditor } from "@/components/licensed-states-editor";
 import { copyToClipboard } from "@/lib/utils";
 
 // ── Tier / Status display maps ────────────────────────────────────────────────
@@ -435,19 +436,30 @@ function LOCard({
               )}
             </div>
 
-            {/* State pills */}
-            {states.length > 0 && (
-              <div className="flex gap-1 flex-wrap mt-1.5">
-                {states.slice(0, 10).map((s: string) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
-                    {s}
-                  </span>
-                ))}
-                {states.length > 10 && (
-                  <span className="text-[10px] text-muted-foreground">+{states.length - 10} more</span>
-                )}
+            {/* State permissions are intentionally editable by every signed-in user. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {states.slice(0, 10).map((s: string) => (
+                <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
+                  {s}
+                </span>
+              ))}
+              {states.length > 10 && (
+                <span className="text-[10px] text-muted-foreground">+{states.length - 10} more</span>
+              )}
+              {states.length === 0 && (
+                <span className="text-xs text-amber-600 dark:text-amber-300">No states assigned</span>
+              )}
+              <div className="ml-1">
+                <LicensedStatesEditor
+                  loId={lo.id}
+                  loName={lo.fullName ?? `LO #${lo.id}`}
+                  states={states}
+                  endpoint={`/api/loan-officers/${lo.id}/licensed-states`}
+                  queryKeys={["/api/loan-officers"]}
+                  compact
+                />
               </div>
-            )}
+            </div>
 
             {/* ── Credentials (always visible if they exist) ─────────── */}
             {hasCredentials && (
