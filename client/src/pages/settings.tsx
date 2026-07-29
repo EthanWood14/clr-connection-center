@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, UserPlus, MapPin } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, UserPlus } from "lucide-react";
 import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
@@ -415,8 +415,8 @@ function TransferHelperCard() {
 
 // ── Email Reports Card ────────────────────────────────────────────────────────
 // ── Morning Check-In Card ─────────────────────────────────────────────────────
-// Org config for the CLR morning check-in: on/off, start time + grace, and the
-// office location + radius used to judge whether a check-in was "in area".
+// Org config for the CLR morning check-in: on/off, grace, and the approved
+// public IP addresses that identify office networks.
 function MorningCheckInSettingsCard() {
   const { toast } = useToast();
   const { data: adminCfg, refetch } = useQuery<any>({
@@ -424,20 +424,15 @@ function MorningCheckInSettingsCard() {
     queryFn: () => apiRequest("GET", "/api/checkin/admin"),
   });
   const [grace, setGrace] = useState("5");
-  const [radius, setRadius] = useState("400");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [locating, setLocating] = useState(false);
-  const [locationMode, setLocationMode] = useState<"enforce" | "record" | "off">("enforce");
+  const [allowedIps, setAllowedIps] = useState("");
+  const [networkMode, setNetworkMode] = useState<"enforce" | "record" | "off">("record");
 
   useEffect(() => {
     const c = adminCfg?.config;
     if (!c) return;
     setGrace(String(c.graceMin ?? 5));
-    setRadius(String(c.radiusM ?? 400));
-    setLat(c.lat != null ? String(c.lat) : "");
-    setLng(c.lng != null ? String(c.lng) : "");
-    setLocationMode((c as any).locationMode ?? "enforce");
+    setAllowedIps(Array.isArray(c.allowedIps) ? c.allowedIps.join(", ") : "");
+    setNetworkMode(c.networkMode ?? "record");
   }, [adminCfg]);
 
   const save = useMutation({
@@ -451,22 +446,19 @@ function MorningCheckInSettingsCard() {
   });
 
   const enabled = !!adminCfg?.config?.enabled;
-  function useMyLocation() {
-    if (!navigator.geolocation) return toast({ title: "Geolocation unavailable in this browser", variant: "destructive" });
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { setLocating(false); setLat(pos.coords.latitude.toFixed(6)); setLng(pos.coords.longitude.toFixed(6)); },
-      () => { setLocating(false); toast({ title: "Couldn't get location", variant: "destructive" }); },
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
+  function addCurrentIp() {
+    const current = String(adminCfg?.currentIp ?? "").trim();
+    if (!current) return toast({ title: "C3 could not detect the current IP", variant: "destructive" });
+    const list = allowedIps.split(/[\s,;]+/).map((ip) => ip.trim()).filter(Boolean);
+    if (!list.includes(current)) list.push(current);
+    setAllowedIps(list.join(", "));
   }
   function saveAll() {
+    const ips = allowedIps.split(/[\s,;]+/).map((ip) => ip.trim()).filter(Boolean);
     save.mutate({
       graceMin: parseInt(grace) || 0,
-      radiusM: parseInt(radius) || 400,
-      lat: lat.trim() === "" ? null : parseFloat(lat),
-      lng: lng.trim() === "" ? null : parseFloat(lng),
-      locationMode,
+      allowedIps: ips,
+      networkMode,
     });
   }
 
@@ -474,14 +466,13 @@ function MorningCheckInSettingsCard() {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <MapPin className="w-4 h-4 text-primary" />
+          <ShieldCheck className="w-4 h-4 text-primary" />
           Morning Check-In
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
           CLRs check in each morning. Each person's expected start comes from <strong>their own Weekly Schedule</strong> —
           there's no org-wide start time. C3 records the time (on-time vs their scheduled start, plus the grace below)
-          and whether they're within the office radius. Set the office point while standing at the office
-          with "Use my location".
+          and whether the request came from an approved office IP. The browser never asks for GPS or location access.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -494,47 +485,39 @@ function MorningCheckInSettingsCard() {
           checks in — it's recorded, but it can't be scored on time until they have one.
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</label>
-          <Select value={locationMode} onValueChange={(v) => setLocationMode(v as "enforce" | "record" | "off")}>
-            <SelectTrigger className="h-8 text-sm" data-testid="select-checkin-location-mode"><SelectValue /></SelectTrigger>
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Network verification</label>
+          <Select value={networkMode} onValueChange={(v) => setNetworkMode(v as "enforce" | "record" | "off")}>
+            <SelectTrigger className="h-8 text-sm" data-testid="select-checkin-network-mode"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="enforce">Required — block check-ins outside the radius</SelectItem>
-              <SelectItem value="record">Record only — note where they were, never block</SelectItem>
-              <SelectItem value="off">Off — don't ask for location at all</SelectItem>
+              <SelectItem value="enforce">Required — approved office IPs only</SelectItem>
+              <SelectItem value="record">Record only — show matches, never block</SelectItem>
+              <SelectItem value="off">Off — do not store or compare IPs</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-[11px] text-muted-foreground">
-            {locationMode === "enforce"
-              ? "A check-in is refused without a precise location inside the radius."
-              : locationMode === "record"
-              ? "Everyone can check in. The distance is still saved and shown on the board as In area or Outside, so you can see it without it stopping anyone."
-              : "No location is requested or stored. The board shows no location for these check-ins."}
+            {networkMode === "enforce"
+              ? "Check-ins from any IP not listed below are refused. An empty list records IPs without blocking so the team cannot be locked out accidentally."
+              : networkMode === "record"
+              ? "Everyone can check in. C3 records whether the connection matched an approved office IP."
+              : "C3 does not store or compare an IP address for check-ins."}
           </p>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Grace (min)</label>
             <Input type="number" min={0} max={120} value={grace} onChange={e => setGrace(e.target.value)} className="h-8 text-sm" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Radius (m)</label>
-            <Input type="number" min={25} max={50000} value={radius} onChange={e => setRadius(e.target.value)} className="h-8 text-sm" />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Office point</label>
-            <Button size="sm" variant="outline" className="h-8 w-full gap-1" onClick={useMyLocation} disabled={locating}>
-              <MapPin className="w-3 h-3" /> {locating ? "Locating…" : "Use my location"}
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Latitude</label>
-            <Input value={lat} onChange={e => setLat(e.target.value)} placeholder="33.6595" className="h-8 text-sm" />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Longitude</label>
-            <Input value={lng} onChange={e => setLng(e.target.value)} placeholder="-117.9988" className="h-8 text-sm" />
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Approved office IPs</label>
+            <div className="flex gap-2">
+              <Input value={allowedIps} onChange={e => setAllowedIps(e.target.value)} placeholder="203.0.113.10, 2001:db8::10" className="h-8 text-sm" />
+              <Button type="button" size="sm" variant="outline" className="h-8 shrink-0" onClick={addCurrentIp}>
+                Add current IP
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Current connection: <span className="font-mono text-foreground">{adminCfg?.currentIp ?? "Unavailable"}</span>
+            </p>
           </div>
         </div>
         <Button size="sm" onClick={saveAll} disabled={save.isPending} className="gap-1.5">

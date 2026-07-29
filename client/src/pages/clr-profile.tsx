@@ -251,7 +251,7 @@ export default function ClrProfile() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat icon={Timer} label="Hours worked" value={data.hours.toFixed(1)} sub="from the time clock" />
             <Stat icon={UserCheck} label="Check-ins" value={data.attendance.checkins}
-                  sub={`${data.attendance.lates} late · ${data.attendance.outsideArea} outside area`} />
+                  sub={`${data.attendance.lates} late · ${data.attendance.outsideArea} different IP`} />
             <Stat icon={FileText} label="EOD reports" value={data.eodReports} sub="submitted in period" />
             <Stat icon={Wallet} label="Comp approved" value={money(data.comp.earnedCents)}
                   sub={data.comp.reimbursedCents ? `+ ${money(data.comp.reimbursedCents)} reimbursed` : "earned comp"} />

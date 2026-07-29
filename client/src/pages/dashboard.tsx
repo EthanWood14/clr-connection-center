@@ -13,7 +13,7 @@ import {
   ArrowUpRight, TrendingUp, Users, PhoneCall, Calendar, XCircle,
   RefreshCw, Trophy, MapPin, Search, Copy, Phone, Mail, User,
   ChevronRight, CalendarClock, Clock, CheckCircle2, Pencil, CalendarDays,
-  MessageSquare, Zap, UserPlus,
+  MessageSquare, ShieldCheck, Zap, UserPlus,
   ArrowLeftRight,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -959,10 +959,9 @@ function ScopeSelector({ value, onChange }: { value: ScopeKey; onChange: (s: Sco
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 // ── Morning check-in card ─────────────────────────────────────────────────────
-// Renders only while the org has check-ins enabled. When an office point is
-// configured, the browser location must verify that the person is nearby.
+// Renders only while the org has check-ins enabled. Network verification is
+// handled server-side from the trusted request IP.
 function MorningCheckInCard() {
-  const [locating, setLocating] = useState(false);
   const { toast } = useToast();
   const { data, refetch } = useQuery<any>({ queryKey: ["/api/checkin"] });
   const checkinMut = useMutation({
@@ -980,36 +979,13 @@ function MorningCheckInCard() {
 
   function doCheckin() {
     checkinMut.reset();
-    const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
-    if (!data.officeSet) return submit({});
-    if (!navigator.geolocation) {
-      toast({
-        title: "Location is required",
-        description: "This browser cannot provide your location. Use a device with Location Services enabled.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
-      () => {
-        setLocating(false);
-        toast({
-          title: "Couldn't verify your location",
-          description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
-          variant: "destructive",
-        });
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
-    );
+    checkinMut.mutate({});
   }
 
   if (mine) {
     const t = new Date(mine.checked_in_at ?? mine.checkedInAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     const onTime = (mine.on_time ?? mine.onTime) === 1;
-    const inArea = mine.in_area ?? mine.inArea;
-    const dist = mine.distance_m ?? mine.distanceM;
+    const ipAllowed = mine.ip_allowed ?? mine.ipAllowed;
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
         <span className="flex items-center gap-1.5 font-medium text-emerald-900 dark:text-emerald-200">
@@ -1019,8 +995,8 @@ function MorningCheckInCard() {
           {mine.late_excused ? "Excused" : onTime ? "On time" : "Late"}
         </span>
         <span className="flex items-center gap-1 text-muted-foreground">
-          <MapPin className="w-3.5 h-3.5" />
-          {inArea === 1 ? "In office area" : inArea === 0 ? `Outside area${dist != null ? ` (${dist >= 1000 ? (dist / 1000).toFixed(1) + " km" : dist + " m"} away)` : ""}` : "No location shared"}
+          <ShieldCheck className="w-3.5 h-3.5" />
+          {ipAllowed === 1 ? "Office network verified" : ipAllowed === 0 ? "Different network" : "Network recorded"}
         </span>
       </div>
     );
@@ -1040,13 +1016,13 @@ function MorningCheckInCard() {
             : " No weekly schedule on file, so it won't be scored."}
         </span>
       </div>
-      <Button size="sm" className="gap-1.5" onClick={doCheckin} disabled={locating || checkinMut.isPending} data-testid="button-checkin">
-        <MapPin className="w-3.5 h-3.5" />
-        {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
+      <Button size="sm" className="gap-1.5" onClick={doCheckin} disabled={checkinMut.isPending} data-testid="button-checkin">
+        <ShieldCheck className="w-3.5 h-3.5" />
+        {checkinMut.isPending ? "Checking in…" : "Check in now"}
       </Button>
-      {data.officeSet && (
+      {data.networkMode !== "off" && (
         <span className="basis-full text-[11px] text-amber-800 dark:text-amber-300">
-          Precise location is required within {data.radiusM} m of the office.
+          C3 checks the connection IP automatically. No location permission is requested.
         </span>
       )}
     </div>

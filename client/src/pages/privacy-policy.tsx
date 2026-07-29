@@ -3,7 +3,7 @@ export default function PrivacyPolicy() {
     <div className="max-w-3xl mx-auto px-6 py-10 space-y-8 text-sm leading-relaxed">
       <div>
         <h1 className="text-2xl font-bold mb-1">Privacy Policy</h1>
-        <p className="text-muted-foreground text-xs">Effective Date: January 1, 2026 · Last Updated: April 29, 2026</p>
+        <p className="text-muted-foreground text-xs">Effective Date: January 1, 2026 · Last Updated: July 29, 2026</p>
       </div>
 
       <p>
@@ -27,7 +27,7 @@ export default function PrivacyPolicy() {
           <li><span className="text-foreground font-medium">Account Information:</span> Name, email address, and role assigned by an administrator.</li>
           <li><span className="text-foreground font-medium">Activity Data:</span> Daily call logs, lead outcome records, end-of-day reports, assignment history, and audit trail entries generated in the course of normal use.</li>
           <li><span className="text-foreground font-medium">LO & Lead Data:</span> Loan officer profiles, credentials, licensing information, and contact details entered or imported by authorized users.</li>
-          <li><span className="text-foreground font-medium">Session Data:</span> Login timestamps and IP addresses used for security and rate-limiting purposes.</li>
+          <li><span className="text-foreground font-medium">Session &amp; Check-In Data:</span> Login timestamps and server-observed IP addresses used for security, rate limiting, and office-network check-in verification. C3 does not request browser GPS location for check-ins.</li>
           <li><span className="text-foreground font-medium">Push Notification Tokens:</span> Browser push subscription endpoints stored for in-app notifications (goal-hit alerts, NMLS reminders). These are stored server-side and are never shared.</li>
         </ul>
       </section>

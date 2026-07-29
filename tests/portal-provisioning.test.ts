@@ -211,35 +211,28 @@ test("both portals are reachable from C3", () => {
   assert.match(sidebar, /Open Loan Officer Portal/);
 });
 
-test("check-in location has three modes and defaults to the existing behaviour", () => {
-  assert.match(storage, /ALTER TABLE email_settings ADD COLUMN checkin_location_mode TEXT NOT NULL DEFAULT 'enforce'/,
-    "existing installs must keep enforcing until someone changes it");
-  const cfg = routes.slice(routes.indexOf("function checkinConfig"), routes.indexOf("function haversineM"));
-  assert.match(cfg, /\["enforce", "record", "off"\]/, "an unrecognised value must fall back, not be trusted");
+test("check-ins use an approved IP allowlist with a safe record-only default", () => {
+  assert.match(storage, /ADD COLUMN checkin_ip_mode TEXT NOT NULL DEFAULT 'record'/);
+  assert.match(storage, /ADD COLUMN checkin_allowed_ips TEXT NOT NULL DEFAULT '\[\]'/);
+  const cfg = routes.slice(routes.indexOf("function checkinConfig"), routes.indexOf("function requestIp"));
+  assert.match(cfg, /\["enforce", "record", "off"\]/);
+  assert.match(cfg, /normalizeAllowedIps/);
 });
 
-test("record-only captures the location but never blocks", () => {
-  const fn = routes.slice(routes.indexOf("function validateCheckinLocation"), routes.indexOf("function checkinExpectedStart"));
-  // Off: nothing is asked for or stored.
-  assert.match(fn, /if \(!officeSet \|\| mode === "off"\) \{[\s\S]{0,200}?ok: true/,
-    "off must pass through with no location");
-  // Record: distance and in/out are still computed so C3 can show them.
-  const rec = fn.slice(fn.indexOf('if (mode === "record")'));
-  assert.match(rec, /ok: true/, "record must never refuse a check-in");
-  assert.match(rec, /haversineM/, "…but must still work out the distance");
-  assert.match(rec, /inArea: distanceM == null \? null : \(distanceM <= cfg\.radiusM \? 1 : 0\)/,
-    "in/out must be recorded so the board can show it");
-  // The refusals stay reachable only for enforce.
-  assert.ok(fn.indexOf('mode === "record"') < fn.indexOf("LOCATION_REQUIRED"),
-    "record must short-circuit before any rejection path");
+test("the server derives check-in IPs and never trusts the request body", () => {
+  const fn = routes.slice(routes.indexOf("function requestIp"), routes.indexOf("function wallClockMinutes"));
+  assert.match(fn, /req\.ip/);
+  assert.match(fn, /req\.socket\?\.remoteAddress/);
+  assert.doesNotMatch(fn, /req\.body/);
+  assert.match(fn, /evaluateCheckinIp/);
 });
 
-test("both check-in clients stop prompting when location is off", () => {
-  for (const f of ["client/src/pages/check-ins.tsx", "client/src/pages/portal.tsx"]) {
+test("check-in clients no longer request browser geolocation", () => {
+  for (const f of ["client/src/pages/check-ins.tsx", "client/src/pages/dashboard.tsx", "client/src/pages/portal.tsx"]) {
     const src = read(f);
-    assert.match(src, /mode === "off"\) return submit\(\{\}\)/, `${f} must not request a position when off`);
-    assert.match(src, /recordOnly/, `${f} must let record-only through on failure`);
-    assert.match(src, /if \(recordOnly\) return submit\(\{\}\)/,
-      `${f} must submit anyway when the browser refuses and location is record-only`);
+    assert.doesNotMatch(src, /navigator\.geolocation/, `${f} must not request GPS`);
+    assert.doesNotMatch(src, /accuracyM/, `${f} must not submit browser accuracy`);
+    assert.match(src, /no location permission is requested/i,
+      `${f} should explain that IP verification is automatic`);
   }
 });

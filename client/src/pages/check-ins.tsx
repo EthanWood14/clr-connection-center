@@ -15,7 +15,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
-  UserCheck, ChevronLeft, ChevronRight, MapPin, CheckCircle2, XCircle, MinusCircle,
+  UserCheck, ChevronLeft, ChevronRight, CheckCircle2, XCircle, MinusCircle,
   Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw, MessageSquareText,
   Send, ShieldCheck, RefreshCw,
 } from "lucide-react";
@@ -28,8 +28,7 @@ type Mine = {
   id: number;
   checked_in_at: string;
   on_time: number | null;
-  in_area: number | null;
-  distance_m: number | null;
+  ip_allowed: number | null;
   minutes_late: number | null;
   expected_start: string | null;
   late_excused?: number | null;
@@ -60,10 +59,8 @@ type MineResp = {
   startSource: "schedule" | "none";
   working: boolean;
   graceMin: number;
-  officeSet: boolean;
-  radiusM: number;
-  /** enforce = must be in the radius · record = noted only · off = not requested */
-  locationMode?: "enforce" | "record" | "off";
+  networkConfigured: boolean;
+  networkMode?: "enforce" | "record" | "off";
   date: string;
   mine: Mine;
   lateStats: LateStats;
@@ -93,8 +90,7 @@ type ExtRow = {
     on_time: number | null;
     minutes_late: number | null;
     expected_start: string | null;
-    in_area: number | null;
-    distance_m: number | null;
+    ip_allowed: number | null;
     late_excused?: number | null;
   } | null;
   expectedStart: string | null; scheduledOff: boolean; noSchedule: boolean;
@@ -109,7 +105,14 @@ type AdminResp = {
   los?: ExtRow[]; loas?: ExtRow[];
   date: string;
   timeZone?: string;
-  config: { enabled: boolean; start: string; graceMin: number; radiusM: number; lat: number | null; lng: number | null };
+  config: {
+    enabled: boolean;
+    start: string;
+    graceMin: number;
+    networkMode: "enforce" | "record" | "off";
+    networkConfigured: boolean;
+    allowedIps?: string[];
+  };
   clrs: CheckinRow[];
   policy: { allowance: number; windowDays: number; windowStart: string };
 };
@@ -136,10 +139,6 @@ function shiftDate(d: string, days: number): string {
   const dt = new Date(d + "T12:00:00Z");
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
-}
-function fmtDist(m: number | null) {
-  if (m == null) return "";
-  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
 }
 function fmtDay(d: string) {
   return new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -441,7 +440,6 @@ export default function CheckIns() {
     isError: meError,
     refetch: refetchMe,
   } = useQuery<MineResp>({ queryKey: ["/api/checkin"] });
-  const [locating, setLocating] = useState(false);
   const [lateRequestReason, setLateRequestReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
@@ -470,37 +468,7 @@ export default function CheckIns() {
 
   function doCheckIn() {
     checkinMut.reset();
-    const submit = (body: any) => { setLocating(false); checkinMut.mutate(body); };
-    const mode = me?.locationMode ?? "enforce";
-    // No office point, or location switched off entirely, means there is nothing
-    // to capture — never prompt.
-    if (!me?.officeSet || mode === "off") return submit({});
-    const recordOnly = mode === "record";
-    if (!navigator.geolocation) {
-      // Record-only: a browser without geolocation should not stop anyone
-      // clocking in; the row simply carries no position.
-      if (recordOnly) return submit({});
-      toast({
-        title: "Location is required",
-        description: "This browser cannot provide your location. Use a device with Location Services enabled.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => submit({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy }),
-      () => {
-        setLocating(false);
-        if (recordOnly) return submit({});
-        toast({
-          title: "Couldn't verify your location",
-          description: "Enable precise location access for this site, make sure Location Services are on, and try again.",
-          variant: "destructive",
-        });
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
-    );
+    checkinMut.mutate({});
   }
 
   const stats = me?.lateStats;
@@ -623,7 +591,7 @@ export default function CheckIns() {
   const totalCheckedIn = checkedIn + los.filter((r) => r.checkin).length + loas.filter((r) => r.checkin).length;
   const onTimeCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 1).length;
   const lateTodayCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 0).length;
-  const inAreaCount = clrs.filter(c => c.checkin && c.checkin.in_area === 1).length;
+  const officeNetworkCount = clrs.filter(c => c.checkin && c.checkin.ip_allowed === 1).length;
   const teamRows = [...clrs, ...los, ...loas];
   const peopleWithLates = teamRows.filter((r) => r.lateCount > 0).length;
   const peopleAtLimit = teamRows.filter((r) => r.lateAtLimit && !r.lateOverLimit).length;
@@ -644,8 +612,8 @@ export default function CheckIns() {
           <div>
             <h1 className="text-2xl font-bold text-white">Check-In</h1>
             <p className="text-sm text-white/60">
-              Check in when you start. Your start time comes from your weekly schedule, and you're
-              verified as being at the office.
+              Check in when you start. Your start time comes from your weekly schedule, and C3
+              verifies the network used for the check-in.
             </p>
           </div>
         </div>
@@ -653,7 +621,7 @@ export default function CheckIns() {
 
       {me && !me.enabled && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 text-[13px] text-amber-900 dark:text-amber-200">
-          Check-ins are currently disabled — an admin can enable them and set the office location in{" "}
+          Check-ins are currently disabled — an admin can enable them and set the approved office IPs in{" "}
           {isLapPortal ? "LAP Settings → Workspace" : "Settings → Morning Check-In"}.
         </div>
       )}
@@ -698,17 +666,17 @@ export default function CheckIns() {
                     <UserCheck className="w-3 h-3" /> Recorded · not scored
                   </Badge>
                 )}
-                {mine.in_area === 1 ? (
+                {mine.ip_allowed === 1 ? (
                   <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
-                    <MapPin className="w-3 h-3" /> At the office
+                    <ShieldCheck className="w-3 h-3" /> Office network
                   </Badge>
-                ) : mine.in_area === 0 ? (
+                ) : mine.ip_allowed === 0 ? (
                   <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                    <MapPin className="w-3 h-3" /> Outside{mine.distance_m != null ? ` · ${fmtDist(mine.distance_m)}` : ""}
+                    <AlertTriangle className="w-3 h-3" /> Different network
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                    <MinusCircle className="w-3 h-3" /> No location
+                    <MinusCircle className="w-3 h-3" /> Network recorded
                   </Badge>
                 )}
               </div>
@@ -825,13 +793,13 @@ export default function CheckIns() {
                   it's recorded, but it won't be scored on time until you submit your <strong className="text-foreground">Weekly Schedule</strong>.
                 </span>
               </div>
-              <Button onClick={doCheckIn} disabled={!me.enabled || locating || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
+              <Button onClick={doCheckIn} disabled={!me.enabled || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
                 <UserCheck className="w-4 h-4" />
-                {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
+                {checkinMut.isPending ? "Checking in…" : "Check in now"}
               </Button>
-              {me.officeSet && (
+              {me.networkMode !== "off" && (
                 <p className="text-[11px] text-muted-foreground">
-                  Precise location is required. You must be within {me.radiusM} m of the office.
+                  C3 checks the connection IP automatically. No location permission is requested.
                 </p>
               )}
             </div>
@@ -847,13 +815,13 @@ export default function CheckIns() {
                 {me?.graceMin ? ` (+${me.graceMin} min grace)` : ""}
                 {" — from your weekly schedule."}
               </p>
-              <Button onClick={doCheckIn} disabled={!me?.enabled || locating || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
+              <Button onClick={doCheckIn} disabled={!me?.enabled || checkinMut.isPending} className="gap-2" data-testid="btn-check-in">
                 <UserCheck className="w-4 h-4" />
-                {locating ? "Getting location…" : checkinMut.isPending ? "Checking in…" : "Check in now"}
+                {checkinMut.isPending ? "Checking in…" : "Check in now"}
               </Button>
-              {me?.officeSet && (
+              {me?.networkMode !== "off" && (
                 <p className="text-[11px] text-muted-foreground">
-                  Precise location is required. You must be within {me.radiusM} m of the office.
+                  C3 checks the connection IP automatically. No location permission is requested.
                 </p>
               )}
             </div>
@@ -1218,9 +1186,9 @@ export default function CheckIns() {
               </span>
               <span className="rounded-full border bg-background px-2 py-1">LOs {los.filter((r) => r.checkin).length}/{los.length}</span>
               <span className="rounded-full border bg-background px-2 py-1">LOAs {loas.filter((r) => r.checkin).length}/{loas.length}</span>
-              {inAreaCount > 0 && (
+              {officeNetworkCount > 0 && (
                 <span className="rounded-full border bg-background px-2 py-1">
-                  {inAreaCount} {isLapPortal ? `LO Assistant${inAreaCount === 1 ? "" : "s"}` : `CLR${inAreaCount === 1 ? "" : "s"}`} in office
+                  {officeNetworkCount} {isLapPortal ? `LO Assistant${officeNetworkCount === 1 ? "" : "s"}` : `CLR${officeNetworkCount === 1 ? "" : "s"}`} on office IP
                 </span>
               )}
             </div>}
@@ -1321,17 +1289,17 @@ export default function CheckIns() {
                               onUndo={() => excuseMut.mutateAsync({ id: ci.id, excused: false, reason: "" })}
                             />
                           )}
-                          {ci.in_area === 1 ? (
+                          {ci.ip_allowed === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
-                              <MapPin className="w-3 h-3" /> In area
+                              <ShieldCheck className="w-3 h-3" /> Office IP
                             </Badge>
-                          ) : ci.in_area === 0 ? (
+                          ) : ci.ip_allowed === 0 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                              <MapPin className="w-3 h-3" /> Outside{ci.distance_m != null ? ` · ${fmtDist(ci.distance_m)}` : ""}
+                              <AlertTriangle className="w-3 h-3" /> Different IP
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                              <MinusCircle className="w-3 h-3" /> No location
+                              <MinusCircle className="w-3 h-3" /> IP recorded
                             </Badge>
                           )}
                           </div>
@@ -1436,17 +1404,17 @@ export default function CheckIns() {
                                 <UserCheck className="w-3 h-3" /> In · not scored
                               </Badge>
                             )}
-                            {r.checkin.in_area === 1 ? (
+                            {r.checkin.ip_allowed === 1 ? (
                               <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
-                                <MapPin className="w-3 h-3" /> In area
+                                <ShieldCheck className="w-3 h-3" /> Office IP
                               </Badge>
-                            ) : r.checkin.in_area === 0 ? (
+                            ) : r.checkin.ip_allowed === 0 ? (
                               <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
-                                <MapPin className="w-3 h-3" /> Outside{r.checkin.distance_m != null ? ` · ${fmtDist(r.checkin.distance_m)}` : ""}
+                                <AlertTriangle className="w-3 h-3" /> Different IP
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                                <MinusCircle className="w-3 h-3" /> Legacy · no location
+                                <MinusCircle className="w-3 h-3" /> IP not verified
                               </Badge>
                             )}
                             </div>

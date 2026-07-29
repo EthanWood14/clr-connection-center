@@ -25,6 +25,12 @@ import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
+import {
+  evaluateCheckinIp,
+  normalizeAllowedIps,
+  normalizeIpAddress,
+  type CheckinIpMode,
+} from "./checkin-ip";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -5939,8 +5945,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         onTime: r.on_time,
         minutesLate: r.minutes_late ?? null,
         expectedStart: r.expected_start ?? null,
-        inArea: r.in_area ?? null,
-        distanceM: r.distance_m ?? null,
+        ipAllowed: r.ip_allowed ?? null,
         excused: !!r.late_excused,
         request: request ? {
           id: request.id,
@@ -5952,9 +5957,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return {
       enabled: cfg.enabled,
       graceMin: cfg.graceMin,
-      officeSet: cfg.lat != null && cfg.lng != null,
-      locationMode: cfg.locationMode,
-      radiusM: cfg.radiusM,
+      networkConfigured: cfg.allowedIps.length > 0,
+      networkMode: cfg.networkMode,
       timeZone: tz,
       timeZoneLabel: "Pacific Time",
       date,
@@ -5964,8 +5968,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         onTime: mine.on_time,
         minutesLate: mine.minutes_late,
         expectedStart: mine.expected_start,
-        inArea: mine.in_area ?? null,
-        distanceM: mine.distance_m ?? null,
+        ipAllowed: mine.ip_allowed ?? null,
         excused: !!mine.late_excused,
       } : null,
       expectedStart: exp.start, working: exp.working,
@@ -5985,9 +5988,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const roster = (storageExtra.listPortalRoster(orgId) as any[]).map((s) => ({ ...s, checkedIn: done.has(`${s.type}:${s.id}`) }));
     res.json({
       date, timeZone, timeZoneLabel: "Pacific Time", enabled: cfg.enabled,
-      officeSet: cfg.lat != null && cfg.lng != null,
-      locationMode: cfg.locationMode,
-      radiusM: cfg.radiusM,
+      networkConfigured: cfg.allowedIps.length > 0,
+      networkMode: cfg.networkMode,
       roster,
     });
   });
@@ -6009,12 +6011,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (existing) return res.json(portalPayload(orgId, type, id));
     const cfg = checkinConfig();
     if (!cfg.enabled) return res.status(400).json({ error: "Daily check-ins are currently paused." });
-    const location = validateCheckinLocation(req.body, cfg);
-    if (!location.ok) {
-      return res.status(location.status).json({
-        error: location.error,
-        code: location.code,
-        ...(location.details ?? {}),
+    const network = validateCheckinIp(req, cfg);
+    if (!network.ok) {
+      return res.status(network.status).json({
+        error: network.error,
+        code: network.code,
       });
     }
     {
@@ -6032,11 +6033,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         expectedStart: exp.working ? exp.start : null,
         // No schedule on file ⇒ recorded but not scored, so on_time stays null.
         onTime, minutesLate: onTime === 0 ? minutesLate : 0,
-        lat: location.lat,
-        lng: location.lng,
-        accuracyM: location.accuracyM,
-        distanceM: location.distanceM,
-        inArea: location.inArea,
+        lat: null,
+        lng: null,
+        accuracyM: null,
+        distanceM: null,
+        inArea: null,
+        ipAddress: network.ipAddress,
+        ipAllowed: network.ipAllowed,
       });
     }
     res.json(portalPayload(orgId, type, id));
@@ -11478,113 +11481,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Morning check-in ────────────────────────────────────────────────────────
   // One check-in per CLR per business day. Records the time, whether it was on
   // time (configured start + grace, evaluated in the user's timezone), and
-  // whether the browser-reported location is inside the office radius.
+  // whether the server-observed IP matches an approved office network.
   function checkinConfig() {
     const s = storageExtra.getEmailSettings() as any;
+    const networkMode = (["enforce", "record", "off"] as const).includes(s?.checkin_ip_mode)
+      ? (s.checkin_ip_mode as CheckinIpMode)
+      : "record";
     return {
       enabled: !!s?.checkin_enabled,
-      lat: s?.checkin_lat != null ? Number(s.checkin_lat) : null,
-      lng: s?.checkin_lng != null ? Number(s.checkin_lng) : null,
-      radiusM: Number(s?.checkin_radius_m ?? 400) || 400,
       start: typeof s?.checkin_start === "string" && /^\d{2}:\d{2}$/.test(s.checkin_start) ? s.checkin_start : "08:00",
       graceMin: Number(s?.checkin_grace_min ?? 5) || 0,
-      locationMode: (["enforce", "record", "off"] as const).includes(s?.checkin_location_mode)
-        ? (s.checkin_location_mode as "enforce" | "record" | "off")
-        : "enforce",
+      networkMode,
+      allowedIps: normalizeAllowedIps(s?.checkin_allowed_ips),
     };
   }
-  function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
-    const R = 6371000;
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLng = toRad(lng2 - lng1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-    return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+
+  function requestIp(req: Request): string | null {
+    // Express trusts exactly one Railway proxy hop in server/index.ts, so req.ip
+    // is the authoritative client address. Never accept an IP from the body.
+    return normalizeIpAddress(req.ip ?? req.socket?.remoteAddress);
   }
-  type CheckinLocation = {
-    lat: number | null;
-    lng: number | null;
-    accuracyM: number | null;
-    distanceM: number | null;
-    inArea: number | null;
-  };
-  type CheckinLocationResult =
-    | ({ ok: true } & CheckinLocation)
-    | { ok: false; status: number; error: string; code: string; details?: Record<string, number> };
 
-  // One authoritative location gate for signed-in CLR check-ins and the public
-  // LO/LOA portal. If no office point is configured, location stays optional.
-  // Once an office is configured, a current, sufficiently accurate browser
-  // reading must fall inside the configured radius.
-  function validateCheckinLocation(body: any, cfg: ReturnType<typeof checkinConfig>): CheckinLocationResult {
-    const parseNumber = (value: any): number | null => {
-      if (value === null || value === undefined || value === "") return null;
-      const n = Number(value);
-      return Number.isFinite(n) ? n : null;
-    };
-    const rawLat = parseNumber(body?.lat);
-    const rawLng = parseNumber(body?.lng);
-    const coordsValid = rawLat != null && rawLng != null
-      && rawLat >= -90 && rawLat <= 90 && rawLng >= -180 && rawLng <= 180;
-    const lat = coordsValid ? rawLat : null;
-    const lng = coordsValid ? rawLng : null;
-    const rawAccuracy = parseNumber(body?.accuracyM);
-    const accuracyM = rawAccuracy != null && rawAccuracy > 0 ? Math.round(rawAccuracy) : null;
-    const officeSet = Number.isFinite(cfg.lat) && Number.isFinite(cfg.lng);
-    const mode = cfg.locationMode ?? "enforce";
-
-    if (!officeSet || mode === "off") {
-      return { ok: true, lat, lng, accuracyM, distanceM: null, inArea: null };
-    }
-    // Record-only: capture whatever the browser gave us — including nothing —
-    // and let the check-in through. Distance and in/out still land on the row so
-    // C3 can show where someone was, which is the point of the mode.
-    if (mode === "record") {
-      const distanceM = lat != null && lng != null
-        ? haversineM(lat, lng, cfg.lat as number, cfg.lng as number)
-        : null;
-      return {
-        ok: true, lat, lng, accuracyM, distanceM,
-        inArea: distanceM == null ? null : (distanceM <= cfg.radiusM ? 1 : 0),
-      };
-    }
-    if (lat == null || lng == null) {
-      return {
-        ok: false,
-        status: 422,
-        code: "LOCATION_REQUIRED",
-        error: "A precise location is required to check in. Enable Location Services and browser location access, then try again.",
-      };
-    }
-    if (accuracyM == null) {
-      return {
-        ok: false,
-        status: 422,
-        code: "LOCATION_ACCURACY_REQUIRED",
-        error: "Your browser did not provide a reliable location. Enable precise location access and try again.",
-      };
-    }
-    const maxAccuracyM = Math.min(250, Math.max(25, Math.round(cfg.radiusM)));
-    if (accuracyM > maxAccuracyM) {
-      return {
-        ok: false,
-        status: 422,
-        code: "LOCATION_INACCURATE",
-        error: `Your location is only accurate to about ${accuracyM} m. Move to a spot with a stronger signal and try again (${maxAccuracyM} m or better required).`,
-        details: { accuracyM, maxAccuracyM },
-      };
-    }
-    const distanceM = haversineM(lat, lng, cfg.lat as number, cfg.lng as number);
-    if (distanceM > cfg.radiusM) {
-      return {
-        ok: false,
-        status: 422,
-        code: "OUTSIDE_CHECKIN_AREA",
-        error: `You appear to be ${distanceM} m from the office check-in point. Move within the configured ${cfg.radiusM} m radius and try again.`,
-        details: { distanceM, radiusM: cfg.radiusM },
-      };
-    }
-    return { ok: true, lat, lng, accuracyM, distanceM, inArea: 1 };
+  function validateCheckinIp(req: Request, cfg: ReturnType<typeof checkinConfig>) {
+    return evaluateCheckinIp(cfg.networkMode, cfg.allowedIps, requestIp(req));
   }
   // Current wall-clock minutes-since-midnight in the user's timezone.
   function wallClockMinutes(tz: string): number {
@@ -11822,9 +11741,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       startSource: exp.source,     // "schedule" | "none"
       working: exp.working,        // false on a day off / with no schedule (never late)
       graceMin: cfg.graceMin,
-      officeSet: cfg.lat != null && cfg.lng != null,
-      locationMode: cfg.locationMode,
-      radiusM: cfg.radiusM,
+      networkConfigured: cfg.allowedIps.length > 0,
+      networkMode: cfg.networkMode,
       date,
       mine,
       lateStats: checkinLateStats(userId, orgId, date),
@@ -11842,15 +11760,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const existing = storageExtra.getCheckinForUserDate(userId, date);
     if (existing) return res.json({ checkin: existing, already: true });
 
-    const location = validateCheckinLocation(req.body, cfg);
-    if (!location.ok) {
-      return res.status(location.status).json({
-        error: location.error,
-        code: location.code,
-        ...(location.details ?? {}),
+    const network = validateCheckinIp(req, cfg);
+    if (!network.ok) {
+      return res.status(network.status).json({
+        error: network.error,
+        code: network.code,
       });
     }
-    const { lat, lng, accuracyM, distanceM, inArea } = location;
     const me = me0;
     const tz = tz0;
     // Lateness is measured against THIS person's scheduled start for today (the
@@ -11872,14 +11788,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     const checkin = storageExtra.saveCheckin({
       orgId, userId, date, checkedInAt: new Date().toISOString(),
-      lat, lng, accuracyM, distanceM, inArea, onTime,
+      lat: null, lng: null, accuracyM: null, distanceM: null, inArea: null,
+      ipAddress: network.ipAddress, ipAllowed: network.ipAllowed, onTime,
       minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null,
       expectedStart: judged ? exp.start : null,
     });
     audit({
       userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
       entityLabel: `${me?.name ?? "User"} morning check-in`,
-      details: JSON.stringify({ date, onTime: onTime == null ? null : !!onTime, minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", inArea: inArea == null ? null : !!inArea, distanceM }),
+      details: JSON.stringify({ date, onTime: onTime == null ? null : !!onTime, minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", ipAllowed: network.ipAllowed == null ? null : !!network.ipAllowed }),
     });
 
     // Policy: 3 lates per rolling 90 days. When this check-in is the one that
@@ -12189,8 +12106,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             on_time: ci.on_time,
             minutes_late: ci.minutes_late,
             expected_start: ci.expected_start,
-            in_area: ci.in_area ?? null,
-            distance_m: ci.distance_m ?? null,
+            ip_allowed: ci.ip_allowed ?? null,
             late_excused: !!ci.late_excused,
           } : null,
           expectedStart: exp.working ? exp.start : null,
@@ -12223,8 +12139,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           on_time: ci.on_time,
           minutes_late: ci.minutes_late,
           expected_start: ci.expected_start,
-          in_area: ci.in_area ?? null,
-          distance_m: ci.distance_m ?? null,
+          ip_allowed: ci.ip_allowed ?? null,
           late_excused: !!ci.late_excused,
         } : null,
         expectedStart: exp.working ? exp.start : null,
@@ -12238,8 +12153,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
       };
     });
+    const actor = storage.getUserById(Number(req.session_user?.userId)) as any;
+    const canManageNetwork = actor?.role === "admin" || !!actor?.superAdmin;
     res.json({
-      date, timeZone: BUSINESS_DAY_DEFAULT_TZ, config: cfg, clrs,
+      date,
+      timeZone: BUSINESS_DAY_DEFAULT_TZ,
+      currentIp: canManageNetwork ? requestIp(req) : undefined,
+      config: {
+        enabled: cfg.enabled,
+        graceMin: cfg.graceMin,
+        networkMode: cfg.networkMode,
+        networkConfigured: cfg.allowedIps.length > 0,
+        allowedIps: canManageNetwork ? cfg.allowedIps : undefined,
+      },
+      clrs,
       los: external.filter((e) => e.type === "lo"),
       loas: external.filter((e) => e.type === "loa"),
       policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
@@ -12303,31 +12230,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true, checkin: updated });
   });
 
-  // Admin: check-in configuration (office point, radius, start time, on/off).
+  // Admin: check-in configuration (approved network IPs, grace, and on/off).
   app.post("/api/checkin/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
     const b = req.body ?? {};
     const patch: any = {};
     if (b.enabled !== undefined) patch.checkinEnabled = b.enabled ? 1 : 0;
-    if (b.lat !== undefined) {
-      const lat = Number(b.lat);
-      if (b.lat === null || b.lat === "") patch.checkinLat = null;
-      else if (Number.isFinite(lat) && lat >= -90 && lat <= 90) patch.checkinLat = lat;
-    }
-    if (b.lng !== undefined) {
-      const lng = Number(b.lng);
-      if (b.lng === null || b.lng === "") patch.checkinLng = null;
-      else if (Number.isFinite(lng) && lng >= -180 && lng <= 180) patch.checkinLng = lng;
-    }
-    if (b.radiusM !== undefined) { const r = Math.round(Number(b.radiusM)); if (Number.isFinite(r) && r >= 25 && r <= 50000) patch.checkinRadiusM = r; }
     // No org-wide start time: each CLR's expected start comes from their weekly
     // schedule. (checkin_start is left in the DB but no longer read.)
     if (b.graceMin !== undefined) { const g = Math.round(Number(b.graceMin)); if (Number.isFinite(g) && g >= 0 && g <= 120) patch.checkinGraceMin = g; }
-    if (b.locationMode !== undefined && ["enforce", "record", "off"].includes(String(b.locationMode))) {
-      patch.checkinLocationMode = String(b.locationMode);
+    if (b.networkMode !== undefined && ["enforce", "record", "off"].includes(String(b.networkMode))) {
+      patch.checkinIpMode = String(b.networkMode);
+    }
+    if (b.allowedIps !== undefined) {
+      if (!Array.isArray(b.allowedIps)) return res.status(400).json({ error: "Approved IPs must be a list." });
+      const normalized = normalizeAllowedIps(b.allowedIps);
+      if (normalized.length !== b.allowedIps.filter((ip: unknown) => String(ip ?? "").trim()).length) {
+        return res.status(400).json({ error: "Enter only valid, unique IPv4 or IPv6 addresses." });
+      }
+      patch.checkinAllowedIps = JSON.stringify(normalized);
     }
     if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
-    res.json(checkinConfig());
+    res.json({ ...checkinConfig(), currentIp: requestIp(req) });
   });
 
   // Per-user pay rates. Managers can view; only comp admins can change. Changing
@@ -15071,7 +14995,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const ci = db.prepare(
         `SELECT COUNT(*) AS n,
                 SUM(CASE WHEN on_time = 0 AND late_excused = 0 AND expected_start IS NOT NULL THEN 1 ELSE 0 END) AS lates,
-                SUM(CASE WHEN in_area = 0 THEN 1 ELSE 0 END) AS outside
+                SUM(CASE WHEN ip_allowed = 0 THEN 1 ELSE 0 END) AS outside
            FROM morning_checkins WHERE user_id = ? AND org_id = ? AND date >= ? AND date <= ?`
       ).get(userId, orgId, startDate, endDate) as any;
       // Standing is judged in the CLR's OWN timezone, not the viewing manager's.

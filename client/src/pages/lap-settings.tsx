@@ -9,7 +9,6 @@ import {
   FileCheck2,
   FolderLock,
   Lock,
-  MapPin,
   MessageCircle,
   MessagesSquare,
   RefreshCw,
@@ -78,10 +77,8 @@ export default function LapSettings() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [checkinGrace, setCheckinGrace] = useState("5");
-  const [checkinRadius, setCheckinRadius] = useState("400");
-  const [checkinLat, setCheckinLat] = useState("");
-  const [checkinLng, setCheckinLng] = useState("");
-  const [locatingOffice, setLocatingOffice] = useState(false);
+  const [checkinAllowedIps, setCheckinAllowedIps] = useState("");
+  const [checkinNetworkMode, setCheckinNetworkMode] = useState<"enforce" | "record" | "off">("record");
 
   const checkinConfigQuery = useQuery<any>({
     queryKey: ["/api/checkin/admin", "lap-settings"],
@@ -99,9 +96,8 @@ export default function LapSettings() {
     const config = checkinConfigQuery.data?.config;
     if (!config) return;
     setCheckinGrace(String(config.graceMin ?? 5));
-    setCheckinRadius(String(config.radiusM ?? 400));
-    setCheckinLat(config.lat == null ? "" : String(config.lat));
-    setCheckinLng(config.lng == null ? "" : String(config.lng));
+    setCheckinAllowedIps(Array.isArray(config.allowedIps) ? config.allowedIps.join(", ") : "");
+    setCheckinNetworkMode(config.networkMode ?? "record");
   }, [checkinConfigQuery.data]);
 
   const browserTimezone = useMemo(() => {
@@ -185,56 +181,27 @@ export default function LapSettings() {
     },
   });
 
-  function useOfficeLocation() {
-    if (!navigator.geolocation) {
-      toast({ title: "Location is unavailable in this browser", variant: "destructive" });
+  function addCurrentCheckinIp() {
+    const current = String(checkinConfigQuery.data?.currentIp ?? "").trim();
+    if (!current) {
+      toast({ title: "LAP could not detect the current IP", variant: "destructive" });
       return;
     }
-    setLocatingOffice(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocatingOffice(false);
-        setCheckinLat(position.coords.latitude.toFixed(6));
-        setCheckinLng(position.coords.longitude.toFixed(6));
-      },
-      () => {
-        setLocatingOffice(false);
-        toast({ title: "LAP could not read this device's location", variant: "destructive" });
-      },
-      { enableHighAccuracy: true, timeout: 8_000 },
-    );
+    const ips = checkinAllowedIps.split(/[\s,;]+/).map((ip) => ip.trim()).filter(Boolean);
+    if (!ips.includes(current)) ips.push(current);
+    setCheckinAllowedIps(ips.join(", "));
   }
 
   function saveOfficeSettings() {
     const graceMin = Number.parseInt(checkinGrace, 10);
-    const radiusM = Number.parseInt(checkinRadius, 10);
-    const lat = checkinLat.trim() ? Number.parseFloat(checkinLat) : null;
-    const lng = checkinLng.trim() ? Number.parseFloat(checkinLng) : null;
     if (!Number.isFinite(graceMin) || graceMin < 0 || graceMin > 120) {
       toast({ title: "Grace period must be between 0 and 120 minutes", variant: "destructive" });
       return;
     }
-    if (!Number.isFinite(radiusM) || radiusM < 25 || radiusM > 50_000) {
-      toast({ title: "Office radius must be between 25 and 50,000 meters", variant: "destructive" });
-      return;
-    }
-    if (lat !== null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) {
-      toast({ title: "Enter a valid latitude between -90 and 90", variant: "destructive" });
-      return;
-    }
-    if (lng !== null && (!Number.isFinite(lng) || lng < -180 || lng > 180)) {
-      toast({ title: "Enter a valid longitude between -180 and 180", variant: "destructive" });
-      return;
-    }
-    if ((lat === null) !== (lng === null)) {
-      toast({ title: "Enter both latitude and longitude, or leave both blank", variant: "destructive" });
-      return;
-    }
     saveCheckinConfig.mutate({
       graceMin,
-      radiusM,
-      lat,
-      lng,
+      allowedIps: checkinAllowedIps.split(/[\s,;]+/).map((ip) => ip.trim()).filter(Boolean),
+      networkMode: checkinNetworkMode,
     });
   }
 
@@ -387,10 +354,10 @@ export default function LapSettings() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <MapPin className="h-4 w-4 text-primary" /> Check-In configuration
+                  <ShieldCheck className="h-4 w-4 text-primary" /> Check-In configuration
                 </CardTitle>
                 <CardDescription>
-                  Set the office location, allowed radius, and grace period used by the shared LAP Check-In tool.
+                  Set approved office IPs and the grace period used by the shared LAP Check-In tool.
                   Expected start times still come from each person&apos;s Weekly Schedule.
                 </CardDescription>
               </CardHeader>
@@ -421,7 +388,7 @@ export default function LapSettings() {
                       />
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
                         <Label htmlFor="lap-checkin-grace">Grace period (minutes)</Label>
                         <Input
@@ -434,48 +401,32 @@ export default function LapSettings() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="lap-checkin-radius">Office radius (meters)</Label>
-                        <Input
-                          id="lap-checkin-radius"
-                          type="number"
-                          min={25}
-                          max={50_000}
-                          value={checkinRadius}
-                          onChange={(event) => setCheckinRadius(event.target.value)}
-                        />
+                        <Label>Network verification</Label>
+                        <Select value={checkinNetworkMode} onValueChange={(value) => setCheckinNetworkMode(value as "enforce" | "record" | "off")}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="enforce">Required — approved IPs only</SelectItem>
+                            <SelectItem value="record">Record only — never block</SelectItem>
+                            <SelectItem value="off">Off — do not store IPs</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
-                      <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
-                        <Label>Office point</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full"
-                          onClick={useOfficeLocation}
-                          disabled={locatingOffice}
-                        >
-                          {locatingOffice ? <RefreshCw className="animate-spin" /> : <MapPin />}
-                          {locatingOffice ? "Locating…" : "Use my location"}
-                        </Button>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="lap-checkin-lat">Latitude</Label>
-                        <Input
-                          id="lap-checkin-lat"
-                          inputMode="decimal"
-                          value={checkinLat}
-                          onChange={(event) => setCheckinLat(event.target.value)}
-                          placeholder="33.6595"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="lap-checkin-lng">Longitude</Label>
-                        <Input
-                          id="lap-checkin-lng"
-                          inputMode="decimal"
-                          value={checkinLng}
-                          onChange={(event) => setCheckinLng(event.target.value)}
-                          placeholder="-117.9988"
-                        />
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label htmlFor="lap-checkin-ips">Approved office IPs</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="lap-checkin-ips"
+                            value={checkinAllowedIps}
+                            onChange={(event) => setCheckinAllowedIps(event.target.value)}
+                            placeholder="203.0.113.10, 2001:db8::10"
+                          />
+                          <Button type="button" variant="outline" className="shrink-0" onClick={addCurrentCheckinIp}>
+                            Add current IP
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Current connection: <span className="font-mono text-foreground">{checkinConfigQuery.data?.currentIp ?? "Unavailable"}</span>
+                        </p>
                       </div>
                     </div>
 

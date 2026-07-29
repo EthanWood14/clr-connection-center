@@ -206,6 +206,8 @@ try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN lng REAL`); } catch 
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN accuracy_m INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN distance_m INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN in_area INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN ip_address TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN ip_allowed INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN late_excused INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_by INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_at TEXT`); } catch {}
@@ -2349,6 +2351,8 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excused_by INTEGER`); } catch {}
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excused_at TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excuse_reason TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN ip_address TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN ip_allowed INTEGER`); } catch {}
   // Check-in config lives with the other org settings on email_settings.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
@@ -2356,12 +2360,18 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_radius_m INTEGER NOT NULL DEFAULT 400`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_start TEXT NOT NULL DEFAULT '08:00'`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_grace_min INTEGER NOT NULL DEFAULT 5`); } catch {}
-  // How location is used at check-in:
+  // Legacy browser-location settings are retained only so existing databases
+  // remain backward compatible. New check-ins use the IP settings below.
+  // How location was used at check-in:
   //   enforce — must be inside the radius, otherwise the check-in is refused
   //   record  — captured and shown in C3, but never blocks anyone
   //   off     — not requested at all
   // Defaults to 'enforce' so existing installs keep the behaviour they have.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_location_mode TEXT NOT NULL DEFAULT 'enforce'`); } catch {}
+  // IP verification replaces browser GPS. Record-only is the safe default until
+  // an admin saves at least one office network IP.
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_ip_mode TEXT NOT NULL DEFAULT 'record'`); } catch {}
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_allowed_ips TEXT NOT NULL DEFAULT '[]'`); } catch {}
 
   // Rolling-interval scheduling: checks fire every interval_days from the last
   // round (next_run_at), instead of on fixed odd-month calendar dates.
@@ -5150,19 +5160,22 @@ export function saveExternalCheckin(r: {
   accuracyM: number | null;
   distanceM: number | null;
   inArea: number | null;
+  ipAddress?: string | null;
+  ipAllowed?: number | null;
 }): any {
   const tx = sqlite.transaction(() => {
     const now = new Date().toISOString();
     sqlite.prepare(`INSERT INTO external_checkins (
         org_id, subject_type, subject_id, date, checked_in_at, expected_start,
-        on_time, minutes_late, lat, lng, accuracy_m, distance_m, in_area, created_at
+        on_time, minutes_late, lat, lng, accuracy_m, distance_m, in_area,
+        ip_address, ip_allowed, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET org_id = excluded.org_id`)
       .run(
         r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart,
         r.onTime, r.minutesLate, r.lat, r.lng, r.accuracyM, r.distanceM,
-        r.inArea, now,
+        r.inArea, r.ipAddress ?? null, r.ipAllowed ?? null, now,
       );
     // A real arrival supersedes an earlier admin-entered absence exception.
     // Keep the historical request, but cancel it atomically with the check-in so
@@ -5451,15 +5464,22 @@ export function saveCheckin(data: {
   lat: number | null; lng: number | null; accuracyM: number | null;
   distanceM: number | null; inArea: number | null; onTime: number | null;
   minutesLate?: number | null; expectedStart?: string | null;
+  ipAddress?: string | null; ipAllowed?: number | null;
 }): any {
   // First check-in of the day wins — re-submits don't overwrite the original time.
   const tx = sqlite.transaction(() => {
     const now = new Date().toISOString();
     sqlite.prepare(`
-      INSERT INTO morning_checkins (org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m, in_area, on_time, minutes_late, expected_start)
-      VALUES (@orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM, @inArea, @onTime, @minutesLate, @expectedStart)
+      INSERT INTO morning_checkins (
+        org_id, user_id, date, checked_in_at, lat, lng, accuracy_m, distance_m,
+        in_area, ip_address, ip_allowed, on_time, minutes_late, expected_start
+      )
+      VALUES (
+        @orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM,
+        @inArea, @ipAddress, @ipAllowed, @onTime, @minutesLate, @expectedStart
+      )
       ON CONFLICT(user_id, date) DO NOTHING
-    `).run({ minutesLate: null, expectedStart: null, ...data });
+    `).run({ minutesLate: null, expectedStart: null, ipAddress: null, ipAllowed: null, ...data });
     sqlite.prepare(`UPDATE attendance_excuse_requests
       SET status='cancelled', reviewed_at=?, reviewer_note=?, updated_at=?
       WHERE org_id=? AND subject_type='user' AND subject_id=?
