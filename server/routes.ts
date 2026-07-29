@@ -24,6 +24,7 @@ import { businessTodayInTz, businessTodayForRequest, addIsoDays, requiredEodWeek
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
+import { resolveEmailTransferCompRateCents } from "./comp-rate";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -723,17 +724,15 @@ function eodActivityEsc(s: string): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Preliminary comp estimate for the EOM report. Flat per-transfer rate decided
-// by each CLR's total transfers for the window: <100 = $5, 100–199 = $10,
-// 200+ = $15 — applied to ALL their transfers. Estimate only, not final pay.
-function compRateForTransfers(t: number): number {
-  return t >= 200 ? 15 : t >= 100 ? 10 : 5;
-}
+// Preliminary comp estimate for the EOM report. A saved per-user flat rate
+// takes precedence; otherwise the monthly volume tiers apply to all transfers.
+// Estimate only, not final pay.
 function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projected?: boolean } = {}): string {
   try {
     const sqlite = storageExtra.getRawSqlite();
     const rows = sqlite.prepare(`
-      SELECT lo.assistant_id AS uid, COUNT(*) AS transfers, u.name AS name
+      SELECT lo.assistant_id AS uid, COUNT(*) AS transfers, u.name AS name,
+             u.transfer_comp_cents AS transferCompCents
       FROM lead_outcomes lo
       LEFT JOIN users u ON u.id = lo.assistant_id
       WHERE lo.outcome_type = 'transfer' AND lo.date >= ? AND lo.date <= ?
@@ -753,7 +752,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
       const pbody = rows.map((r: any) => {
         const mtd = Number(r.transfers) || 0;
         const proj = projectCount(mtd);
-        const rate = compRateForTransfers(proj);
+        const rate = resolveEmailTransferCompRateCents(proj, r.name, r.transferCompCents) / 100;
         const comp = proj * rate;
         totMtd += mtd; totProj += proj; totComp += comp;
         const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
@@ -768,7 +767,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
       return `
       <div style="margin:24px 0">
         <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Projected Bonus Costs (month-end estimate)</h2>
-        <p style="font-size:12px;color:#64748b;margin:0 0 10px">Each CLR's transfers projected to month-end at their current pace (day ${daysElapsed} of ${daysInMonth}), then priced by tier: &lt;100 = $5, 100–199 = $10, 200+ = $15 per transfer. <strong>Estimate only — not final pay.</strong></p>
+        <p style="font-size:12px;color:#64748b;margin:0 0 10px">Each CLR's transfers projected to month-end at their current pace (day ${daysElapsed} of ${daysInMonth}), then priced by tier: &lt;100 = $5, 100–199 = $10, 200+ = $15 per transfer. Saved flat rates override these tiers. <strong>Estimate only — not final pay.</strong></p>
         <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
           <thead><tr style="background:#f8fafc">
             <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">CLR</th>
@@ -792,7 +791,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
     let totalTransfers = 0, totalComp = 0;
     const body = rows.map((r: any) => {
       const t = Number(r.transfers) || 0;
-      const rate = compRateForTransfers(t);
+      const rate = resolveEmailTransferCompRateCents(t, r.name, r.transferCompCents) / 100;
       const comp = t * rate;
       totalTransfers += t; totalComp += comp;
       const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
@@ -806,7 +805,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
     return `
     <div style="margin:24px 0">
       <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Preliminary Comp Summary</h2>
-      <p style="font-size:12px;color:#64748b;margin:0 0 10px">Estimate from current transfer entries (${startDate} → ${endDate}). Flat per-transfer rate by monthly tier: &lt;100 = $5, 100–199 = $10, 200+ = $15. <strong>Not final pay.</strong></p>
+      <p style="font-size:12px;color:#64748b;margin:0 0 10px">Estimate from current transfer entries (${startDate} → ${endDate}). Per-transfer rate by monthly tier: &lt;100 = $5, 100–199 = $10, 200+ = $15; saved flat rates override these tiers. <strong>Not final pay.</strong></p>
       <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
         <thead><tr style="background:#f8fafc">
           <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">CLR</th>
