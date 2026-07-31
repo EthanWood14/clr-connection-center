@@ -447,11 +447,22 @@ function MorningCheckInSettingsCard() {
   });
 
   const enabled = !!adminCfg?.config?.enabled;
-  function addCurrentIp() {
+  // An ISP delegates a stable IPv6 prefix but the host half rotates under
+  // privacy extensions, so adding the full address stops matching within a day.
+  // Offer the /64 instead — that is the part that identifies the office.
+  const currentIpSuggestion = (() => {
     const current = String(adminCfg?.currentIp ?? "").trim();
-    if (!current) return toast({ title: "C3 could not detect the current IP", variant: "destructive" });
+    if (!current) return null;
+    if (!current.includes(":")) return { entry: current, isPrefix: false };
+    const groups = current.split(":");
+    // Compressed forms are left alone rather than guessed at.
+    if (current.includes("::") || groups.length < 4) return { entry: current, isPrefix: false };
+    return { entry: `${groups.slice(0, 4).join(":")}::/64`, isPrefix: true };
+  })();
+  function addCurrentIp() {
+    if (!currentIpSuggestion) return toast({ title: "C3 could not detect the current IP", variant: "destructive" });
     const list = allowedIps.split(/[\s,;]+/).map((ip) => ip.trim()).filter(Boolean);
-    if (!list.includes(current)) list.push(current);
+    if (!list.includes(currentIpSuggestion.entry)) list.push(currentIpSuggestion.entry);
     setAllowedIps(list.join(", "));
   }
   function saveAll() {
@@ -511,13 +522,23 @@ function MorningCheckInSettingsCard() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Approved office IPs</label>
             <div className="flex gap-2">
-              <Input value={allowedIps} onChange={e => setAllowedIps(e.target.value)} placeholder="203.0.113.10, 2001:db8::10" className="h-8 text-sm" />
+              <Input value={allowedIps} onChange={e => setAllowedIps(e.target.value)} placeholder="203.0.113.0/24, 2600:1700:1251:1980::/64" className="h-8 text-sm" />
               <Button type="button" size="sm" variant="outline" className="h-8 shrink-0" onClick={addCurrentIp}>
-                Add current IP
+                {currentIpSuggestion?.isPrefix ? "Add this network" : "Add current IP"}
               </Button>
             </div>
             <p className="text-[11px] text-muted-foreground">
               Current connection: <span className="font-mono text-foreground">{adminCfg?.currentIp ?? "Unavailable"}</span>
+            </p>
+            {currentIpSuggestion?.isPrefix && (
+              <p className="text-[11px] text-muted-foreground">
+                Adds <span className="font-mono text-foreground">{currentIpSuggestion.entry}</span> — the network prefix.
+                A full IPv6 address rotates every day or so and would stop matching; the prefix is the stable part.
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Ranges are allowed: <span className="font-mono">203.0.113.0/24</span> or <span className="font-mono">2600:1700:1251:1980::/64</span>.
+              Leave empty to record IPs without enforcing.
             </p>
           </div>
         </div>
