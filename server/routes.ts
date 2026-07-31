@@ -6011,6 +6011,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (existing) return res.json(portalPayload(orgId, type, id));
     const cfg = checkinConfig();
     if (!cfg.enabled) return res.status(400).json({ error: "Daily check-ins are currently paused." });
+    // A schedule has to exist before the first check-in. Without one there is no
+    // start time to judge against, so the check-in records but can never be
+    // scored — which is how people ended up with weeks of unscoreable entries.
+    // Checked before the network test so the clearer problem is reported first.
+    if (externalExpectedStart(orgId, type, id, date).source === "none") {
+      return res.status(422).json({
+        code: "SCHEDULE_REQUIRED",
+        error: "Set your weekly schedule before checking in — it decides what time you're due.",
+      });
+    }
     const network = validateCheckinIp(req, cfg);
     if (!network.ok) {
       return res.status(network.status).json({
@@ -11497,9 +11507,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   function requestIp(req: Request): string | null {
-    // Express trusts exactly one Railway proxy hop in server/index.ts, so req.ip
-    // is the authoritative client address. Never accept an IP from the body.
-    return normalizeIpAddress(req.ip ?? req.socket?.remoteAddress);
+    // Take the LEFTMOST X-Forwarded-For entry — the original client — the same
+    // way login rate-limiting has always done it.
+    //
+    // `req.ip` with `trust proxy = 1` counts one hop from the RIGHT, which is
+    // only the client when there is exactly one proxy. In production there is
+    // more than one, and the two approaches provably disagree: check-ins
+    // recorded 84.17.44.225-229 (a datacentre range, rotating per request and
+    // never matching the office) while login attempts on the same server saw
+    // ordinary client addresses. Every check-in was landing on ip_allowed = 0.
+    //
+    // Leftmost XFF is client-spoofable, which req.ip is not. That trade is
+    // deliberate: an unspoofable value that is always wrong verifies nothing,
+    // and this is a presence check rather than an authentication boundary.
+    const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim();
+    return normalizeIpAddress(forwarded) ?? normalizeIpAddress(req.ip ?? req.socket?.remoteAddress);
   }
 
   function validateCheckinIp(req: Request, cfg: ReturnType<typeof checkinConfig>) {

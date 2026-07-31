@@ -236,3 +236,31 @@ test("check-in clients no longer request browser geolocation", () => {
       `${f} should explain that IP verification is automatic`);
   }
 });
+
+test("a schedule must exist before the first portal check-in", () => {
+  // Without a schedule there is no start time to judge against, so the check-in
+  // records but can never be scored — which is how people accumulated weeks of
+  // unscoreable entries. Ask once, up front.
+  const route = routes.slice(
+    routes.indexOf(`app.post("/api/portal/:code/checkin"`),
+    routes.indexOf(`app.put("/api/portal/:code/schedule"`),
+  );
+  assert.match(route, /externalExpectedStart\(orgId, type, id, date\)\.source === "none"/,
+    "the gate must key off there being no schedule at all");
+  assert.match(route, /code: "SCHEDULE_REQUIRED"/);
+  assert.match(route, /res\.status\(422\)/);
+  // Order matters: refuse before spending the user's time on a location prompt.
+  assert.ok(route.indexOf("SCHEDULE_REQUIRED") < route.indexOf("validateCheckinLocation"),
+    "check the schedule before asking for a position");
+  // Being scheduled off today is NOT the same as having no schedule — those
+  // people may still record a check-in.
+  assert.ok(!/\.working === false/.test(route), "a day off must not block checking in");
+});
+
+test("the portal explains the requirement instead of failing on press", () => {
+  const portal = read("client/src/pages/portal.tsx");
+  assert.match(portal, /disabled=\{!me\.enabled \|\| !me\.schedule/,
+    "the button must be disabled when no schedule is on file");
+  assert.match(portal, /Save your schedule to check in/, "and say why");
+  assert.match(portal, /Set your schedule first/);
+});

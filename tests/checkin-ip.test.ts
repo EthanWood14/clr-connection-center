@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   evaluateCheckinIp,
   normalizeAllowedIps,
@@ -49,4 +52,22 @@ test("an empty allowlist records IPs without locking everyone out", () => {
     ipAddress: "198.51.100.4",
     ipAllowed: null,
   });
+});
+
+test("the observed IP is the client, not an intermediate proxy", () => {
+  // req.ip with trust proxy = 1 counts one hop from the RIGHT, which is only the
+  // client when exactly one proxy sits in front. In production more than one
+  // does: check-ins recorded a rotating datacentre range and every one landed on
+  // ip_allowed = 0, while login rate-limiting on the same server — which reads
+  // the leftmost X-Forwarded-For — saw ordinary client addresses.
+  const routes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server/routes.ts"), "utf8");
+  const fn = routes.slice(routes.indexOf("function requestIp(req: Request)"), routes.indexOf("function validateCheckinIp"));
+  assert.match(fn, /x-forwarded-for/, "must read the forwarded chain");
+  assert.match(fn, /\.split\(","\)\[0\]/, "and take the leftmost entry — the original client");
+  // req.ip stays as the fallback for direct connections with no proxy header.
+  assert.match(fn, /\?\?\s*normalizeIpAddress\(req\.ip/);
+  // Assert on the expression, not the prose above it.
+  const ret = fn.slice(fn.indexOf("const forwarded"));
+  assert.ok(ret.indexOf("forwarded") < ret.indexOf("req.ip"),
+    "the forwarded client must win over req.ip, not the other way round");
 });

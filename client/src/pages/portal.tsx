@@ -669,19 +669,27 @@ export default function Portal() {
                         </>
                       ) : (
                         <>
-                          <p className="text-lg font-semibold">No schedule on file</p>
-                          <p className="text-sm text-muted-foreground mt-1">You can check in now. It will be recorded without an on-time or late score.</p>
+                          <p className="text-lg font-semibold">Set your schedule first</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Your schedule decides what time you're due, so it has to be on file before your first check-in.
+                            Fill it in below and save — it only takes a moment.
+                          </p>
                         </>
                       )}
                     </div>
                     <Button
                       className="w-full gap-2 h-12 text-base"
-                      disabled={!me.enabled || checkIn.isPending}
+                      // No schedule means the server will refuse anyway — better to
+                      // show why up front than to let them press it and fail.
+                      disabled={!me.enabled || !me.schedule || checkIn.isPending}
                       onClick={beginCheckIn}
                       data-testid="portal-check-in"
                     >
                       <UserCheck className="w-5 h-5" />
-                      {checkIn.isPending ? "Checking in…" : me.working ? "Check in for today" : "Check in anyway"}
+                      {!me.schedule
+                        ? "Save your schedule to check in"
+                        : checkIn.isPending ? "Checking in…"
+                        : me.working ? "Check in for today" : "Check in anyway"}
                     </Button>
                     {me.networkMode !== "off" && (
                       <p className="text-[11px] text-muted-foreground flex items-center gap-1">
