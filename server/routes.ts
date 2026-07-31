@@ -12287,6 +12287,54 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true, checkin: updated });
   });
 
+  // Managers can apply the same direct late-excuse workflow to LO and LOA
+  // portal check-ins. The actual check-in time remains intact for history.
+  app.post("/api/checkin/external/:type/:id/excuse", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const uid = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const type = req.params.type === "lo" || req.params.type === "loa" ? req.params.type : null;
+    if (!type) return res.status(400).json({ error: "Invalid check-in type." });
+    const id = parseInt(req.params.id, 10);
+    const row = storageExtra.getExternalCheckinById(id) as any;
+    if (!row || Number(row.org_id) !== orgId || row.subject_type !== type) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    if (Number(row.on_time) !== 0 || !row.expected_start) {
+      return res.status(400).json({ error: "That check-in wasn't a scored late." });
+    }
+    const excused = req.body?.excused === undefined ? true : !!req.body.excused;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length > 500) {
+      return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    }
+    const { checkin: updated } = storageExtra.setAdminLateExcuse({
+      orgId,
+      subjectType: type,
+      subjectId: Number(row.subject_id),
+      checkinId: id,
+      attendanceDate: String(row.date),
+      excused,
+      adminUserId: uid,
+      reason,
+    });
+    const me = storage.getUserById(uid) as any;
+    const subject = type === "lo"
+      ? storage.getLoanOfficerById(Number(row.subject_id)) as any
+      : storageExtra.getLoanOfficerAssistant(Number(row.subject_id)) as any;
+    const subjectName = subject?.name ?? subject?.fullName ?? (type === "lo" ? "LO" : "LOA");
+    audit({
+      userId: uid,
+      userName: me?.name ?? "Unknown",
+      action: "update",
+      entityType: "external_checkin",
+      entityId: id,
+      entityLabel: `${subjectName} late on ${row.date} ${excused ? "excused" : "re-applied"}`,
+      details: JSON.stringify({ subjectType: type, subjectId: row.subject_id, date: row.date, excused, reason: reason || null }),
+    });
+    res.json({ ok: true, checkin: updated });
+  });
+
   // Admin: check-in configuration (approved network IPs, grace, and on/off).
   app.post("/api/checkin/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;

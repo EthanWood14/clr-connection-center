@@ -191,7 +191,7 @@ function ManualLateExcuseAction({
   onExcuse,
   onUndo,
 }: {
-  userId: number;
+  userId: number | string;
   currentlyExcused: boolean;
   pending: boolean;
   onExcuse: (reason: string) => Promise<unknown>;
@@ -491,8 +491,14 @@ export default function CheckIns() {
   // Managers can reverse a late (and undo the reversal). The row keeps its real
   // times; excusing only stops it counting toward the 90-day allowance.
   const excuseMut = useMutation({
-    mutationFn: (v: { id: number; excused: boolean; reason: string }) =>
-      apiRequest("POST", `/api/checkin/${v.id}/excuse`, { excused: v.excused, reason: v.reason }),
+    mutationFn: (v: { id: number; excused: boolean; reason: string; subjectType?: "lo" | "loa" }) =>
+      apiRequest(
+        "POST",
+        v.subjectType
+          ? `/api/checkin/external/${v.subjectType}/${v.id}/excuse`
+          : `/api/checkin/${v.id}/excuse`,
+        { excused: v.excused, reason: v.reason },
+      ),
     onSuccess: (_d, v) => {
       queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
       queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
@@ -1403,6 +1409,25 @@ export default function CheckIns() {
                               <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
                                 <UserCheck className="w-3 h-3" /> In · not scored
                               </Badge>
+                            )}
+                            {isManager && r.checkin.on_time === 0 && r.checkin.id && (
+                              <ManualLateExcuseAction
+                                userId={`${r.type}-${r.id}`}
+                                currentlyExcused={!!r.checkin.late_excused}
+                                pending={excuseMut.isPending}
+                                onExcuse={(reason) => excuseMut.mutateAsync({
+                                  id: r.checkin!.id!,
+                                  excused: true,
+                                  reason,
+                                  subjectType: r.type,
+                                })}
+                                onUndo={() => excuseMut.mutateAsync({
+                                  id: r.checkin!.id!,
+                                  excused: false,
+                                  reason: "",
+                                  subjectType: r.type,
+                                })}
+                              />
                             )}
                             {r.checkin.ip_allowed === 1 ? (
                               <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">

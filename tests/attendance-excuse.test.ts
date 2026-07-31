@@ -197,6 +197,29 @@ test("attendance excuses stay consistent across CLR, LO, and LOA workflows", () 
         .get(`${subject.type}:${subject.id}`),
       undefined,
     );
+    const reappliedExternal = storage.setAdminLateExcuse({
+      orgId: 1,
+      subjectType: subject.type,
+      subjectId: subject.id,
+      attendanceDate: subject.date,
+      checkinId: Number(checkin.id),
+      excused: false,
+      adminUserId: adminId,
+    });
+    assert.equal(reappliedExternal.checkin.late_excused, 0);
+    assert.equal(reappliedExternal.request?.status, "cancelled");
+    const directlyExcusedExternal = storage.setAdminLateExcuse({
+      orgId: 1,
+      subjectType: subject.type,
+      subjectId: subject.id,
+      attendanceDate: subject.date,
+      checkinId: Number(checkin.id),
+      excused: true,
+      adminUserId: adminId,
+      reason: "Manager excused from the check-in roster.",
+    });
+    assert.equal(directlyExcusedExternal.checkin.late_excused, 1);
+    assert.equal(directlyExcusedExternal.request?.status, "approved");
   }
 
   const clrAbsenceDate = "2026-07-21";

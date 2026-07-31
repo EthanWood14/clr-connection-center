@@ -5663,6 +5663,19 @@ export interface SetAdminUserLateExcuseInput {
   lateWindowEnd?: string;
 }
 
+export interface SetAdminLateExcuseInput {
+  orgId: number;
+  subjectType: AttendanceExcuseSubjectType;
+  subjectId: number;
+  checkinId: number;
+  attendanceDate: string;
+  excused: boolean;
+  adminUserId: number;
+  reason?: string | null;
+  lateWindowStart?: string;
+  lateWindowEnd?: string;
+}
+
 export interface CreateAdminAbsenceExcuseInput {
   orgId: number;
   subjectType: AttendanceExcuseSubjectType;
@@ -6298,11 +6311,12 @@ export function resolvePendingAttendanceExcuseRequest(
   return tx.immediate();
 }
 
-export function setAdminUserLateExcuse(
-  input: SetAdminUserLateExcuseInput,
+export function setAdminLateExcuse(
+  input: SetAdminLateExcuseInput,
 ): { checkin: any; request: AttendanceExcuseRequest | null } {
   const orgId = attendancePositiveId(input.orgId, "Organization id");
-  const userId = attendancePositiveId(input.userId, "User id");
+  const subjectType = attendanceSubjectType(input.subjectType);
+  const subjectId = attendancePositiveId(input.subjectId, "Subject id");
   const checkinId = attendancePositiveId(input.checkinId, "Check-in id");
   const attendanceDate = attendanceLocalDate(input.attendanceDate);
   const adminUserId = attendancePositiveId(input.adminUserId, "Reviewing user id");
@@ -6310,19 +6324,19 @@ export function setAdminUserLateExcuse(
   const lateWindow = normalizedLateWindow(input.lateWindowStart, input.lateWindowEnd);
 
   const tx = sqlite.transaction(() => {
-    assertAttendanceSubjectInOrg(orgId, "user", userId);
+    assertAttendanceSubjectInOrg(orgId, subjectType, subjectId);
     assertAttendanceReviewerInOrg(orgId, adminUserId);
     const checkin = assertScoredLateCheckin(getScopedAttendanceCheckin(
       orgId,
-      "user",
-      userId,
+      subjectType,
+      subjectId,
       attendanceDate,
       checkinId,
     ));
     const existingRequest = getAttendanceRequestForSubjectDate(
       orgId,
-      "user",
-      userId,
+      subjectType,
+      subjectId,
       attendanceDate,
       "late",
     );
@@ -6330,25 +6344,28 @@ export function setAdminUserLateExcuse(
 
     if (input.excused) {
       const excuseReason = reviewerNote || existingRequest?.reason || "";
+      const table = subjectType === "user" ? "morning_checkins" : "external_checkins";
+      const subjectWhere = subjectType === "user" ? "user_id = ?" : "subject_type = ? AND subject_id = ?";
+      const subjectParams = subjectType === "user" ? [subjectId] : [subjectType, subjectId];
       sqlite.prepare(`
-        UPDATE morning_checkins
+        UPDATE ${table}
         SET late_excused = 1, excused_by = ?, excused_at = ?, excuse_reason = ?
-        WHERE id = ? AND org_id = ? AND user_id = ? AND date = ?
+        WHERE id = ? AND org_id = ? AND ${subjectWhere} AND date = ?
       `).run(
         adminUserId,
         now,
-        excuseReason.slice(0, 300),
+        excuseReason.slice(0, subjectType === "user" ? 300 : 500),
         checkinId,
         orgId,
-        userId,
+        ...subjectParams,
         attendanceDate,
       );
-      if (lateWindow.start && lateWindow.end) {
+      if (subjectType === "user" && lateWindow.start && lateWindow.end) {
         sqlite.prepare(`
           UPDATE morning_checkins
           SET late_alert_sent = 0
           WHERE org_id = ? AND user_id = ? AND date >= ? AND date <= ?
-        `).run(orgId, userId, lateWindow.start, lateWindow.end);
+        `).run(orgId, subjectId, lateWindow.start, lateWindow.end);
       }
       if (existingRequest) {
         sqlite.prepare(`
@@ -6359,11 +6376,14 @@ export function setAdminUserLateExcuse(
         `).run(adminUserId, now, reviewerNote, now, existingRequest.id, orgId);
       }
     } else {
+      const table = subjectType === "user" ? "morning_checkins" : "external_checkins";
+      const subjectWhere = subjectType === "user" ? "user_id = ?" : "subject_type = ? AND subject_id = ?";
+      const subjectParams = subjectType === "user" ? [subjectId] : [subjectType, subjectId];
       sqlite.prepare(`
-        UPDATE morning_checkins
+        UPDATE ${table}
         SET late_excused = 0, excused_by = NULL, excused_at = NULL, excuse_reason = NULL
-        WHERE id = ? AND org_id = ? AND user_id = ? AND date = ?
-      `).run(checkinId, orgId, userId, attendanceDate);
+        WHERE id = ? AND org_id = ? AND ${subjectWhere} AND date = ?
+      `).run(checkinId, orgId, ...subjectParams, attendanceDate);
       if (existingRequest?.status === "approved") {
         sqlite.prepare(`
           UPDATE attendance_excuse_requests
@@ -6383,8 +6403,8 @@ export function setAdminUserLateExcuse(
 
     const updatedCheckin = getScopedAttendanceCheckin(
       orgId,
-      "user",
-      userId,
+      subjectType,
+      subjectId,
       attendanceDate,
       checkinId,
     );
@@ -6400,6 +6420,16 @@ export function setAdminUserLateExcuse(
   });
 
   return tx.immediate();
+}
+
+export function setAdminUserLateExcuse(
+  input: SetAdminUserLateExcuseInput,
+): { checkin: any; request: AttendanceExcuseRequest | null } {
+  return setAdminLateExcuse({
+    ...input,
+    subjectType: "user",
+    subjectId: input.userId,
+  });
 }
 
 export function createAdminAbsenceExcuse(
