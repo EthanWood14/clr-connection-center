@@ -412,10 +412,6 @@ function AppointmentCard({
   const [expanded, setExpanded] = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [noteDraft, setNoteDraft] = useState(outcome.notes ?? "");
-  // Only the appointment's owner (or an admin/manager) can act on it. Non-owners
-  // viewing a missed appointment get a read-only card.
-  const canEdit = seesAll || isMine;
-
   const handleReschedule = () => {
     if (!newDate) return;
     onReschedule(outcome.id, newDate);
@@ -434,9 +430,11 @@ function AppointmentCard({
   const isOverdue = !!dateStr && dateStr < todayStr;
   const isUpcoming = !!dateStr && dateStr > todayStr;
   const isTodayAppt = dateStr === todayStr;
-  // Anyone can COMPLETE (pick up) a missed appointment as a handoff — even one
-  // they don't own. Other edits (reschedule/edit/delete) stay owner/admin-only.
-  const canComplete = canEdit || isOverdue;
+  // Every signed-in C3 user can update a missed appointment so it never gets
+  // stuck. Permanent deletion remains limited to its owner or an admin/manager.
+  const canEdit = seesAll || isMine || isOverdue;
+  const canDelete = seesAll || isMine;
+  const canComplete = canEdit;
 
   return (
     <Card className={`border transition-colors ${isConflict ? "border-amber-300 dark:border-amber-700/70" : isOverdue ? "border-red-200 dark:border-red-900/50" : "border-border hover:border-primary/30"}`}>
@@ -610,7 +608,7 @@ function AppointmentCard({
               )}
             </div>
 
-            {/* Action buttons — owner or admin/manager only */}
+            {/* Overdue appointments are shared team work; deletion is not. */}
             {canEdit && (
             <div className="flex flex-wrap gap-2">
               <Button
@@ -639,7 +637,7 @@ function AppointmentCard({
                 <Pencil className="w-3 h-3" />
                 Edit Details
               </Button>
-              <Button
+              {canDelete && <Button
                 size="sm"
                 variant="outline"
                 className="h-8 text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 border-red-200 dark:border-red-900/50 ml-auto"
@@ -650,7 +648,7 @@ function AppointmentCard({
               >
                 {isPendingDelete ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                 Delete
-              </Button>
+              </Button>}
             </div>
             )}
 
@@ -754,8 +752,8 @@ export default function Appointments() {
   // Visibility rule: admins and managers see all appointments. Everyone else
   // sees their own appointments PLUS any missed (overdue) appointment from the
   // whole team, so missed appointments are visible to all and handoffs can be
-  // picked up. Editing someone else's appointment stays restricted (see canEdit
-  // in AppointmentCard) — non-owners get a read-only view.
+  // picked up and edited by the team. Current/future appointments remain private
+  // to their owner unless the viewer is a manager or admin.
   const isVisible = (o: Outcome) => {
     if (seesAll) return true;
     if (myUserId != null && o.assistantId === myUserId) return true;

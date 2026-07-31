@@ -31,6 +31,10 @@ import {
   normalizeIpAddress,
   type CheckinIpMode,
 } from "./checkin-ip";
+import {
+  isSharedOverdueAppointment,
+  sharedOverdueAppointmentPatch,
+} from "./appointment-permissions";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -9525,28 +9529,48 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.patch("/api/outcomes/:id", requireAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
-    const sessionUser = req.session_user as { userId: number; role?: string } | undefined;
-    const isAdmin = sessionUser?.role === "admin";
-    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id, outcome_type FROM lead_outcomes WHERE id = ?`).get(id) as any;
+    const sessionUser = req.session_user as { userId: number; role?: string; orgId?: number; superAdmin?: boolean } | undefined;
+    const isAdmin = sessionUser?.role === "admin" || !!sessionUser?.superAdmin;
+    const orgId = Number(sessionUser?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    const existing = sqlite.prepare(`
+      SELECT assistant_id, outcome_type, follow_up_date, org_id
+      FROM lead_outcomes WHERE id = ?
+    `).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
+    if (!sessionUser?.superAdmin && Number(existing.org_id) !== orgId) {
+      return res.status(404).json({ error: "Outcome not found" });
+    }
     const isOwner = existing.assistant_id === sessionUser?.userId;
+    const isSharedOverdueEdit = isSharedOverdueAppointment(
+      existing,
+      businessTodayForRequest(req, sqlite),
+    );
     // "Completing" an appointment — flipping it to a terminal outcome
     // (transfer / fell_through) — is allowed for ANY signed-in user, so a missed
-    // appointment can be picked up as a handoff. Every other edit stays limited
-    // to the owner or an admin.
+    // appointment can be picked up as a handoff. Active overdue appointments
+    // are also editable by every signed-in C3 user so no missed lead gets stuck.
     const isCompletion = req.body?.outcomeType === "transfer" || req.body?.outcomeType === "fell_through";
-    if (!isAdmin && !isOwner && !isCompletion) {
-      return res.status(403).json({ error: "You can only edit your own outcomes" });
+    if (!isAdmin && !isOwner && !isCompletion && !isSharedOverdueEdit) {
+      return res.status(403).json({ error: "You can only edit your own outcomes or an overdue appointment" });
     }
     let body = { ...req.body };
-    // A non-owner completing someone else's appointment may only touch the
-    // fields a completion needs — never the borrower, LO, phone, schedule, etc.
+    // Shared overdue edits include the details exposed by the appointment page,
+    // but never ownership, organization, IDs, or deletion. Non-overdue handoff
+    // completions keep their narrower legacy field set.
     if (!isAdmin && !isOwner) {
-      const ALLOWED_COMPLETION_FIELDS = new Set([
-        "outcomeType", "transferType", "followUpDate", "date",
-        "bulkTexter", "helperAssisted", "notes", "conversationNotes", "nextSteps",
-      ]);
-      body = Object.fromEntries(Object.entries(body).filter(([k]) => ALLOWED_COMPLETION_FIELDS.has(k)));
+      if (isSharedOverdueEdit) {
+        body = sharedOverdueAppointmentPatch(body, isCompletion);
+      } else {
+        const ALLOWED_COMPLETION_FIELDS = new Set([
+          "outcomeType", "transferType", "followUpDate", "date",
+          "bulkTexter", "helperAssisted", "notes", "conversationNotes", "nextSteps",
+        ]);
+        body = Object.fromEntries(Object.entries(body).filter(([k]) => ALLOWED_COMPLETION_FIELDS.has(k)));
+      }
+      if (!Object.keys(body).length) {
+        return res.status(400).json({ error: "No editable appointment fields were provided" });
+      }
     }
     // If caller is setting outcomeType, enforce the same rule.
     if (body.outcomeType === "transfer") {
@@ -9586,7 +9610,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if ("requiresFollowup" in body) body.requiresFollowup = boolToInt(body.requiresFollowup);
     if ("rescheduled" in body) body.rescheduled = boolToInt(body.rescheduled);
     const outcome = storage.updateLeadOutcome(id, body);
-    if (outcome) audit({ userId: 1, userName: "Ethan Wood", action: "update", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? null, details: JSON.stringify(body) });
+    if (outcome) {
+      const actor = storage.getUserById(Number(sessionUser?.userId)) as any;
+      audit({
+        userId: Number(sessionUser?.userId),
+        userName: actor?.name ?? "Unknown",
+        action: "update",
+        entityType: "outcome",
+        entityId: outcome.id,
+        entityLabel: outcome.borrowerName ?? null,
+        details: JSON.stringify({ ...body, sharedOverdueEdit: !isAdmin && !isOwner && isSharedOverdueEdit }),
+      });
+    }
     // 🎉 Celebrate conversions to transfer (e.g. appointment completed as a
     // transfer) — but not edits of something that was already a transfer.
     if (outcome && body.outcomeType === "transfer" && existing.outcome_type !== "transfer") {
