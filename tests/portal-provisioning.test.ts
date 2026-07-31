@@ -249,9 +249,10 @@ test("a schedule must exist before the first portal check-in", () => {
     "the gate must key off there being no schedule at all");
   assert.match(route, /code: "SCHEDULE_REQUIRED"/);
   assert.match(route, /res\.status\(422\)/);
-  // Order matters: refuse before spending the user's time on a location prompt.
-  assert.ok(route.indexOf("SCHEDULE_REQUIRED") < route.indexOf("validateCheckinLocation"),
-    "check the schedule before asking for a position");
+  // Order matters: a missing schedule is the clearer, self-fixable problem, so
+  // report it before the network check.
+  assert.ok(route.indexOf("SCHEDULE_REQUIRED") < route.indexOf("validateCheckinIp"),
+    "check the schedule before the office-network test");
   // Being scheduled off today is NOT the same as having no schedule — those
   // people may still record a check-in.
   assert.ok(!/\.working === false/.test(route), "a day off must not block checking in");
