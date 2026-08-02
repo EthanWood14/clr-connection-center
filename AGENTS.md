@@ -200,6 +200,14 @@ Two things to know before touching it:
 
 `tests/lap-portal-confinement.test.ts` locks both properties down.
 
+## Paperclip workflow
+
+- Work only in the isolated Paperclip worktree and issue branch supplied for the task. Preserve any pre-existing changes in the primary checkout.
+- Use `npm ci` for setup. The required handoff gate is `npm run build && npm test`; report known pre-existing type-check failures separately from regressions.
+- Do not access live Railway data, send email, apply migrations, deploy, push, or merge without explicit human approval. A passing check is not release authorization.
+- Never read, print, copy, or commit `.env` files, databases, backups, or tokens.
+- Handoffs must state the outcome, changed files, checks run, data/security impact, rollback notes, remaining risks, and branch/commit. A reviewer must approve before merge or deployment.
+
 ## Known external limits
 
 - The **Bonzo API cannot set pipeline stages** (verified across many endpoint
