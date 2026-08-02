@@ -8094,6 +8094,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // A manager can send the requester a direct prompt to discuss the comp item.
+  // The employee receives it in-app and as a browser push when enabled.
+  app.post("/api/comp/:id/ask-manager", requireAuth, (req: any, res) => {
+    if (!isCompManager(Number(req.session_user?.userId))) return res.status(403).json({ error: "Managers/admins only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    try {
+      const db = storageExtra.getRawSqlite();
+      const r = db.prepare("SELECT * FROM comp_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
+      if (!r) return res.status(404).json({ error: "Not found" });
+      const dollars = "$" + ((r.amount_cents ?? 0) / 100).toFixed(2);
+      const desc = r.description || "comp request";
+      const title = "Please talk to your managers";
+      const body = `Please talk to your managers about your comp request for ${dollars} (${desc}).`;
+      try { (storage as any).createNotification?.({ userId: r.user_id, type: "comp_request", title, message: body }); } catch {}
+      try { sendPushToUser(r.user_id, { title, body, url: "/#/comp-requests" }).catch(() => {}); } catch {}
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to notify requester" });
+    }
+  });
+
   app.post("/api/comp/:id/paid", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;

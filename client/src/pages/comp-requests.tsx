@@ -1038,12 +1038,26 @@ export default function CompRequests() {
   const [denyNote, setDenyNote] = useState("");
 
   // ── "Ask manager": client-side prompt pointing the CLR to their manager ────
-  function askManager(r: CompItem) {
+  function showAskManagerPrompt(r: CompItem) {
     toast({
       title: "Questions about this request?",
       description: "Reach out to " + (r.reviewerName || "your manager") + " for more information on this comp request.",
     });
   }
+
+  // Manager-side action: tell the employee who submitted the request to speak
+  // directly with their managers about it.
+  const askManagerMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", "/api/comp/" + id + "/ask-manager", {}),
+    onSuccess: (_d: any, id: number) => {
+      const r = team.find(x => x.id === id);
+      toast({
+        title: "Employee notified",
+        description: (r?.userName || "The requester") + " was told to talk to their managers about this comp request.",
+      });
+    },
+    onError: (e: any) => toast({ title: "Couldn't send notification", description: e?.message ?? "Try again.", variant: "destructive" }),
+  });
 
   // ── Notify requester: push pop-up + in-app with the request's current status ──
   const notifyMutation = useMutation({
@@ -1608,9 +1622,10 @@ export default function CompRequests() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => askManager(r)}
+                        onClick={() => askManagerMutation.mutate(r.id)}
+                        disabled={askManagerMutation.isPending}
                         className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
-                        title="Have a question? Reach out to your manager."
+                        title={"Tell " + r.userName + " to talk to their managers about this request"}
                         data-testid={"team-ask-manager-" + r.id}
                       >
                         <HelpCircle className="w-3 h-3" /> Ask manager
@@ -1730,7 +1745,7 @@ export default function CompRequests() {
                     {r.status !== "pending" && (
                       <button
                         type="button"
-                        onClick={() => askManager(r)}
+                        onClick={() => showAskManagerPrompt(r)}
                         className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium hover:bg-muted"
                         title="Have a question? Reach out to your manager."
                         data-testid={"ask-manager-" + r.id}
