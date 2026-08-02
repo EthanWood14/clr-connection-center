@@ -35,6 +35,7 @@ import {
   isSharedOverdueAppointment,
   sharedOverdueAppointmentPatch,
 } from "./appointment-permissions";
+import { buildTransferScorecardWindows } from "./manager-scorecard";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -10549,11 +10550,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     // ── Range-aware section data ──
     // Computes everything that needs a range selector, for a given window.
-    type RangeKey = "week" | "30d" | "3mo" | "all";
+    type RangeKey = "week" | "3d" | "7d" | "14d" | "30d" | "90d" | "3mo" | "all";
     const rangeWindows: Record<RangeKey, { startDate: string; endDate: string; days: number; label: string }> = (() => {
       const today = new Date(todayStr + "T00:00:00");
       const minus = (days: number) => { const d = new Date(today); d.setDate(d.getDate() - days); return fmtD(d); };
       return {
+        ...buildTransferScorecardWindows(todayStr),
         week: { startDate: minus(6),  endDate: todayStr, days: 7,   label: "Last 7 days" },
         "30d": { startDate: minus(29), endDate: todayStr, days: 30,  label: "Last 30 days" },
         "3mo": { startDate: minus(89), endDate: todayStr, days: 90,  label: "Last 3 months" },
@@ -10897,7 +10899,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
 
     const byRange: Record<string, any> = {};
-    for (const key of ["week", "30d", "3mo", "all"] as const) {
+    for (const key of ["week", "3d", "7d", "14d", "30d", "90d", "3mo", "all"] as const) {
       const w = rangeWindows[key];
       byRange[key] = { window: w, ...computeRange(w.startDate, w.endDate, w.days) };
     }
