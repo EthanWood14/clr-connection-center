@@ -478,7 +478,7 @@ function RecurringPanel() {
           <Repeat className="w-4 h-4 text-indigo-500" /> Recurring monthly requests
           {active.length > 0 && <Badge className="ml-1 bg-indigo-600 text-white text-[10px] px-1.5">{active.length} active</Badge>}
         </CardTitle>
-        <p className="text-xs text-muted-foreground mt-1">These auto-file for approval on the <strong>1st of each month</strong>. Pause to skip upcoming months; delete to stop for good. Set one up with the "repeat monthly" toggle when logging an expense.</p>
+        <p className="text-xs text-muted-foreground mt-1">These auto-file for approval on each subscription's <strong>saved day of the month</strong>. Pause to skip upcoming months; delete to stop for good. Set one up with the "repeat monthly" toggle when logging an expense.</p>
       </CardHeader>
       <CardContent>
         <div className="rounded-md border divide-y">
@@ -488,6 +488,7 @@ function RecurringPanel() {
               <span className="min-w-0 truncate flex-1">{t.description}</span>
               <CatChip category={t.category} />
               <span className="tabular-nums font-semibold">{money(t.amountCents)}/mo</span>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">Day {t.dayOfMonth ?? 1}</Badge>
               {!t.active && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Paused</Badge>}
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => toggleMut.mutate({ id: t.id, active: !t.active })} disabled={toggleMut.isPending} data-testid={"recurring-toggle-" + t.id}>
                 {t.active ? "Pause" : "Resume"}
@@ -867,7 +868,7 @@ export default function CompRequests() {
   const [note, setNote] = useState("");
   const [isReimbursement, setIsReimbursement] = useState(false);
   // "Repeat monthly": also saves a recurring template — the same request is then
-  // auto-filed on the 1st of every month until paused/deleted. Not for hours
+  // auto-filed on the chosen day each month until paused/deleted. Not for hours
   // (shift-backed) requests.
   const [recurringMonthly, setRecurringMonthly] = useState(false);
   // Set when an hours comp request is filled from the Time Clock hint / button: the
@@ -1293,7 +1294,7 @@ export default function CompRequests() {
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
               <div className="space-y-0.5">
                 <p className="text-sm font-medium flex items-center gap-1.5"><Repeat className="w-3.5 h-3.5 text-indigo-500" /> Repeat this request monthly?</p>
-                <p className="text-xs text-muted-foreground">On = the same request auto-files for approval on the 1st of every month (e.g. a subscription) until you pause or delete it below.</p>
+                <p className="text-xs text-muted-foreground">On = the same request auto-files each month on the day shown in “Date spent” (or today's day if blank) until you pause or delete it below.</p>
               </div>
               <Switch
                 checked={recurringMonthly}

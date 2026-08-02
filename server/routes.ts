@@ -36,6 +36,7 @@ import {
   sharedOverdueAppointmentPatch,
 } from "./appointment-permissions";
 import { buildTransferScorecardWindows } from "./manager-scorecard";
+import { recurringCompDueDate, recurringCompIsDue } from "./recurring-comp";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -2132,7 +2133,8 @@ async function processRecurringComp(): Promise<void> {
   const period = todayStr.slice(0, 7);
   const monthLabel = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1))
     .toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-  const due = db.prepare("SELECT * FROM comp_recurring WHERE active=1 AND (last_filed_period IS NULL OR last_filed_period != ?)").all(period) as any[];
+  const candidates = db.prepare("SELECT * FROM comp_recurring WHERE active=1 AND (last_filed_period IS NULL OR last_filed_period != ?)").all(period) as any[];
+  const due = candidates.filter((template) => recurringCompIsDue(todayStr, Number(template.day_of_month ?? 1), template.last_filed_period ?? null));
   if (!due.length) return;
   const users = storage.getUsers() as any[];
   const userById = new Map<number, any>(users.map((u: any) => [u.id, u]));
@@ -2152,6 +2154,7 @@ async function processRecurringComp(): Promise<void> {
       }
       const nowIso = new Date().toISOString();
       const token = crypto.randomBytes(24).toString("hex");
+      const scheduledDate = recurringCompDueDate(todayStr, Number(t.day_of_month ?? 1));
       const description = `${t.description} — ${monthLabel} (recurring)`.slice(0, 300);
       // Claim + INSERT run in ONE transaction: the once-per-month stamp only
       // sticks if the request row was actually created, so a failed INSERT rolls
@@ -2161,8 +2164,8 @@ async function processRecurringComp(): Promise<void> {
         const claimed = db.prepare("UPDATE comp_recurring SET last_filed_period=?, updated_at=? WHERE id=? AND active=1 AND (last_filed_period IS NULL OR last_filed_period != ?)")
           .run(period, nowIso, t.id, period);
         if (claimed.changes !== 1) return null;
-        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'pending', ?, ?, ?, ?)")
-          .run(t.org_id, t.user_id, description, (t.category === "time" || t.category === "hours") ? "other" : t.category, t.amount_cents, t.note ?? "", t.is_reimbursement ?? 0, token, nowIso, nowIso, nowIso);
+        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
+          .run(t.org_id, t.user_id, description, (t.category === "time" || t.category === "hours") ? "other" : t.category, t.amount_cents, scheduledDate, t.note ?? "", t.is_reimbursement ?? 0, token, nowIso, nowIso, nowIso);
         return Number(info.lastInsertRowid);
       });
       const newId = fileOne();
@@ -3659,12 +3662,31 @@ export function registerRoutes(httpServer: Server, app: Express) {
         amount_cents INTEGER NOT NULL,
         note TEXT DEFAULT '',
         is_reimbursement INTEGER NOT NULL DEFAULT 0,
+        day_of_month INTEGER NOT NULL DEFAULT 1,
         active INTEGER NOT NULL DEFAULT 1,
         last_filed_period TEXT,
         created_by INTEGER,
         created_at TEXT,
         updated_at TEXT
       )
+    `);
+    try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_recurring ADD COLUMN day_of_month INTEGER`); } catch {}
+    // Existing templates predate a stored billing day. Recover it from the
+    // original matching request's expense date, then fall back to creation day.
+    storageExtra.getRawSqlite().exec(`
+      UPDATE comp_recurring
+      SET day_of_month = MIN(31, MAX(1, COALESCE(
+        (SELECT CAST(substr(COALESCE(cr.expense_date, cr.requested_at, cr.created_at), 9, 2) AS INTEGER)
+           FROM comp_requests cr
+          WHERE cr.org_id = comp_recurring.org_id
+            AND cr.user_id = comp_recurring.user_id
+            AND cr.description = comp_recurring.description
+            AND cr.amount_cents = comp_recurring.amount_cents
+          ORDER BY cr.id ASC LIMIT 1),
+        CAST(substr(comp_recurring.created_at, 9, 2) AS INTEGER),
+        1
+      )))
+      WHERE day_of_month IS NULL OR day_of_month < 1 OR day_of_month > 31
     `);
     storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_recurring_active ON comp_recurring(org_id, active)`);
   } catch {}
@@ -7755,17 +7777,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // auto-file the same expense twice every month. Never for "time" (hours are
       // shift-backed and can't recur on a fixed amount).
       const wantsRecurring = (body.recurringMonthly === true || body.recurringMonthly === 1 || body.recurringMonthly === "1") && category !== "time";
+      const recurringDate = expenseDate ?? new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ });
+      const recurringDay = Math.max(1, Math.min(31, Number(recurringDate.slice(8, 10)) || 1));
       let recurringId: number | null = null;
       let recurringReused = false;
       const createAll = db.transaction(() => {
         const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, token, nowIso, nowIso, nowIso);
         if (wantsRecurring) {
           const period = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ }).slice(0, 7);
-          const dup = db.prepare("SELECT id FROM comp_recurring WHERE org_id=? AND user_id=? AND description=? AND amount_cents=? AND active=1").get(orgId, targetId, description, amountCents) as any;
+          const dup = db.prepare("SELECT id FROM comp_recurring WHERE org_id=? AND user_id=? AND description=? AND amount_cents=? AND day_of_month=? AND active=1").get(orgId, targetId, description, amountCents, recurringDay) as any;
           if (dup) { recurringId = Number(dup.id); recurringReused = true; }
           else {
-            const rInfo = db.prepare("INSERT INTO comp_recurring (org_id, user_id, description, category, amount_cents, note, is_reimbursement, active, last_filed_period, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)")
-              .run(orgId, targetId, description, category, amountCents, note, isReimbursement, period, sessUserId, nowIso, nowIso);
+            const rInfo = db.prepare("INSERT INTO comp_recurring (org_id, user_id, description, category, amount_cents, note, is_reimbursement, day_of_month, active, last_filed_period, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)")
+              .run(orgId, targetId, description, category, amountCents, note, isReimbursement, recurringDay, period, sessUserId, nowIso, nowIso);
             recurringId = Number(rInfo.lastInsertRowid);
           }
         }
@@ -8704,6 +8728,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       templates: rows.map(r => ({
         id: r.id, userId: r.user_id, userName: nameById.get(r.user_id) ?? ("User #" + r.user_id),
         description: r.description, category: r.category, amountCents: r.amount_cents,
+        dayOfMonth: Number(r.day_of_month ?? 1),
         isReimbursement: !!r.is_reimbursement, active: !!r.active,
         lastFiledPeriod: r.last_filed_period ?? null, createdAt: r.created_at ?? null,
       })),
@@ -8720,8 +8745,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (req.body?.active === undefined) return res.status(400).json({ error: "Nothing to change." });
     const active = (req.body.active === true || req.body.active === 1 || req.body.active === "1") ? 1 : 0;
     // Resuming (0 → 1) also stamps the CURRENT month as filed, so "pause to skip
-    // months" holds: a mid-month resume starts on the next 1st instead of
-    // immediately auto-filing a month the owner may have filed manually.
+    // months" holds: a mid-month resume waits for the template's next scheduled
+    // monthly day instead of filing a month the owner may have filed manually.
     if (active && !existing.active) {
       const period = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ }).slice(0, 7);
       db.prepare("UPDATE comp_recurring SET active=1, last_filed_period=?, updated_at=? WHERE id=? AND org_id=?").run(period, new Date().toISOString(), id, orgId);
