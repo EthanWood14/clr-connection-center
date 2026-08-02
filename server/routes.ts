@@ -36,7 +36,7 @@ import {
   sharedOverdueAppointmentPatch,
 } from "./appointment-permissions";
 import { buildTransferScorecardWindows } from "./manager-scorecard";
-import { recurringCompDueDate, recurringCompIsDue } from "./recurring-comp";
+import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -3689,7 +3689,33 @@ export function registerRoutes(httpServer: Server, app: Express) {
       WHERE day_of_month IS NULL OR day_of_month < 1 OR day_of_month > 31
     `);
     storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_comp_recurring_active ON comp_recurring(org_id, active)`);
-  } catch {}
+
+    // Repair requests the old first-of-month scheduler created before a
+    // template's recovered billing day. Only untouched pending/draft rows with
+    // the exact system-generated description and no attachments are removed;
+    // manager-reviewed, paid, denied, or manually entered comp is preserved.
+    const repairs = repairEarlyRecurringCompRequests(
+      storageExtra.getRawSqlite(),
+      businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ),
+    );
+    for (const repair of repairs) {
+      try {
+        storage.createAuditLog({
+          userId: 0,
+          userName: "System",
+          action: "delete",
+          entityType: "comp_request",
+          entityId: 0,
+          entityLabel: "Early recurring comp request removed",
+          details: JSON.stringify(repair),
+        } as any);
+      } catch {}
+    }
+    const repaired = repairs.reduce((sum, repair) => sum + repair.removed, 0);
+    if (repaired > 0) console.log(`[migration] comp_recurring_remove_early_generated_v1: removed ${repaired} early recurring request(s)`);
+  } catch (e: any) {
+    console.error("[migration] recurring comp setup/repair failed:", e?.message ?? e);
+  }
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
