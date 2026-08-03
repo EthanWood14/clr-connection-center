@@ -38,6 +38,7 @@ import {
 import { buildTransferScorecardWindows } from "./manager-scorecard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
+import { callSyncOutcomeNotes, normalizeCallSyncPayload, verifyCallSyncSignature } from "./callsync";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -13202,6 +13203,167 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return storageExtra.findUserByName(typeof nameGuess === "string" ? nameGuess : null);
   }
 
+  function findCallSyncUser(phoneGuess: any, nameGuess: any, emailGuess: any): any | null {
+    const users = storage.getUsers() as any[];
+    const eligible = users.filter((u: any) =>
+      (u.isActive ?? u.is_active) && (u.portal == null || u.portal === "c3")
+      && (u.role === "assistant" || u.role === "admin")
+    );
+    const incomingPhone = normalizePhone(phoneGuess);
+    if (incomingPhone) {
+      const byPhone = eligible.find((u: any) => normalizePhone(u.phone) === incomingPhone);
+      if (byPhone) return byPhone;
+    }
+    const incomingEmail = String(emailGuess ?? "").trim().toLowerCase();
+    if (incomingEmail) {
+      const byEmail = eligible.find((u: any) => String(u.email ?? "").trim().toLowerCase() === incomingEmail);
+      if (byEmail) return byEmail;
+    }
+    const incomingName = String(nameGuess ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    return incomingName
+      ? eligible.find((u: any) => String(u.name ?? "").trim().toLowerCase().replace(/\s+/g, " ") === incomingName) ?? null
+      : null;
+  }
+
+  function findCallSyncLoanOfficer(orgId: number, nameGuess: any, phoneGuess: any, emailGuess: any): any | null {
+    const db = storageExtra.getRawSqlite();
+    const rows = db.prepare(`SELECT * FROM loan_officers WHERE org_id=?`).all(orgId) as any[];
+    const incomingPhone = normalizePhone(phoneGuess);
+    if (incomingPhone) {
+      const byPhone = rows.find((lo: any) => normalizePhone(lo.phone) === incomingPhone);
+      if (byPhone) return byPhone;
+    }
+    const incomingEmail = String(emailGuess ?? "").trim().toLowerCase();
+    if (incomingEmail) {
+      const byEmail = rows.find((lo: any) => String(lo.email ?? "").trim().toLowerCase() === incomingEmail);
+      if (byEmail) return byEmail;
+    }
+    const incomingName = String(nameGuess ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    return incomingName
+      ? rows.find((lo: any) => String(lo.full_name ?? "").trim().toLowerCase().replace(/\s+/g, " ") === incomingName) ?? null
+      : null;
+  }
+
+  function callSyncDate(isoGuess: string | null, fallback: string): string {
+    if (!isoGuess) return fallback;
+    const parsed = new Date(isoGuess);
+    if (!Number.isFinite(parsed.getTime())) return fallback;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(parsed);
+    const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    return `${part("year")}-${part("month")}-${part("day")}`;
+  }
+
+  app.post("/api/webhook/callsync", (req, res) => {
+    const settings = storageExtra.getWebhookSettings();
+    const secret = String(process.env.CALLSYNC_WEBHOOK_SECRET || settings.callsync_secret || "").trim();
+    if (!secret) {
+      return res.status(503).json({ ok: false, error: "CallSync webhook is not configured" });
+    }
+    const signature = req.headers["x-callsync-signature"] as string | undefined;
+    if (!verifyCallSyncSignature(req.rawBody, secret, signature)) {
+      storageExtra.logWebhookEvent({
+        source: "callsync", eventType: "auth_failed",
+        payload: { error: "invalid signature" }, processed: false,
+      });
+      return res.status(401).json({ ok: false, error: "invalid signature" });
+    }
+
+    const normalized = normalizeCallSyncPayload(req.body);
+    const matched = findCallSyncUser(normalized.staffPhone, normalized.staffName, normalized.staffEmail);
+    const eventPayload = req.body ?? {};
+    let action = "ignored_non_outcome";
+    let outcomeId: number | null = null;
+
+    try {
+      if (normalized.outcomeType && !matched) {
+        action = "unmatched_clr";
+      } else if (normalized.outcomeType && matched) {
+        const db = storageExtra.getRawSqlite();
+        const orgId = Number(matched.orgId ?? matched.org_id ?? 1) || 1;
+        const lo = findCallSyncLoanOfficer(orgId, normalized.loName, normalized.loPhone, normalized.loEmail);
+        const externalCallId = normalized.callId || normalized.payloadId
+          || crypto.createHash("sha256").update(req.rawBody as Buffer).digest("hex");
+        const existingLink = db.prepare(
+          `SELECT * FROM callsync_outcome_links WHERE org_id=? AND external_call_id=?`
+        ).get(orgId, externalCallId) as any;
+        const existingOutcome = existingLink
+          ? db.prepare(`SELECT * FROM lead_outcomes WHERE id=? AND org_id=?`).get(existingLink.outcome_id, orgId) as any
+          : null;
+        const fallbackDate = businessTodayForRequest(req, db);
+        const date = callSyncDate(normalized.startedAt, fallbackDate);
+        const now = new Date().toISOString();
+        const notes = callSyncOutcomeNotes(normalized);
+        const appointmentDatetime = normalized.outcomeType === "appointment"
+          ? normalized.appointmentDatetime
+          : null;
+        const loId = lo?.id ?? existingOutcome?.lo_id ?? 0;
+
+        if (existingOutcome) {
+          db.prepare(`UPDATE lead_outcomes SET
+            date=?, assistant_id=?, lo_id=?, borrower_name=COALESCE(?, borrower_name),
+            phone_number=COALESCE(?, phone_number), outcome_type=?, transfer_type=?,
+            appointment_datetime=?, notes=?,
+            journey_id=?, updated_at=? WHERE id=? AND org_id=?`
+          ).run(
+            date, matched.id, loId, normalized.borrowerName, normalized.borrowerPhone,
+            normalized.outcomeType, normalized.transferType, appointmentDatetime,
+            notes, `callsync:${externalCallId}`, now, existingOutcome.id, orgId,
+          );
+          outcomeId = Number(existingOutcome.id);
+          action = "updated_outcome";
+        } else {
+          const inserted = db.prepare(`INSERT INTO lead_outcomes
+            (date, assistant_id, lo_id, borrower_name, outcome_type, transfer_type,
+             phone_number, notes, appointment_datetime, journey_id, tags, org_id, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).run(
+            date, matched.id, loId, normalized.borrowerName, normalized.outcomeType,
+            normalized.transferType, normalized.borrowerPhone, notes, appointmentDatetime,
+            `callsync:${externalCallId}`, JSON.stringify(["callsync"]), orgId, now, now,
+          );
+          outcomeId = Number(inserted.lastInsertRowid);
+          action = "created_outcome";
+        }
+
+        db.prepare(`INSERT INTO callsync_outcome_links
+          (org_id, external_call_id, outcome_id, last_payload_id, last_event_type, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?)
+          ON CONFLICT(org_id, external_call_id) DO UPDATE SET
+            outcome_id=excluded.outcome_id,
+            last_payload_id=excluded.last_payload_id,
+            last_event_type=excluded.last_event_type,
+            updated_at=excluded.updated_at`
+        ).run(
+          orgId, externalCallId, outcomeId, normalized.payloadId,
+          normalized.eventType, now, now,
+        );
+      }
+    } catch (error: any) {
+      console.error("CallSync webhook processing failed:", error?.message ?? error);
+      storageExtra.logWebhookEvent({
+        source: "callsync", eventType: normalized.eventType,
+        payload: eventPayload, matchedUserId: matched?.id ?? null, processed: false,
+      });
+      return res.status(500).json({ ok: false, error: "CallSync event could not be processed" });
+    }
+
+    storageExtra.logWebhookEvent({
+      source: "callsync", eventType: normalized.eventType,
+      payload: eventPayload, matchedUserId: matched?.id ?? null,
+      processed: action === "created_outcome" || action === "updated_outcome",
+    });
+    return res.json({
+      ok: true,
+      action,
+      matched_user: matched?.name ?? null,
+      outcome_id: outcomeId,
+      outcome_type: normalized.outcomeType,
+      transfer_type: normalized.transferType,
+    });
+  });
+
   app.post("/api/webhook/mojo", (req, res) => {
     const body = req.body ?? {};
     const settings = storageExtra.getWebhookSettings();
@@ -13396,12 +13558,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       zapierWebhookUrl: s.zapier_webhook_url ?? "",
       zapierSecret: s.zapier_secret ?? "",
       leadvaultReportingToken: s.leadvault_reporting_token ?? "",
+      callsyncSecret: s.callsync_secret ?? "",
     });
   });
 
   app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret, leadvaultReportingToken } = req.body ?? {};
+    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret, leadvaultReportingToken, callsyncSecret } = req.body ?? {};
     const updated = storageExtra.updateWebhookSettings({
       mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
       bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
@@ -13410,6 +13573,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       zapierWebhookUrl: typeof zapierWebhookUrl === "string" ? zapierWebhookUrl : undefined,
       zapierSecret: typeof zapierSecret === "string" ? zapierSecret : undefined,
       leadvaultReportingToken: typeof leadvaultReportingToken === "string" ? leadvaultReportingToken : undefined,
+      callsyncSecret: typeof callsyncSecret === "string" ? callsyncSecret : undefined,
     });
     res.json({
       mojoSecret: updated.mojo_secret ?? "",
@@ -13419,6 +13583,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       zapierWebhookUrl: updated.zapier_webhook_url ?? "",
       zapierSecret: updated.zapier_secret ?? "",
       leadvaultReportingToken: updated.leadvault_reporting_token ?? "",
+      callsyncSecret: updated.callsync_secret ?? "",
     });
   });
 
@@ -17096,6 +17261,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const mojoEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='mojo'`).get() as any).c;
     const zapierEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='zapier' OR source='zapier_out'`).get() as any).c;
     const csvImports = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='mojo_csv'`).get() as any).c;
+    const callSyncEvents = (db.prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE source='callsync'`).get() as any).c;
     const lastBonzoSync = storageExtra.getLastBonzoSync?.();
     res.json({
       bonzo: {
@@ -17116,6 +17282,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         inboundConfigured: !!settings.zapier_secret,
         outboundConfigured: !!settings.zapier_webhook_url,
         events: zapierEvents,
+      },
+      callsync: {
+        webhookConfigured: !!(process.env.CALLSYNC_WEBHOOK_SECRET || settings.callsync_secret),
+        webhookEvents: callSyncEvents,
       },
     });
   });

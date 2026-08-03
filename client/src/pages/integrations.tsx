@@ -16,6 +16,7 @@ import { InfoBanner } from "@/components/info-banner";
 const MOJO_URL = "https://www.westcapitallending.center/api/webhook/mojo";
 const BONZO_URL = "https://www.westcapitallending.center/api/webhook/bonzo";
 const ZAPIER_INBOUND_URL = "https://www.westcapitallending.center/api/webhook/mojo/zapier";
+const CALLSYNC_URL = "https://www.westcapitallending.center/api/webhook/callsync";
 
 type Settings = {
   mojoSecret: string;
@@ -25,6 +26,7 @@ type Settings = {
   zapierWebhookUrl: string;
   zapierSecret: string;
   leadvaultReportingToken: string;
+  callsyncSecret: string;
 };
 
 type WebhookEvent = {
@@ -273,7 +275,7 @@ export default function IntegrationsPage() {
 
   const [local, setLocal] = useState<Settings>({
     mojoSecret: "", bonzoSecret: "", bonzoApiToken: "", mojoApiKey: "",
-    zapierWebhookUrl: "", zapierSecret: "", leadvaultReportingToken: "",
+    zapierWebhookUrl: "", zapierSecret: "", leadvaultReportingToken: "", callsyncSecret: "",
   });
   useEffect(() => {
     if (settings) {
@@ -285,6 +287,7 @@ export default function IntegrationsPage() {
         zapierWebhookUrl: settings.zapierWebhookUrl ?? "",
         zapierSecret: settings.zapierSecret ?? "",
         leadvaultReportingToken: settings.leadvaultReportingToken ?? "",
+        callsyncSecret: settings.callsyncSecret ?? "",
       });
     }
   }, [settings]);
@@ -344,7 +347,7 @@ export default function IntegrationsPage() {
     return "partial";
   }, [settings]);
 
-  const [sourceFilter, setSourceFilter] = useState<"all" | "bonzo" | "mojo" | "zapier">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "bonzo" | "mojo" | "zapier" | "callsync">("all");
   const filteredEvents = useMemo(() => {
     const filtered = sourceFilter === "all"
       ? events
@@ -445,6 +448,83 @@ export default function IntegrationsPage() {
           lastSync={mojoSyncStatus?.last ?? null}
           syncTooltip="Configure Mojo API key to enable this"
         />
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-md flex items-center justify-center text-white font-bold text-lg shrink-0 bg-rose-600">
+                C
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <CardTitle className="text-base">CallSync</CardTitle>
+                  <StatusBadge status={local.callsyncSecret?.trim() ? "connected" : "not_connected"} />
+                </div>
+                <CardDescription className="mt-1">
+                  Automatically creates C3 transfers and appointments from explicit CallSync dispositions.
+                  Repeat recording and AI events update the same outcome instead of double-counting it.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Webhook URL</label>
+              <div className="flex gap-2 mt-1.5">
+                <Input readOnly value={CALLSYNC_URL} className="font-mono text-xs" />
+                <CopyBtn value={CALLSYNC_URL} />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Webhook Secret</label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocal((p) => ({
+                    ...p,
+                    callsyncSecret: `${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`,
+                  }))}
+                >
+                  Generate secure secret
+                </Button>
+              </div>
+              <div className="mt-1.5">
+                <SecretInput
+                  value={local.callsyncSecret}
+                  onChange={(v) => setLocal((p) => ({ ...p, callsyncSecret: v }))}
+                  placeholder="Generate or paste the secret used in CallSync"
+                />
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5">
+              <p className="font-semibold">CallSync setup</p>
+              <p>1. Open CallSync → Settings → Webhooks → New Endpoint.</p>
+              <p>2. Paste the URL and use the exact same secret shown above.</p>
+              <p>3. Enable New Call Log, AI Analysis, and Caller Updated events.</p>
+              <p>4. Save here first, then send a test event from CallSync.</p>
+            </div>
+            <div className="pt-2 border-t">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">What is automated</div>
+              <ul className="space-y-1.5 text-sm">
+                <li>✅ Direct and appointment transfers</li>
+                <li>✅ Scheduled appointments and appointment times</li>
+                <li>✅ CLR matching by phone, email, then exact name</li>
+                <li>✅ Borrower, LO, notes, phone, and recording links when supplied</li>
+                <li>✅ Duplicate protection by CallSync call ID</li>
+              </ul>
+            </div>
+            <div className="flex justify-end pt-2">
+              <Button
+                onClick={() => saveMutation.mutate({ callsyncSecret: local.callsyncSecret })}
+                disabled={saveMutation.isPending || !local.callsyncSecret.trim()}
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" /> Save CallSync
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Zapier Card */}
@@ -573,14 +653,14 @@ export default function IntegrationsPage() {
               <CardDescription>Last 30 inbound webhook events (auto-refreshes every 15s).</CardDescription>
             </div>
             <div className="flex gap-1">
-              {(["all", "bonzo", "mojo", "zapier"] as const).map((s) => (
+              {(["all", "callsync", "bonzo", "mojo", "zapier"] as const).map((s) => (
                 <Button
                   key={s}
                   size="sm"
                   variant={sourceFilter === s ? "default" : "outline"}
                   onClick={() => setSourceFilter(s)}
                 >
-                  {s === "all" ? "All" : s === "bonzo" ? "Bonzo" : s === "mojo" ? "Mojo" : "Zapier"}
+                  {s === "all" ? "All" : s === "callsync" ? "CallSync" : s === "bonzo" ? "Bonzo" : s === "mojo" ? "Mojo" : "Zapier"}
                 </Button>
               ))}
             </div>
