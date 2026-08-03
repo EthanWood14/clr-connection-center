@@ -13257,7 +13257,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post("/api/webhook/callsync", (req, res) => {
     const settings = storageExtra.getWebhookSettings();
-    const secret = String(process.env.CALLSYNC_WEBHOOK_SECRET || settings.callsync_secret || "").trim();
+    // A value saved by an admin deliberately overrides the environment fallback,
+    // so the Integrations screen can rotate the secret without a Railway change.
+    const secret = String(settings.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET || "").trim();
     if (!secret) {
       return res.status(503).json({ ok: false, error: "CallSync webhook is not configured" });
     }
@@ -13559,6 +13561,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       zapierSecret: s.zapier_secret ?? "",
       leadvaultReportingToken: s.leadvault_reporting_token ?? "",
       callsyncSecret: s.callsync_secret ?? "",
+      callsyncSecretConfigured: !!(s.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET),
+      callsyncSecretManagedByEnv: !s.callsync_secret && !!process.env.CALLSYNC_WEBHOOK_SECRET,
     });
   });
 
@@ -13584,6 +13588,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       zapierSecret: updated.zapier_secret ?? "",
       leadvaultReportingToken: updated.leadvault_reporting_token ?? "",
       callsyncSecret: updated.callsync_secret ?? "",
+      callsyncSecretConfigured: !!(updated.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET),
+      callsyncSecretManagedByEnv: !updated.callsync_secret && !!process.env.CALLSYNC_WEBHOOK_SECRET,
     });
   });
 

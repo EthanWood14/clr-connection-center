@@ -27,6 +27,8 @@ type Settings = {
   zapierSecret: string;
   leadvaultReportingToken: string;
   callsyncSecret: string;
+  callsyncSecretConfigured?: boolean;
+  callsyncSecretManagedByEnv?: boolean;
 };
 
 type WebhookEvent = {
@@ -458,7 +460,7 @@ export default function IntegrationsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <CardTitle className="text-base">CallSync</CardTitle>
-                  <StatusBadge status={local.callsyncSecret?.trim() ? "connected" : "not_connected"} />
+                  <StatusBadge status={(settings?.callsyncSecretConfigured || local.callsyncSecret?.trim()) ? "connected" : "not_connected"} />
                 </div>
                 <CardDescription className="mt-1">
                   Automatically creates C3 transfers and appointments from explicit CallSync dispositions.
@@ -497,6 +499,11 @@ export default function IntegrationsPage() {
                   placeholder="Generate or paste the secret used in CallSync"
                 />
               </div>
+              {settings?.callsyncSecretManagedByEnv && !local.callsyncSecret.trim() && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  A server-managed secret is active. Generate and save a new secret here if you want to replace it from C3.
+                </p>
+              )}
             </div>
             <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5">
               <p className="font-semibold">CallSync setup</p>
