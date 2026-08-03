@@ -493,11 +493,16 @@ export default function IntegrationsPage() {
                 </Button>
               </div>
               <div className="mt-1.5">
-                <SecretInput
-                  value={local.callsyncSecret}
-                  onChange={(v) => setLocal((p) => ({ ...p, callsyncSecret: v }))}
-                  placeholder="Generate or paste the secret used in CallSync"
-                />
+                <div className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <SecretInput
+                      value={local.callsyncSecret}
+                      onChange={(v) => setLocal((p) => ({ ...p, callsyncSecret: v }))}
+                      placeholder="Generate or paste the secret used in CallSync"
+                    />
+                  </div>
+                  <CopyBtn value={local.callsyncSecret} />
+                </div>
               </div>
               {settings?.callsyncSecretManagedByEnv && !local.callsyncSecret.trim() && (
                 <p className="text-xs text-muted-foreground mt-2">
