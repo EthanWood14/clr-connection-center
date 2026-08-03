@@ -155,7 +155,12 @@ export default function TimeOff() {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3500);
       const who = forUserId ? (clrOptions.find((u: any) => String(u.id) === forUserId)?.name ?? "the CLR") : null;
-      toast({ title: "Request sent! 🎉", description: who ? ("Submitted for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".") : (d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly.") });
+      toast({
+        title: d?.status === "approved" ? "Vacation scheduled" : "Request sent! 🎉",
+        description: d?.status === "approved" && who
+          ? `${who} will be excluded from daily assignments for the selected dates.`
+          : (who ? ("Submitted for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".") : (d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly.")),
+      });
       setStartDate(""); setEndDate(""); setReason(""); setForUserId("");
       refresh();
     },
@@ -203,7 +208,7 @@ export default function TimeOff() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <CalendarOff className="w-4 h-4" /> Request Time Off
+            <CalendarOff className="w-4 h-4" /> {isManager && forUserId ? "Schedule CLR Vacation" : "Request Time Off"}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -228,7 +233,7 @@ export default function TimeOff() {
                   <option key={u.id} value={String(u.id)}>{u.name}</option>
                 ))}
               </select>
-              <p className="text-[11px] text-muted-foreground mt-1">As a manager you can submit this on behalf of a CLR.</p>
+              <p className="text-[11px] text-muted-foreground mt-1">Selecting a CLR schedules approved vacation immediately. They receive no daily assignments from the start date through the end date, then return automatically.</p>
             </div>
           )}
           <div>
@@ -321,7 +326,7 @@ export default function TimeOff() {
           )}
           <div className="flex items-center justify-end">
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white shadow-sm" data-testid="button-submit-timeoff">
-              <Plane className="w-4 h-4" /> {createMutation.isPending ? "Sending…" : "Request My Time Off"}
+              <Plane className="w-4 h-4" /> {createMutation.isPending ? "Sending…" : (isManager && forUserId ? "Schedule CLR Vacation" : "Request My Time Off")}
             </Button>
           </div>
         </CardContent>

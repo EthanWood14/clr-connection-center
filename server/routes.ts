@@ -37,6 +37,7 @@ import {
 } from "./appointment-permissions";
 import { buildTransferScorecardWindows } from "./manager-scorecard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
+import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -3451,6 +3452,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
       )
     `);
     storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_time_off_token ON time_off_requests(approval_token)`);
+    storageExtra.getRawSqlite().exec(`CREATE INDEX IF NOT EXISTS idx_time_off_assignment_dates ON time_off_requests(org_id, status, start_date, end_date, user_id)`);
+    storageExtra.getRawSqlite().exec(`PRAGMA optimize`);
   } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE time_off_requests ADD COLUMN approval_token TEXT`); } catch {}
 
@@ -7112,6 +7115,54 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return m;
   }
 
+  function rebalanceClrVacationAssignments(orgId: number, userId: number, startDate: string, endDate: string): number {
+    const db = storageExtra.getRawSqlite();
+    const existingRows = db.prepare(`
+      SELECT da.id, da.assignment_date
+      FROM daily_assignments da
+      INNER JOIN loan_officers lo ON lo.id=da.lo_id
+      WHERE lo.org_id=? AND da.assistant_id=? AND da.status='recommended'
+        AND da.assignment_date>=? AND da.assignment_date<=?
+      ORDER BY da.assignment_date, da.assistant_rank, da.id
+    `).all(orgId, userId, startDate, endDate) as any[];
+    const countsByDate = new Map<string, Map<number, number>>();
+    let reassigned = 0;
+    for (const assignment of existingRows) {
+      const assignmentDate = String(assignment.assignment_date);
+      const available = assignmentClrsForDate(storage.getUsers(), db, orgId, assignmentDate);
+      if (!available.length) continue;
+      let counts = countsByDate.get(assignmentDate);
+      if (!counts) {
+        counts = new Map<number, number>(available.map(user => [Number(user.id), 0]));
+        const currentCounts = db.prepare(`
+          SELECT assistant_id, COUNT(*) AS count
+          FROM daily_assignments
+          WHERE assignment_date=? GROUP BY assistant_id
+        `).all(assignmentDate) as any[];
+        for (const current of currentCounts) {
+          const id = Number(current.assistant_id);
+          if (counts.has(id)) counts.set(id, Number(current.count));
+        }
+        countsByDate.set(assignmentDate, counts);
+      }
+      const targetId = available.reduce((bestId, user) => {
+        const id = Number(user.id);
+        const count = counts!.get(id) ?? 0;
+        const bestCount = counts!.get(bestId) ?? 0;
+        return count < bestCount || (count === bestCount && id < bestId) ? id : bestId;
+      }, Number(available[0].id));
+      const nextRank = (db.prepare("SELECT COALESCE(MAX(assistant_rank),0)+1 AS next_rank FROM daily_assignments WHERE assignment_date=? AND assistant_id=?")
+        .get(assignmentDate, targetId) as any).next_rank;
+      const moved = db.prepare("UPDATE daily_assignments SET assistant_id=?, assistant_rank=? WHERE id=?")
+        .run(targetId, Number(nextRank), Number(assignment.id));
+      if (moved.changes === 1) {
+        counts.set(targetId, (counts.get(targetId) ?? 0) + 1);
+        reassigned++;
+      }
+    }
+    return reassigned;
+  }
+
   // List requests. Managers/admins see the whole org; everyone else sees only
   // their own. Pass ?scope=mine to force own-only even as a manager.
   app.get("/api/time-off", requireAuth, (req: any, res) => {
@@ -7134,7 +7185,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // Create a request for yourself.
+  // Self-service creates a pending request. A manager selecting another CLR
+  // schedules approved vacation immediately and rebalances any existing work.
   app.post("/api/time-off", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
@@ -7151,30 +7203,54 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const meRow = storage.getUserById(sessUserId) as any;
     const isMgr = !!(meRow && (meRow.role === "admin" || (meRow.isManager ?? meRow.is_manager) || (meRow.superAdmin ?? meRow.super_admin)));
     const onBehalf = Number(body.onBehalfOf ?? body.forUserId) || 0;
+    let managerScheduled = false;
     if (isMgr && onBehalf && onBehalf !== sessUserId) {
       const target = storage.getUserById(onBehalf) as any;
-      if (target) requesterId = onBehalf;
+      const targetOrgId = Number(target?.orgId ?? target?.org_id ?? 0);
+      const targetActive = !!(target?.isActive ?? target?.is_active);
+      const targetIsClr = target?.role === "assistant" || (target?.role === "admin" && !!(target?.isClr ?? target?.is_clr));
+      if (!target || targetOrgId !== orgId || !targetActive || !targetIsClr) {
+        return res.status(400).json({ error: "Select an active CLR in your organization." });
+      }
+      requesterId = onBehalf;
+      managerScheduled = true;
     }
     const nowIso = new Date().toISOString();
-    const token = crypto.randomBytes(24).toString("hex");
+    const token = managerScheduled ? null : crypto.randomBytes(24).toString("hex");
     try {
       const db = storageExtra.getRawSqlite();
-      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)").run(orgId, requesterId, startDate, endDate, reason, token, nowIso, nowIso);
+      const status = managerScheduled ? "approved" : "pending";
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, reviewed_by, reviewed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(orgId, requesterId, startDate, endDate, reason, status, token, managerScheduled ? sessUserId : null, managerScheduled ? nowIso : null, nowIso, nowIso);
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === requesterId);
       const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
       const onBehalfNote = requesterId !== sessUserId ? (" (submitted by " + (submitter?.name ?? "manager") + ")") : "";
+      const reassignedAssignments = managerScheduled
+        ? rebalanceClrVacationAssignments(orgId, requesterId, startDate, endDate)
+        : 0;
       audit({
         userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
         entityType: "time_off", entityId: Number(info.lastInsertRowid),
         entityLabel: (requester?.name ?? "CLR") + " " + startDate + "->" + endDate + onBehalfNote,
-        details: JSON.stringify({ startDate, endDate, reason, requesterId, submittedBy: sessUserId }),
+        details: JSON.stringify({ startDate, endDate, reason, requesterId, submittedBy: sessUserId, status, excludesDailyAssignments: managerScheduled, reassignedAssignments }),
       });
+
+      if (managerScheduled) {
+        try {
+          (storage as any).createNotification?.({
+            userId: requesterId,
+            type: "time_off",
+            title: "Vacation scheduled",
+            message: `${submitter?.name ?? "Your manager"} scheduled approved time off for ${startDate} to ${endDate}. You will be excluded from daily assignments during this period${reassignedAssignments ? `, and ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned` : ""}.`,
+          });
+        } catch {}
+      }
 
       // Email the configured time-off approver with one-click approve/deny links.
       let emailedTo: string | null = null;
-      try {
+      if (!managerScheduled) try {
         const settings = storageExtra.getEmailSettings() as any;
         const approverId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || 0;
         const approver = approverId ? (storage.getUserById(approverId) as any) : null;
@@ -7209,8 +7285,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const reviewerId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || null;
       const now = new Date().toISOString();
       db.prepare("UPDATE time_off_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
+      const reassignedAssignments = status === "approved"
+        ? rebalanceClrVacationAssignments(Number(row.org_id), Number(row.user_id), row.start_date, row.end_date)
+        : 0;
       try {
-        (storage as any).createNotification?.({ userId: row.user_id, type: "time_off", title: "Time off " + status, message: "Your time-off request for " + row.start_date + " to " + row.end_date + " was " + status + " via email." });
+        (storage as any).createNotification?.({ userId: row.user_id, type: "time_off", title: "Time off " + status, message: "Your time-off request for " + row.start_date + " to " + row.end_date + " was " + status + " via email." + (reassignedAssignments ? ` ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned.` : "") });
       } catch {}
       if (status === "approved") {
         try {
@@ -7245,6 +7324,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const existing = db.prepare("SELECT * FROM time_off_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Request not found" });
       db.prepare("UPDATE time_off_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
+      const reassignedAssignments = status === "approved"
+        ? rebalanceClrVacationAssignments(orgId, Number(existing.user_id), existing.start_date, existing.end_date)
+        : 0;
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(id) as any;
       const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
@@ -7252,14 +7334,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
         entityType: "time_off", entityId: id,
         entityLabel: (nameById.get(existing.user_id) ?? "CLR") + " " + existing.start_date + "->" + existing.end_date,
-        details: JSON.stringify({ status, reviewerNote }),
+        details: JSON.stringify({ status, reviewerNote, reassignedAssignments }),
       });
       try {
         (storage as any).createNotification?.({
           userId: existing.user_id,
           type: "time_off",
           title: "Time off " + status,
-          message: "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : "."),
+          message: "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : ".") + (reassignedAssignments ? ` ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned.` : ""),
         });
       } catch {}
       if (status === "approved") {
@@ -8977,7 +9059,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         AND (role = 'assistant' OR (role = 'admin' AND is_clr = 1))
         AND in_daily_assignments = 1
         AND id != ?
-    `).all(callingUser.orgId ?? 1, callingUser.userId) as any[];
+        AND NOT EXISTS (
+          SELECT 1 FROM time_off_requests tor
+          WHERE tor.org_id=users.org_id AND tor.user_id=users.id
+            AND tor.status='approved' AND tor.start_date<=? AND tor.end_date>=?
+        )
+    `).all(callingUser.orgId ?? 1, callingUser.userId, date, date) as any[];
 
     const clrsMissingEod: string[] = [];
     for (const clr of allClrs) {
@@ -9004,7 +9091,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
     // in_daily_assignments = 0 → CLR opted out of daily assignment generation only
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = assignmentClrsForDate(storage.getUsers(), sqlite, Number(callingUser.orgId ?? 1) || 1, date);
 
     if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
@@ -9075,15 +9162,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         storageExtra.setMonthlyAssignments(month, rows);
       }
       const monthlyMap = storageExtra.getMonthlyAssignments(month);
-      // Use monthly assignment order, filter to top-ranked LOs that are eligible today.
-      // Also drop rows pointing at CLRs no longer in the daily-assignment pool
-      // (excluded via in_daily_assignments, deactivated, etc.).
+      // Preserve the monthly LO order. If its usual CLR is on approved leave,
+      // temporarily rebalance that LO across the available CLRs for this day.
       const eligibleIds = new Set(topRanked.map(r => r.lo.id));
-      const pooledAssistantIds = new Set(assistants.map(a => a.id));
-      const orderedRows = monthlyMap.filter((r: any) =>
-        eligibleIds.has(r.lo_id || r.loId) && pooledAssistantIds.has(r.assistant_id || r.assistantId));
-      orderedRows.forEach((r: any, index: number) => {
-        const assistantId = r.assistant_id || r.assistantId;
+      const orderedRows = monthlyMap.filter((r: any) => eligibleIds.has(r.lo_id || r.loId));
+      const resolvedRows = resolveMonthlyClrAssignments(orderedRows, assistants);
+      resolvedRows.forEach(({ row: r, assistantId }, index: number) => {
         const loId = r.lo_id || r.loId;
         const assistantRank = Math.floor(index / assistants.length) + 1;
         assignments.push({
@@ -9130,8 +9214,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(400).json({ error: "items must be a non-empty array" });
     }
 
-    storage.clearDailyAssignments(date);
     const assistants = storage.getUsers().filter(u => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const orgId = Number((user as any)?.orgId ?? (user as any)?.org_id ?? 1) || 1;
+    const vacationIds = approvedTimeOffUserIds(storageExtra.getRawSqlite(), orgId, date);
+    const unavailableItem = items.find((item: any) => vacationIds.has(Number(item.assistantId)));
+    if (unavailableItem) {
+      const unavailable = assistants.find(u => Number(u.id) === Number(unavailableItem.assistantId));
+      return res.status(400).json({ error: `${unavailable?.name ?? "That CLR"} has approved time off on ${date} and cannot receive assignments.` });
+    }
+    storage.clearDailyAssignments(date);
     const assistantOrder: Record<number, number> = {};
     for (const item of items) {
       const aid = Number(item.assistantId);
@@ -9233,6 +9324,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const target = storage.getUserById(assistantId);
     const targetActive = !!(target && ((target as any).isActive ?? (target as any).is_active));
     if (!targetActive) return res.status(400).json({ error: "Target CLR not found or inactive" });
+    const orgId = Number((me as any)?.orgId ?? (me as any)?.org_id ?? 1) || 1;
+    const targetOrgId = Number((target as any)?.orgId ?? (target as any)?.org_id ?? 0);
+    if (targetOrgId !== orgId) return res.status(403).json({ error: "Target CLR is outside your organization." });
+    const rowsById = new Map<number, any>();
+    for (const id of ids) {
+      const row = storage.getAssignmentById(id) as any;
+      if (row) rowsById.set(id, row);
+      const date = row?.assignmentDate ?? row?.assignment_date;
+      if (date && approvedTimeOffUserIds(storageExtra.getRawSqlite(), orgId, date).has(assistantId)) {
+        return res.status(400).json({ error: `${(target as any)?.name ?? "That CLR"} has approved time off on ${date} and cannot receive assignments.` });
+      }
+    }
 
     let moved = 0;
     const skipped: number[] = [];
@@ -9240,7 +9343,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // ranks compacted afterward so the visible #1..#N numbering stays contiguous.
     const touched = new Set<string>();
     for (const id of ids) {
-      const existing = storage.getAssignmentById(id) as any;
+      const existing = rowsById.get(id) as any;
       if (!existing) { skipped.push(id); continue; }
       const fromId = existing.assistantId ?? existing.assistant_id;
       if (fromId === assistantId) { skipped.push(id); continue; }
@@ -14012,7 +14115,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
     const settings = storage.getAlgorithmSettings();
     const los = storage.getLoanOfficers();
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = assignmentClrsForDate(storage.getUsers(), storageExtra.getRawSqlite(), Number((user as any).orgId ?? (user as any).org_id ?? 1) || 1, date);
     if (assistants.length === 0) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
 
     // Clear ALL of today's assignments (override wipes everything)
@@ -14050,11 +14153,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       const eligibleIds = new Set(topRanked.map(r => r.lo.id));
       const orderedRows = monthlyRows.filter((r: any) => eligibleIds.has(r.lo_id || r.loId));
-      orderedRows.forEach((r: any, index: number) => {
+      const resolvedRows = resolveMonthlyClrAssignments(orderedRows, assistants);
+      resolvedRows.forEach(({ row: r, assistantId }, index: number) => {
         assignments.push({
           assignmentDate: date,
           loId: r.lo_id || r.loId,
-          assistantId: r.assistant_id || r.assistantId,
+          assistantId,
           globalRank: index + 1,
           assistantRank: Math.floor(index / assistants.length) + 1,
           status: "recommended",
