@@ -1,5 +1,3 @@
-import crypto from "crypto";
-
 export type CallSyncOutcomeKind = "transfer" | "appointment";
 export type CallSyncTransferType = "direct" | "appointment" | null;
 
@@ -47,32 +45,6 @@ function firstText(...values: unknown[]): string | null {
   return null;
 }
 
-function signatureBytes(signature: string): Buffer | null {
-  const cleaned = signature.trim().replace(/^sha256=/i, "");
-  if (/^[a-f0-9]{64}$/i.test(cleaned)) return Buffer.from(cleaned, "hex");
-  try {
-    const decoded = Buffer.from(cleaned, "base64");
-    return decoded.length === 32 ? decoded : null;
-  } catch {
-    return null;
-  }
-}
-
-export function verifyCallSyncSignature(
-  rawBody: Buffer | string | unknown,
-  secret: string,
-  signature: string | undefined,
-): boolean {
-  if (!secret.trim() || !signature) return false;
-  const supplied = signatureBytes(signature);
-  if (!supplied) return false;
-  const raw = Buffer.isBuffer(rawBody)
-    ? rawBody
-    : Buffer.from(typeof rawBody === "string" ? rawBody : "");
-  const expected = crypto.createHmac("sha256", secret.trim()).update(raw).digest();
-  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
-}
-
 function outcomeFromDisposition(value: string | null): {
   outcomeType: CallSyncOutcomeKind | null;
   transferType: CallSyncTransferType;
@@ -96,7 +68,7 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
   const data = object(body.data ?? body.payload);
   const call = object(data.call_details ?? data.call ?? body.call_details ?? body.call);
   const staff = object(data.staff ?? data.employee ?? data.agent ?? body.staff ?? body.employee ?? body.agent);
-  const caller = object(data.caller ?? data.contact ?? body.caller ?? body.contact);
+  const caller = object(data.caller ?? data.contact ?? data.borrower ?? body.caller ?? body.contact ?? body.borrower);
   const identity = object(data.identity ?? body.identity);
   const analysis = object(data.ai_analysis ?? data.analysis ?? body.ai_analysis ?? body.analysis);
   const appointment = object(data.appointment ?? body.appointment);
@@ -104,6 +76,8 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
     data.loan_officer ?? data.lo ?? data.transferred_to ?? data.transfer_recipient ?? data.recipient
     ?? body.loan_officer ?? body.lo ?? body.transferred_to ?? body.transfer_recipient ?? body.recipient,
   );
+  const explicitOutcome = firstText(data.outcome_type, body.outcome_type)?.toLowerCase();
+  const explicitTransferType = firstText(data.transfer_type, body.transfer_type)?.toLowerCase();
 
   const labels = [
     ...(Array.isArray(identity.labels) ? identity.labels : []),
@@ -130,6 +104,16 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
       classified = next;
       break;
     }
+  }
+  if (explicitOutcome === "transfer") {
+    classified = {
+      outcomeType: "transfer",
+      transferType: explicitTransferType === "appointment" ? "appointment" : "direct",
+    };
+    disposition = firstText(data.disposition, body.disposition) ?? disposition;
+  } else if (explicitOutcome === "appointment") {
+    classified = { outcomeType: "appointment", transferType: null };
+    disposition = firstText(data.disposition, body.disposition) ?? disposition;
   }
 
   const borrowerName = firstText(
@@ -167,7 +151,7 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
       data.appointment_datetime, data.appointment_at, data.scheduled_at,
       body.appointment_datetime, body.appointment_at, body.scheduled_at,
     ),
-    startedAt: firstText(call.started_at, call.start_time, data.started_at, body.started_at, body.timestamp),
+    startedAt: firstText(call.started_at, call.start_time, data.occurred_at, body.occurred_at, data.started_at, body.started_at, body.timestamp),
     recordingUrl,
     notes: explicitNotes,
   };
@@ -182,4 +166,3 @@ export function callSyncOutcomeNotes(value: NormalizedCallSyncOutcome): string {
   ].filter((v): v is string => !!v);
   return parts.join("\n");
 }
-

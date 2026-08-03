@@ -16,7 +16,6 @@ import { InfoBanner } from "@/components/info-banner";
 const MOJO_URL = "https://www.westcapitallending.center/api/webhook/mojo";
 const BONZO_URL = "https://www.westcapitallending.center/api/webhook/bonzo";
 const ZAPIER_INBOUND_URL = "https://www.westcapitallending.center/api/webhook/mojo/zapier";
-const CALLSYNC_URL = "https://www.westcapitallending.center/api/webhook/callsync";
 
 type Settings = {
   mojoSecret: string;
@@ -460,62 +459,20 @@ export default function IntegrationsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <CardTitle className="text-base">CallSync</CardTitle>
-                  <StatusBadge status={(settings?.callsyncSecretConfigured || local.callsyncSecret?.trim()) ? "connected" : "not_connected"} />
+                  <StatusBadge status={local.leadvaultReportingToken?.trim() ? "connected" : "not_connected"} />
                 </div>
                 <CardDescription className="mt-1">
-                  Automatically creates C3 transfers and appointments from explicit CallSync dispositions.
-                  Repeat recording and AI events update the same outcome instead of double-counting it.
+                  CallSync is the CallTools system inside LeadVault. Transfer and appointment dispositions
+                  automatically create matching C3 outcomes without a separate vendor account.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Webhook URL</label>
-              <div className="flex gap-2 mt-1.5">
-                <Input readOnly value={CALLSYNC_URL} className="font-mono text-xs" />
-                <CopyBtn value={CALLSYNC_URL} />
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Webhook Secret</label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setLocal((p) => ({
-                    ...p,
-                    callsyncSecret: `${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`,
-                  }))}
-                >
-                  Generate secure secret
-                </Button>
-              </div>
-              <div className="mt-1.5">
-                <div className="flex items-start gap-2">
-                  <div className="flex-1">
-                    <SecretInput
-                      value={local.callsyncSecret}
-                      onChange={(v) => setLocal((p) => ({ ...p, callsyncSecret: v }))}
-                      placeholder="Generate or paste the secret used in CallSync"
-                    />
-                  </div>
-                  <CopyBtn value={local.callsyncSecret} />
-                </div>
-              </div>
-              {settings?.callsyncSecretManagedByEnv && !local.callsyncSecret.trim() && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  A server-managed secret is active. Generate and save a new secret here if you want to replace it from C3.
-                </p>
-              )}
-            </div>
             <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5">
-              <p className="font-semibold">CallSync setup</p>
-              <p>1. Open CallSync → Settings → Webhooks → New Endpoint.</p>
-              <p>2. Paste the URL and use the exact same secret shown above.</p>
-              <p>3. Enable New Call Log, AI Analysis, and Caller Updated events.</p>
-              <p>4. Save here first, then send a test event from CallSync.</p>
+              <p className="font-semibold">Shared internal connection</p>
+              <p>CallTools records the disposition in CallSync/LeadVault, then LeadVault securely sends the outcome to C3.</p>
+              <p>The same reporting connection used for outbound-call statistics authenticates this delivery.</p>
             </div>
             <div className="pt-2 border-t">
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">What is automated</div>
@@ -524,16 +481,8 @@ export default function IntegrationsPage() {
                 <li>✅ Scheduled appointments and appointment times</li>
                 <li>✅ CLR matching by phone, email, then exact name</li>
                 <li>✅ Borrower, LO, notes, phone, and recording links when supplied</li>
-                <li>✅ Duplicate protection by CallSync call ID</li>
+                <li>✅ Retry-safe duplicate protection by CallTools event ID</li>
               </ul>
-            </div>
-            <div className="flex justify-end pt-2">
-              <Button
-                onClick={() => saveMutation.mutate({ callsyncSecret: local.callsyncSecret })}
-                disabled={saveMutation.isPending || !local.callsyncSecret.trim()}
-              >
-                <Save className="w-3.5 h-3.5 mr-1.5" /> Save CallSync
-              </Button>
             </div>
           </CardContent>
         </Card>

@@ -1,18 +1,6 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import test from "node:test";
-import { normalizeCallSyncPayload, verifyCallSyncSignature } from "../server/callsync";
-
-test("verifies CallSync HMAC signatures against the untouched request body", () => {
-  const raw = Buffer.from(JSON.stringify({ event: "call_logged", payload_id: "evt_1" }));
-  const secret = "test-secret";
-  const signature = crypto.createHmac("sha256", secret).update(raw).digest("hex");
-
-  assert.equal(verifyCallSyncSignature(raw, secret, signature), true);
-  assert.equal(verifyCallSyncSignature(raw, secret, `sha256=${signature}`), true);
-  assert.equal(verifyCallSyncSignature(Buffer.from("changed"), secret, signature), false);
-  assert.equal(verifyCallSyncSignature(raw, secret, undefined), false);
-});
+import { normalizeCallSyncPayload } from "../server/callsync";
 
 test("normalizes an explicit direct transfer without mistaking call direction for an outcome", () => {
   const result = normalizeCallSyncPayload({
@@ -71,3 +59,23 @@ test("ignores ordinary incoming, outgoing, and completed call events", () => {
   }
 });
 
+test("normalizes the internal CallTools outcome contract", () => {
+  const result = normalizeCallSyncPayload({
+    event: "calltools.outcome",
+    event_id: "calltools:hcd:123",
+    call_id: "call-123",
+    disposition: "Appointment Transfer",
+    outcome_type: "transfer",
+    transfer_type: "appointment",
+    agent: { name: "Ethan Wood" },
+    borrower: { name: "Jane Borrower", phone: "9495551212" },
+    loan_officer: { name: "Alex LO", email: "alex@example.test" },
+    occurred_at: "2026-08-03T18:00:00Z",
+  });
+  assert.equal(result.payloadId, "calltools:hcd:123");
+  assert.equal(result.outcomeType, "transfer");
+  assert.equal(result.transferType, "appointment");
+  assert.equal(result.staffName, "Ethan Wood");
+  assert.equal(result.borrowerName, "Jane Borrower");
+  assert.equal(result.loEmail, "alex@example.test");
+});

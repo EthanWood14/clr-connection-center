@@ -38,7 +38,7 @@ import {
 import { buildTransferScorecardWindows } from "./manager-scorecard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
-import { callSyncOutcomeNotes, normalizeCallSyncPayload, verifyCallSyncSignature } from "./callsync";
+import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -13256,20 +13256,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   app.post("/api/webhook/callsync", (req, res) => {
-    const settings = storageExtra.getWebhookSettings();
-    // A value saved by an admin deliberately overrides the environment fallback,
-    // so the Integrations screen can rotate the secret without a Railway change.
-    const secret = String(settings.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET || "").trim();
-    if (!secret) {
-      return res.status(503).json({ ok: false, error: "CallSync webhook is not configured" });
+    const token = leadvaultReportingToken();
+    if (!token) {
+      return res.status(503).json({ ok: false, error: "CallSync reporting connection is not configured" });
     }
-    const signature = req.headers["x-callsync-signature"] as string | undefined;
-    if (!verifyCallSyncSignature(req.rawBody, secret, signature)) {
+    const suppliedToken = req.headers["x-api-token"] as string | undefined;
+    const suppliedBytes = Buffer.from(suppliedToken?.trim() ?? "");
+    const expectedBytes = Buffer.from(token);
+    if (suppliedBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(suppliedBytes, expectedBytes)) {
       storageExtra.logWebhookEvent({
         source: "callsync", eventType: "auth_failed",
-        payload: { error: "invalid signature" }, processed: false,
+        payload: { error: "invalid token" }, processed: false,
       });
-      return res.status(401).json({ ok: false, error: "invalid signature" });
+      return res.status(401).json({ ok: false, error: "invalid token" });
     }
 
     const normalized = normalizeCallSyncPayload(req.body);
@@ -13285,7 +13284,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const db = storageExtra.getRawSqlite();
         const orgId = Number(matched.orgId ?? matched.org_id ?? 1) || 1;
         const lo = findCallSyncLoanOfficer(orgId, normalized.loName, normalized.loPhone, normalized.loEmail);
-        const externalCallId = normalized.callId || normalized.payloadId
+        const externalCallId = normalized.payloadId || normalized.callId
           || crypto.createHash("sha256").update(req.rawBody as Buffer).digest("hex");
         const existingLink = db.prepare(
           `SELECT * FROM callsync_outcome_links WHERE org_id=? AND external_call_id=?`
