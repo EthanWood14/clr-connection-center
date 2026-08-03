@@ -5203,6 +5203,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (req.path === "/comp/email-decision") return next();
     if (req.path === "/time-off/email-decision") return next();
     if (req.path === "/schedule/email-decision") return next();
+    // LeadVault/CallSync authenticates this machine-to-machine endpoint with
+    // the shared x-api-token inside the route handler.
+    if (req.path === "/webhook/callsync") return next();
     // LO/LOA self-service portal — no C3 login; each request resolves an
     // organization-scoped shared code before touching roster data.
     if (req.path.startsWith("/portal/")) return next();
