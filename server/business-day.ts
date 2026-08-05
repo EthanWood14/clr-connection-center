@@ -47,6 +47,34 @@ export function addIsoDays(iso: string, days: number): string {
   return formatDateInTz(t, "UTC");
 }
 
+// Whether a calendar date is Mon-Fri. Noon UTC so no DST shift can move the
+// date onto an adjacent day and change its weekday.
+function isWeekday(year: number, month: number, day: number): boolean {
+  const dow = new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).getUTCDay();
+  return dow !== 0 && dow !== 6;
+}
+
+/**
+ * Count weekdays in a month, from the 1st through `throughDay` inclusive.
+ *
+ * Omit `throughDay` for the whole month. Days past the end of the month are
+ * clamped, so passing 31 in a 30-day month counts 30 days' worth.
+ *
+ * Month-end estimates extrapolate from the pace so far. Work only happens on
+ * weekdays, so dividing by elapsed *calendar* days treats every Saturday and
+ * Sunday as a zero-transfer day and drags the daily rate down — which
+ * understates the projection by roughly two sevenths.
+ */
+export function countWeekdaysInMonth(year: number, month: number, throughDay?: number): number {
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const end = Math.min(throughDay ?? lastDay, lastDay);
+  let count = 0;
+  for (let day = 1; day <= end; day++) {
+    if (isWeekday(year, month, day)) count++;
+  }
+  return count;
+}
+
 /**
  * Return completed weekdays immediately before an effective business date.
  *
@@ -63,8 +91,7 @@ export function previousWeekdaysFromBusinessDate(
   for (let daysBack = 1; daysBack <= maxLookbackDays && weekdays.length < limit; daysBack++) {
     const candidate = addIsoDays(businessDate, -daysBack);
     const [y, m, d] = candidate.split("-").map(n => parseInt(n, 10));
-    const dow = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
-    if (dow !== 0 && dow !== 6) weekdays.push(candidate);
+    if (isWeekday(y, m, d)) weekdays.push(candidate);
   }
   return weekdays;
 }

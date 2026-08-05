@@ -20,7 +20,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
@@ -759,9 +759,12 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
     // month-end at their current daily pace, then price the projected count.
     if (opts.projected) {
       const [ey, em, ed] = endDate.split("-").map(n => parseInt(n, 10));
-      const daysElapsed = Math.max(1, ed);                          // window starts on the 1st
-      const daysInMonth = new Date(Date.UTC(ey, em, 0)).getUTCDate();
-      const projectCount = (mtd: number) => Math.round((mtd / daysElapsed) * daysInMonth);
+      // Weekdays only, on both sides of the ratio. Nobody logs transfers on a
+      // Saturday, so counting weekends as elapsed days made every CLR look
+      // slower than they are and understated the month-end estimate.
+      const weekdaysElapsed = Math.max(1, countWeekdaysInMonth(ey, em, ed)); // window starts on the 1st
+      const weekdaysInMonth = countWeekdaysInMonth(ey, em);
+      const projectCount = (mtd: number) => Math.round((mtd / weekdaysElapsed) * weekdaysInMonth);
       let totMtd = 0, totProj = 0, totComp = 0;
       const pbody = rows.map((r: any) => {
         const mtd = Number(r.transfers) || 0;
@@ -781,7 +784,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
       return `
       <div style="margin:24px 0">
         <h2 style="font-size:16px;color:#0f172a;margin:0 0 4px">Projected Bonus Costs (month-end estimate)</h2>
-        <p style="font-size:12px;color:#64748b;margin:0 0 10px">Each CLR's transfers projected to month-end at their current pace (day ${daysElapsed} of ${daysInMonth}), then priced by tier: &lt;100 = $5, 100–199 = $10, 200+ = $15 per transfer. Saved flat rates override these tiers. <strong>Estimate only — not final pay.</strong></p>
+        <p style="font-size:12px;color:#64748b;margin:0 0 10px">Each CLR's transfers projected to month-end at their current pace (weekday ${weekdaysElapsed} of ${weekdaysInMonth} — weekends excluded), then priced by tier: &lt;100 = $5, 100–199 = $10, 200+ = $15 per transfer. Saved flat rates override these tiers. <strong>Estimate only — not final pay.</strong></p>
         <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e2e8f0">
           <thead><tr style="background:#f8fafc">
             <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">CLR</th>
