@@ -20,6 +20,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
+import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
@@ -5835,7 +5836,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   function attendanceManagerUsers(orgId: number, excludeUserId?: number): any[] {
-    const rows = storageExtra.getRawSqlite().prepare(`SELECT id, name FROM users
+    // email comes along for the 10am check-in digest; the notification callers
+    // that only read id/name are unaffected by the extra column.
+    const rows = storageExtra.getRawSqlite().prepare(`SELECT id, name, email FROM users
       WHERE org_id=? AND is_active=1 AND (role='admin' OR is_manager=1)
       ORDER BY id`).all(orgId) as any[];
     return excludeUserId ? rows.filter((u) => Number(u.id) !== excludeUserId) : rows;
@@ -12305,11 +12308,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Team board: today's check-in status + 90-day late standing for EVERY role
   // (CLRs, Loan Officers, LOAs). Visible to the whole team — attendance is public
   // to teammates by design; only managers can act (excuse), enforced on that route.
-  app.get("/api/checkin/admin", requireAuth, (req: any, res) => {
-    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
-    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
-      ? req.query.date
-      : checkinToday(checkinTzFor(Number(req.session_user?.userId)));
+  // The attendance board for one org and date: every CLR and every portal
+  // subject, with their check-in, what was expected of them, and where they
+  // stand in the rolling late window.
+  //
+  // Shared on purpose. The manager screen and the 10am digest email must never
+  // disagree about who was late, so they read one function instead of two
+  // copies of the same joins.
+  function buildCheckinBoard(orgId: number, date: string) {
     const rows = storageExtra.getCheckinsForDate(orgId, date);
     const byUser = new Map<number, any>(rows.map((r: any) => [r.user_id, r]));
     const cfg = checkinConfig();
@@ -12395,6 +12401,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
       };
     });
+    return {
+      cfg, windowStart, clrs,
+      los: external.filter((e) => e.type === "lo"),
+      loas: external.filter((e) => e.type === "loa"),
+    };
+  }
+
+  app.get("/api/checkin/admin", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date
+      : checkinToday(checkinTzFor(Number(req.session_user?.userId)));
+    const { cfg, windowStart, clrs, los, loas } = buildCheckinBoard(orgId, date);
     const actor = storage.getUserById(Number(req.session_user?.userId)) as any;
     const canManageNetwork = actor?.role === "admin" || !!actor?.superAdmin;
     res.json({
@@ -12408,11 +12427,94 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         networkConfigured: cfg.allowedIps.length > 0,
         allowedIps: canManageNetwork ? cfg.allowedIps : undefined,
       },
-      clrs,
-      los: external.filter((e) => e.type === "lo"),
-      loas: external.filter((e) => e.type === "loa"),
+      clrs, los, loas,
       policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
     });
+  });
+
+  // ── Daily check-in digest ───────────────────────────────────────────────────
+  // One email to every manager at 10:00 Pacific: who was on time, who was late,
+  // and who never checked in. By 10am an 8am start plus grace has long passed,
+  // so lateness is settled and the picture is final.
+  //
+  // Registered here rather than beside the other crons at module scope because
+  // it needs buildCheckinBoard() and the check-in helpers, which are scoped to
+  // registerRoutes(). cron.schedule() may be called from anywhere, and
+  // registerRoutes() runs exactly once at boot.
+
+  async function sendCheckinDigest(orgId: number, date: string): Promise<"sent" | "skipped"> {
+    const { cfg, clrs, los, loas } = buildCheckinBoard(orgId, date);
+    if (!cfg.enabled) return "skipped";
+
+    const toSubject = (s: any): DigestSubject => ({
+      name: s.name, sub: s.loName ?? null, expectedStart: s.expectedStart,
+      checkin: s.checkin, lateCount: s.lateCount, lateOverLimit: s.lateOverLimit,
+      scheduledOff: s.scheduledOff, noSchedule: s.noSchedule,
+      absenceExcused: s.absenceExcused, startPassed: s.startPassed,
+    });
+    // CLRs first, then the portal roster, in one list — managers care about who
+    // was late, not which table the row came from.
+    const all: DigestSubject[] = [...clrs, ...los, ...loas].map(toSubject);
+
+    // Nothing to report when nobody was due in — this is what keeps weekends and
+    // holidays quiet without hard-coding which days those are.
+    if (!anyoneExpected(all)) return "skipped";
+
+    const managers = attendanceManagerUsers(orgId)
+      .map((m: any) => String(m.email ?? "").trim())
+      .filter((e: string) => e.includes("@"));
+    if (!managers.length) return "skipped";
+
+    const late = all.filter((s) => digestStatus(s) === "late").length;
+    const missing = all.filter((s) => digestStatus(s) === "missing").length;
+    const onTime = all.filter((s) => digestStatus(s) === "on_time").length;
+
+    const flag = late + missing;
+    const subject = `Check-ins — ${date}${flag ? ` (${late} late, ${missing} missing)` : " — all clear"}`;
+    const html = buildEmail({
+      subject,
+      preheader: `${onTime} on time · ${late} late · ${missing} no check-in`,
+      body: buildCheckinDigestHtml(date, all),
+    });
+    await sendEmail({ to: managers, subject, html });
+    console.log(`[checkin-digest] org ${orgId}: sent to ${managers.length} manager(s) — ${onTime} on time, ${late} late, ${missing} missing`);
+    return "sent";
+  }
+
+  cron.schedule("0 10 * * *", async () => {
+    try {
+      // Every org that has active people, so a second org is not silently skipped.
+      const orgs = (storageExtra.getRawSqlite()
+        .prepare(`SELECT DISTINCT org_id FROM users WHERE is_active=1 ORDER BY org_id`)
+        .all() as any[]).map((r) => Number(r.org_id)).filter(Number.isFinite);
+      for (const orgId of orgs) {
+        const date = checkinToday(BUSINESS_DAY_DEFAULT_TZ);
+        try {
+          const result = await runWithOrg({ orgId, superAdmin: false }, () => sendCheckinDigest(orgId, date));
+          if (result === "skipped") console.log(`[checkin-digest] org ${orgId}: nothing to report for ${date}`);
+        } catch (e: any) {
+          console.error(`[checkin-digest] org ${orgId} failed:`, e?.message ?? e);
+        }
+      }
+    } catch (e: any) {
+      console.error("[checkin-digest] cron error:", e?.message ?? e);
+    }
+  }, { timezone: "America/Los_Angeles" });
+
+  // Manager-only manual trigger, so the digest can be proven end-to-end without
+  // waiting for 10am.
+  app.post("/api/checkin/digest/send-now", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const date = (typeof req.body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date))
+      ? req.body.date
+      : checkinToday(BUSINESS_DAY_DEFAULT_TZ);
+    try {
+      const result = await sendCheckinDigest(orgId, date);
+      res.json({ ok: true, result, date });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to send" });
+    }
   });
 
   // Manager: reverse (excuse) a late, or put it back. The row keeps its real
