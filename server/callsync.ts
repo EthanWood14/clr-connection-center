@@ -5,6 +5,8 @@ export type NormalizedCallSyncOutcome = {
   eventType: string;
   payloadId: string | null;
   callId: string | null;
+  contactKey: string | null;
+  conversation: boolean;
   outcomeType: CallSyncOutcomeKind | null;
   transferType: CallSyncTransferType;
   disposition: string | null;
@@ -135,6 +137,8 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
     eventType: firstText(body.event, body.event_type, body.type) ?? "unknown",
     payloadId: firstText(body.payload_id, body.event_id, data.payload_id, data.event_id),
     callId: firstText(call.call_id, call.id, data.call_id, body.call_id),
+    contactKey: firstText(data.contact_id, body.contact_id, data.lead_id, body.lead_id, borrowerPhone),
+    conversation: data.conversation === true || body.conversation === true,
     outcomeType: classified.outcomeType,
     transferType: classified.transferType,
     disposition,

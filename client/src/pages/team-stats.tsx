@@ -22,6 +22,8 @@ const COLORS = {
   deferral: "#F59E0B",
   callback: "#0EA5E9",
   no_answer: "#9CA3AF",
+  contacts: "#0891B2",
+  conversations: "#D97706",
 };
 
 const BREAKDOWN_SEGMENTS = [
@@ -51,11 +53,11 @@ interface StatsResponse {
   startDate: string;
   endDate: string;
   clrId: number | null;
-  totals: { calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number };
-  previous: { calls: number; transfers: number; appointments: number; transferRate: number };
-  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number }>;
+  totals: { calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number };
+  previous: { calls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number };
+  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
+  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -99,7 +101,7 @@ function SummaryCard({ title, value, previous, suffix = "" }: { title: string; v
   );
 }
 
-type SortKey = "name" | "calls" | "messages" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "vsGoal";
+type SortKey = "name" | "calls" | "messages" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "callToolsContacts" | "callToolsConversations" | "vsGoal";
 
 export default function TeamStats() {
   const { user } = useAuth();
@@ -268,8 +270,10 @@ export default function TeamStats() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         <SummaryCard title="Total Calls" value={data.totals.calls} previous={data.previous.calls} />
+        <SummaryCard title="CallTools Contacts" value={data.totals.callToolsContacts} previous={data.previous.callToolsContacts} />
+        <SummaryCard title="Conversations" value={data.totals.callToolsConversations} previous={data.previous.callToolsConversations} />
         <SummaryCard title="Messages Sent" value={(data.totals as any).messages ?? 0} />
         <SummaryCard title="Total Transfers" value={data.totals.transfers} previous={data.previous.transfers} />
         <SummaryCard title="Transfer Rate" value={data.totals.transferRate.toFixed(1)} previous={data.previous.transferRate} suffix="%" />
@@ -393,6 +397,8 @@ export default function TeamStats() {
                   <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar xAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} />
+                  <Bar xAxisId="calls" dataKey="callToolsContacts" name="Contacts" fill={COLORS.contacts} />
+                  <Bar xAxisId="small" dataKey="callToolsConversations" name="Conversations" fill={COLORS.conversations} />
                   <Bar xAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} />
                   <Bar xAxisId="small" dataKey="appointments" name="Appointments" fill={COLORS.appointments} />
                 </BarChart>
@@ -417,6 +423,8 @@ export default function TeamStats() {
                     const cols: [SortKey, string][] = [
                       ["name","CLR Name"],
                       ["calls","Calls"],
+                      ["callToolsContacts","Contacts"],
+                      ["callToolsConversations","Conversations"],
                       ["messages","Messages"],
                       ["transfers","Transfers"],
                       ["vsGoal","vs Goal"],
@@ -447,7 +455,7 @@ export default function TeamStats() {
               <tbody>
                 {perClrSorted.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
+                    <td colSpan={13} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
                   </tr>
                 ) : perClrSorted.map((row: any) => (
                   <tr
@@ -458,6 +466,8 @@ export default function TeamStats() {
                   >
                     <td className="px-4 py-2.5 font-medium">{row.name}</td>
                     <td className="px-4 py-2.5">{row.calls}</td>
+                    <td className="px-4 py-2.5 text-cyan-700 dark:text-cyan-300">{row.callToolsContacts ?? 0}</td>
+                    <td className="px-4 py-2.5 text-amber-700 dark:text-amber-300">{row.callToolsConversations ?? 0}</td>
                     <td className="px-4 py-2.5 text-teal-600 dark:text-teal-400">{row.messages ?? 0}</td>
                     <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400">{row.transfers}</td>
                     <td className="px-4 py-2.5">

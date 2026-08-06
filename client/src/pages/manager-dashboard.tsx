@@ -12,7 +12,7 @@ import {
   PhoneCall, Calendar, XCircle, ArrowUpRight, Trophy,
   CheckCircle2, AlertTriangle, ShieldCheck, Send, RefreshCw, TrendingUp,
   Download, Activity, MapPin, Target, Flame, ArrowDown, ArrowUp,
-  Minus, AlertOctagon, Info, BarChart3, PieChart as PieIcon, Award,
+  Minus, AlertOctagon, Info, BarChart3, PieChart as PieIcon, Award, Users,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -69,6 +69,7 @@ type RangeBlock = {
     userId: number; name: string;
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; conversionRate: number;
+    callToolsContacts?: number; callToolsConversations?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
   }[];
@@ -99,6 +100,13 @@ type ManagerData = {
   today: string;
   ranges: { week: any; month: any; last30: any };
   stats: { today: any; week: any; month: any; priorWeek: any; priorMonth: any };
+  callActivity: {
+    today: { contacts: number; conversations: number };
+    week: { contacts: number; conversations: number };
+    month: { contacts: number; conversations: number };
+    priorWeek: { contacts: number; conversations: number };
+    priorMonth: { contacts: number; conversations: number };
+  };
   clrCards: any[];
   eod: {
     date: string;
@@ -210,6 +218,8 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
   const cols: Array<{ key: string; label: string; get: (r: any) => number; better: boolean; fmt: (r: any) => string }> = [
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
+    { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
+    { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0) },
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
@@ -482,7 +492,7 @@ export default function ManagerDashboard() {
     );
   }
 
-  const { stats, clrCards, eod, pipeline, activityFeed, alerts, byRange } = data;
+  const { stats, callActivity, clrCards, eod, pipeline, activityFeed, alerts, byRange } = data;
 
   // KPI summary numbers (pulled from week range trend so they match KPI tiles)
   const trend30 = byRange["30d"]?.trend ?? [];
@@ -496,9 +506,13 @@ export default function ManagerDashboard() {
   const apptDeltaWk = deltaInfo(stats.week?.appointments ?? 0, stats.priorWeek?.appointments ?? 0);
   const fellDeltaWk = deltaInfo(stats.week?.fellThrough ?? 0, stats.priorWeek?.fellThrough ?? 0);
   const callsDeltaWk = deltaInfo(last7Calls, priorLast7Calls);
+  const contactsDeltaWk = deltaInfo(callActivity.week.contacts, callActivity.priorWeek.contacts);
+  const conversationsDeltaWk = deltaInfo(callActivity.week.conversations, callActivity.priorWeek.conversations);
   const transferDeltaMo = deltaInfo(stats.month?.transfers ?? 0, stats.priorMonth?.transfers ?? 0);
   const apptDeltaMo = deltaInfo(stats.month?.appointments ?? 0, stats.priorMonth?.appointments ?? 0);
   const fellDeltaMo = deltaInfo(stats.month?.fellThrough ?? 0, stats.priorMonth?.fellThrough ?? 0);
+  const contactsDeltaMo = deltaInfo(callActivity.month.contacts, callActivity.priorMonth.contacts);
+  const conversationsDeltaMo = deltaInfo(callActivity.month.conversations, callActivity.priorMonth.conversations);
 
   const visibleClrs = showAllClrs ? clrCards : clrCards.slice(0, 6);
 
@@ -674,8 +688,10 @@ export default function ManagerDashboard() {
       {/* KPI tiles — Today */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Today</div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           <KpiTile label="Calls" value={todayCalls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY} />
+          <KpiTile label="Contacts" value={callActivity.today.contacts} icon={Users} color={CYAN} />
+          <KpiTile label="Conversations" value={callActivity.today.conversations} icon={Activity} color={AMBER} />
           <KpiTile label="Transfers" value={stats.today?.transfers ?? 0} icon={ArrowUpRight} color={GREEN} />
           <KpiTile label="Appointments" value={stats.today?.appointments ?? 0} icon={Calendar} color={BLUE} />
           <KpiTile label="Fell through" value={stats.today?.fellThrough ?? 0} icon={XCircle} color={RED} />
@@ -685,9 +701,13 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This week with WoW deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This week</div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           <KpiTile label="Calls (7d)" value={last7Calls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY}
                    delta={<DeltaArrow {...callsDeltaWk} />} />
+          <KpiTile label="Contacts" value={callActivity.week.contacts} icon={Users} color={CYAN}
+                   delta={<DeltaArrow {...contactsDeltaWk} />} />
+          <KpiTile label="Conversations" value={callActivity.week.conversations} icon={Activity} color={AMBER}
+                   delta={<DeltaArrow {...conversationsDeltaWk} />} />
           <KpiTile label="Transfers" value={stats.week?.transfers ?? 0} icon={ArrowUpRight} color={GREEN}
                    delta={<DeltaArrow {...transferDeltaWk} />} />
           <KpiTile label="Appointments" value={stats.week?.appointments ?? 0} icon={Calendar} color={BLUE}
@@ -700,7 +720,11 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This month with MoM deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This month</div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          <KpiTile label="Contacts" value={callActivity.month.contacts} icon={Users} color={CYAN}
+                   delta={<DeltaArrow {...contactsDeltaMo} />} />
+          <KpiTile label="Conversations" value={callActivity.month.conversations} icon={Activity} color={AMBER}
+                   delta={<DeltaArrow {...conversationsDeltaMo} />} />
           <KpiTile label="Transfers" value={stats.month?.transfers ?? 0} sub={`Conv ${stats.month?.conversionRate ?? 0}%`}
                    icon={ArrowUpRight} color={GREEN} delta={<DeltaArrow {...transferDeltaMo} />} />
           <KpiTile label="Appointments" value={stats.month?.appointments ?? 0} icon={Calendar} color={BLUE}

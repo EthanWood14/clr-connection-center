@@ -1132,6 +1132,8 @@ function ClrDashboard() {
             <StatCard title="Fell Through" value={displayStats?.fellThrough} icon={XCircle} color="warning" accent="red" sub={subLabel} href="/outcomes" />
             <StatCard title="Future Contacts" value={displayStats?.futureContactsCount ?? 0} icon={CalendarDays} color="primary" accent="teal" sub={subLabel} href="/outcomes" />
             <StatCard title={scope === "team" ? `Team ${callsTitle}` : callsTitle} value={displayStats?.myCallsInPeriod ?? 0} icon={PhoneCall} color="success" accent="blue" sub={scope === "team" ? `team calls ${subLabel}` : `my calls ${subLabel}`} href="/eod-report" />
+            <StatCard title="CallTools Contacts" value={displayStats?.callToolsContacts ?? 0} icon={Users} color="primary" accent="teal" sub={`unique leads ${subLabel}`} href="/stats" />
+            <StatCard title="Conversations" value={displayStats?.callToolsConversations ?? 0} icon={MessageSquare} color="warning" accent="orange" sub={`human connects ${subLabel}`} href="/stats" />
             {(displayStats?.contactsReached ?? 0) > 0 && (
               <StatCard title="Contacts Reached" value={displayStats?.contactsReached ?? 0} icon={PhoneCall} color="primary" accent="teal" sub={`answered ${subLabel}`} href="/eod-report" />
             )}

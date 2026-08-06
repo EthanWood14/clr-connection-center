@@ -64,7 +64,9 @@ test("normalizes the internal CallTools outcome contract", () => {
     event: "calltools.outcome",
     event_id: "calltools:hcd:123",
     call_id: "call-123",
+    contact_id: 441,
     disposition: "Appointment Transfer",
+    conversation: true,
     outcome_type: "transfer",
     transfer_type: "appointment",
     agent: { name: "Ethan Wood" },
@@ -73,6 +75,8 @@ test("normalizes the internal CallTools outcome contract", () => {
     occurred_at: "2026-08-03T18:00:00Z",
   });
   assert.equal(result.payloadId, "calltools:hcd:123");
+  assert.equal(result.contactKey, "441");
+  assert.equal(result.conversation, true);
   assert.equal(result.outcomeType, "transfer");
   assert.equal(result.transferType, "appointment");
   assert.equal(result.staffName, "Ethan Wood");

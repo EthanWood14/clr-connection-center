@@ -2684,6 +2684,27 @@ function runNewMigrations() {
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_callsync_payload_id
     ON callsync_outcome_links(last_payload_id) WHERE last_payload_id IS NOT NULL`);
 
+  // Every CallTools historical disposition is an immutable activity event.
+  // Outcomes are a subset; keeping activity separate lets dashboards count
+  // unique contacts and human conversations without inflating outcomes.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS callsync_activity_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    external_event_id TEXT NOT NULL,
+    assistant_id INTEGER NOT NULL,
+    activity_date TEXT NOT NULL,
+    contact_key TEXT NOT NULL,
+    conversation INTEGER NOT NULL DEFAULT 0,
+    disposition TEXT,
+    occurred_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(org_id, external_event_id)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_range
+    ON callsync_activity_events(org_id, activity_date, assistant_id)`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_contact
+    ON callsync_activity_events(org_id, contact_key, activity_date)`);
+
   // ── Bonzo integration tables ─────────────────────────────────────────────
   try {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_prospects (
