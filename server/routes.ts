@@ -21,6 +21,7 @@ import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProces
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
+import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
@@ -6791,7 +6792,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (body.leadMailboxPassword === "••••••••") delete body.leadMailboxPassword;
     const lo = storage.updateLoanOfficer(id, body);
     const me = storage.getUserById(Number(req.session_user?.userId)) as any;
-    if (lo) audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: JSON.stringify(body) });
+    if (lo) audit({ userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update", entityType: "loan_officer", entityId: lo.id, entityLabel: lo.fullName, details: auditDetails(body) });
     res.json(lo);
   });
 
@@ -12765,15 +12766,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       from: str(req.query.from, /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/),
       to: str(req.query.to, /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/),
       search: str(req.query.search, /^.{1,80}$/),
-    }).filter((log: any) => {
-      // Rows the org owns, plus the ones nobody owns. Actions recorded without a
-      // resolvable user — failed logins (user_id null, by definition nobody yet)
-      // and system deletions (user_id 0) — used to be filtered out here, so the
-      // only records anyone would want during an incident were the ones the
-      // viewer could never show.
-      const uid = log.userId;
-      return uid == null || uid === 0 || allowedUserIds.has(Number(uid));
     });
+    // Scoping is done by org_id in SQL now. The old post-filter kept only rows
+    // whose user_id was a current org member, which dropped every action with no
+    // resolvable user — failed logins (user_id null, since nobody is signed in
+    // yet) and system deletions (user_id 0) — precisely the rows an
+    // investigation needs. Letting them through without an org column would have
+    // shown one org's failed logins, and the IPs and addresses in them, to every
+    // other org's admins.
     res.json(logs);
   });
 

@@ -5,7 +5,8 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { currentOrgId } from "./orgContext";
+import { currentOrgId, getOrgContext } from "./orgContext";
+import { auditDetails, detailsHasPlaintextSecret } from "./audit-details";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
   leadOutcomes, dailyCallLogs, notifications, algorithmSettings, auditLogs,
@@ -339,6 +340,45 @@ sqlite.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// ── Migration: audit rows carry their org, their source IP, and are indexed ───
+// Existing rows all predate multi-org and belong to org 1.
+try { sqlite.exec(`ALTER TABLE audit_logs ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
+try { sqlite.exec(`ALTER TABLE audit_logs ADD COLUMN ip_address TEXT`); } catch {}
+// The viewer always sorts by recency and filters by org, type or user. Cheap at
+// today's 5.5k rows; the difference between usable and not once this grows.
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs (created_at DESC)`); } catch {}
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_audit_org_created ON audit_logs (org_id, created_at DESC)`); } catch {}
+try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs (entity_type, created_at DESC)`); } catch {}
+
+// ── Migration: scrub plaintext credentials out of historical audit rows ───────
+// PATCH /api/loan-officers/:id used to serialise the raw request body into
+// details, so live Bonzo and lead-mailbox passwords sat in this table in the
+// clear. Redaction now happens on write; this removes what was already stored.
+// Runs once — the marker row stops it repeating on every boot.
+try {
+  const done = sqlite.prepare(
+    `SELECT 1 FROM audit_logs WHERE action='audit_credential_scrub_v1' LIMIT 1`,
+  ).get();
+  if (!done) {
+    const rows = sqlite.prepare(
+      `SELECT id, details FROM audit_logs WHERE details IS NOT NULL AND details LIKE '%assword%'`,
+    ).all() as any[];
+    const upd = sqlite.prepare(`UPDATE audit_logs SET details = ? WHERE id = ?`);
+    let scrubbed = 0;
+    for (const r of rows) {
+      if (!detailsHasPlaintextSecret(r.details)) continue;
+      try { upd.run(auditDetails(JSON.parse(r.details)), r.id); scrubbed++; } catch {}
+    }
+    sqlite.prepare(
+      `INSERT INTO audit_logs (user_id, user_name, action, entity_type, entity_label, details, org_id, created_at)
+       VALUES (0, 'System', 'audit_credential_scrub_v1', 'settings', 'Redacted stored credentials', ?, 1, ?)`,
+    ).run(JSON.stringify({ rowsScrubbed: scrubbed }), new Date().toISOString());
+    if (scrubbed) console.log(`[audit] scrubbed plaintext credentials from ${scrubbed} historical audit rows`);
+  }
+} catch (e: any) {
+  console.error("[audit] credential scrub failed:", e?.message ?? e);
+}
 
 // ── Migration: add password_hash column if it doesn't exist ───────────────────
 try {
@@ -1236,7 +1276,7 @@ export interface IStorage {
   createAuditLog(data: InsertAuditLog): AuditLog;
   getAuditLogs(filters?: {
     entityType?: string; userId?: number; limit?: number;
-    action?: string; from?: string; to?: string; search?: string;
+    action?: string; from?: string; to?: string; search?: string; orgId?: number;
   }): AuditLog[];
 
   // Dashboard stats
@@ -1845,15 +1885,26 @@ export class Storage implements IStorage {
   }
 
   createAuditLog(data: InsertAuditLog) {
-    return db.insert(auditLogs).values({ ...data, createdAt: new Date().toISOString() }).returning().get()!;
+    // Stamp the org here rather than at 60-odd call sites. getOrgContext(), not
+    // currentOrgId(): the latter returns null under bypassScope for super-admin
+    // requests, which is exactly when knowing the org matters most.
+    const orgId = (data as any).orgId ?? getOrgContext()?.orgId ?? 1;
+    return db.insert(auditLogs)
+      .values({ ...data, orgId, createdAt: new Date().toISOString() })
+      .returning().get()!;
   }
 
   getAuditLogs(filters?: {
     entityType?: string; userId?: number; limit?: number;
-    action?: string; from?: string; to?: string; search?: string;
+    action?: string; from?: string; to?: string; search?: string; orgId?: number;
   }) {
     const limit = filters?.limit ?? 100;
     const conditions = [];
+    // Scope by org in SQL. This used to be a post-filter on "is this user one I
+    // can see", which both hid rows with no resolvable user and would have
+    // leaked those same rows to every org once they were let through.
+    const orgId = filters?.orgId ?? getOrgContext()?.orgId;
+    if (orgId != null) conditions.push(eq(auditLogs.orgId, orgId));
     if (filters?.entityType) conditions.push(eq(auditLogs.entityType, filters.entityType));
     if (filters?.userId !== undefined) conditions.push(eq(auditLogs.userId, filters.userId));
     if (filters?.action) conditions.push(eq(auditLogs.action, filters.action));

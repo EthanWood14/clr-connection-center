@@ -66,19 +66,116 @@ test("audit filter inputs are validated before they reach the query", () => {
   assert.match(route, /Math\.min\(500/, "the result set stays bounded");
 });
 
-test("records with no resolvable user are still visible", () => {
-  // Failed logins carry user_id null and system deletions carry 0. Filtering
-  // those out hid exactly the rows an investigation needs.
+test("records with no resolvable user are visible without leaking across orgs", () => {
+  // Failed logins carry user_id null and system deletions carry 0. The old
+  // post-filter kept only rows whose user_id was a current org member, so those
+  // were dropped — exactly the rows an investigation needs. Simply letting them
+  // through is not the fix either: with no org column on the row, one org's
+  // failed logins (and the IPs and addresses in them) would be readable by every
+  // other org's admins. Scoping has to happen on org_id, in SQL.
   const route = routes.slice(
     routes.indexOf(`app.get("/api/audit-logs"`),
     routes.indexOf(`// ── Daily Call Logs`),
   );
-  assert.ok(
-    !/log\.userId != null && allowedUserIds\.has/.test(route),
-    "the old filter dropped unowned rows entirely",
+  assert.ok(!/log\.userId != null && allowedUserIds\.has/.test(route),
+    "the user-based post-filter dropped unowned rows");
+  assert.ok(!/uid == null \|\| uid === 0/.test(route),
+    "…and passing them through unscoped leaked them to every org");
+  assert.ok(!/\.filter\(\(log/.test(route), "no post-filter should remain at all");
+});
+
+// ── Credential redaction ──────────────────────────────────────────────────────
+// PATCH /api/loan-officers/:id serialised the raw request body into details,
+// which put 45 rows of live Bonzo and lead-mailbox passwords into audit_logs.
+
+test("secrets are masked, never written through", async () => {
+  const { auditDetails, AUDIT_MASK } = await import("../server/audit-details");
+  const out = auditDetails({
+    fullName: "Sample LO", bonzoUsername: "user@example.com",
+    bonzoPassword: "Sher22vin!$!$", leadMailboxPassword: "hunter2", newPassword: "x",
+  })!;
+  assert.ok(!out.includes("Sher22vin"), "the real password must not survive");
+  assert.ok(!out.includes("hunter2"));
+  assert.match(out, new RegExp(AUDIT_MASK));
+  // Non-secret fields still come through — a redacted row must stay useful.
+  assert.match(out, /Sample LO/);
+  assert.match(out, /user@example\.com/);
+});
+
+test("an absent secret is null, a set one is the placeholder", async () => {
+  const { auditDetails, AUDIT_MASK } = await import("../server/audit-details");
+  const cleared = JSON.parse(auditDetails({ bonzoPassword: "" })!);
+  const set = JSON.parse(auditDetails({ bonzoPassword: "real" })!);
+  // "changed a password" and "cleared a password" are different events and the
+  // audit row is the only witness to which one happened.
+  assert.equal(cleared.bonzoPassword, null);
+  assert.equal(set.bonzoPassword, AUDIT_MASK);
+});
+
+test("credential bags and binary payloads are dropped, not masked", async () => {
+  const { auditDetails } = await import("../server/audit-details");
+  const out = auditDetails({ name: "x", otherCredentials: { a: 1 }, dataBase64: "AAAA", subscription: { keys: {} } })!;
+  for (const k of ["otherCredentials", "dataBase64", "subscription"]) {
+    assert.ok(!out.includes(k), `${k} must not appear at all`);
+  }
+  assert.match(out, /"name":"x"/);
+});
+
+test("snake_case and camelCase spellings are both caught", async () => {
+  const { auditDetails } = await import("../server/audit-details");
+  const out = auditDetails({ bonzo_password: "secret1", lead_mailbox_password: "secret2", twilio_auth_token: "secret3" })!;
+  for (const v of ["secret1", "secret2", "secret3"]) assert.ok(!out.includes(v), `${v} leaked`);
+});
+
+test("details are bounded so one request cannot flood the table", async () => {
+  const { auditDetails } = await import("../server/audit-details");
+  const out = auditDetails({ notes: "x".repeat(50_000) })!;
+  assert.ok(out.length <= 4000, `details capped, got ${out.length}`);
+});
+
+test("rotated settings record which fields moved, never the values", async () => {
+  const { auditChangedFields } = await import("../server/audit-details");
+  const out = auditChangedFields(
+    { twilioAuthToken: "old-token", fromNumber: "+15550001111" },
+    { twilioAuthToken: "new-token", fromNumber: "+15550001111" },
   );
-  assert.match(route, /uid == null \|\| uid === 0 \|\| allowedUserIds\.has/,
-    "null and 0 must survive the org filter");
-  // …but rows belonging to a DIFFERENT org must still be excluded.
-  assert.match(route, /allowedUserIds\.has\(Number\(uid\)\)/);
+  assert.ok(!out.includes("old-token") && !out.includes("new-token"), "a diff of a secret is as bad as the secret");
+  assert.match(out, /"changed":\["twilioAuthToken"\]/);
+  assert.match(out, /"wasSet":\{"twilioAuthToken":true\}/);
+});
+
+test("the scrub detector finds plaintext but ignores already-masked rows", async () => {
+  const { detailsHasPlaintextSecret, auditDetails, AUDIT_MASK } = await import("../server/audit-details");
+  assert.equal(detailsHasPlaintextSecret(`{"bonzoPassword":"Sher22vin!$!$"}`), true);
+  assert.equal(detailsHasPlaintextSecret(`{"bonzoPassword":"${AUDIT_MASK}"}`), false);
+  assert.equal(detailsHasPlaintextSecret(`{"bonzoPassword":""}`), false, "empty means no credential was set");
+  assert.equal(detailsHasPlaintextSecret(`{"fullName":"Sample"}`), false);
+  assert.equal(detailsHasPlaintextSecret(null), false);
+  // Anything the scrubber rewrites must come back clean.
+  assert.equal(detailsHasPlaintextSecret(auditDetails(JSON.parse(`{"bonzoPassword":"live"}`))), false);
+});
+
+test("the LO update route no longer serialises the raw body", () => {
+  const route = routes.slice(
+    routes.indexOf(`app.patch("/api/loan-officers/:id"`),
+    routes.indexOf(`// ── Lead sources`),
+  );
+  assert.ok(!/details: JSON\.stringify\(body\)/.test(route), "the raw body carried live credentials");
+  assert.match(route, /details: auditDetails\(body\)/);
+});
+
+test("audit rows are scoped by org in SQL, not by guessing from the user", () => {
+  assert.match(storage, /orgId: integer\("org_id"\)|ALTER TABLE audit_logs ADD COLUMN org_id/);
+  const create = storage.slice(storage.indexOf("createAuditLog(data: InsertAuditLog) {"), storage.indexOf("getAuditLogs(filters?: {", storage.indexOf("createAuditLog(data: InsertAuditLog) {")));
+  assert.match(create, /getOrgContext\(\)\?\.orgId/,
+    "getOrgContext, not currentOrgId — the latter is null under bypassScope");
+  const get = storage.slice(storage.indexOf("getAuditLogs(filters?: {", storage.indexOf("class Storage")));
+  assert.match(get, /eq\(auditLogs\.orgId, orgId\)/, "scoping must be a WHERE clause");
+});
+
+test("historical plaintext credentials are scrubbed once, and the scrub is recorded", () => {
+  assert.match(storage, /audit_credential_scrub_v1/, "the scrub must be idempotent via a marker");
+  const block = storage.slice(storage.indexOf("Migration: scrub plaintext credentials"));
+  assert.match(block.slice(0, 1800), /detailsHasPlaintextSecret/, "only rewrite rows that actually leak");
+  assert.match(block.slice(0, 1800), /rowsScrubbed/, "the scrub itself must be auditable");
 });

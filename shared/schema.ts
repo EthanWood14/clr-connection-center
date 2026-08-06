@@ -304,6 +304,13 @@ export const auditLogs = sqliteTable("audit_logs", {
   entityId: integer("entity_id"),         // ID of the affected record
   entityLabel: text("entity_label"),      // human-readable description e.g. "Robert Chen"
   details: text("details"),              // JSON string with before/after or context
+  // Which org the action belonged to. Stamped centrally from the request's org
+  // context, because rows for sessionless callers (webhooks, portal codes,
+  // failed logins) have no user to infer an org from — and filtering the viewer
+  // by "is this a user I can see" meant those rows were either invisible or
+  // visible to everyone.
+  orgId: integer("org_id").notNull().default(1),
+  ipAddress: text("ip_address"),         // where it came from; the only identity an unauthenticated action has
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 
