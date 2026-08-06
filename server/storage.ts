@@ -1234,7 +1234,10 @@ export interface IStorage {
 
   // Audit Logs
   createAuditLog(data: InsertAuditLog): AuditLog;
-  getAuditLogs(filters?: { entityType?: string; userId?: number; limit?: number }): AuditLog[];
+  getAuditLogs(filters?: {
+    entityType?: string; userId?: number; limit?: number;
+    action?: string; from?: string; to?: string; search?: string;
+  }): AuditLog[];
 
   // Dashboard stats
   getDashboardStats(startDate: string, endDate: string, assistantId?: number): any;
@@ -1845,11 +1848,26 @@ export class Storage implements IStorage {
     return db.insert(auditLogs).values({ ...data, createdAt: new Date().toISOString() }).returning().get()!;
   }
 
-  getAuditLogs(filters?: { entityType?: string; userId?: number; limit?: number }) {
+  getAuditLogs(filters?: {
+    entityType?: string; userId?: number; limit?: number;
+    action?: string; from?: string; to?: string; search?: string;
+  }) {
     const limit = filters?.limit ?? 100;
     const conditions = [];
     if (filters?.entityType) conditions.push(eq(auditLogs.entityType, filters.entityType));
     if (filters?.userId !== undefined) conditions.push(eq(auditLogs.userId, filters.userId));
+    if (filters?.action) conditions.push(eq(auditLogs.action, filters.action));
+    // created_at is an ISO string, so a plain string compare is a date compare.
+    // `to` is widened to end-of-day: a bare "2026-08-05" would otherwise match
+    // only the midnight instant and silently return nothing for that day.
+    if (filters?.from) conditions.push(gte(auditLogs.createdAt, filters.from));
+    if (filters?.to) {
+      conditions.push(lte(auditLogs.createdAt, /^\d{4}-\d{2}-\d{2}$/.test(filters.to) ? `${filters.to}T23:59:59.999Z` : filters.to));
+    }
+    if (filters?.search) {
+      const term = `%${filters.search}%`;
+      conditions.push(sql`(${auditLogs.entityLabel} LIKE ${term} OR ${auditLogs.userName} LIKE ${term} OR ${auditLogs.details} LIKE ${term})`);
+    }
     const query = conditions.length > 0
       ? db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.createdAt)).limit(limit)
       : db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(limit);

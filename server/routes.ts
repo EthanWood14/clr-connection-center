@@ -3727,7 +3727,19 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   // ── Audit helper ─────────────────────────────────────────────────────────────
   function audit(data: Omit<InsertAuditLog, never>) {
-    try { storage.createAuditLog(data); } catch {}
+    try {
+      storage.createAuditLog(data);
+    } catch (e: any) {
+      // Never fail a request because the trail could not be written — but never
+      // lose it in silence either. A swallowed failure here means a mutation
+      // went through with nothing recording who made it, and the only clue was
+      // an audit row that simply never appeared.
+      console.error(
+        `[audit] FAILED to record ${data.action} ${data.entityType}#${data.entityId ?? "?"}`
+        + ` by ${data.userName || `user ${data.userId}`}:`,
+        e?.message ?? e,
+      );
+    }
   }
 
   // ── Cookie parser ──────────────────────────────────────────────────────────
@@ -9855,13 +9867,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const id = parseInt(req.params.id);
     const sessionUser = req.session_user as { userId: number; role?: string } | undefined;
     const isAdmin = sessionUser?.role === "admin";
-    const existing = storageExtra.getRawSqlite().prepare(`SELECT assistant_id FROM lead_outcomes WHERE id = ?`).get(id) as any;
+    // Select the whole row, not just its owner. Once it is deleted this audit
+    // entry is the ONLY remaining record of what was removed, so it has to carry
+    // enough to answer "which transfer disappeared, and whose was it?" without a
+    // database restore.
+    const existing = storageExtra.getRawSqlite().prepare(
+      `SELECT id, assistant_id, lo_id, borrower_name, outcome_type, transfer_type, date, created_at
+         FROM lead_outcomes WHERE id = ?`,
+    ).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
     if (!isAdmin && existing.assistant_id !== sessionUser?.userId) {
       return res.status(403).json({ error: "You can only delete your own outcomes" });
     }
     createBackup('pre-delete');
-    audit({ userId: sessionUser?.userId ?? 0, userName: "", action: "delete", entityType: "outcome", entityId: id, entityLabel: null, details: null });
+    const me = storage.getUserById(Number(sessionUser?.userId)) as any;
+    audit({
+      userId: sessionUser?.userId ?? 0,
+      userName: me?.name ?? "Unknown",
+      action: "delete",
+      entityType: "outcome",
+      entityId: id,
+      entityLabel: existing.borrower_name ?? null,
+      details: JSON.stringify({
+        outcomeType: existing.outcome_type,
+        transferType: existing.transfer_type ?? null,
+        date: existing.date,
+        loId: existing.lo_id ?? null,
+        assistantId: existing.assistant_id,
+        loggedAt: existing.created_at,
+        // An admin removing someone else's row is a different act from a CLR
+        // tidying up their own, and only the row itself can tell them apart.
+        deletedByOwner: existing.assistant_id === sessionUser?.userId,
+      }),
+    });
     storage.deleteLeadOutcome(id);
     res.json({ ok: true });
   });
@@ -12718,11 +12756,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (userId !== undefined && !allowedUserIds.has(userId)) {
       return res.status(404).json({ error: "User not found in your organization" });
     }
+    const str = (v: unknown, re: RegExp) => (typeof v === "string" && re.test(v.trim()) ? v.trim() : undefined);
     const logs = storage.getAuditLogs({
       entityType: rawEntityType && rawEntityType !== "all" ? rawEntityType : undefined,
       userId,
       limit,
-    }).filter((log: any) => log.userId != null && allowedUserIds.has(Number(log.userId)));
+      action: str(req.query.action, /^[A-Za-z0-9_-]{1,64}$/),
+      from: str(req.query.from, /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/),
+      to: str(req.query.to, /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/),
+      search: str(req.query.search, /^.{1,80}$/),
+    }).filter((log: any) => {
+      // Rows the org owns, plus the ones nobody owns. Actions recorded without a
+      // resolvable user — failed logins (user_id null, by definition nobody yet)
+      // and system deletions (user_id 0) — used to be filtered out here, so the
+      // only records anyone would want during an incident were the ones the
+      // viewer could never show.
+      const uid = log.userId;
+      return uid == null || uid === 0 || allowedUserIds.has(Number(uid));
+    });
     res.json(logs);
   });
 
