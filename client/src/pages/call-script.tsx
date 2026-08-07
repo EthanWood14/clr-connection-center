@@ -219,7 +219,7 @@ function inferOutcomeFromScriptEnd(
   if (/transfer.*appointment|appointment.*transfer|warm transfer.*appt/.test(both)) return "transfer_appointment";
   if (/transfer|warm transfer|hand off|connecting you|connect you|loan officer now/.test(both)) return "transfer_direct";
   if (/(book|schedule|set).*appointment|appointment (set|booked|scheduled)|prequal.*appt/.test(both)) return "appointment";
-  if (/call.*back|callback|i'?ll call|call later|reach out (later|tomorrow)|follow.?up call/.test(both)) return "callback_requested";
+  if (/call.*back|callback|i'?ll call|call later|reach out (later|tomorrow)|follow.?up call/.test(both)) return "appointment";
   return null;
 }
 
@@ -1183,8 +1183,7 @@ type RecorderStep = "idle" | "recording" | "outcome_selected" | "wizard" | "veri
 type RecorderOutcomeKey =
   | "transfer_direct"
   | "transfer_appointment"
-  | "appointment"
-  | "callback_requested";
+  | "appointment";
 
 // Only the three loggable results — Transfer (split by how it was made),
 // Appointment, Callback. Each carries a `diff` line that spells out what
@@ -1200,7 +1199,6 @@ const OUTCOME_CHOICES: {
   { key: "transfer_direct", label: "Transfer (Direct)", diff: "LO took the lead live on the line", btn: "bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600", outcomeType: "transfer", transferType: "direct" },
   { key: "transfer_appointment", label: "Transfer (Appointment)", diff: "Handed to the LO as a scheduled transfer", btn: "bg-teal-500 hover:bg-teal-600 text-white border-teal-600", outcomeType: "transfer", transferType: "appointment" },
   { key: "appointment", label: "Appointment Scheduled", diff: "Exact date & time set — no LO handoff", btn: "bg-blue-500 hover:bg-blue-600 text-white border-blue-600", outcomeType: "appointment" },
-  { key: "callback_requested", label: "Callback Requested", diff: "Call back soon — no exact time set", btn: "bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500", outcomeType: "callback_requested" },
 ];
 
 function formatDuration(ms: number): string {
@@ -1377,7 +1375,7 @@ function CallRecorder({
   const needsLo = outcomeChoice && (outcomeChoice.outcomeType === "transfer" || outcomeChoice.outcomeType === "appointment");
   // Transfers (including appointment-type transfers) no longer schedule a calendar
   // appointment — only true Appointment and Callback outcomes collect a date/time.
-  const needsScheduled = outcomeChoice && (outcomeChoice.outcomeType === "appointment" || outcomeChoice.outcomeType === "callback_requested");
+  const needsScheduled = outcomeChoice && outcomeChoice.outcomeType === "appointment";
   const needsTransferConfirm = outcomeChoice && outcomeChoice.outcomeType === "transfer";
 
   const resolvedLoId = useMemo(() => {
@@ -1422,10 +1420,6 @@ function CallRecorder({
       }
       if (outcomeChoice.outcomeType === "appointment" && wizardScheduled) {
         payload.appointmentDatetime = wizardScheduled;
-      }
-      if (outcomeChoice.outcomeType === "callback_requested" && wizardScheduled) {
-        // Preserve full datetime so reminders can trigger at the requested time.
-        payload.followUpDate = wizardScheduled;
       }
       // Transfers (direct or appointment) intentionally do NOT set an
       // appointmentDatetime — a transfer should not schedule a calendar appointment.

@@ -49,26 +49,26 @@ function NotesPolicyNote() {
 }
 
 const OUTCOME_TYPES = [
-  "transfer", "appointment", "callback_requested", "deferral", "fell_through",
+  "transfer", "appointment", "deferral", "fell_through",
   "no_answer", "not_interested", "wrong_number", "other"
 ] as const;
 
 // Includes legacy future_contact for backward compatibility (displayed as Deferral)
 const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer", appointment: "Appointment", fell_through: "Fell Through",
-  no_answer: "No Answer", callback_requested: "Callback",
+  no_answer: "No Answer",
   deferral: "Deferral", future_contact: "Deferral",
   not_interested: "Not Interested", wrong_number: "Wrong Number", other: "Other",
 };
 
 const OUTCOME_HELPERS: Record<string, string> = {
   appointment: "Specific date & time confirmed",
-  callback_requested: "Call back soon — within days/weeks, no exact time",
   deferral: "Month+ away — open to future contact, no date set",
 };
 
 // ── Result picker tiles — the first screen of the log-contact flow ────────────
-// Only the three results CLRs log: Transfer, Appointment, Callback.
+// The CLR logs transfers and scheduled appointments here. Follow-Up from
+// CallTools also arrives as an appointment, so C3 has one calendar concept.
 // Each tile leads with the ONE thing that sets it apart from the other two,
 // so picking the right result is obvious at a glance.
 const OUTCOME_TILES: Array<{
@@ -91,13 +91,6 @@ const OUTCOME_TILES: Array<{
     diff: "Exact date & time confirmed — no handoff yet",
     detail: "A specific slot is on the books. The lead was NOT connected to an LO on this call.",
     tone: "border-blue-500 bg-blue-50 hover:bg-blue-100 text-blue-900 dark:bg-blue-900/20 dark:hover:bg-blue-900/30 dark:text-blue-200 dark:border-blue-700",
-  },
-  {
-    type: "callback_requested",
-    icon: PhoneCall,
-    diff: "Call back soon — no exact time set",
-    detail: "Lead wants to hear back within days or weeks, but nothing is on the calendar yet.",
-    tone: "border-purple-500 bg-purple-50 hover:bg-purple-100 text-purple-900 dark:bg-purple-900/20 dark:hover:bg-purple-900/30 dark:text-purple-200 dark:border-purple-700",
   },
 ];
 
@@ -132,7 +125,6 @@ const OUTCOME_COLORS: Record<string, string> = {
   appointment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   fell_through: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
   no_answer: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  callback_requested: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
   deferral: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
   future_contact: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
   not_interested: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
@@ -683,7 +675,7 @@ function OutcomeFormDialog({
                 <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-phone-number" /></FormControl>
               </FormItem>
             )} />
-            {!isTransfer && (watchedType === "appointment" || watchedType === "callback_requested") && (
+            {!isTransfer && watchedType === "appointment" && (
               <FormField control={form.control} name="appointmentDatetime" render={({ field }) => (
                 <FormItem>
                   <FormLabel>
@@ -700,7 +692,7 @@ function OutcomeFormDialog({
             {/* Only show the followUpDate field when appointmentDatetime is NOT already shown.
                 For appointment/callback types, the appointmentDatetime IS the follow-up date.
                 For other types, this one field feeds the Upcoming Appointments tab. */}
-            {!(watchedType === "appointment" || watchedType === "callback_requested") && (
+            {watchedType !== "appointment" && (
               <FormField control={form.control} name="followUpDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>
@@ -1008,7 +1000,7 @@ const editOutcomeSchema = z.object({
 });
 type EditOutcomeValues = z.infer<typeof editOutcomeSchema>;
 
-const FOLLOWUP_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
+const FOLLOWUP_TYPES = new Set(["appointment", "deferral", "future_contact"]);
 
 function EditOutcomeDialog({
   outcome,

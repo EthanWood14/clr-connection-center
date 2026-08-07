@@ -180,7 +180,7 @@ export type DailyAssignment = typeof dailyAssignments.$inferSelect;
 // ── Lead Outcomes ──────────────────────────────────────────────────────────────
 export const OUTCOME_TYPES = [
   "transfer", "appointment", "fell_through",
-  "no_answer", "callback_requested", "deferral", "future_contact",
+  "no_answer", "deferral", "future_contact",
   "not_interested", "wrong_number", "other"
 ] as const;
 

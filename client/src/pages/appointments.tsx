@@ -77,7 +77,6 @@ const OUTCOME_LABELS: Record<string, string> = {
   transfer: "Transfer",
   appointment: "Appointment",
   fell_through: "Fell Through",
-  callback_requested: "Callback",
   deferral: "Deferral",
   future_contact: "Deferral",
   not_interested: "Not Interested",
@@ -88,19 +87,17 @@ const OUTCOME_LABELS: Record<string, string> = {
 // Colors per appointment subtype
 const APPT_BADGE_COLORS: Record<string, string> = {
   appointment: "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300",
-  callback_requested: "bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300",
   deferral: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
   future_contact: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300",
 };
 
 // Active appointment types — these are the ones that still need to be handled
-const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
+const ACTIVE_APPT_TYPES = new Set(["appointment", "deferral", "future_contact"]);
 
 // Filter tab definitions
 const FILTER_TABS = [
-  { key: "all", label: "All", tooltip: "All appointments, callbacks, and deferrals" },
+  { key: "all", label: "All", tooltip: "All appointments and deferrals" },
   { key: "appointment", label: "Appointments", tooltip: "Specific date & time confirmed" },
-  { key: "callback_requested", label: "Callbacks", tooltip: "Call back soon — within days/weeks, no exact time" },
   { key: "deferral", label: "Deferrals", tooltip: "Month+ away — open to future contact, no date set" },
 ] as const;
 type FilterKey = typeof FILTER_TABS[number]["key"];
@@ -182,7 +179,7 @@ function EditDialog({
   }, [open, outcome, form]);
 
   const allOutcomeTypes = [
-    "appointment", "callback_requested", "deferral", "transfer", "fell_through",
+    "appointment", "deferral", "transfer", "fell_through",
     "not_interested", "voicemail", "no_answer",
   ];
 
@@ -784,9 +781,7 @@ export default function Appointments() {
         (
           // dated entries always show
           (o.followUpDate != null && o.followUpDate !== "") ||
-          // undated callbacks/deferrals still show (callback dates are optional;
-          // deferrals have no date by definition) — they land in "No Date Set"
-          o.outcomeType === "callback_requested" ||
+          // Undated deferrals have no date by definition and land in "No Date Set".
           o.outcomeType === "deferral" ||
           o.outcomeType === "future_contact"
         )
@@ -841,7 +836,6 @@ export default function Appointments() {
 
   // Stats counts (respects current filter since allAppointments is filtered)
   const apptCount = allAppointments.filter(o => o.outcomeType === "appointment").length;
-  const callbackCount = allAppointments.filter(o => o.outcomeType === "callback_requested").length;
   const deferralCount = allAppointments.filter(o => o.outcomeType === "deferral" || o.outcomeType === "future_contact").length;
   const overdueCount = overdueList.length;
 
@@ -1093,7 +1087,7 @@ export default function Appointments() {
             />
           </div>
           <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {apptCount} appt{apptCount === 1 ? "" : "s"} · {callbackCount} callback{callbackCount === 1 ? "" : "s"} · {deferralCount} deferral{deferralCount === 1 ? "" : "s"}
+            {apptCount} appointment{apptCount === 1 ? "" : "s"} · {deferralCount} deferral{deferralCount === 1 ? "" : "s"}
           </span>
         </div>
       )}

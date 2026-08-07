@@ -67,6 +67,7 @@ test("normalizes the internal CallTools outcome contract", () => {
     contact_id: 441,
     disposition: "Appointment Transfer",
     conversation: true,
+    active_seconds: 317,
     outcome_type: "transfer",
     transfer_type: "appointment",
     agent: { name: "Ethan Wood" },
@@ -77,9 +78,25 @@ test("normalizes the internal CallTools outcome contract", () => {
   assert.equal(result.payloadId, "calltools:hcd:123");
   assert.equal(result.contactKey, "441");
   assert.equal(result.conversation, true);
+  assert.equal(result.activeSeconds, 317);
   assert.equal(result.outcomeType, "transfer");
   assert.equal(result.transferType, "appointment");
   assert.equal(result.staffName, "Ethan Wood");
   assert.equal(result.borrowerName, "Jane Borrower");
   assert.equal(result.loEmail, "alex@example.test");
+});
+
+test("maps CallTools Follow-Up to an appointment even without a readable date", () => {
+  const result = normalizeCallSyncPayload({
+    event: "calltools.outcome",
+    event_id: "calltools:hcd:follow-up",
+    contact_id: 991,
+    disposition: "Follow-Up",
+    conversation: true,
+    notes: "Borrower asked us to reach back out later.",
+  });
+
+  assert.equal(result.outcomeType, "appointment");
+  assert.equal(result.appointmentDatetime, null);
+  assert.equal(result.notes, "Borrower asked us to reach back out later.");
 });

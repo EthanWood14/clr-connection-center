@@ -6846,7 +6846,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Lead-source results (Input Results) ─────────────────────────────────────
   // A CLR logs what they got from working a lead source (e.g. Cold Lead Barrell
   // → 2 transfers). Own logs for CLRs; managers see/act on everyone's.
-  const LSO_TYPES = new Set(["transfer", "appointment", "fell_through", "no_answer", "callback_requested", "deferral", "future_contact", "not_interested", "wrong_number", "other"]);
+  const LSO_TYPES = new Set(["transfer", "appointment", "fell_through", "no_answer", "deferral", "future_contact", "not_interested", "wrong_number", "other"]);
   app.get("/api/lead-source-outcomes", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId);
@@ -10059,7 +10059,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     endDate: string,
     assistantId?: number,
     excludedIds: Set<number> = new Set(),
-  ): { contacts: number; conversations: number } {
+  ): { contacts: number; conversations: number; activeSeconds: number } {
     const db = storageExtra.getSqlite();
     const params: any[] = [currentOrgId() ?? 1, startDate, endDate];
     let where = "org_id=? AND activity_date>=? AND activity_date<=?";
@@ -10070,25 +10070,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       where += ` AND assistant_id NOT IN (${Array.from(excludedIds).map(() => "?").join(",")})`;
       params.push(...excludedIds);
     }
-    const row = db.prepare(`SELECT COUNT(DISTINCT contact_key) AS contacts,
-      COALESCE(SUM(conversation),0) AS conversations
+    const row = db.prepare(`SELECT COUNT(DISTINCT CASE WHEN contact_key NOT LIKE 'call:%' THEN contact_key END) AS contacts,
+      COALESCE(SUM(conversation),0) AS conversations,
+      COALESCE(SUM(active_seconds),0) AS active_seconds
       FROM callsync_activity_events WHERE ${where}`).get(...params) as any;
     return {
       contacts: Number(row?.contacts ?? 0),
       conversations: Number(row?.conversations ?? 0),
+      activeSeconds: Number(row?.active_seconds ?? 0),
     };
   }
 
-  function callSyncActivityByUser(startDate: string, endDate: string): Map<number, { contacts: number; conversations: number }> {
+  function callSyncActivityByUser(startDate: string, endDate: string): Map<number, { contacts: number; conversations: number; activeSeconds: number }> {
     const rows = storageExtra.getSqlite().prepare(`SELECT assistant_id,
-      COUNT(DISTINCT contact_key) AS contacts,
-      COALESCE(SUM(conversation),0) AS conversations
+      COUNT(DISTINCT CASE WHEN contact_key NOT LIKE 'call:%' THEN contact_key END) AS contacts,
+      COALESCE(SUM(conversation),0) AS conversations,
+      COALESCE(SUM(active_seconds),0) AS active_seconds
       FROM callsync_activity_events
       WHERE org_id=? AND activity_date>=? AND activity_date<=?
       GROUP BY assistant_id`).all(currentOrgId() ?? 1, startDate, endDate) as any[];
     return new Map(rows.map((row: any) => [Number(row.assistant_id), {
       contacts: Number(row.contacts ?? 0),
       conversations: Number(row.conversations ?? 0),
+      activeSeconds: Number(row.active_seconds ?? 0),
     }]));
   }
 
@@ -10097,7 +10101,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     endDate: string,
     assistantId?: number,
     excludedIds: Set<number> = new Set(),
-  ): Map<string, { contacts: number; conversations: number }> {
+  ): Map<string, { contacts: number; conversations: number; activeSeconds: number }> {
     const params: any[] = [currentOrgId() ?? 1, startDate, endDate];
     let where = "org_id=? AND activity_date>=? AND activity_date<=?";
     if (assistantId != null) {
@@ -10108,13 +10112,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       params.push(...excludedIds);
     }
     const rows = storageExtra.getSqlite().prepare(`SELECT activity_date,
-      COUNT(DISTINCT contact_key) AS contacts,
-      COALESCE(SUM(conversation),0) AS conversations
+      COUNT(DISTINCT CASE WHEN contact_key NOT LIKE 'call:%' THEN contact_key END) AS contacts,
+      COALESCE(SUM(conversation),0) AS conversations,
+      COALESCE(SUM(active_seconds),0) AS active_seconds
       FROM callsync_activity_events WHERE ${where}
       GROUP BY activity_date`).all(...params) as any[];
     return new Map(rows.map((row: any) => [String(row.activity_date), {
       contacts: Number(row.contacts ?? 0),
       conversations: Number(row.conversations ?? 0),
+      activeSeconds: Number(row.active_seconds ?? 0),
     }]));
   }
 
@@ -10145,6 +10151,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let helperTransfers = 0;
     let callToolsContacts = 0;
     let callToolsConversations = 0;
+    let callToolsActiveSeconds = 0;
 
     // Sum contacts_reached + dnc_hits from raw call_logs for the period
     const rawLogsInPeriod = storageExtra.getCallLogsByRangeRaw(startDate, endDate) as any[];
@@ -10215,6 +10222,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const callTools = callSyncActivitySummary(startDate, endDate, undefined, excluded);
       callToolsContacts = callTools.contacts;
       callToolsConversations = callTools.conversations;
+      callToolsActiveSeconds = callTools.activeSeconds;
     } else if (userId) {
       const myLog = storage.getDailyCallLogs(todayStr).find(
         (l: any) => (l.assistantId ?? l.assistant_id) === userId,
@@ -10238,6 +10246,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const callTools = callSyncActivitySummary(startDate, endDate, userId);
       callToolsContacts = callTools.contacts;
       callToolsConversations = callTools.conversations;
+      callToolsActiveSeconds = callTools.activeSeconds;
     }
 
     res.json({
@@ -10256,6 +10265,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       helperTransfers,
       callToolsContacts,
       callToolsConversations,
+      callToolsActiveSeconds,
       helperName: String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine"),
       askHelper: !!(storageExtra.getEmailSettings() as any)?.ask_helper,
     });
@@ -10359,8 +10369,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const appointments = dayOutcomes.filter(o => isAppt(ot(o))).length;
       const fellThrough = dayOutcomes.filter(o => ot(o) === "fell_through").length;
       const rate = calls > 0 ? (transfers / calls) * 100 : 0;
-      const activity = callToolsByDay.get(day) ?? { contacts: 0, conversations: 0 };
-      return { date: day, calls, transfers, appointments, fellThrough, transferRate: +rate.toFixed(1), callToolsContacts: activity.contacts, callToolsConversations: activity.conversations };
+      const activity = callToolsByDay.get(day) ?? { contacts: 0, conversations: 0, activeSeconds: 0 };
+      return { date: day, calls, transfers, appointments, fellThrough, transferRate: +rate.toFixed(1), callToolsContacts: activity.contacts, callToolsConversations: activity.conversations, callToolsActiveSeconds: activity.activeSeconds };
     });
 
     // Outcome breakdown (for donut)
@@ -10397,7 +10407,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const uMessages = sumMessages(eodInRange.filter((r: any) => r.assistant_id === u.id));
       const uContacts = sumContacts(uRawLogs);
       const uDnc = sumDnc(uRawLogs);
-      const uCallTools = callToolsByUser.get(u.id) ?? { contacts: 0, conversations: 0 };
+      const uCallTools = callToolsByUser.get(u.id) ?? { contacts: 0, conversations: 0, activeSeconds: 0 };
       const uTransfers = uOutcomes.filter(o => ot(o) === "transfer").length;
       const uAppointments = uOutcomes.filter(o => isAppt(ot(o))).length;
       const uFellThrough = uOutcomes.filter(o => ot(o) === "fell_through").length;
@@ -10417,6 +10427,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         dncHits: uDnc,
         callToolsContacts: uCallTools.contacts,
         callToolsConversations: uCallTools.conversations,
+        callToolsActiveSeconds: uCallTools.activeSeconds,
         transfers: uTransfers,
         appointments: uAppointments,
         fellThrough: uFellThrough,
@@ -10441,6 +10452,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         dncHits: totalDncHits,
         callToolsContacts: callToolsActivity.contacts,
         callToolsConversations: callToolsActivity.conversations,
+        callToolsActiveSeconds: callToolsActivity.activeSeconds,
         transfers: totalTransfers,
         appointments: totalAppointments,
         fellThrough: totalFellThrough,
@@ -10453,6 +10465,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         transferRate: +prevTransferRate.toFixed(1),
         callToolsContacts: previousCallToolsActivity.contacts,
         callToolsConversations: previousCallToolsActivity.conversations,
+        callToolsActiveSeconds: previousCallToolsActivity.activeSeconds,
       },
       daily,
       breakdown,
@@ -10809,7 +10822,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const noAnswer = om.no_answer ?? 0;
       const futureContact = om.future_contact ?? 0;
       const calls = callsByUserMonth.get(u.id) ?? 0;
-      const activity = monthCallActivityByUser.get(u.id) ?? { contacts: 0, conversations: 0 };
+      const activity = monthCallActivityByUser.get(u.id) ?? { contacts: 0, conversations: 0, activeSeconds: 0 };
       // Weekly goals (raw, as stored on the user record) — used for tooltip clarity.
       const goalCallsWeekly        = Number(u.goalCallsWeekly        ?? u.goal_calls_weekly        ?? 0);
       const goalTransfersWeekly    = Number(u.goalTransfersWeekly    ?? u.goal_transfers_weekly    ?? 0);
@@ -10829,6 +10842,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         calls,
         callToolsContacts: activity.contacts,
         callToolsConversations: activity.conversations,
+        callToolsActiveSeconds: activity.activeSeconds,
         // Weekly base goals (so the UI can show "weekly goal: N")
         goalCallsWeekly, goalTransfersWeekly, goalAppointmentsWeekly,
         // Prorated goals matching the month-to-date counts above.
@@ -11046,7 +11060,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           const calls = lbCallsByUser.get(u.id) ?? 0;
           const messages = lbMsgsByUser.get(u.id) ?? 0;
           const textTransfers = lbTextByUser.get(u.id) ?? 0;
-          const activity = lbCallActivity.get(u.id) ?? { contacts: 0, conversations: 0 };
+          const activity = lbCallActivity.get(u.id) ?? { contacts: 0, conversations: 0, activeSeconds: 0 };
           const conversionRate = s.total > 0 ? Math.round((s.transfers / s.total) * 100) : 0;
           // Outcome ratios as percentages of all logged outcomes (excludes pure call counts).
           const transferPct    = s.total > 0 ? Math.round((s.transfers    / s.total) * 1000) / 10 : 0;
@@ -11066,6 +11080,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             messages,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
+            callToolsActiveSeconds: activity.activeSeconds,
             conversionRate,
             transferPct,
             appointmentPct,
@@ -13551,14 +13566,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const date = callSyncDate(normalized.startedAt, fallbackDate);
         const now = new Date().toISOString();
 
-        if (normalized.eventType === "calltools.outcome" && normalized.contactKey) {
+        if (
+          (normalized.eventType === "calltools.outcome" && normalized.contactKey) ||
+          (normalized.eventType === "calltools.call" && normalized.activeSeconds > 0)
+        ) {
+          const activityContactKey = normalized.contactKey ?? `call:${normalized.callId ?? externalCallId}`;
           const insertedActivity = db.prepare(`INSERT OR IGNORE INTO callsync_activity_events
             (org_id, external_event_id, assistant_id, activity_date, contact_key,
-             conversation, disposition, occurred_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?)`
+             conversation, active_seconds, disposition, occurred_at, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)`
           ).run(
-            orgId, externalCallId, matched.id, date, normalized.contactKey,
-            normalized.conversation ? 1 : 0, normalized.disposition,
+            orgId, externalCallId, matched.id, date, activityContactKey,
+            normalized.conversation ? 1 : 0, normalized.activeSeconds, normalized.disposition,
             normalized.startedAt, now,
           );
           activityRecorded = insertedActivity.changes > 0;
@@ -14750,7 +14769,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         }
       }
     }
-    res.json({ report, activities });
+    const callToolsActivity = callSyncActivitySummary(date, date, Number(userId));
+    res.json({ report, activities, callToolsActivity });
   });
 
   // History: all past EOD reports for the current user (or all users for admin)
@@ -14890,24 +14910,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, messagesSent, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
+    const { reportDate, callsMade, messagesSent, additionalConversations, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
     // Calls made is mandatory — a blank field must not quietly file as 0. The
     // client sends null when empty; anything non-numeric/negative is rejected too.
-    const callsNum = Number(callsMade);
-    if (callsMade === null || callsMade === undefined || callsMade === "" || !Number.isFinite(callsNum) || callsNum < 0) {
-      return res.status(400).json({ error: 'Enter how many calls you made today (enter 0 if none).' });
+    const nonNegativeWhole = (value: any): number | null => {
+      if (value === null || value === undefined || value === "") return 0;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
+    };
+    const callsNum = nonNegativeWhole(callsMade);
+    const messagesNum = nonNegativeWhole(messagesSent ?? textsSent);
+    const additionalConversationsNum = nonNegativeWhole(additionalConversations);
+    if (callsNum === null || messagesNum === null || additionalConversationsNum === null) {
+      return res.status(400).json({ error: 'Additional calls, texts, and conversations must be zero or a positive number.' });
     }
     const normalizeIds = (x: any): number[] =>
       Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
     const assignedIds = normalizeIds(assignedLosCalled);
     const additionalIds = normalizeIds(additionalLosCalled);
     const otherNotesStr = typeof additionalLosOtherNotes === "string" ? additionalLosOtherNotes : null;
+    const importedActivity = callSyncActivitySummary(reportDate, reportDate, Number(userId));
     const report = storageExtra.upsertEodReport({
       reportDate,
       assistantId: userId,
       callsMade: callsNum,
-      messagesSent: Number(messagesSent ?? textsSent ?? 0),
+      messagesSent: messagesNum,
+      additionalConversations: additionalConversationsNum,
+      callToolsConversations: importedActivity.conversations,
+      callToolsActiveSeconds: importedActivity.activeSeconds,
       transfers: Number(transfers ?? 0),
       appointments: Number(appointments ?? 0),
       notes: notes ?? null,
@@ -15092,6 +15123,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       if (allRecipients.length > 0) {
         const calls = callsNum;
+        const conversations = importedActivity.conversations + additionalConversationsNum;
+        const activeMinutes = Math.round(importedActivity.activeSeconds / 60);
         const xfers = Number(transfers ?? 0);
         const appts = Number(appointments ?? 0);
         const safeNotes = (notes ?? "").toString().trim();
@@ -15134,7 +15167,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           transfer: 0,
           appointment: 0,
           fell_through: 0,
-          callback_requested: 0,
           deferral: 0,
           future_contact: 0,
           no_answer: 0,
@@ -15172,15 +15204,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                 when: (o.appointment_datetime as string | null) || (o.follow_up_date as string | null) || null,
                 notes: (o.notes as string | null) ?? null,
               }));
-            // Callbacks + deferrals (lumped together, kind tagged so we label them).
+            // Deferrals and future contacts remain separate from appointments.
             dayCallbacks = dayRows
-              .filter((o: any) => o.outcome_type === 'callback_requested' || o.outcome_type === 'deferral' || o.outcome_type === 'future_contact')
+              .filter((o: any) => o.outcome_type === 'deferral' || o.outcome_type === 'future_contact')
               .map((o: any) => ({
                 name: (o.borrower_name || '').trim() || 'Unknown borrower',
                 loName: (o.lo_full_name || '').trim() || null,
                 when: (o.follow_up_date as string | null) || null,
                 notes: (o.notes as string | null) ?? null,
-                kind: o.outcome_type === 'callback_requested' ? 'callback' as const : 'deferral' as const,
+                kind: 'deferral' as const,
               }));
             const fellThroughRows = dayRows.filter((o: any) => o.outcome_type === 'fell_through');
             fellThroughCount = fellThroughRows.length;
@@ -15276,12 +15308,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           <!-- Stats grid -->
           <table width="100%" cellpadding="6" cellspacing="0" border="0" style="margin-bottom:20px">
             <tr>
-              ${statBlock("Calls Made", calls, "#1A2B4A")}
+              ${statBlock("Conversations", conversations, "#0891b2", `${importedActivity.conversations} CallTools + ${additionalConversationsNum} added`)}
+              ${statBlock("Active Time", `${activeMinutes}m`, "#0891b2", "from CallTools")}
               ${statBlock("Transfers", xfers, "#059669", xfers === 1 ? "1 lead transferred" : `${xfers} leads transferred`)}
               ${statBlock("Appointments", appts, "#2563eb")}
-              ${statBlock("Fell Through", fellThroughCount, "#dc2626")}
             </tr>
           </table>
+          ${(calls > 0 || messagesNum > 0) ? `<p style="margin:-10px 0 20px;font-size:12px;color:#64748b;text-align:center">Additional activity: ${calls} call${calls === 1 ? '' : 's'} and ${messagesNum} text${messagesNum === 1 ? '' : 's'}</p>` : ''}
 
           <!-- Full outcome breakdown — all 7 outcome types (callbacks + deferrals grouped) -->
           <div style="margin-bottom:20px">
@@ -15292,7 +15325,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appointments</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
-                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Callbacks &amp; Deferrals</th>
+                  <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Deferrals</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Future Contacts</th>
                   <th style="padding:8px 6px;text-align:center;color:#94a3b8;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">No Answer</th>
                 </tr>
@@ -15302,7 +15335,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${outcomeCounts.transfer}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${outcomeCounts.appointment}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${outcomeCounts.fell_through}</td>
-                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.callback_requested + outcomeCounts.deferral}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.deferral}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#0891b2">${outcomeCounts.future_contact}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#64748b">${outcomeCounts.no_answer}</td>
                 </tr>

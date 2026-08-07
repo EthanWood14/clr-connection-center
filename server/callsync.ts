@@ -7,6 +7,7 @@ export type NormalizedCallSyncOutcome = {
   callId: string | null;
   contactKey: string | null;
   conversation: boolean;
+  activeSeconds: number;
   outcomeType: CallSyncOutcomeKind | null;
   transferType: CallSyncTransferType;
   disposition: string | null;
@@ -47,6 +48,14 @@ function firstText(...values: unknown[]): string | null {
   return null;
 }
 
+function nonNegativeSeconds(...values: unknown[]): number {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.round(parsed);
+  }
+  return 0;
+}
+
 function outcomeFromDisposition(value: string | null): {
   outcomeType: CallSyncOutcomeKind | null;
   transferType: CallSyncTransferType;
@@ -60,6 +69,9 @@ function outcomeFromDisposition(value: string | null): {
     return { outcomeType: "transfer", transferType: "direct" };
   }
   if (/\b(appointment|appt)\s*(set|scheduled|booked|confirmed)?\b|\b(scheduled|booked)\s+(an?\s+)?(appointment|appt)\b/.test(normalized)) {
+    return { outcomeType: "appointment", transferType: null };
+  }
+  if (/^follow\s*up\b/.test(normalized)) {
     return { outcomeType: "appointment", transferType: null };
   }
   return { outcomeType: null, transferType: null };
@@ -139,6 +151,11 @@ export function normalizeCallSyncPayload(bodyValue: unknown): NormalizedCallSync
     callId: firstText(call.call_id, call.id, data.call_id, body.call_id),
     contactKey: firstText(data.contact_id, body.contact_id, data.lead_id, body.lead_id, borrowerPhone),
     conversation: data.conversation === true || body.conversation === true,
+    activeSeconds: nonNegativeSeconds(
+      data.active_seconds, body.active_seconds,
+      data.active_time_seconds, body.active_time_seconds,
+      call.active_seconds, call.talk_time_seconds, call.duration_seconds,
+    ),
     outcomeType: classified.outcomeType,
     transferType: classified.transferType,
     disposition,

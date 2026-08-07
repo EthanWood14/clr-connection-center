@@ -69,7 +69,7 @@ type RangeBlock = {
     userId: number; name: string;
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; conversionRate: number;
-    callToolsContacts?: number; callToolsConversations?: number;
+    callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
   }[];
@@ -101,11 +101,11 @@ type ManagerData = {
   ranges: { week: any; month: any; last30: any };
   stats: { today: any; week: any; month: any; priorWeek: any; priorMonth: any };
   callActivity: {
-    today: { contacts: number; conversations: number };
-    week: { contacts: number; conversations: number };
-    month: { contacts: number; conversations: number };
-    priorWeek: { contacts: number; conversations: number };
-    priorMonth: { contacts: number; conversations: number };
+    today: { contacts: number; conversations: number; activeSeconds: number };
+    week: { contacts: number; conversations: number; activeSeconds: number };
+    month: { contacts: number; conversations: number; activeSeconds: number };
+    priorWeek: { contacts: number; conversations: number; activeSeconds: number };
+    priorMonth: { contacts: number; conversations: number; activeSeconds: number };
   };
   clrCards: any[];
   eod: {
@@ -220,6 +220,7 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
     { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
     { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0) },
+    { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m` },
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
@@ -688,10 +689,11 @@ export default function ManagerDashboard() {
       {/* KPI tiles — Today */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Today</div>
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
           <KpiTile label="Calls" value={todayCalls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY} />
           <KpiTile label="Contacts" value={callActivity.today.contacts} icon={Users} color={CYAN} />
           <KpiTile label="Conversations" value={callActivity.today.conversations} icon={Activity} color={AMBER} />
+          <KpiTile label="Active Time" value={`${Math.floor(callActivity.today.activeSeconds / 3600)}h ${Math.floor((callActivity.today.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
           <KpiTile label="Transfers" value={stats.today?.transfers ?? 0} icon={ArrowUpRight} color={GREEN} />
           <KpiTile label="Appointments" value={stats.today?.appointments ?? 0} icon={Calendar} color={BLUE} />
           <KpiTile label="Fell through" value={stats.today?.fellThrough ?? 0} icon={XCircle} color={RED} />
@@ -701,13 +703,14 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This week with WoW deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This week</div>
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
           <KpiTile label="Calls (7d)" value={last7Calls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY}
                    delta={<DeltaArrow {...callsDeltaWk} />} />
           <KpiTile label="Contacts" value={callActivity.week.contacts} icon={Users} color={CYAN}
                    delta={<DeltaArrow {...contactsDeltaWk} />} />
           <KpiTile label="Conversations" value={callActivity.week.conversations} icon={Activity} color={AMBER}
                    delta={<DeltaArrow {...conversationsDeltaWk} />} />
+          <KpiTile label="Active Time" value={`${Math.floor(callActivity.week.activeSeconds / 3600)}h ${Math.floor((callActivity.week.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
           <KpiTile label="Transfers" value={stats.week?.transfers ?? 0} icon={ArrowUpRight} color={GREEN}
                    delta={<DeltaArrow {...transferDeltaWk} />} />
           <KpiTile label="Appointments" value={stats.week?.appointments ?? 0} icon={Calendar} color={BLUE}
@@ -720,11 +723,12 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This month with MoM deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This month</div>
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
           <KpiTile label="Contacts" value={callActivity.month.contacts} icon={Users} color={CYAN}
                    delta={<DeltaArrow {...contactsDeltaMo} />} />
           <KpiTile label="Conversations" value={callActivity.month.conversations} icon={Activity} color={AMBER}
                    delta={<DeltaArrow {...conversationsDeltaMo} />} />
+          <KpiTile label="Active Time" value={`${Math.floor(callActivity.month.activeSeconds / 3600)}h ${Math.floor((callActivity.month.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
           <KpiTile label="Transfers" value={stats.month?.transfers ?? 0} sub={`Conv ${stats.month?.conversionRate ?? 0}%`}
                    icon={ArrowUpRight} color={GREEN} delta={<DeltaArrow {...transferDeltaMo} />} />
           <KpiTile label="Appointments" value={stats.month?.appointments ?? 0} icon={Calendar} color={BLUE}

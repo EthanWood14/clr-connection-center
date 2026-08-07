@@ -2607,6 +2607,12 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_los_other_notes TEXT`); } catch {}
   // Messages sent (texts/DMs) for the day — tracked alongside calls.
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN messages_sent INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_conversations INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN calltools_conversations INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN calltools_active_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // Callbacks are appointments now. Preserve the schedule, borrower and notes
+  // while removing the retired outcome type from every C3 surface.
+  try { sqlite.exec(`UPDATE lead_outcomes SET outcome_type='appointment' WHERE outcome_type='callback_requested'`); } catch {}
 
   // EOD drafts — one per user, holds serialized form state so CLRs don't lose
   // their progress if they close the page before submitting.
@@ -2695,11 +2701,13 @@ function runNewMigrations() {
     activity_date TEXT NOT NULL,
     contact_key TEXT NOT NULL,
     conversation INTEGER NOT NULL DEFAULT 0,
+    active_seconds INTEGER NOT NULL DEFAULT 0,
     disposition TEXT,
     occurred_at TEXT,
     created_at TEXT NOT NULL,
     UNIQUE(org_id, external_event_id)
   )`);
+  try { sqlite.exec(`ALTER TABLE callsync_activity_events ADD COLUMN active_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_range
     ON callsync_activity_events(org_id, activity_date, assistant_id)`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_contact
@@ -3741,24 +3749,30 @@ export function getEodReport(reportDate: string, assistantId: number): any {
   return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
 }
 
-export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
   const assignedJson = JSON.stringify(Array.isArray(data.assignedLosCalled) ? data.assignedLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const additionalJson = JSON.stringify(Array.isArray(data.additionalLosCalled) ? data.additionalLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const otherNotes = typeof data.additionalLosOtherNotes === "string" && data.additionalLosOtherNotes.trim()
     ? data.additionalLosOtherNotes.trim()
     : null;
   const messagesSent = Number.isFinite(Number(data.messagesSent)) ? Math.max(0, Math.round(Number(data.messagesSent))) : 0;
+  const additionalConversations = Number.isFinite(Number(data.additionalConversations)) ? Math.max(0, Math.round(Number(data.additionalConversations))) : 0;
+  const callToolsConversations = Number.isFinite(Number(data.callToolsConversations)) ? Math.max(0, Math.round(Number(data.callToolsConversations))) : 0;
+  const callToolsActiveSeconds = Number.isFinite(Number(data.callToolsActiveSeconds)) ? Math.max(0, Math.round(Number(data.callToolsActiveSeconds))) : 0;
   sqlite.prepare(`
-    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, additional_conversations, calltools_conversations, calltools_active_seconds, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(report_date, assistant_id) DO UPDATE SET
       calls_made=excluded.calls_made, messages_sent=excluded.messages_sent, transfers=excluded.transfers,
+      additional_conversations=excluded.additional_conversations,
+      calltools_conversations=excluded.calltools_conversations,
+      calltools_active_seconds=excluded.calltools_active_seconds,
       appointments=excluded.appointments, notes=excluded.notes,
       assigned_los_called=excluded.assigned_los_called,
       additional_los_called=excluded.additional_los_called,
       additional_los_other_notes=excluded.additional_los_other_notes,
       submitted_at=datetime('now')
-  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
+  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, additionalConversations, callToolsConversations, callToolsActiveSeconds, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
   return getEodReport(data.reportDate, data.assistantId);
 }
 

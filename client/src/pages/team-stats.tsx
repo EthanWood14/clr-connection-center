@@ -53,11 +53,11 @@ interface StatsResponse {
   startDate: string;
   endDate: string;
   clrId: number | null;
-  totals: { calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number };
-  previous: { calls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number };
-  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number }>;
+  totals: { calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
+  previous: { calls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
+  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
+  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -101,7 +101,7 @@ function SummaryCard({ title, value, previous, suffix = "" }: { title: string; v
   );
 }
 
-type SortKey = "name" | "calls" | "messages" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "callToolsContacts" | "callToolsConversations" | "vsGoal";
+type SortKey = "name" | "calls" | "messages" | "transfers" | "transferRate" | "appointments" | "fellThrough" | "deferrals" | "contactsReached" | "dncHits" | "callToolsContacts" | "callToolsConversations" | "callToolsActiveSeconds" | "vsGoal";
 
 export default function TeamStats() {
   const { user } = useAuth();
@@ -270,10 +270,11 @@ export default function TeamStats() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
         <SummaryCard title="Total Calls" value={data.totals.calls} previous={data.previous.calls} />
         <SummaryCard title="CallTools Contacts" value={data.totals.callToolsContacts} previous={data.previous.callToolsContacts} />
         <SummaryCard title="Conversations" value={data.totals.callToolsConversations} previous={data.previous.callToolsConversations} />
+        <SummaryCard title="Active Minutes" value={Math.round((data.totals.callToolsActiveSeconds ?? 0) / 60)} previous={Math.round((data.previous.callToolsActiveSeconds ?? 0) / 60)} />
         <SummaryCard title="Messages Sent" value={(data.totals as any).messages ?? 0} />
         <SummaryCard title="Total Transfers" value={data.totals.transfers} previous={data.previous.transfers} />
         <SummaryCard title="Transfer Rate" value={data.totals.transferRate.toFixed(1)} previous={data.previous.transferRate} suffix="%" />
@@ -425,6 +426,7 @@ export default function TeamStats() {
                       ["calls","Calls"],
                       ["callToolsContacts","Contacts"],
                       ["callToolsConversations","Conversations"],
+                      ["callToolsActiveSeconds","Active Time"],
                       ["messages","Messages"],
                       ["transfers","Transfers"],
                       ["vsGoal","vs Goal"],
@@ -455,7 +457,7 @@ export default function TeamStats() {
               <tbody>
                 {perClrSorted.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
+                    <td colSpan={14} className="px-4 py-8 text-center text-sm text-muted-foreground">No CLR data.</td>
                   </tr>
                 ) : perClrSorted.map((row: any) => (
                   <tr
@@ -468,6 +470,7 @@ export default function TeamStats() {
                     <td className="px-4 py-2.5">{row.calls}</td>
                     <td className="px-4 py-2.5 text-cyan-700 dark:text-cyan-300">{row.callToolsContacts ?? 0}</td>
                     <td className="px-4 py-2.5 text-amber-700 dark:text-amber-300">{row.callToolsConversations ?? 0}</td>
+                    <td className="px-4 py-2.5 text-cyan-700 dark:text-cyan-300">{Math.floor((row.callToolsActiveSeconds ?? 0) / 3600)}h {Math.floor(((row.callToolsActiveSeconds ?? 0) % 3600) / 60)}m</td>
                     <td className="px-4 py-2.5 text-teal-600 dark:text-teal-400">{row.messages ?? 0}</td>
                     <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400">{row.transfers}</td>
                     <td className="px-4 py-2.5">

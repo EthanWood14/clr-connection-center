@@ -58,6 +58,13 @@ function ReadOnlyStat({ icon: Icon, label, value, color }: { icon: any; label: s
   );
 }
 
+function formatActiveTime(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
 export default function EodReport() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -107,6 +114,7 @@ export default function EodReport() {
   // Form state — calls + messages + notes + LO coverage
   const [callsMade, setCallsMade] = useState("");
   const [messagesSent, setMessagesSent] = useState("");
+  const [additionalConversations, setAdditionalConversations] = useState("");
   const [notes, setNotes]         = useState("");
   const [dirty, setDirty]         = useState(false);
   const [assignedCalled, setAssignedCalled] = useState<number[]>([]);
@@ -136,7 +144,7 @@ export default function EodReport() {
   const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
-  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[] }>({
+  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
   });
@@ -217,6 +225,7 @@ export default function EodReport() {
     if (report) {
       setCallsMade(String(report.calls_made ?? report.callsMade ?? ""));
       setMessagesSent(String(report.messages_sent ?? report.messagesSent ?? ""));
+      setAdditionalConversations(String(report.additional_conversations ?? report.additionalConversations ?? ""));
       setNotes(report.notes ?? "");
       setAssignedCalled(Array.isArray(report.assignedLosCalled) ? report.assignedLosCalled : []);
       setAdditionalCalled(Array.isArray(report.additionalLosCalled) ? report.additionalLosCalled : []);
@@ -226,6 +235,7 @@ export default function EodReport() {
     } else {
       setCallsMade("");
       setMessagesSent("");
+      setAdditionalConversations("");
       setNotes("");
       setAssignedCalled([]);
       setAdditionalCalled([]);
@@ -260,6 +270,7 @@ export default function EodReport() {
         skipAutoSaveRef.current = true;
         if (typeof d.callsMade === "string") setCallsMade(d.callsMade);
         if (typeof d.messagesSent === "string") setMessagesSent(d.messagesSent);
+        if (typeof d.additionalConversations === "string") setAdditionalConversations(d.additionalConversations);
         if (typeof d.notes === "string") setNotes(d.notes);
         if (Array.isArray(d.assignedCalled)) setAssignedCalled(d.assignedCalled);
         if (Array.isArray(d.additionalCalled)) setAdditionalCalled(d.additionalCalled);
@@ -286,6 +297,7 @@ export default function EodReport() {
             selectedDate,
             callsMade,
             messagesSent,
+            additionalConversations,
             notes,
             assignedCalled,
             additionalCalled,
@@ -314,7 +326,7 @@ export default function EodReport() {
     autoSaveTimer.current = setTimeout(() => { void saveDraft(true); }, 500);
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callsMade, messagesSent, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, draftDate, dirty]);
+  }, [callsMade, messagesSent, additionalConversations, notes, assignedCalled, additionalCalled, additionalOtherNotes, showOtherInput, selectedDate, draftDate, dirty]);
 
   async function clearDraft(resetForm: boolean) {
     try {
@@ -326,6 +338,8 @@ export default function EodReport() {
     if (resetForm) {
       skipAutoSaveRef.current = true;
       setCallsMade("");
+      setMessagesSent("");
+      setAdditionalConversations("");
       setNotes("");
       setAssignedCalled([]);
       setAdditionalCalled([]);
@@ -340,9 +354,9 @@ export default function EodReport() {
     mutationFn: () =>
       apiRequest("POST", "/api/eod-reports", {
         reportDate:   selectedDate,
-        // null when blank so the server rejects it rather than silently filing a 0.
-        callsMade:    callsMade.trim() === "" ? null : (parseInt(callsMade) || 0),
+        callsMade:    parseInt(callsMade) || 0,
         messagesSent: parseInt(messagesSent) || 0,
+        additionalConversations: parseInt(additionalConversations) || 0,
         transfers:    autoTransfers,
         appointments: autoAppointments,
         notes:        notes.trim() || null,
@@ -421,11 +435,8 @@ export default function EodReport() {
   const displayDate = format(parseISO(selectedDate), "EEEE, MMMM d, yyyy");
 
   // Calls made is mandatory on the EOD — blank blocks submission (0 is fine).
-  const callsValid = callsMade.trim() !== "" && Number.isFinite(Number(callsMade)) && Number(callsMade) >= 0;
-  const callsNum = parseInt(callsMade) || 0;
-  const ratioPreview = callsNum > 0
-    ? ((autoTransfers / callsNum) * 100).toFixed(1) + "%"
-    : null;
+  const importedConversations = Number(data?.callToolsActivity?.conversations ?? report?.calltools_conversations ?? 0);
+  const importedActiveSeconds = Number(data?.callToolsActivity?.activeSeconds ?? report?.calltools_active_seconds ?? 0);
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto print-report">
@@ -445,10 +456,12 @@ export default function EodReport() {
           displayDate={displayDate}
           callsMade={Number((report as any).calls_made ?? (report as any).callsMade ?? 0)}
           messagesSent={Number((report as any).messages_sent ?? (report as any).messagesSent ?? 0)}
+          additionalConversations={Number((report as any).additional_conversations ?? 0)}
+          importedConversations={Number((report as any).calltools_conversations ?? 0)}
+          importedActiveSeconds={Number((report as any).calltools_active_seconds ?? 0)}
           autoTransfers={autoTransfers}
           autoAppointments={autoAppointments}
           autoFellThrough={autoFellThrough}
-          autoCallbacks={autoCallbacks}
           autoDeferrals={autoDeferrals}
           autoFuture={autoFuture}
           autoNoAnswer={autoNoAnswer}
@@ -570,11 +583,10 @@ export default function EodReport() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 <ReadOnlyStat icon={TrendingUp}    label="Transfers"    value={autoTransfers}    color="text-green-600 dark:text-green-400" />
                 <ReadOnlyStat icon={Calendar}      label="Appointments" value={autoAppointments} color="text-blue-600 dark:text-blue-400" />
                 <ReadOnlyStat icon={XCircle}       label="Fell Through" value={autoFellThrough}  color="text-orange-500 dark:text-orange-400" />
-                <ReadOnlyStat icon={PhoneCall}     label="Callbacks"    value={autoCallbacks}    color="text-amber-600 dark:text-amber-400" />
                 <ReadOnlyStat icon={Clock}         label="Future"       value={autoFuture}       color="text-indigo-600 dark:text-indigo-400" />
                 <ReadOnlyStat icon={ClipboardList} label="No Answer"    value={autoNoAnswer}     color="text-muted-foreground" />
               </div>
@@ -729,48 +741,59 @@ export default function EodReport() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CallTools Conversations</p>
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">{importedConversations}</p>
+                  <p className="text-[11px] text-muted-foreground">Imported automatically</p>
+                </div>
+                <div className="rounded-lg border bg-cyan-50/60 dark:bg-cyan-950/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CallTools Active Time</p>
+                  <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 tabular-nums">{formatActiveTime(importedActiveSeconds)}</p>
+                  <p className="text-[11px] text-muted-foreground">Imported automatically</p>
+                </div>
+              </div>
 
-              {/* Calls made — the one manual entry, and it's REQUIRED. Enter 0 if
-                  you genuinely made none; the report can't be submitted blank. */}
+              {/* Optional work completed outside CallTools. */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <PhoneCall className="w-3.5 h-3.5" /> Total Calls Made <span className="text-red-500">*</span>
+                  <PhoneCall className="w-3.5 h-3.5" /> Additional Calls
                 </label>
                 <div className="flex items-center gap-3">
                   <Input
-                    type="number" min={0} placeholder="Required — enter your total calls (0 if none)"
+                    type="number" min={0} placeholder="Calls made outside CallTools"
                     value={callsMade}
                     onChange={e => { setCallsMade(e.target.value); setDirty(true); }}
-                    aria-required="true"
-                    aria-invalid={!callsValid}
-                    className={"h-9 max-w-[240px]" + (callsValid ? "" : " border-red-400 focus-visible:ring-red-400")}
-                    data-testid="input-calls-made"
+                    className="h-9 max-w-[240px]"
+                    data-testid="input-additional-calls"
                   />
-                  {ratioPreview && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <TrendingUp className="w-3.5 h-3.5 text-primary" />
-                      Transfer/Call: <strong className="text-foreground ml-0.5">{ratioPreview}</strong>
-                    </span>
-                  )}
                 </div>
-                {!callsValid && (
-                  <p className="text-[11px] font-medium text-red-600 dark:text-red-400" data-testid="calls-required-msg">
-                    Required — enter how many calls you made today (enter 0 if none).
-                  </p>
-                )}
               </div>
 
-              {/* Messages sent — texts/DMs sent instead of calls */}
+              {/* Texts sent outside the connected CallTools workflow. */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <MessageSquare className="w-3.5 h-3.5" /> Messages Sent
+                  <MessageSquare className="w-3.5 h-3.5" /> Additional Texts
                 </label>
                 <Input
-                  type="number" min={0} placeholder="Texts / DMs sent today"
+                  type="number" min={0} placeholder="Texts sent outside CallTools"
                   value={messagesSent}
                   onChange={e => { setMessagesSent(e.target.value); setDirty(true); }}
                   className="h-9 max-w-[200px]"
-                  data-testid="input-messages-sent"
+                  data-testid="input-additional-texts"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5" /> Additional Conversations
+                </label>
+                <Input
+                  type="number" min={0} placeholder="Conversations outside CallTools"
+                  value={additionalConversations}
+                  onChange={e => { setAdditionalConversations(e.target.value); setDirty(true); }}
+                  className="h-9 max-w-[200px]"
+                  data-testid="input-additional-conversations"
                 />
               </div>
 
@@ -788,8 +811,7 @@ export default function EodReport() {
                 <Button
                   className="flex-1 min-w-[180px] gap-2"
                   onClick={() => saveMutation.mutate()}
-                  disabled={saveMutation.isPending || (!dirty && !!report) || !callsValid}
-                  title={!callsValid ? "Enter your total calls made first" : ""}
+                  disabled={saveMutation.isPending || (!dirty && !!report)}
                 >
                   {saveMutation.isPending ? (
                     <><Clock className="w-4 h-4 animate-spin" /> Saving…</>
@@ -963,8 +985,9 @@ export default function EodReport() {
 // Only visible via the @media print stylesheet (class="print-only").
 function EodPrintSheet({
   report, activities, displayDate, callsMade, messagesSent,
+  additionalConversations, importedConversations, importedActiveSeconds,
   autoTransfers, autoAppointments, autoFellThrough,
-  autoCallbacks, autoDeferrals, autoFuture, autoNoAnswer, autoTotalLogged,
+  autoDeferrals, autoFuture, autoNoAnswer, autoTotalLogged,
   fallbackUser,
 }: {
   report: any;
@@ -972,10 +995,12 @@ function EodPrintSheet({
   displayDate: string;
   callsMade: number;
   messagesSent: number;
+  additionalConversations: number;
+  importedConversations: number;
+  importedActiveSeconds: number;
   autoTransfers: number;
   autoAppointments: number;
   autoFellThrough: number;
-  autoCallbacks: number;
   autoDeferrals: number;
   autoFuture: number;
   autoNoAnswer: number;
@@ -986,11 +1011,11 @@ function EodPrintSheet({
   const transfers    = breakdown.transfer           ?? report?.transfers    ?? autoTransfers;
   const appointments = breakdown.appointment        ?? report?.appointments ?? autoAppointments;
   const fellThrough  = breakdown.fell_through       ?? autoFellThrough;
-  const callbacks    = breakdown.callback_requested ?? autoCallbacks;
   const deferrals    = breakdown.deferral           ?? autoDeferrals;
   const future       = breakdown.future_contact     ?? autoFuture;
   const noAnswer     = breakdown.no_answer          ?? autoNoAnswer;
-  const totalLogged  = transfers + appointments + fellThrough + callbacks + deferrals + future + noAnswer || autoTotalLogged;
+  const totalLogged  = transfers + appointments + fellThrough + deferrals + future + noAnswer || autoTotalLogged;
+  const totalConversations = importedConversations + additionalConversations;
 
   const clrName  = report?.clr_name  ?? fallbackUser?.name  ?? fallbackUser?.fullName ?? "—";
   const clrEmail = report?.clr_email ?? fallbackUser?.email ?? "";
@@ -1001,7 +1026,7 @@ function EodPrintSheet({
     ? format(parseServerTimestamp(submittedAtRaw) ?? new Date(submittedAtRaw), "MMM d, yyyy 'at' h:mm a")
     : null;
 
-  const ratio = callsMade > 0 ? ((transfers / callsMade) * 100).toFixed(1) + "%" : "—";
+  const ratio = totalConversations > 0 ? ((transfers / totalConversations) * 100).toFixed(1) + "%" : "—";
 
   const transferProspects = (report?.transferProspectsWithLo ?? report?.transferProspects ?? []) as Array<
     { name: string; loName?: string | null; transferType?: string | null }
@@ -1017,7 +1042,7 @@ function EodPrintSheet({
     { label: "Transfers",            count: transfers },
     { label: "Appointments Set",     count: appointments },
     { label: "Fell Through",         count: fellThrough },
-    { label: "Callbacks & Deferrals", count: callbacks + deferrals },
+    { label: "Deferrals",            count: deferrals },
     { label: "Future Contact",       count: future },
     { label: "No Answer",            count: noAnswer },
   ];
@@ -1045,10 +1070,13 @@ function EodPrintSheet({
       <h2 className="eod-h2">Daily Summary</h2>
       <table className="eod-kv">
         <tbody>
-          <tr><td>Total Calls Made</td><td className="num">{callsMade}</td></tr>
-          <tr><td>Messages Sent</td><td className="num">{messagesSent}</td></tr>
+          <tr><td>CallTools Conversations</td><td className="num">{importedConversations}</td></tr>
+          <tr><td>CallTools Active Time</td><td className="num">{formatActiveTime(importedActiveSeconds)}</td></tr>
+          <tr><td>Additional Conversations</td><td className="num">{additionalConversations}</td></tr>
+          <tr><td>Additional Calls</td><td className="num">{callsMade}</td></tr>
+          <tr><td>Additional Texts</td><td className="num">{messagesSent}</td></tr>
           <tr><td>Total Outcomes Logged</td><td className="num">{totalLogged}</td></tr>
-          <tr><td>Transfer / Call Ratio</td><td className="num">{ratio}</td></tr>
+          <tr><td>Transfer / Conversation Ratio</td><td className="num">{ratio}</td></tr>
         </tbody>
       </table>
 
@@ -1261,18 +1289,20 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const xfers = breakdown.transfer ?? r.transfers ?? 0;
           const appts = breakdown.appointment ?? r.appointments ?? 0;
           const fellThrough = breakdown.fell_through ?? 0;
-          const callbacks = breakdown.callback_requested ?? 0;
           const deferrals = breakdown.deferral ?? 0;
-          const callbacksAndDeferrals = callbacks + deferrals;
+          const conversations = Number(r.calltools_conversations ?? 0) + Number(r.additional_conversations ?? 0);
+          const activeSeconds = Number(r.calltools_active_seconds ?? 0);
           const future = breakdown.future_contact ?? 0;
           const noAnswer = breakdown.no_answer ?? 0;
           const summaryChips: Array<{ label: string; val: number; cls: string }> = [
-            { label: "calls",                  val: calls,                cls: "text-muted-foreground" },
-            { label: "messages",               val: messages,             cls: "text-muted-foreground" },
+            { label: "conversations",          val: conversations,        cls: "text-cyan-700 font-medium" },
+            { label: "active min",             val: Math.round(activeSeconds / 60), cls: "text-cyan-700" },
+            { label: "extra calls",            val: calls,                cls: "text-muted-foreground" },
+            { label: "extra texts",            val: messages,             cls: "text-muted-foreground" },
             { label: "transfers",              val: xfers,                cls: "text-emerald-600 font-medium" },
             { label: "appts",                  val: appts,                cls: "text-blue-600" },
             { label: "fell through",           val: fellThrough,          cls: "text-rose-600" },
-            { label: "callbacks & deferrals", val: callbacksAndDeferrals, cls: "text-amber-600" },
+            { label: "deferrals",              val: deferrals,            cls: "text-amber-600" },
             { label: "future",                 val: future,               cls: "text-indigo-600" },
             { label: "no answer",              val: noAnswer,             cls: "text-muted-foreground" },
           ].filter(c => c.val > 0);
