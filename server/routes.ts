@@ -1026,14 +1026,20 @@ async function sendReport(
     : assignmentsAll;
 
   // CLR list — assistants + admin-CLRs. When clrId is set, scope to that CLR.
-  // Non-counted CLRs are excluded from the team breakdown/totals and rendered in
-  // a separate "Non-counted CLRs" section. A single-CLR scoped report still works
-  // for a non-counted CLR (they remain valid report subjects).
+  //
+  // Emailed reports count every CLR, including the ones flagged
+  // exclude_from_stats. Those used to be dropped from the totals and listed in a
+  // separate section at the bottom, which meant the headline numbers described a
+  // smaller team than the one that did the work — the single non-counted CLR is
+  // the highest-volume person on the team by roughly three to one, so the team
+  // total was materially understated.
+  //
+  // The flag still governs the dashboard, the leaderboard and assignment
+  // generation. This is deliberately scoped to what gets emailed.
   const isClrRow = (u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr));
   const clrs = users.filter((u: any) =>
-    isClrRow(u) && (scopedClrId ? u.id === scopedClrId : !u.excludeFromStats)
+    isClrRow(u) && (scopedClrId ? u.id === scopedClrId : true)
   );
-  const nonCountedClrs = scopedClrId ? [] : users.filter((u: any) => isClrRow(u) && u.excludeFromStats);
 
   // Per-CLR aggregates
   interface ClrStats {
@@ -1118,9 +1124,8 @@ async function sendReport(
     };
   }
 
+  // Sorted by transfers, so the busiest CLR leads the table.
   const clrStats: ClrStats[] = clrs.map(computeClrStat).sort((a, b) => b.transfers - a.transfers);
-  // Separate group — does NOT feed any team total.
-  const nonCountedStats: ClrStats[] = nonCountedClrs.map(computeClrStat).sort((a, b) => b.transfers - a.transfers);
 
   // Team totals
   const teamCalls          = clrStats.reduce((s, r) => s + r.calls, 0);
@@ -1258,38 +1263,6 @@ async function sendReport(
     </div>`;
   })();
 
-  // Separate "Non-counted CLRs" section — their activity, explicitly NOT in team totals.
-  const nonCountedHtml = nonCountedStats.length === 0 ? "" : (() => {
-    const rowsHtml = nonCountedStats.map((r, i) => {
-      const bg = i % 2 === 0 ? "#ffffff" : "#f8fafc";
-      return `<tr style="background:${bg}">
-        <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0d9488">${r.messages}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${r.transfers}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0f766e">${r.appointments}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;color:#b45309">${r.fellThrough}</td>
-      </tr>`;
-    }).join("");
-    return `
-    <div style="margin-top:28px">
-      <h2 style="margin:0 0 4px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Non-counted CLRs</h2>
-      <p style="margin:0 0 12px;font-size:12px;color:#64748b">Tracked separately — <strong>not included</strong> in the team totals, leaderboard, or charts above.</p>
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;font-size:12px">
-        <thead>
-          <tr style="background:#475569">
-            <th style="padding:9px 12px;text-align:left;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">CLR (non-counted)</th>
-            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Calls</th>
-            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Msgs</th>
-            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Transfers</th>
-            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Appts</th>
-            <th style="padding:9px 12px;text-align:center;color:#cbd5e1;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">Fell Through</th>
-          </tr>
-        </thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    </div>`;
-  })();
 
   const todayLabel = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: BUSINESS_DAY_DEFAULT_TZ });
   const subject = type === "weekly"
@@ -1575,7 +1548,6 @@ async function sendReport(
 
     <!--SEC:outcomeBreakdown-->${outcomeBreakdownHtml}<!--/SEC:outcomeBreakdown-->
 
-    ${nonCountedHtml}
 
     <!--SEC:transferDetails-->${transferDetailsHtml}<!--/SEC:transferDetails-->
 
@@ -3092,9 +3064,10 @@ cron.schedule("5 19 * * 1-5", async () => {
       console.log("[eod-digest] no submissions today, skipping manager digest");
       return;
     }
-    // Non-counted CLRs are shown in their own section and excluded from totals.
-    const rows = allRows.filter((r: any) => !r.excluded);
-    const nonCountedRows = allRows.filter((r: any) => r.excluded);
+    // Every CLR who submitted counts, including any flagged exclude_from_stats.
+    // They used to be split into a section below the totals, which understated
+    // the day's numbers — same reasoning as the emailed summary reports.
+    const rows = allRows;
 
     // Additional work logged for the day (eod_activities), grouped per CLR.
     const activityByClr = new Map<number, any[]>();
@@ -3137,19 +3110,6 @@ cron.schedule("5 19 * * 1-5", async () => {
       </tr>${extraRow}`;
     }).join("");
     const rowsHtml = renderDigestRows(rows);
-    const nonCountedDigestHtml = nonCountedRows.length === 0 ? "" : `
-      <h3 style="margin:22px 0 6px;font-size:13px;font-weight:700;color:#0F182D">Non-counted CLRs</h3>
-      <p style="margin:0 0 8px;font-size:11px;color:#64748b">Not included in the totals above.</p>
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
-        <thead><tr style="background:#f1f5f9">
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase">CLR</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Calls</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Msgs</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Xfers</th>
-          <th style="padding:8px 12px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase">Appts</th>
-        </tr></thead>
-        <tbody>${renderDigestRows(nonCountedRows)}</tbody>
-      </table>`;
 
     const body = `
       <p style="margin:0 0 20px;font-size:15px;font-weight:600;color:#1A2B4A">Daily EOD Summary — ${todayPT}</p>
@@ -3172,7 +3132,6 @@ cron.schedule("5 19 * * 1-5", async () => {
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
-      ${nonCountedDigestHtml}
       <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center">
         This digest is sent once daily. Each CLR also receives their own full report immediately on submission.
       </p>`;
