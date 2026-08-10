@@ -464,6 +464,7 @@ export default function EodReport() {
           additionalConversations={Number((report as any).additional_conversations ?? 0)}
           importedConversations={Number((report as any).calltools_conversations ?? 0)}
           importedActiveSeconds={Number((report as any).calltools_active_seconds ?? 0)}
+          importedDialpadCalls={Number((report as any).dialpad_calls ?? 0)}
           autoTransfers={autoTransfers}
           autoAppointments={autoAppointments}
           autoFellThrough={autoFellThrough}
@@ -999,7 +1000,7 @@ export default function EodReport() {
 // Only visible via the @media print stylesheet (class="print-only").
 function EodPrintSheet({
   report, activities, displayDate, callsMade, messagesSent,
-  additionalConversations, importedConversations, importedActiveSeconds,
+  additionalConversations, importedConversations, importedActiveSeconds, importedDialpadCalls,
   autoTransfers, autoAppointments, autoFellThrough,
   autoDeferrals, autoFuture, autoNoAnswer, autoTotalLogged,
   fallbackUser,
@@ -1012,6 +1013,7 @@ function EodPrintSheet({
   additionalConversations: number;
   importedConversations: number;
   importedActiveSeconds: number;
+  importedDialpadCalls: number;
   autoTransfers: number;
   autoAppointments: number;
   autoFellThrough: number;
@@ -1305,6 +1307,9 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const appts = breakdown.appointment ?? r.appointments ?? 0;
           const fellThrough = breakdown.fell_through ?? 0;
           const deferrals = breakdown.deferral ?? 0;
+          // The expanded row renders a "Callbacks & Deferrals" stat; without this
+          // it threw a ReferenceError the moment anyone opened a history row.
+          const callbacksAndDeferrals = (breakdown.callback_requested ?? 0) + deferrals;
           const conversations = Number(r.calltools_conversations ?? 0) + Number(r.additional_conversations ?? 0);
           const activeSeconds = Number(r.calltools_active_seconds ?? 0);
           const future = breakdown.future_contact ?? 0;

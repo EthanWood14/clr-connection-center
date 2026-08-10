@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
 import { copyToClipboard } from "@/lib/utils";
@@ -84,6 +85,11 @@ export default function StateLookup() {
   const [selectedState, setSelectedState] = useState<{ abbr: string; name: string } | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const isLapPortal = typeof window !== "undefined" && window.location.hash.startsWith("#/lap");
+  // Referenced by the "LOs with no states" notice below, which threw a
+  // ReferenceError on render because this was never declared. Same idiom the
+  // other pages use (check-ins.tsx, assignments.tsx).
+  const { user } = useAuth();
+  const isAdminOrManager = user?.role === "admin" || !!(user as any)?.isManager || !!user?.superAdmin;
   const loanOfficersEndpoint = isLapPortal ? "/api/lap/loan-officers" : "/api/loan-officers";
 
   const handleStateSelect = useCallback((state: { abbr: string; name: string }) => {
