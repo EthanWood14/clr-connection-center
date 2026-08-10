@@ -1,4 +1,4 @@
-export type TransferScorecardRangeKey = "3d" | "7d" | "14d" | "30d" | "90d";
+export type TransferScorecardRangeKey = "today" | "3d" | "7d" | "14d" | "30d" | "90d";
 
 export type TransferScorecardWindow = {
   startDate: string;
@@ -8,6 +8,10 @@ export type TransferScorecardWindow = {
 };
 
 const PREVIOUS_DAYS: Array<[TransferScorecardRangeKey, number]> = [
+  // Zero previous days — today alone. Managers wanted to see the board as it
+  // stands right now, not blended into a week where a strong morning is
+  // invisible against six other days.
+  ["today", 0],
   ["3d", 3],
   ["7d", 7],
   ["14d", 14],
@@ -30,6 +34,7 @@ export function buildTransferScorecardWindows(
     startDate: subtractCalendarDays(today, previousDays),
     endDate: today,
     days: previousDays + 1,
-    label: `${previousDays} days`,
+    // "0 days" would be both wrong and unreadable for the single-day window.
+    label: previousDays === 0 ? "Today" : `${previousDays} days`,
   }])) as Record<TransferScorecardRangeKey, TransferScorecardWindow>;
 }

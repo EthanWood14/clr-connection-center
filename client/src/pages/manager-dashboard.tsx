@@ -43,8 +43,9 @@ const RANGE_OPTIONS: { key: RangeKey; label: string; short: string }[] = [
   { key: "all",  short: "All",  label: "All time" },
 ];
 
-type ScorecardRange = "3d" | "7d" | "14d" | "30d" | "90d";
+type ScorecardRange = "today" | "3d" | "7d" | "14d" | "30d" | "90d";
 const SCORECARD_OPTIONS: { key: ScorecardRange; label: string }[] = [
+  { key: "today", label: "Today" },
   { key: "3d", label: "3 days" },
   { key: "7d", label: "7 days" },
   { key: "14d", label: "14 days" },
@@ -754,7 +755,10 @@ export default function ManagerDashboard() {
           rangeLabel={byRange[scorecardRange]?.window?.label ?? SCORECARD_OPTIONS.find(option => option.key === scorecardRange)?.label ?? "selected"}
         />
         <p className="text-[11px] text-muted-foreground mt-2">
-          Includes today and the selected number of previous calendar days. Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
+          {scorecardRange === "today"
+            ? "Today only, and still filling in as the day goes on."
+            : "Includes today and the selected number of previous calendar days."}
+          {" "}Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
         </p>
       </div>
 
