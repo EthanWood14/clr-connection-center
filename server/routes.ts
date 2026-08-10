@@ -12758,7 +12758,30 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       patch.checkinAllowedIps = JSON.stringify(normalized);
     }
-    if (Object.keys(patch).length) storageExtra.updateEmailSettings(patch);
+    if (Object.keys(patch).length) {
+      // Audit before/after. This route silently replaced the approved-IP list
+      // once already: the office allowlist was corrected on 2026-08-05, was back
+      // to a dead IPv6 address by 2026-08-08, and because nothing here recorded
+      // it there was no way to tell who saved what or when. An attendance
+      // control that can be changed without a trace is not a control.
+      const before = checkinConfig();
+      storageExtra.updateEmailSettings(patch);
+      const after = checkinConfig();
+      const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+      audit({
+        userId: me?.id ?? 0,
+        userName: me?.name ?? "Unknown",
+        action: "update",
+        entityType: "checkin_settings",
+        entityId: 1,
+        entityLabel: "Check-in settings",
+        details: JSON.stringify({
+          before: { enabled: before.enabled, networkMode: before.networkMode, graceMin: before.graceMin, allowedIps: before.allowedIps },
+          after: { enabled: after.enabled, networkMode: after.networkMode, graceMin: after.graceMin, allowedIps: after.allowedIps },
+          savedFromIp: requestIp(req),
+        }),
+      });
+    }
     res.json({ ...checkinConfig(), currentIp: requestIp(req) });
   });
 
