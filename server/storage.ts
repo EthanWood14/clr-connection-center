@@ -2610,6 +2610,9 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN additional_conversations INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN calltools_conversations INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN calltools_active_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // Dialpad calls as they stood when the report was filed. Snapshotted like the
+  // CallTools figures so a later re-sync cannot rewrite a submitted report.
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN dialpad_calls INTEGER NOT NULL DEFAULT 0`); } catch {}
   // Callbacks are appointments now. Preserve the schedule, borrower and notes
   // while removing the retired outcome type from every C3 surface.
   try { sqlite.exec(`UPDATE lead_outcomes SET outcome_type='appointment' WHERE outcome_type='callback_requested'`); } catch {}
@@ -2689,6 +2692,37 @@ function runNewMigrations() {
   )`);
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_callsync_payload_id
     ON callsync_outcome_links(last_payload_id) WHERE last_payload_id IS NOT NULL`);
+
+  // ── Dialpad call statistics ──────────────────────────────────────────────
+  // The upstream feed identifies people only by display name, and those names
+  // do not always match C3's spelling ("Matthew Lane" vs "Matt Lane"). This
+  // records the decisions a human made about which agent is which user, so a
+  // rename upstream cannot silently reattribute somebody's call count.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS dialpad_agent_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    agent_key TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    user_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(org_id, agent_key)
+  )`);
+  // Raw per-day counts as pulled, kept separate from eod_reports on purpose:
+  // what a CLR reported and what the dialer observed are different facts.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS dialpad_daily_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    stat_date TEXT NOT NULL,
+    agent_key TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    user_id INTEGER,
+    calls INTEGER NOT NULL DEFAULT 0,
+    synced_at TEXT NOT NULL,
+    UNIQUE(org_id, stat_date, agent_key)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_dialpad_stats_user
+    ON dialpad_daily_stats(org_id, user_id, stat_date)`);
 
   // Every CallTools historical disposition is an immutable activity event.
   // Outcomes are a subset; keeping activity separate lets dashboards count
@@ -3749,7 +3783,7 @@ export function getEodReport(reportDate: string, assistantId: number): any {
   return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
 }
 
-export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; dialpadCalls?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
   const assignedJson = JSON.stringify(Array.isArray(data.assignedLosCalled) ? data.assignedLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const additionalJson = JSON.stringify(Array.isArray(data.additionalLosCalled) ? data.additionalLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const otherNotes = typeof data.additionalLosOtherNotes === "string" && data.additionalLosOtherNotes.trim()
@@ -3759,20 +3793,22 @@ export function upsertEodReport(data: { reportDate: string; assistantId: number;
   const additionalConversations = Number.isFinite(Number(data.additionalConversations)) ? Math.max(0, Math.round(Number(data.additionalConversations))) : 0;
   const callToolsConversations = Number.isFinite(Number(data.callToolsConversations)) ? Math.max(0, Math.round(Number(data.callToolsConversations))) : 0;
   const callToolsActiveSeconds = Number.isFinite(Number(data.callToolsActiveSeconds)) ? Math.max(0, Math.round(Number(data.callToolsActiveSeconds))) : 0;
+  const dialpadCalls = Number.isFinite(Number(data.dialpadCalls)) ? Math.max(0, Math.round(Number(data.dialpadCalls))) : 0;
   sqlite.prepare(`
-    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, additional_conversations, calltools_conversations, calltools_active_seconds, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, additional_conversations, calltools_conversations, calltools_active_seconds, dialpad_calls, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(report_date, assistant_id) DO UPDATE SET
       calls_made=excluded.calls_made, messages_sent=excluded.messages_sent, transfers=excluded.transfers,
       additional_conversations=excluded.additional_conversations,
       calltools_conversations=excluded.calltools_conversations,
       calltools_active_seconds=excluded.calltools_active_seconds,
+      dialpad_calls=excluded.dialpad_calls,
       appointments=excluded.appointments, notes=excluded.notes,
       assigned_los_called=excluded.assigned_los_called,
       additional_los_called=excluded.additional_los_called,
       additional_los_other_notes=excluded.additional_los_other_notes,
       submitted_at=datetime('now')
-  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, additionalConversations, callToolsConversations, callToolsActiveSeconds, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
+  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, additionalConversations, callToolsConversations, callToolsActiveSeconds, dialpadCalls, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
   return getEodReport(data.reportDate, data.assistantId);
 }
 
@@ -4187,6 +4223,68 @@ export function getRecentWebhookEvents(limit = 50) {
        ORDER BY we.created_at DESC
        LIMIT ?`
   ).all(limit) as any[];
+}
+
+// ── Dialpad call statistics ──────────────────────────────────────────────────
+
+/** Explicit agent-name → user decisions, keyed by the normalized agent key. */
+export function getDialpadAgentLinks(orgId: number): Map<string, number> {
+  const rows = sqlite.prepare(
+    `SELECT agent_key, user_id FROM dialpad_agent_links WHERE org_id=? AND user_id IS NOT NULL`,
+  ).all(orgId) as any[];
+  return new Map(rows.map((r) => [String(r.agent_key), Number(r.user_id)]));
+}
+
+/** Record (or clear, with userId null) which C3 user a Dialpad agent is. */
+export function setDialpadAgentLink(orgId: number, agentKey: string, agentName: string, userId: number | null) {
+  const now = new Date().toISOString();
+  sqlite.prepare(
+    `INSERT INTO dialpad_agent_links (org_id, agent_key, agent_name, user_id, created_at, updated_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(org_id, agent_key) DO UPDATE SET
+       agent_name=excluded.agent_name, user_id=excluded.user_id, updated_at=excluded.updated_at`,
+  ).run(orgId, agentKey, agentName, userId, now, now);
+}
+
+export function listDialpadAgentLinks(orgId: number): any[] {
+  return sqlite.prepare(
+    `SELECT l.*, u.name AS user_name FROM dialpad_agent_links l
+       LEFT JOIN users u ON u.id = l.user_id
+      WHERE l.org_id=? ORDER BY l.agent_name`,
+  ).all(orgId) as any[];
+}
+
+/** Upsert one agent's count for one day. Re-running a sync must not double up. */
+export function upsertDialpadDailyStat(r: {
+  orgId: number; date: string; agentKey: string; agentName: string;
+  userId: number | null; calls: number;
+}) {
+  sqlite.prepare(
+    `INSERT INTO dialpad_daily_stats (org_id, stat_date, agent_key, agent_name, user_id, calls, synced_at)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(org_id, stat_date, agent_key) DO UPDATE SET
+       agent_name=excluded.agent_name, user_id=excluded.user_id,
+       calls=excluded.calls, synced_at=excluded.synced_at`,
+  ).run(r.orgId, r.date, r.agentKey, r.agentName, r.userId, Math.max(0, Math.trunc(r.calls)), new Date().toISOString());
+}
+
+/** What Dialpad saw for one CLR on one day, or null when nothing was pulled. */
+export function getDialpadCallsFor(orgId: number, userId: number, date: string): { calls: number; agentName: string; syncedAt: string } | null {
+  const row = sqlite.prepare(
+    `SELECT calls, agent_name, synced_at FROM dialpad_daily_stats
+      WHERE org_id=? AND user_id=? AND stat_date=?`,
+  ).get(orgId, userId, date) as any;
+  return row ? { calls: Number(row.calls), agentName: String(row.agent_name), syncedAt: String(row.synced_at) } : null;
+}
+
+/** Agents seen in the feed that no C3 user has been mapped to yet. */
+export function getUnmappedDialpadAgents(orgId: number, sinceDate: string): any[] {
+  return sqlite.prepare(
+    `SELECT agent_key, agent_name, SUM(calls) AS calls, MAX(stat_date) AS last_seen
+       FROM dialpad_daily_stats
+      WHERE org_id=? AND user_id IS NULL AND stat_date >= ?
+      GROUP BY agent_key, agent_name ORDER BY calls DESC`,
+  ).all(orgId, sinceDate) as any[];
 }
 
 export function getWebhookSettings() {

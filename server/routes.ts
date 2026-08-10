@@ -20,6 +20,7 @@ import { initPush, getVapidPublicKey, saveSubscription, removeSubscription, send
 import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProcessUptimeSec } from "./status";
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
+import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-stats";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
@@ -13952,6 +13953,148 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // ── Dialpad → EOD call counts ───────────────────────────────────────────────
+  // Transfers and appointments already fill themselves in on the EOD report,
+  // because CallTools dispositions land as lead_outcomes and the form tallies
+  // them. Calls made was the last number a CLR still counted by hand.
+  //
+  // Source is the same LeadVault outbound-summary feed the Outbound Calls page
+  // uses — it already aggregates Dialpad, so there is no second vendor account,
+  // no Dialpad OAuth, and no extra rate limit. Its by_day breakdown is what
+  // makes it usable per-day; calls_total is a rolling window and would
+  // overstate any single date.
+  const DIALPAD_SYNC_DAYS = 7;   // re-pull a week so late-arriving calls land
+
+  async function fetchDialpadAgents(days: number): Promise<DialpadAgentRow[] | null> {
+    const token = leadvaultReportingToken();
+    if (!token) return null;
+    const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20_000);
+    try {
+      const r = await fetch(`${base}/api/clr/outbound-summary?days=${days}`, {
+        headers: { "x-api-token": token, Accept: "application/json" },
+        signal: ctrl.signal,
+      });
+      if (!r.ok) { console.error(`[dialpad-sync] upstream HTTP ${r.status}`); return null; }
+      const j: any = await r.json().catch(() => null);
+      return Array.isArray(j?.agents) ? j.agents : null;
+    } catch (e: any) {
+      console.error(`[dialpad-sync] fetch failed: ${String(e?.message ?? e).slice(0, 200)}`);
+      return null;
+    } finally { clearTimeout(t); }
+  }
+
+  /** Pull the feed and record per-agent-per-day counts. Idempotent. */
+  async function syncDialpadStats(orgId: number, days = DIALPAD_SYNC_DAYS): Promise<{ ok: boolean; rows: number; matched: number; unmatched: string[] }> {
+    const agents = await fetchDialpadAgents(days);
+    if (!agents) return { ok: false, rows: 0, matched: 0, unmatched: [] };
+    // Only C3 staff are candidates. The feed also carries loan officers dialling
+    // for themselves and people who are not in C3 at all; those stay unmatched
+    // rather than being force-fitted onto a similarly named CLR.
+    const users = (storage.getUsers() as any[])
+      .filter((u) => (u.isActive ?? u.is_active) && (u.portal == null || u.portal === "c3"))
+      .map((u) => ({ id: Number(u.id), name: String(u.name ?? "") }));
+    const links = storageExtra.getDialpadAgentLinks(orgId);
+    const flat = flattenAgentStats(agents, users, links);
+    const unmatched = new Set<string>();
+    for (const r of flat) {
+      storageExtra.upsertDialpadDailyStat({
+        orgId, date: r.date, agentKey: agentKey(r.agent), agentName: r.agent,
+        userId: r.userId, calls: r.calls,
+      });
+      if (r.userId == null) unmatched.add(r.agent);
+    }
+    const matched = flat.filter((r) => r.userId != null).length;
+    console.log(`[dialpad-sync] org ${orgId}: ${flat.length} agent-days (${matched} matched, ${unmatched.size} agents unmapped)`);
+    return { ok: true, rows: flat.length, matched, unmatched: Array.from(unmatched) };
+  }
+
+  // Through the day, so an EOD opened at any hour sees a current number.
+  cron.schedule("15 * * * *", async () => {
+    try {
+      const orgs = (storageExtra.getRawSqlite()
+        .prepare(`SELECT DISTINCT org_id FROM users WHERE is_active=1 ORDER BY org_id`)
+        .all() as any[]).map((r) => Number(r.org_id)).filter(Number.isFinite);
+      for (const orgId of orgs) {
+        try { await runWithOrg({ orgId, superAdmin: false }, () => syncDialpadStats(orgId)); }
+        catch (e: any) { console.error(`[dialpad-sync] org ${orgId} failed:`, e?.message ?? e); }
+      }
+    } catch (e: any) {
+      console.error("[dialpad-sync] cron error:", e?.message ?? e);
+    }
+  }, { timezone: "America/Los_Angeles" });
+
+  // What Dialpad recorded for the signed-in CLR on a date. The EOD form uses
+  // this to fill the calls field in.
+  app.get("/api/dialpad/my-calls", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId);
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
+      ? req.query.date
+      : businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const hit = storageExtra.getDialpadCallsFor(orgId, userId, date);
+    res.json({
+      date,
+      configured: !!leadvaultReportingToken(),
+      calls: hit?.calls ?? null,
+      agentName: hit?.agentName ?? null,
+      syncedAt: hit?.syncedAt ?? null,
+    });
+  });
+
+  // Admin: which agents in the feed are not mapped to anyone, and the mapping.
+  app.get("/api/dialpad/agents", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    res.json({
+      configured: !!leadvaultReportingToken(),
+      unmapped: storageExtra.getUnmappedDialpadAgents(orgId, addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), -30)),
+      links: storageExtra.listDialpadAgentLinks(orgId),
+    });
+  });
+
+  // Admin: map an agent to a user, or clear it with userId null.
+  app.post("/api/dialpad/agents/link", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const agentName = String(req.body?.agentName ?? "").trim();
+    if (!agentName) return res.status(400).json({ error: "agentName is required" });
+    const rawUserId = req.body?.userId;
+    const userId = rawUserId == null || rawUserId === "" ? null : Number(rawUserId);
+    if (userId != null && !Number.isInteger(userId)) return res.status(400).json({ error: "userId must be an integer or null" });
+    if (userId != null) {
+      const target = storage.getUserById(userId) as any;
+      if (!target || Number(target.orgId ?? target.org_id ?? 1) !== orgId) {
+        return res.status(404).json({ error: "User not found in your organization" });
+      }
+    }
+    storageExtra.setDialpadAgentLink(orgId, agentKey(agentName), agentName, userId);
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    audit({
+      userId: me?.id ?? 0, userName: me?.name ?? "Unknown", action: "update",
+      entityType: "dialpad_agent_link", entityId: userId, entityLabel: agentName,
+      details: JSON.stringify({ agentName, userId }),
+    });
+    // Re-attribute the history we already hold so the mapping takes effect on
+    // past days too, not only on whatever the next sync happens to return.
+    try { await syncDialpadStats(orgId); } catch { /* the link is saved regardless */ }
+    res.json({ ok: true });
+  });
+
+  // Admin: pull now rather than waiting for the hourly run.
+  app.post("/api/dialpad/sync", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    try {
+      const r = await syncDialpadStats(orgId, 30);
+      if (!r.ok) return res.status(503).json({ error: "Dialpad feed is not configured or did not respond" });
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Sync failed" });
+    }
+  });
+
   // ── Reporting period helper ───────────────────────────────────────────────────
   app.get("/api/reporting-period", (req, res) => {
     res.json(getDefaultPeriod());
@@ -14770,7 +14913,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
     }
     const callToolsActivity = callSyncActivitySummary(date, date, Number(userId));
-    res.json({ report, activities, callToolsActivity });
+    // Dialpad calls for the same day, alongside the CallTools figures. Both are
+    // imported observations of the same shift from different systems.
+    const dialpadHit = storageExtra.getDialpadCallsFor(
+      Number(req.session_user?.orgId ?? 1) || 1, Number(userId), date,
+    );
+    const dialpadActivity = {
+      calls: dialpadHit?.calls ?? 0,
+      agentName: dialpadHit?.agentName ?? null,
+      syncedAt: dialpadHit?.syncedAt ?? null,
+      matched: !!dialpadHit,
+    };
+    res.json({ report, activities, callToolsActivity, dialpadActivity });
   });
 
   // History: all past EOD reports for the current user (or all users for admin)
@@ -14939,6 +15093,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       additionalConversations: additionalConversationsNum,
       callToolsConversations: importedActivity.conversations,
       callToolsActiveSeconds: importedActivity.activeSeconds,
+      // Snapshot Dialpad the same way, so a later re-sync of the rolling window
+      // cannot rewrite the numbers on an already-filed report.
+      dialpadCalls: storageExtra.getDialpadCallsFor(
+        Number(req.session_user?.orgId ?? 1) || 1, Number(userId), reportDate,
+      )?.calls ?? 0,
       transfers: Number(transfers ?? 0),
       appointments: Number(appointments ?? 0),
       notes: notes ?? null,

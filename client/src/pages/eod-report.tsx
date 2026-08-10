@@ -144,7 +144,7 @@ export default function EodReport() {
   const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
-  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number } }>({
+  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
   });
@@ -437,6 +437,11 @@ export default function EodReport() {
   // Calls made is mandatory on the EOD — blank blocks submission (0 is fine).
   const importedConversations = Number(data?.callToolsActivity?.conversations ?? report?.calltools_conversations ?? 0);
   const importedActiveSeconds = Number(data?.callToolsActivity?.activeSeconds ?? report?.calltools_active_seconds ?? 0);
+  // Dialpad calls for the same day. A submitted report shows the figure that was
+  // snapshotted when it was filed, not whatever a later re-sync now says.
+  const importedDialpadCalls = Number(report?.dialpad_calls ?? data?.dialpadActivity?.calls ?? 0);
+  const dialpadAgentName = data?.dialpadActivity?.agentName ?? null;
+  const dialpadMatched = !!data?.dialpadActivity?.matched || Number(report?.dialpad_calls ?? 0) > 0;
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto print-report">
@@ -751,6 +756,15 @@ export default function EodReport() {
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CallTools Active Time</p>
                   <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 tabular-nums">{formatActiveTime(importedActiveSeconds)}</p>
                   <p className="text-[11px] text-muted-foreground">Imported automatically</p>
+                </div>
+                <div className="rounded-lg border bg-violet-50/60 dark:bg-violet-950/20 p-3 col-span-2" data-testid="dialpad-calls-tile">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dialpad Calls</p>
+                  <p className="text-2xl font-bold text-violet-700 dark:text-violet-300 tabular-nums">{importedDialpadCalls}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {dialpadMatched
+                      ? <>Imported automatically{dialpadAgentName ? <> as "{dialpadAgentName}"</> : null}</>
+                      : "Not linked to a Dialpad agent yet — ask a manager to map you"}
+                  </p>
                 </div>
               </div>
 
@@ -1072,6 +1086,7 @@ function EodPrintSheet({
         <tbody>
           <tr><td>CallTools Conversations</td><td className="num">{importedConversations}</td></tr>
           <tr><td>CallTools Active Time</td><td className="num">{formatActiveTime(importedActiveSeconds)}</td></tr>
+          <tr><td>Dialpad Calls</td><td className="num">{importedDialpadCalls}</td></tr>
           <tr><td>Additional Conversations</td><td className="num">{additionalConversations}</td></tr>
           <tr><td>Additional Calls</td><td className="num">{callsMade}</td></tr>
           <tr><td>Additional Texts</td><td className="num">{messagesSent}</td></tr>
