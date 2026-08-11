@@ -33,6 +33,8 @@ type Mine = {
   expected_start: string | null;
   late_excused?: number | null;
   excuse_reason?: string | null;
+  manually_marked_late?: number | boolean | null;
+  marked_late_reason?: string | null;
   request?: ExcuseRequestSummary | null;
 } | null;
 
@@ -92,6 +94,8 @@ type ExtRow = {
     expected_start: string | null;
     ip_allowed: number | null;
     late_excused?: number | null;
+    manually_marked_late?: number | boolean | null;
+    marked_late_reason?: string | null;
   } | null;
   expectedStart: string | null; scheduledOff: boolean; noSchedule: boolean;
   lateCount: number; lateOverLimit: boolean; lateAtLimit: boolean;
@@ -390,6 +394,50 @@ function AbsenceExcuseAction({
   );
 }
 
+function MarkMissingLateAction({
+  subjectType, subjectId, date, pending, onSave,
+}: {
+  subjectType: "user" | "lo" | "loa";
+  subjectId: number;
+  date: string;
+  pending: boolean;
+  onSave: (reason: string) => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const testId = `${subjectType}-${subjectId}-${date}`;
+  return (
+    <AlertDialog open={open} onOpenChange={(next) => { setOpen(next); if (next) setReason(""); }}>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] text-red-700" disabled={pending} data-testid={`mark-missing-late-${testId}`}>
+          Mark late
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Mark late without a check-in?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This records a late for {fmtDay(date)} while keeping the attendance record clear that no check-in was submitted.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <label className="space-y-1.5 text-sm font-medium">
+          Manager note <span className="font-normal text-muted-foreground">(optional)</span>
+          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500}
+            placeholder="No check-in submitted" className="mt-1.5 min-h-24 resize-y" />
+        </label>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button className="bg-red-600 hover:bg-red-700" disabled={pending} onClick={async () => {
+            try { await onSave(reason.trim()); setOpen(false); } catch {}
+          }} data-testid={`save-missing-late-${testId}`}>
+            {pending ? "Saving…" : "Mark late"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function RollingLateCount({
   count,
   allowance,
@@ -589,12 +637,23 @@ export default function CheckIns() {
     },
     onError: (e: any) => toast({ title: "Couldn't remove excuse", description: e?.message, variant: "destructive" }),
   });
+  const markMissingLateMut = useMutation({
+    mutationFn: (v: { subjectType: "user" | "lo" | "loa"; subjectId: number; date: string; reason: string }) =>
+      apiRequest("POST", "/api/checkin/manual-lates", v),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      toast({ title: "Marked late", description: "The record shows that no check-in was submitted." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't mark late", description: e?.message, variant: "destructive" }),
+  });
   const clrs = adminData?.clrs ?? [];
   const los = adminData?.los ?? [];
   const loas = adminData?.loas ?? [];
-  const checkedIn = clrs.filter(c => c.checkin).length;
+  const isRealCheckin = (row: CheckinRow | ExtRow) => !!row.checkin && !row.checkin.manually_marked_late;
+  const checkedIn = clrs.filter(isRealCheckin).length;
   const totalPeople = clrs.length + los.length + loas.length;
-  const totalCheckedIn = checkedIn + los.filter((r) => r.checkin).length + loas.filter((r) => r.checkin).length;
+  const totalCheckedIn = checkedIn + los.filter(isRealCheckin).length + loas.filter(isRealCheckin).length;
   const onTimeCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 1).length;
   const lateTodayCount = [...clrs, ...los, ...loas].filter(c => c.checkin && c.checkin.on_time === 0).length;
   const officeNetworkCount = clrs.filter(c => c.checkin && c.checkin.ip_allowed === 1).length;
@@ -1252,7 +1311,9 @@ export default function CheckIns() {
                         <p className="truncate text-sm font-medium">{c.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {ci
-                            ? `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : c.noSchedule ? " · no schedule" : ""}`
+                            ? ci.manually_marked_late
+                              ? `No check-in submitted${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`
+                              : `Checked in ${fmtTime(ci.checked_in_at)}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : c.noSchedule ? " · no schedule" : ""}`
                             : c.noSchedule ? "No schedule on file — not scored"
                             : c.scheduledOff ? "Scheduled off"
                             : `${c.startPassed ? "No check-in" : "Not due yet"}${c.expectedStart ? ` · due ${fmtHm(c.expectedStart)}` : ""}`}
@@ -1268,7 +1329,11 @@ export default function CheckIns() {
                         />
                         {ci ? (
                           <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                          {ci.on_time === 1 ? (
+                          {ci.manually_marked_late ? (
+                            <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800" title={ci.marked_late_reason ?? undefined}>
+                              <XCircle className="w-3 h-3" /> Marked late · no check-in
+                            </Badge>
+                          ) : ci.on_time === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                               <CheckCircle2 className="w-3 h-3" /> On time
                             </Badge>
@@ -1286,7 +1351,7 @@ export default function CheckIns() {
                             </Badge>
                           )}
                           {/* Reverse a late (or put it back) — managers only. */}
-                          {isManager && ci.on_time === 0 && (
+                          {isManager && ci.on_time === 0 && !ci.manually_marked_late && (
                             <ManualLateExcuseAction
                               userId={c.userId}
                               currentlyExcused={!!ci.late_excused}
@@ -1295,7 +1360,7 @@ export default function CheckIns() {
                               onUndo={() => excuseMut.mutateAsync({ id: ci.id, excused: false, reason: "" })}
                             />
                           )}
-                          {ci.ip_allowed === 1 ? (
+                          {!ci.manually_marked_late && (ci.ip_allowed === 1 ? (
                             <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                               <ShieldCheck className="w-3 h-3" /> Office IP
                             </Badge>
@@ -1307,7 +1372,7 @@ export default function CheckIns() {
                             <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
                               <MinusCircle className="w-3 h-3" /> IP recorded
                             </Badge>
-                          )}
+                          ))}
                           </div>
                         ) : c.noSchedule ? (
                           <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
@@ -1332,6 +1397,13 @@ export default function CheckIns() {
                               <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
                                 <XCircle className="w-3 h-3" /> Missing
                               </Badge>
+                            )}
+                            {isManager && c.absenceEligible && (
+                              <MarkMissingLateAction
+                                subjectType="user" subjectId={c.userId} date={date}
+                                pending={markMissingLateMut.isPending}
+                                onSave={(reason) => markMissingLateMut.mutateAsync({ subjectType: "user", subjectId: c.userId, date, reason })}
+                              />
                             )}
                             {isAdmin && (c.absenceEligible || (c.absenceExcused && c.absenceExcuseSource === "admin")) && (
                               <AbsenceExcuseAction
@@ -1367,7 +1439,7 @@ export default function CheckIns() {
               return (
                 <div key={grp}>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-1.5 mt-1">
-                    {grp === "lo" ? "Loan Officers" : "Loan Officer Assistants"} ({rows.filter((r) => r.checkin).length}/{rows.length} in)
+                    {grp === "lo" ? "Loan Officers" : "Loan Officer Assistants"} ({rows.filter(isRealCheckin).length}/{rows.length} in)
                   </p>
                   <div className="rounded-md border divide-y">
                     {rows.map((r) => (
@@ -1376,7 +1448,9 @@ export default function CheckIns() {
                           <p className="truncate text-sm font-medium">{r.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {r.checkin
-                              ? `Checked in ${fmtTime(r.checkin.checked_in_at, adminData?.timeZone)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
+                              ? r.checkin.manually_marked_late
+                                ? `No check-in submitted${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
+                                : `Checked in ${fmtTime(r.checkin.checked_in_at, adminData?.timeZone)}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`
                               : r.noSchedule ? "No schedule on file — not scored"
                               : r.scheduledOff ? "Not scheduled today"
                               : `${r.startPassed ? "Not checked in" : "Not due yet"}${r.expectedStart ? ` · due ${fmtHm(r.expectedStart)}` : ""}`}
@@ -1393,7 +1467,11 @@ export default function CheckIns() {
                           />
                           {r.checkin ? (
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            {r.checkin.late_excused ? (
+                            {r.checkin.manually_marked_late ? (
+                              <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800" title={r.checkin.marked_late_reason ?? undefined}>
+                                <XCircle className="w-3 h-3" /> Marked late · no check-in
+                              </Badge>
+                            ) : r.checkin.late_excused ? (
                               <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                                 <CheckCircle2 className="w-3 h-3" /> Excused
                               </Badge>
@@ -1410,7 +1488,7 @@ export default function CheckIns() {
                                 <UserCheck className="w-3 h-3" /> In · not scored
                               </Badge>
                             )}
-                            {isManager && r.checkin.on_time === 0 && r.checkin.id && (
+                            {isManager && r.checkin.on_time === 0 && !r.checkin.manually_marked_late && r.checkin.id && (
                               <ManualLateExcuseAction
                                 userId={`${r.type}-${r.id}`}
                                 currentlyExcused={!!r.checkin.late_excused}
@@ -1429,7 +1507,7 @@ export default function CheckIns() {
                                 })}
                               />
                             )}
-                            {r.checkin.ip_allowed === 1 ? (
+                            {!r.checkin.manually_marked_late && (r.checkin.ip_allowed === 1 ? (
                               <Badge variant="outline" className="gap-1 font-normal text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
                                 <ShieldCheck className="w-3 h-3" /> Office IP
                               </Badge>
@@ -1441,7 +1519,7 @@ export default function CheckIns() {
                               <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
                                 <MinusCircle className="w-3 h-3" /> IP not verified
                               </Badge>
-                            )}
+                            ))}
                             </div>
                           ) : r.noSchedule ? (
                             <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
@@ -1463,6 +1541,13 @@ export default function CheckIns() {
                                 <Badge variant="outline" className="gap-1 font-normal text-red-700 dark:text-red-400 border-red-300 dark:border-red-800">
                                   <XCircle className="w-3 h-3" /> Missing
                                 </Badge>
+                              )}
+                              {isManager && r.absenceEligible && (
+                                <MarkMissingLateAction
+                                  subjectType={r.type} subjectId={r.id} date={date}
+                                  pending={markMissingLateMut.isPending}
+                                  onSave={(reason) => markMissingLateMut.mutateAsync({ subjectType: r.type, subjectId: r.id, date, reason })}
+                                />
                               )}
                               {isAdmin && (r.absenceEligible || (r.absenceExcused && r.absenceExcuseSource === "admin")) && (
                                 <AbsenceExcuseAction

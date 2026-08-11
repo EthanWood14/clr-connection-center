@@ -53,11 +53,11 @@ interface StatsResponse {
   startDate: string;
   endDate: string;
   clrId: number | null;
-  totals: { calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
-  previous: { calls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
-  daily: Array<{ date: string; calls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number }>;
+  totals: { calls: number; additionalCalls?: number; callToolsCalls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
+  previous: { calls: number; callToolsCalls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
+  daily: Array<{ date: string; calls: number; callToolsCalls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
+  perClr: Array<{ userId: number; name: string; calls: number; additionalCalls?: number; callToolsCalls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {

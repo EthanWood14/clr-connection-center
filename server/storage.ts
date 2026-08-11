@@ -213,6 +213,10 @@ try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN late_excused INTEGER
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_by INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excused_at TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN excuse_reason TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN manually_marked_late INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN marked_late_by INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN marked_late_at TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE external_checkins ADD COLUMN marked_late_reason TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE external_schedules ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_date ON external_checkins(org_id, date)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_subject_date ON external_checkins(org_id, subject_type, subject_id, date DESC)`); } catch {}
@@ -2422,6 +2426,10 @@ function runNewMigrations() {
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN excuse_reason TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN ip_address TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN ip_allowed INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN manually_marked_late INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN marked_late_by INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN marked_late_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN marked_late_reason TEXT`); } catch {}
   // Check-in config lives with the other org settings on email_settings.
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_lat REAL`); } catch {}
@@ -2731,6 +2739,7 @@ function runNewMigrations() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id INTEGER NOT NULL DEFAULT 1,
     external_event_id TEXT NOT NULL,
+    call_id TEXT,
     assistant_id INTEGER NOT NULL,
     activity_date TEXT NOT NULL,
     contact_key TEXT NOT NULL,
@@ -2741,11 +2750,68 @@ function runNewMigrations() {
     created_at TEXT NOT NULL,
     UNIQUE(org_id, external_event_id)
   )`);
+  try { sqlite.exec(`ALTER TABLE callsync_activity_events ADD COLUMN call_id TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE callsync_activity_events ADD COLUMN active_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_range
     ON callsync_activity_events(org_id, activity_date, assistant_id)`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_activity_contact
     ON callsync_activity_events(org_id, contact_key, activity_date)`);
+
+  // CallTools reports active_time as a cumulative session counter. It can reset
+  // when an agent reconnects, so retain both the last raw observation and the
+  // accumulated daily total. Duplicate polls add zero; a reset starts a new
+  // positive delta instead of throwing away the earlier session.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS callsync_agent_activity_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    assistant_id INTEGER NOT NULL,
+    activity_date TEXT NOT NULL,
+    active_seconds INTEGER NOT NULL DEFAULT 0,
+    last_observed_seconds INTEGER NOT NULL DEFAULT 0,
+    observed_at TEXT NOT NULL,
+    UNIQUE(org_id, assistant_id, activity_date)
+  )`);
+  try { sqlite.exec(`ALTER TABLE callsync_agent_activity_daily ADD COLUMN last_observed_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`UPDATE callsync_agent_activity_daily
+    SET last_observed_seconds=active_seconds
+    WHERE last_observed_seconds=0 AND active_seconds>0`); } catch {}
+  // Reconstruct earlier same-day sessions from stored CallTools observations.
+  // A lower raw value than the preceding observation is a reconnect/reset, so
+  // it starts a new additive segment. Existing daily rows win, making this
+  // migration safe to run at every boot without changing live totals.
+  try { sqlite.exec(`WITH ordered AS (
+      SELECT org_id, assistant_id, activity_date, active_seconds AS raw_seconds,
+        LAG(active_seconds, 1, 0) OVER (
+          PARTITION BY org_id, assistant_id, activity_date
+          ORDER BY COALESCE(occurred_at, created_at), id
+        ) AS prior_seconds,
+        ROW_NUMBER() OVER (
+          PARTITION BY org_id, assistant_id, activity_date
+          ORDER BY COALESCE(occurred_at, created_at) DESC, id DESC
+        ) AS newest,
+        COALESCE(occurred_at, created_at) AS observed_at
+      FROM callsync_activity_events
+      WHERE active_seconds > 0
+    ), totals AS (
+      SELECT org_id, assistant_id, activity_date,
+        SUM(CASE WHEN raw_seconds >= prior_seconds
+          THEN raw_seconds - prior_seconds ELSE raw_seconds END) AS accumulated_seconds
+      FROM ordered
+      GROUP BY org_id, assistant_id, activity_date
+    ), latest AS (
+      SELECT org_id, assistant_id, activity_date, raw_seconds, observed_at
+      FROM ordered WHERE newest=1
+    )
+    INSERT INTO callsync_agent_activity_daily (
+      org_id, assistant_id, activity_date, active_seconds, last_observed_seconds, observed_at
+    )
+    SELECT totals.org_id, totals.assistant_id, totals.activity_date,
+      totals.accumulated_seconds, latest.raw_seconds, latest.observed_at
+    FROM totals JOIN latest USING (org_id, assistant_id, activity_date)
+    WHERE 1
+    ON CONFLICT(org_id, assistant_id, activity_date) DO NOTHING`); } catch {}
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_callsync_agent_activity_range
+    ON callsync_agent_activity_daily(org_id, activity_date, assistant_id)`);
 
   // ── Bonzo integration tables ─────────────────────────────────────────────
   try {
@@ -5392,7 +5458,24 @@ export function saveExternalCheckin(r: {
         ip_address, ip_allowed, created_at
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET org_id = excluded.org_id`)
+      ON CONFLICT(subject_type, subject_id, date) DO UPDATE SET
+        org_id=excluded.org_id,
+        checked_in_at=excluded.checked_in_at,
+        expected_start=excluded.expected_start,
+        on_time=excluded.on_time,
+        minutes_late=excluded.minutes_late,
+        lat=excluded.lat,
+        lng=excluded.lng,
+        accuracy_m=excluded.accuracy_m,
+        distance_m=excluded.distance_m,
+        in_area=excluded.in_area,
+        ip_address=excluded.ip_address,
+        ip_allowed=excluded.ip_allowed,
+        manually_marked_late=0,
+        marked_late_by=NULL,
+        marked_late_at=NULL,
+        marked_late_reason=NULL
+      WHERE external_checkins.manually_marked_late=1`)
       .run(
         r.orgId, r.type, r.id, r.date, r.checkedInAt, r.expectedStart,
         r.onTime, r.minutesLate, r.lat, r.lng, r.accuracyM, r.distanceM,
@@ -5699,7 +5782,24 @@ export function saveCheckin(data: {
         @orgId, @userId, @date, @checkedInAt, @lat, @lng, @accuracyM, @distanceM,
         @inArea, @ipAddress, @ipAllowed, @onTime, @minutesLate, @expectedStart
       )
-      ON CONFLICT(user_id, date) DO NOTHING
+      ON CONFLICT(user_id, date) DO UPDATE SET
+        org_id=excluded.org_id,
+        checked_in_at=excluded.checked_in_at,
+        lat=excluded.lat,
+        lng=excluded.lng,
+        accuracy_m=excluded.accuracy_m,
+        distance_m=excluded.distance_m,
+        in_area=excluded.in_area,
+        ip_address=excluded.ip_address,
+        ip_allowed=excluded.ip_allowed,
+        on_time=excluded.on_time,
+        minutes_late=excluded.minutes_late,
+        expected_start=excluded.expected_start,
+        manually_marked_late=0,
+        marked_late_by=NULL,
+        marked_late_at=NULL,
+        marked_late_reason=NULL
+      WHERE morning_checkins.manually_marked_late=1
     `).run({ minutesLate: null, expectedStart: null, ipAddress: null, ipAllowed: null, ...data });
     sqlite.prepare(`UPDATE attendance_excuse_requests
       SET status='cancelled', reviewed_at=?, reviewer_note=?, updated_at=?
@@ -5710,6 +5810,51 @@ export function saveCheckin(data: {
   });
   tx.immediate();
   return getCheckinForUserDate(data.userId, data.date);
+}
+
+export function markMissingCheckinLate(input: {
+  orgId: number;
+  subjectType: "user" | PortalSubjectType;
+  subjectId: number;
+  date: string;
+  expectedStart: string;
+  markedBy: number;
+  reason?: string | null;
+}): any {
+  const markedAt = new Date().toISOString();
+  const reason = String(input.reason ?? "No check-in submitted.").trim().slice(0, 500)
+    || "No check-in submitted.";
+  const tx = sqlite.transaction(() => {
+    if (input.subjectType === "user") {
+      const existing = sqlite.prepare(`SELECT id FROM morning_checkins
+        WHERE org_id=? AND user_id=? AND date=?`).get(input.orgId, input.subjectId, input.date);
+      if (existing) throw new Error("checkin_already_exists");
+      sqlite.prepare(`INSERT INTO morning_checkins (
+        org_id, user_id, date, checked_in_at, on_time, minutes_late, expected_start,
+        manually_marked_late, marked_late_by, marked_late_at, marked_late_reason
+      ) VALUES (?,?,?,?,0,1,?,1,?,?,?)`).run(
+        input.orgId, input.subjectId, input.date, markedAt, input.expectedStart,
+        input.markedBy, markedAt, reason,
+      );
+      return;
+    }
+    const existing = sqlite.prepare(`SELECT id FROM external_checkins
+      WHERE org_id=? AND subject_type=? AND subject_id=? AND date=?`)
+      .get(input.orgId, input.subjectType, input.subjectId, input.date);
+    if (existing) throw new Error("checkin_already_exists");
+    sqlite.prepare(`INSERT INTO external_checkins (
+      org_id, subject_type, subject_id, date, checked_in_at, expected_start,
+      on_time, minutes_late, manually_marked_late, marked_late_by,
+      marked_late_at, marked_late_reason, created_at
+    ) VALUES (?,?,?,?,?,?,0,1,1,?,?,?,?)`).run(
+      input.orgId, input.subjectType, input.subjectId, input.date, markedAt,
+      input.expectedStart, input.markedBy, markedAt, reason, markedAt,
+    );
+  });
+  tx.immediate();
+  return input.subjectType === "user"
+    ? getCheckinForUserDate(input.subjectId, input.date)
+    : getExternalCheckin(input.orgId, input.subjectType, input.subjectId, input.date);
 }
 
 // Late check-ins for a user within a trailing window (inclusive of both dates),

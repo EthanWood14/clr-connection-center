@@ -147,6 +147,7 @@ export default function EodReport() {
   const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
+    refetchInterval: 10 * 60_000,
   });
 
   // Today's report (independent of selectedDate) — drives whether the user is

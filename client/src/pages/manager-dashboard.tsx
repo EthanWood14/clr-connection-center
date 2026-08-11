@@ -103,11 +103,11 @@ type ManagerData = {
   ranges: { week: any; month: any; last30: any };
   stats: { today: any; week: any; month: any; priorWeek: any; priorMonth: any };
   callActivity: {
-    today: { contacts: number; conversations: number; activeSeconds: number };
-    week: { contacts: number; conversations: number; activeSeconds: number };
-    month: { contacts: number; conversations: number; activeSeconds: number };
-    priorWeek: { contacts: number; conversations: number; activeSeconds: number };
-    priorMonth: { contacts: number; conversations: number; activeSeconds: number };
+    today: { calls: number; contacts: number; conversations: number; activeSeconds: number };
+    week: { calls: number; contacts: number; conversations: number; activeSeconds: number };
+    month: { calls: number; contacts: number; conversations: number; activeSeconds: number };
+    priorWeek: { calls: number; contacts: number; conversations: number; activeSeconds: number };
+    priorMonth: { calls: number; contacts: number; conversations: number; activeSeconds: number };
   };
   clrCards: any[];
   eod: {
