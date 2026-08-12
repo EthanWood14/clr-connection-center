@@ -157,3 +157,23 @@ test("a filed report keeps the number it was filed with", () => {
   assert.match(eodForm, /report\?\.dialpad_calls \?\? data\?\.dialpadActivity\?\.calls/,
     "a saved report's snapshot must win over the live figure");
 });
+
+test("an account-wide feed is not duplicated across orgs", () => {
+  // The feed is one LeadVault account, not one per org. Pulling it inside the
+  // per-org loop wrote a complete duplicate of every agent-day under the demo
+  // org with user_id null — 176 phantom rows that made the mapping screen list
+  // the entire roster as unmapped.
+  const fn = routes.slice(routes.indexOf("async function syncDialpadStats"), routes.indexOf(`cron.schedule("15 * * * *"`));
+  assert.match(fn, /if \(!flat\.some\(\(r\) => r\.userId != null\)\)/,
+    "an org that matches no agent in the feed must write nothing");
+  assert.ok(
+    fn.indexOf("no agent in the feed maps to this org") < fn.indexOf("upsertDialpadDailyStat"),
+    "the guard must come before any write",
+  );
+});
+
+test("the trend reads only this org's mapped agents", () => {
+  const block = routes.slice(routes.indexOf("const dialpadByDate"), routes.indexOf("const trendMap"));
+  assert.match(block, /org_id = \?/, "scoped by org");
+  assert.match(block, /user_id IS NOT NULL/, "unattributed agents never reach a team total");
+});

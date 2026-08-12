@@ -799,15 +799,17 @@ export default function ManagerDashboard() {
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }} interval={Math.max(0, Math.floor(trendData.length / 8))} />
                     <YAxis tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }} />
                     <Tooltip contentStyle={{ backgroundColor: isDark ? "#1f1d1c" : "#ffffff", border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`, color: isDark ? "#e4e4e7" : "#0f172a" }} />
-                    {/* Two dialers, two bars — never one summed total. On a given
-                        day most CLRs appear in both feeds with large counts, and
-                        nothing tells us whether those are the same calls counted
-                        twice, so adding them could roughly double the figure.
-                        Side by side also means one feed stalling leaves the other
-                        still visible instead of the chart reading as no work. */}
+                    {/* Stacked per request, so the bar height is the two feeds
+                        combined. Read the total with care: on a given day most
+                        CLRs appear in BOTH feeds with large counts, and nothing
+                        available distinguishes the same call measured twice from
+                        two genuinely separate calls — so the stack is an upper
+                        bound, not a verified total. The segments stay separately
+                        coloured and labelled for exactly that reason, and one
+                        feed stalling still leaves the other visible. */}
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="calls" fill={isDark ? GOLD : NAVY_2} name="CallTools + logged" />
-                    <Bar dataKey="dialpadCalls" fill={PURPLE} name="Dialpad" />
+                    <Bar dataKey="calls" stackId="calls" fill={isDark ? GOLD : NAVY_2} name="CallTools + logged" />
+                    <Bar dataKey="dialpadCalls" stackId="calls" fill={PURPLE} name="Dialpad" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

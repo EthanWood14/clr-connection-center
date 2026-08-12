@@ -14159,6 +14159,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       .map((u) => ({ id: Number(u.id), name: String(u.name ?? "") }));
     const links = storageExtra.getDialpadAgentLinks(orgId);
     const flat = flattenAgentStats(agents, users, links);
+    // LeadVault's outbound-summary is one account-wide feed, not a per-org one.
+    // Looping every org and pulling it for each wrote a complete duplicate of
+    // every agent-day under the demo org with user_id null — 176 phantom rows
+    // that made the mapping screen list the whole roster as unmapped. If not one
+    // agent in this feed belongs to this org, the feed simply is not this org's.
+    if (!flat.some((r) => r.userId != null)) {
+      console.log(`[dialpad-sync] org ${orgId}: no agent in the feed maps to this org — skipped`);
+      return { ok: true, rows: 0, matched: 0, unmatched: [] };
+    }
     const unmatched = new Set<string>();
     for (const r of flat) {
       storageExtra.upsertDialpadDailyStat({
