@@ -125,11 +125,13 @@ function checkWebhooks(): { status: ServiceStatus; eventsLast24h: number; detail
     // feed had been dead since 14:40. So also flag a severe trickle, measured
     // against the heartbeat volume the same bridge is producing.
     //
-    // The 0.5% floor is calibrated on the two days either side of the failure:
-    // 2026-08-11 ran ~300 calls against ~8,500 heartbeats (3.5%), 2026-08-12
-    // ran 18 against 6,422 (0.28%). Deliberately an order of magnitude below
-    // normal so an ordinarily quiet morning does not trip it.
-    if (beats >= 500 && calls * 200 < beats) {
+    // The 2% floor is calibrated on real three-hour windows either side of the
+    // failure: the outage ran 15 calls against 1,209 heartbeats (1.24%), while
+    // healthy windows ran 3.30%, 6.93%, 13.35% and 45.21%. The lowest healthy
+    // sample is only 2.7x the outage, so this is a narrower margin than it
+    // looks — a genuinely dead morning could sit near the line. It is set to
+    // catch a feed that has effectively stopped, not to police volume.
+    if (beats >= 500 && calls * 50 < beats) {
       return {
         status: "degraded",
         eventsLast24h: c,

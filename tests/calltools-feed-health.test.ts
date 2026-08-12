@@ -29,14 +29,20 @@ test("a severe trickle is caught, not just a total stop", () => {
   // hours after the feed died the window still held 18 stale call events, so
   // `calls === 0` was false and the check read healthy.
   const fn = status.slice(status.indexOf("function checkWebhooks"), status.indexOf("function checkPush"));
-  assert.match(fn, /calls \* 200 < beats/, "flag when calls fall an order of magnitude below normal");
+  assert.match(fn, /calls \* 50 < beats/, "flag when calls fall far below normal");
   assert.match(fn, /beats >= 500/, "…but only with enough heartbeat volume to be meaningful");
 
-  // Reproduce the rule against the real numbers on both sides of the failure.
+  // Measured three-hour windows, ISO-compared. An earlier calibration used
+  // datetime('now','-3 hours'), which renders with a space while created_at is
+  // ISO with a T — the comparison silently matched the whole day and produced
+  // a threshold ~5x too lenient to fire.
   const degraded = (beats: number, calls: number) =>
-    (beats >= 50 && calls === 0) || (beats >= 500 && calls * 200 < beats);
-  assert.equal(degraded(6422, 18), true, "2026-08-12, the failure, must flag");
-  assert.equal(degraded(8500, 300), false, "2026-08-11, a normal day, must not");
+    (beats >= 50 && calls === 0) || (beats >= 500 && calls * 50 < beats);
+  assert.equal(degraded(1209, 15), true, "2026-08-12 16:24, the outage (1.24%), must flag");
+  assert.equal(degraded(1196, 15), true, "2026-08-12 15:00, same outage, must flag");
+  assert.equal(degraded(666, 22), false, "2026-08-10 16:24 (3.30%) is the quietest healthy sample");
+  assert.equal(degraded(1183, 82), false, "2026-08-11 16:24 (6.93%) is healthy");
+  assert.equal(degraded(1022, 462), false, "2026-08-10 20:00 (45.2%) is healthy");
   assert.equal(degraded(6318, 0), true, "a hard stop must flag");
   assert.equal(degraded(20, 0), false, "an idle night has too little signal to judge");
 });
