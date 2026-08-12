@@ -177,3 +177,16 @@ test("the trend reads only this org's mapped agents", () => {
   assert.match(block, /org_id = \?/, "scoped by org");
   assert.match(block, /user_id IS NOT NULL/, "unattributed agents never reach a team total");
 });
+
+test("the sync avoids the upstream window that returns a truncated roster", () => {
+  // Measured against the live feed on 2026-08-12, seconds apart:
+  //   days=1  -> 42 agents, 16,019 calls
+  //   days=3  -> 42 agents, 16,019
+  //   days=7  -> 34 agents,  3,552   <-- reproducible, and what the sync used
+  //   days=30 -> 42 agents, 16,019
+  // Every window agreed 2026-08-11 was 722, so the daily split is sound; the
+  // seven-day window simply drops agents and volume.
+  const fn = routes.slice(routes.indexOf("const DIALPAD_SYNC_DAYS"), routes.indexOf("async function fetchDialpadAgents"));
+  assert.match(fn, /DIALPAD_SYNC_DAYS = 30/, "7 is the one window the upstream gets wrong");
+  assert.ok(!/DIALPAD_SYNC_DAYS = 7/.test(fn));
+});

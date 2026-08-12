@@ -14125,7 +14125,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // no Dialpad OAuth, and no extra rate limit. Its by_day breakdown is what
   // makes it usable per-day; calls_total is a rolling window and would
   // overstate any single date.
-  const DIALPAD_SYNC_DAYS = 7;   // re-pull a week so late-arriving calls land
+  // 30, not 7. The upstream honours some windows and not others: days=1, 3 and
+  // 30 all return 42 agents and the same 16,019-call month, while days=7
+  // reproducibly returns 34 agents and 3,552 — a truncated roster and a fifth of
+  // the volume. Asking for the month and letting the by_day breakdown supply the
+  // per-day numbers avoids the broken window entirely, and re-pulling 30 days
+  // hourly also lets late-arriving calls land on the right date.
+  const DIALPAD_SYNC_DAYS = 30;
 
   async function fetchDialpadAgents(days: number): Promise<DialpadAgentRow[] | null> {
     const token = leadvaultReportingToken();
