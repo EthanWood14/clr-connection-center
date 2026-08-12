@@ -120,6 +120,22 @@ function checkWebhooks(): { status: ServiceStatus; eventsLast24h: number; detail
         detail: `CallTools heartbeats arriving (${beats}/3h) but no call events — call volume will read as zero`,
       };
     }
+    // A zero-test alone would have missed the incident it was written for: at
+    // 16:21 the window still held 18 call events from earlier hours while the
+    // feed had been dead since 14:40. So also flag a severe trickle, measured
+    // against the heartbeat volume the same bridge is producing.
+    //
+    // The 0.5% floor is calibrated on the two days either side of the failure:
+    // 2026-08-11 ran ~300 calls against ~8,500 heartbeats (3.5%), 2026-08-12
+    // ran 18 against 6,422 (0.28%). Deliberately an order of magnitude below
+    // normal so an ordinarily quiet morning does not trip it.
+    if (beats >= 500 && calls * 200 < beats) {
+      return {
+        status: "degraded",
+        eventsLast24h: c,
+        detail: `CallTools call events far below normal (${calls} calls against ${beats} heartbeats in 3h) — call volume is under-reporting`,
+      };
+    }
     return { status: "up", eventsLast24h: c };
   } catch {
     return { status: "up", eventsLast24h: 0 };

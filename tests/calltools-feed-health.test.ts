@@ -24,6 +24,23 @@ test("a dead call feed is not masked by heartbeats", () => {
   assert.match(fn, /beats >= 50 && calls === 0/, "only flag when the bridge is demonstrably alive");
 });
 
+test("a severe trickle is caught, not just a total stop", () => {
+  // A zero-test alone missed the very incident this was written for: three
+  // hours after the feed died the window still held 18 stale call events, so
+  // `calls === 0` was false and the check read healthy.
+  const fn = status.slice(status.indexOf("function checkWebhooks"), status.indexOf("function checkPush"));
+  assert.match(fn, /calls \* 200 < beats/, "flag when calls fall an order of magnitude below normal");
+  assert.match(fn, /beats >= 500/, "…but only with enough heartbeat volume to be meaningful");
+
+  // Reproduce the rule against the real numbers on both sides of the failure.
+  const degraded = (beats: number, calls: number) =>
+    (beats >= 50 && calls === 0) || (beats >= 500 && calls * 200 < beats);
+  assert.equal(degraded(6422, 18), true, "2026-08-12, the failure, must flag");
+  assert.equal(degraded(8500, 300), false, "2026-08-11, a normal day, must not");
+  assert.equal(degraded(6318, 0), true, "a hard stop must flag");
+  assert.equal(degraded(20, 0), false, "an idle night has too little signal to judge");
+});
+
 test("the degraded reason reaches the status page", () => {
   assert.match(status, /detail: whRes\.detail/, "a bare 'degraded' with no reason is not actionable");
 });
