@@ -10939,6 +10939,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const callsByDate = new Map<string, number>();
       for (const r of callsRows) callsByDate.set(r.date, Number(r.calls) || 0);
       const callToolsByDate = callSyncActivityByDay(startDate, endDate, undefined, excludedIds);
+      // Dialpad, as its own series. Deliberately NOT added into `calls`: on any
+      // given day most CLRs appear in both feeds with large counts (2026-08-11,
+      // Jeremy: 183 CallTools vs 228 Dialpad), and nothing here can tell whether
+      // those are the same calls measured twice or genuinely separate ones.
+      // Summing them could roughly double the reported volume, so the chart
+      // shows each source and lets a human read them.
+      const dialpadByDate = new Map<string, number>();
+      try {
+        for (const r of sqlite.prepare(
+          `SELECT stat_date, COALESCE(SUM(calls),0) AS calls FROM dialpad_daily_stats
+            WHERE org_id = ? AND user_id IS NOT NULL AND stat_date >= ? AND stat_date <= ?
+            GROUP BY stat_date`,
+        ).all(currentOrgId() ?? 1, startDate, endDate) as any[]) {
+          dialpadByDate.set(String(r.stat_date), Number(r.calls) || 0);
+        }
+      } catch { /* table absent on an older install — the series is simply empty */ }
       const trendMap = new Map<string, any>();
       for (const r of trendRows) trendMap.set(r.date, r);
 
@@ -10949,6 +10965,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         trendMap.forEach((_, k) => keys.add(k));
         callsByDate.forEach((_, k) => keys.add(k));
         callToolsByDate.forEach((_, k) => keys.add(k));
+        dialpadByDate.forEach((_, k) => keys.add(k));
         const sorted = Array.from(keys).sort();
         for (const d of sorted) {
           const row = trendMap.get(d);
@@ -10956,6 +10973,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             date: d,
             calls: (callsByDate.get(d) ?? 0) + (callToolsByDate.get(d)?.calls ?? 0),
             callToolsCalls: callToolsByDate.get(d)?.calls ?? 0,
+            dialpadCalls: dialpadByDate.get(d) ?? 0,
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
             fellThrough: row ? Number(row.fell_through) || 0 : 0,
@@ -10971,6 +10989,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             date: d,
             calls: (callsByDate.get(d) ?? 0) + (callToolsByDate.get(d)?.calls ?? 0),
             callToolsCalls: callToolsByDate.get(d)?.calls ?? 0,
+            dialpadCalls: dialpadByDate.get(d) ?? 0,
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
             fellThrough: row ? Number(row.fell_through) || 0 : 0,

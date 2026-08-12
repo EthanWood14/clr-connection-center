@@ -87,7 +87,7 @@ function checkEmail(): { status: ServiceStatus; detail: string } {
   return { status: has ? "up" : "degraded", detail: has ? "Configured" : "Not configured" };
 }
 
-function checkWebhooks(): { status: ServiceStatus; eventsLast24h: number } {
+function checkWebhooks(): { status: ServiceStatus; eventsLast24h: number; detail?: string } {
   try {
     const sqlite = getSqlite();
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -95,6 +95,31 @@ function checkWebhooks(): { status: ServiceStatus; eventsLast24h: number } {
       .prepare(`SELECT COUNT(*) AS c FROM webhook_events WHERE created_at >= ?`)
       .get(cutoff) as any;
     const c = Number(row?.c ?? 0);
+
+    // A raw event count cannot see this failure. On 2026-08-12 the CallTools
+    // feed delivered 6,318 agent heartbeats and 6 call events, against ~300
+    // calls on each of the two previous days — the dashboards flatlined for a
+    // full day while this check reported "up" on the heartbeat volume alone.
+    //
+    // Heartbeats arriving means the bridge is alive and agents are logged in.
+    // Heartbeats without a single call event over hours is the signature of the
+    // call feed specifically having stopped, and is worth flagging.
+    const recent = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const beats = Number((sqlite.prepare(
+      `SELECT COUNT(*) AS c FROM webhook_events
+        WHERE created_at >= ? AND event_type = 'calltools.agent_activity'`,
+    ).get(recent) as any)?.c ?? 0);
+    const calls = Number((sqlite.prepare(
+      `SELECT COUNT(*) AS c FROM webhook_events
+        WHERE created_at >= ? AND event_type IN ('calltools.call','calltools.outcome')`,
+    ).get(recent) as any)?.c ?? 0);
+    if (beats >= 50 && calls === 0) {
+      return {
+        status: "degraded",
+        eventsLast24h: c,
+        detail: `CallTools heartbeats arriving (${beats}/3h) but no call events — call volume will read as zero`,
+      };
+    }
     return { status: "up", eventsLast24h: c };
   } catch {
     return { status: "up", eventsLast24h: 0 };
@@ -130,7 +155,7 @@ export function runAllChecks(): ServiceResult[] {
     { name: "API", status: "up", responseMs: apiResponseMs, lastChecked: now, uptime90d: uptimePct90d("API") },
     { name: "Database", status: dbRes.status, responseMs: dbRes.responseMs, lastChecked: now, uptime90d: uptimePct90d("Database") },
     { name: "Email", status: emailRes.status, lastChecked: now, detail: emailRes.detail, uptime90d: uptimePct90d("Email") },
-    { name: "Webhooks", status: whRes.status, lastChecked: now, eventsLast24h: whRes.eventsLast24h, uptime90d: uptimePct90d("Webhooks") },
+    { name: "Webhooks", status: whRes.status, lastChecked: now, eventsLast24h: whRes.eventsLast24h, detail: whRes.detail, uptime90d: uptimePct90d("Webhooks") },
     { name: "Push Notifications", status: pushRes.status, lastChecked: now, detail: pushRes.detail, uptime90d: uptimePct90d("Push Notifications") },
   ];
 }
