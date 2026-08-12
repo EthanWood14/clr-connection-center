@@ -213,7 +213,14 @@ function heatColor(value: number, min: number, max: number, higherIsBetter: bool
 
 // Weekly Scorecard — last-7-days per-CLR snapshot as a color-graded table.
 function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: string }) {
-  const list = [...(rows ?? [])].sort((a, b) => (b.transfers - a.transfers) || (b.calls - a.calls));
+  // Transfers, then appointments, then calls. Appointments break a transfer tie
+  // because they are the same kind of work as a transfer — a booked appointment
+  // is a result, whereas call count only says who dialled more to get there.
+  // Calls stay as the last resort so the order is still deterministic.
+  const list = [...(rows ?? [])].sort((a, b) =>
+    (b.transfers - a.transfers)
+    || (b.appointments - a.appointments)
+    || (b.calls - a.calls));
   if (list.length === 0) {
     return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No CLR activity in this {rangeLabel.toLowerCase()} range.</CardContent></Card>;
   }
