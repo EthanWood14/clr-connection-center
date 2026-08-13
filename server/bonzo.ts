@@ -174,6 +174,7 @@ export async function getProspectAssignee(prospectId: number): Promise<number | 
 export async function getProspectSnapshot(prospectId: number): Promise<{
   firstName: string; lastName: string; tags: string[];
   pipelineId: number | null; stageId: number | null; stageName: string | null;
+  assignedTo: number | null; assignedUserName: string | null;
 } | null> {
   const r = await req("GET", `/prospects/${prospectId}`);
   const d = r.json?.data ?? r.json;
@@ -182,12 +183,37 @@ export async function getProspectSnapshot(prospectId: number): Promise<{
     firstName: String(d.first_name ?? ""),
     lastName: String(d.last_name ?? ""),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t: any) => String(t?.name ?? t)).filter(Boolean),
-    // Read-only: the stage is reported here but CANNOT be written back — see
-    // the note on updateProspect.
+    // Stage is writable ONLY via moveProspectStage below — never via PUT.
     pipelineId: d.pipeline?.id != null ? Number(d.pipeline.id) : (d.pipeline_id != null ? Number(d.pipeline_id) : null),
     stageId: d.pipeline_stage?.id != null ? Number(d.pipeline_stage.id) : null,
     stageName: d.pipeline_stage?.name != null ? String(d.pipeline_stage.name) : null,
+    assignedTo: d.assigned_to != null ? Number(d.assigned_to) : null,
+    assignedUserName: d.assigned_user?.name != null ? String(d.assigned_user.name) : null,
   };
+}
+
+// Reassign a prospect to another Bonzo user. PUT accepts assigned_to — the
+// same call BrokerBot's [SEND PROSPECT] transfer uses in production. Read back
+// because a 200 from this API has been observed elsewhere to not persist.
+export async function reassignProspect(prospectId: number, bonzoUserId: number): Promise<{ ok: boolean; verified: boolean; error?: string }> {
+  const r = await req("PUT", `/prospects/${prospectId}`, { assigned_to: bonzoUserId });
+  if (!r.ok) return { ok: false, verified: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };
+  const now = await getProspectAssignee(prospectId);
+  return { ok: true, verified: now === bonzoUserId };
+}
+
+// Move a prospect into a pipeline stage.
+//
+// POST /prospects/{id}/pipeline-stage/{stageId} — the one route the 2026-07-21
+// probe never tried. BrokerBot moves stages with exactly this call in
+// production, and its hard-won rule ships with it: a 2xx does NOT prove the
+// move landed, so always read the stage back. Moving a prospect that is in no
+// pipeline places it into the stage's pipeline.
+export async function moveProspectStage(prospectId: number, stageId: number): Promise<{ ok: boolean; verified: boolean; error?: string }> {
+  const r = await req("POST", `/prospects/${prospectId}/pipeline-stage/${stageId}`, {});
+  if (!r.ok) return { ok: false, verified: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };
+  const snap = await getProspectSnapshot(prospectId);
+  return { ok: true, verified: snap?.stageId === Number(stageId) };
 }
 
 // The ordered stage list for a pipeline, or [] when the token can't see it
@@ -210,8 +236,8 @@ export async function getPipelineStages(pipelineId: number): Promise<{ id: numbe
 // back for pipeline_stage_id / stage_id / stage / pipelineStageId /
 // pipeline_stage{} / pipeline_stage_name; PATCH /prospects/{id} is 405; and
 // /prospects/{id}/stage, /move-stage, /pipeline, plus every
-// /pipelines/{id}/stages/... move route, are 404. Stage moves have to be done
-// by a Bonzo-side automation reacting to a tag we set.
+// /pipelines/{id}/stages/... move route, are 404. The one route that DOES work
+// is POST /prospects/{id}/pipeline-stage/{stageId} — use moveProspectStage.
 export async function updateProspect(prospectId: number, payload: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
   const r = await req("PUT", `/prospects/${prospectId}`, payload);
   return r.ok ? { ok: true } : { ok: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };

@@ -645,6 +645,10 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_status TEXT`); } ca
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_states TEXT NOT NULL DEFAULT '[]'`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_last_checked TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration TEXT`); } catch {}
+  // Bonzo user id for this LO — the reassignment target when a transfer moves a
+  // prospect to them. Seeded from BrokerBot's mapping; self-learned thereafter
+  // when a prospect already on their seat confirms the id by display name.
+  try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_id INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN reduced_odds INTEGER NOT NULL DEFAULT 0`); } catch {}
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}

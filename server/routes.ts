@@ -26,7 +26,7 @@ import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-det
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import {
   evaluateCheckinIp,
@@ -17569,17 +17569,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     console.log(`[bonzo-appt] outcome=${outcomeId} result=${result} noted on prospect=${o.bonzo_prospect_id}`);
   }
 
-  // ── "Move to Responded on transfer" decision ────────────────────────────────
-  // Bonzo's API cannot set a pipeline stage (verified live — see the note on
-  // updateProspect), so C3 makes the DECISION and expresses it as a tag; a Bonzo
-  // automation ("when tag CLR_MOVE_RESPONDED_TAG is added → move to Responded")
-  // performs the move. Keeping the logic here means the exclusion rule lives in
-  // code we control instead of being duplicated across every LO's pipeline.
+  // ── Transfer → pipeline-stage decision ──────────────────────────────────────
+  // C3 decides the target stage; the move itself is attempted DIRECTLY via
+  // moveProspectStage (POST /prospects/{id}/pipeline-stage/{stageId} — the one
+  // route the 2026-07-21 probe missed; BrokerBot uses it in production). When
+  // the target stage can't be resolved by name in the prospect's pipeline —
+  // pipeline not visible to the org token, prospect in no pipeline, or the
+  // stage simply doesn't exist there — C3 falls back to a tag and a Bonzo-side
+  // automation performs the move, exactly as before.
   //
-  // Rule: transfers move the prospect to Responded, UNLESS the deal has already
-  // advanced — anything from "App Taken" through "Funded" is left alone so a
-  // transfer never drags a live loan backwards.
+  // Rules: a transfer moves the prospect to Responded — except Chris Redoble's,
+  // which go to Hot Transfers. Never move a deal that has already advanced
+  // (anything App Taken → Funded stays put), and never move a prospect already
+  // sitting in the target stage.
   const CLR_MOVE_RESPONDED_TAG = "clrmoveresponded";
+  // Chris's automation tag. NOTE: as of 2026-08-13 no visible pipeline in the
+  // org has a "Hot Transfers" stage, so until that stage exists (plus a Bonzo
+  // automation on this tag), Chris's moves neither resolve directly nor fire an
+  // automation — the tag still lands, so the intent is recorded either way.
+  const CLR_MOVE_HOT_TAG = "clrmovehottransfers";
+  const HOT_TRANSFERS_STAGE_RE = /hot\s*transfer/i;
   // Deal stages that must never be moved back, by name. Used both to bound the
   // App-Taken→Funded range and as the fallback for pipelines that don't use
   // those exact labels.
@@ -17601,14 +17610,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   // ── Transfer → Bonzo sync ───────────────────────────────────────────────────
-  // When a transfer is logged, mark the Bonzo prospect: append the attribution
-  // suffix to the last name and add the "clrtransfer" tag. Suffix format:
-  //   normal LO:          "(CLR {clr first name})"
-  //   Chris Redoble LOs:  "({loa first name} l {clr first name})"  (lowercase
-  //                       L separator; falls back to the CLR format when the
-  //                       outcome has no LOA)
-  // Both writes are idempotent: the suffix is skipped if already present, and
-  // tags are MERGED because Bonzo's PUT replaces the whole tag set.
+  // When a transfer is logged:
+  //   1. REASSIGN the Bonzo prospect to the LO it was transferred to in C3
+  //      (loan_officers.bonzo_user_id; verified by read-back).
+  //   2. MOVE the pipeline stage — Chris Redoble's transfers to Hot Transfers,
+  //      everyone else's to Responded. Directly when the stage resolves by name
+  //      in the prospect's pipeline; by automation tag otherwise.
+  //   3. RENAME with the attribution suffix and add the "clrtransfer" tag.
+  //      Suffix: normal LO "(CLR {clr first})"; Chris "({loa first} I {clr
+  //      first})" — capital-I separator — falling back to the CLR form when the
+  //      outcome has no LOA.
+  // Every write is idempotent: reassignment no-ops when already right, the move
+  // is skipped when already in the target stage, the suffix is skipped if
+  // present, and tags are MERGED because Bonzo's PUT replaces the whole set.
   async function syncTransferToBonzo(outcomeId: number): Promise<void> {
     if (!bonzoConfigured()) return;
     const db = storageExtra.getRawSqlite();
@@ -17625,32 +17639,84 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (!p) { console.log(`[bonzo-transfer] outcome=${outcomeId}: no Bonzo prospect — skipped (lookup never creates)`); return; }
       prospectId = p.id;
     }
-    const snap = await getProspectSnapshot(prospectId);
+    let snap = await getProspectSnapshot(prospectId);
     if (!snap) { console.error(`[bonzo-transfer] outcome=${outcomeId}: prospect ${prospectId} unreadable`); return; }
     const firstName = (s: any) => String(s ?? "").trim().split(/\s+/)[0] || "";
     const clrFirst = firstName(clr?.name);
-    const isChris = /chris\s+redoble/i.test(String(lo?.fullName ?? ""));
+    // Surname match on purpose: the C3 record is "Christopher Redoble", which
+    // the old /chris\s+redoble/ could never match — his transfers were silently
+    // getting the plain CLR suffix.
+    const isChris = /\bredoble\b/i.test(String(lo?.fullName ?? ""));
     let loaFirst = "";
     if (isChris && o.loa_id) {
       try { loaFirst = firstName((storageExtra.getLoanOfficerAssistant(o.loa_id) as any)?.fullName); } catch {}
     }
-    const suffix = isChris && loaFirst ? `(${loaFirst} l ${clrFirst})` : `(CLR ${clrFirst})`;
-    // Decide whether this transfer should move the prospect to Responded. Skip
-    // it when the deal is already App Taken → Funded, and when they're already
-    // sitting in Responded (nothing to move).
+    const suffix = isChris && loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
+
+    // ── 1. Reassign to the transferee ─────────────────────────────────────────
+    // Loose both-ways word match, same idea as bonzo.ts namesMatch — enough to
+    // recognise "Bill Neessen" in "B. Neessen" style display names is NOT
+    // attempted; only full-word containment counts.
+    const loWords = String(lo?.fullName ?? "").toLowerCase().replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean);
+    const nameMatchesLo = (n: string | null) => {
+      const w = String(n ?? "").toLowerCase().replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean);
+      if (!w.length || !loWords.length) return false;
+      const [small, big] = w.length <= loWords.length ? [w, loWords] : [loWords, w];
+      return small.every((x) => big.includes(x));
+    };
+    let bonzoUserId: number | null = lo?.bonzoUserId ?? lo?.bonzo_user_id ?? null;
+    if (bonzoUserId == null && lo && snap.assignedTo != null && nameMatchesLo(snap.assignedUserName)) {
+      // Self-learn: the prospect is already sitting on a seat whose display
+      // name is this LO — record the id so future transfers can reassign.
+      bonzoUserId = snap.assignedTo;
+      try {
+        db.prepare(`UPDATE loan_officers SET bonzo_user_id=? WHERE id=? AND bonzo_user_id IS NULL`).run(bonzoUserId, lo.id);
+        console.log(`[bonzo-transfer] learned bonzo_user_id=${bonzoUserId} for LO "${lo.fullName}" from prospect ${prospectId}`);
+      } catch { /* learning is best-effort */ }
+    }
+    let reassigned = "not_needed";
+    if (bonzoUserId != null && snap.assignedTo !== bonzoUserId) {
+      const r = await reassignProspect(prospectId, bonzoUserId);
+      reassigned = !r.ok ? `failed:${r.error}` : r.verified ? "verified" : "unverified";
+      if (r.ok) {
+        // Reassignment can change which pipeline the prospect sits in — refresh
+        // before making any stage decision.
+        snap = (await getProspectSnapshot(prospectId)) ?? snap;
+      } else {
+        console.error(`[bonzo-transfer] outcome=${outcomeId}: reassign to ${bonzoUserId} failed: ${r.error}`);
+      }
+    } else if (bonzoUserId == null) {
+      reassigned = "no_bonzo_user_id";
+    }
+
+    // ── 2. Stage decision ─────────────────────────────────────────────────────
+    const wantStageRe = isChris ? HOT_TRANSFERS_STAGE_RE : RESPONDED_STAGE_RE;
+    const moveTag = isChris ? CLR_MOVE_HOT_TAG : CLR_MOVE_RESPONDED_TAG;
     let stages: { id: number; name: string; order: number }[] = [];
     if (snap.pipelineId != null) {
       try { stages = await getPipelineStages(snap.pipelineId); } catch { stages = []; }
     }
     const advanced = isAdvancedStage(snap.stageName, stages, snap.stageId);
-    const alreadyResponded = RESPONDED_STAGE_RE.test(String(snap.stageName ?? ""));
-    const shouldMove = !advanced && !alreadyResponded;
+    const alreadyThere = wantStageRe.test(String(snap.stageName ?? ""));
+    const shouldMove = !advanced && !alreadyThere;
+    let moved = "none";
+    if (shouldMove) {
+      const target = stages.find((s) => wantStageRe.test(s.name));
+      if (target) {
+        const r = await moveProspectStage(prospectId, target.id);
+        moved = !r.ok ? `failed:${r.error}` : r.verified ? `direct:"${target.name}"` : `direct_unverified:"${target.name}"`;
+        if (!r.ok) console.error(`[bonzo-transfer] outcome=${outcomeId}: stage move to "${target.name}" failed: ${r.error}`);
+      } else {
+        moved = "tagged"; // resolved below via the automation tag
+      }
+    }
 
+    // ── 3. Rename + tags ──────────────────────────────────────────────────────
     const tags = [...snap.tags];
     const has = (t: string) => tags.some((x) => x.toLowerCase() === t.toLowerCase());
     let tagsChanged = false;
     if (!has("clrtransfer")) { tags.push("clrtransfer"); tagsChanged = true; }
-    if (shouldMove && !has(CLR_MOVE_RESPONDED_TAG)) { tags.push(CLR_MOVE_RESPONDED_TAG); tagsChanged = true; }
+    if (shouldMove && moved === "tagged" && !has(moveTag)) { tags.push(moveTag); tagsChanged = true; }
 
     const updates: Record<string, any> = {};
     if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
@@ -17663,12 +17729,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // deal, so the LO can see the transfer was logged and why the stage stands.
     if (advanced) {
       try {
-        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (App Taken→Funded deals are not moved back to Responded).`);
+        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (App Taken→Funded deals are not moved back).`);
       } catch { /* note is best-effort */ }
     }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" stage="${snap.stageName ?? "?"}" advanced=${advanced} moveTagged=${shouldMove} renamed=${"last_name" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} moved=${moved} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag
@@ -17680,7 +17746,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const phone = String(req.body?.phone ?? "");
     const clrFirst = String(req.body?.clrName ?? "WireTest").split(/\s+/)[0];
     const loaFirst = req.body?.loaName ? String(req.body.loaName).split(/\s+/)[0] : null;
-    const suffix = loaFirst ? `(${loaFirst} l ${clrFirst})` : `(CLR ${clrFirst})`;
+    const suffix = loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
     const steps: any = { suffix };
     const p = await findProspectByPhone(phone);
     steps.prospect = p ? { id: p.id, name: p.name } : null;
