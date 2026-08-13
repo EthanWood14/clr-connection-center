@@ -270,15 +270,16 @@ export default function TeamStats() {
       </div>
 
       {/* Summary cards */}
+      {/* Owner-specified order (2026-08-12): transfers, then appointments, then conversations, then call time. */}
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
+        <SummaryCard title="Total Transfers" value={data.totals.transfers} previous={data.previous.transfers} />
+        <SummaryCard title="Total Appointments" value={data.totals.appointments} previous={data.previous.appointments} />
+        <SummaryCard title="Conversations" value={data.totals.callToolsConversations} previous={data.previous.callToolsConversations} />
+        <SummaryCard title="Call Time (min)" value={Math.round((data.totals.callToolsActiveSeconds ?? 0) / 60)} previous={Math.round((data.previous.callToolsActiveSeconds ?? 0) / 60)} />
         <SummaryCard title="Total Calls" value={data.totals.calls} previous={data.previous.calls} />
         <SummaryCard title="CallTools Contacts" value={data.totals.callToolsContacts} previous={data.previous.callToolsContacts} />
-        <SummaryCard title="Conversations" value={data.totals.callToolsConversations} previous={data.previous.callToolsConversations} />
-        <SummaryCard title="Active Minutes" value={Math.round((data.totals.callToolsActiveSeconds ?? 0) / 60)} previous={Math.round((data.previous.callToolsActiveSeconds ?? 0) / 60)} />
         <SummaryCard title="Messages Sent" value={(data.totals as any).messages ?? 0} />
-        <SummaryCard title="Total Transfers" value={data.totals.transfers} previous={data.previous.transfers} />
         <SummaryCard title="Transfer Rate" value={data.totals.transferRate.toFixed(1)} previous={data.previous.transferRate} suffix="%" />
-        <SummaryCard title="Total Appointments" value={data.totals.appointments} previous={data.previous.appointments} />
       </div>
 
       {/* Chart 1: Activity Trend — toggle-controlled */}
@@ -397,11 +398,11 @@ export default function TeamStats() {
                   <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
                   <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar xAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} />
-                  <Bar xAxisId="calls" dataKey="callToolsContacts" name="Contacts" fill={COLORS.contacts} />
-                  <Bar xAxisId="small" dataKey="callToolsConversations" name="Conversations" fill={COLORS.conversations} />
                   <Bar xAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} />
                   <Bar xAxisId="small" dataKey="appointments" name="Appointments" fill={COLORS.appointments} />
+                  <Bar xAxisId="small" dataKey="callToolsConversations" name="Conversations" fill={COLORS.conversations} />
+                  <Bar xAxisId="calls" dataKey="calls" name="Calls" fill={COLORS.calls} />
+                  <Bar xAxisId="calls" dataKey="callToolsContacts" name="Contacts" fill={COLORS.contacts} />
                 </BarChart>
               </ResponsiveContainer>
             )}
