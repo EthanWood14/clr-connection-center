@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
+import { LeadCapturePanel } from "@/components/lead-capture-panel";
+import { type LeadCapture, emptyLeadCapture, resolveLeadSource, composeLeadCaptureNotes, leadCaptureHasContent } from "@/lib/lead-capture";
 import { businessTodayClient } from "@/lib/business-day";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1218,6 +1220,8 @@ function CallRecorder({
   recordingStartedAt,
   scriptEndSignal,
   scriptPathSteps,
+  capture,
+  onCaptureConsumed,
   onScriptEndConsumed,
   assistantUserId,
   onLogged,
@@ -1235,6 +1239,10 @@ function CallRecorder({
   // Live conversation path — used to build a default notes string even when
   // the user picks an outcome manually before the script ends.
   scriptPathSteps: { nodeText: string; chosenLabel: string }[];
+  // The Lead Card filled during the call. Submitted with the outcome and
+  // cleared by the parent after a successful log.
+  capture: LeadCapture;
+  onCaptureConsumed: () => void;
   onScriptEndConsumed: () => void;
   // Logged-in user id — stored on the outcome as assistantId.
   assistantUserId: number | null;
@@ -1418,6 +1426,12 @@ function CallRecorder({
         if (askBulkTexter) payload.bulkTexter = wizardBulkTexter;
         if (askHelper) payload.helperAssisted = wizardHelper;
       }
+      // Everything captured on the Lead Card rides along, serialized exactly
+      // the way the Input Results wizard serializes it — one shape downstream.
+      const src = resolveLeadSource(capture);
+      if (src) payload.leadSource = src;
+      const composed = composeLeadCaptureNotes(capture);
+      if (composed) payload.conversationNotes = composed;
       if (outcomeChoice.outcomeType === "appointment" && wizardScheduled) {
         payload.appointmentDatetime = wizardScheduled;
       }
@@ -1443,6 +1457,7 @@ function CallRecorder({
       setNotesAutoFilled(false);
       onBorrowerNameChange("");
       onStartRecording(false);
+      onCaptureConsumed();
       onLogged?.();
     },
     onError: (e: any) => toast({ title: "Failed to log call", description: e?.message, variant: "destructive" }),
@@ -1664,6 +1679,11 @@ function CallRecorder({
               <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes (optional)</label>
               <Textarea value={wizardNotes} onChange={e => setWizardNotes(e.target.value)} rows={2} className="text-sm mt-1" placeholder="Anything worth remembering…" />
             </div>
+            {leadCaptureHasContent(capture) && (
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium" data-testid="lead-card-attached">
+                ✓ Lead Card attached — the qualification checklist and info fields go with this log.
+              </p>
+            )}
           </div>
           <div className="flex gap-2 justify-end flex-wrap pt-1">
             <Button size="sm" variant="ghost" onClick={handleCancel}>Cancel</Button>
@@ -1755,6 +1775,12 @@ export default function CallScriptPage() {
   const [borrowerName, setBorrowerName] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  // The Lead Card — filled during the call, submitted with the outcome.
+  const [capture, setCapture] = useState<LeadCapture>(emptyLeadCapture());
+  // Setup (timezone / LO / script picker) folds away once a call is underway so
+  // the script and Lead Card get the whole screen.
+  const [setupOpen, setSetupOpen] = useState(true);
+  useEffect(() => { if (isRecording) setSetupOpen(false); }, [isRecording]);
 
   // Bridge between ScriptRunner (which knows the conversation path) and
   // CallRecorder (which logs the outcome). When the script ends, the snapshot
@@ -1968,7 +1994,7 @@ export default function CallScriptPage() {
   return (
     <PlaceholderContext.Provider value={placeholders}>
     <ScriptCoach open={coachOpen} mode={hasPersonalCopy ? "refine" : "create"} onClose={() => setCoachOpen(false)} onBuilt={(s: any) => { if (s?.id) setSelectedScriptId(s.id); setView("run"); }} />
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="p-6 max-w-6xl mx-auto space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -2052,7 +2078,33 @@ export default function CallScriptPage() {
         </div>
       </div>
 
-      {/* Placeholder controls: timezone + borrower name */}
+      {/* Always-visible call bar: borrower quick-capture + setup toggle. The
+          borrower name feeds the script placeholders live, so it has to stay
+          reachable mid-call; everything else folds away once a call starts. */}
+      {view === "run" && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            value={borrowerName}
+            onChange={e => setBorrowerName(e.target.value)}
+            placeholder="Borrower's first name"
+            className={`h-9 text-sm w-64 ${isRecording && !borrowerName.trim() ? "ring-2 ring-emerald-500 border-emerald-500" : ""}`}
+            data-testid="script-borrower-name"
+          />
+          <span className="text-[11px] text-muted-foreground">fills <code>[borrower name]</code></span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1 ml-auto text-muted-foreground"
+            onClick={() => setSetupOpen(o => !o)}
+            data-testid="button-toggle-setup"
+          >
+            Setup <ChevronDown className={`w-3.5 h-3.5 transition-transform ${setupOpen ? "rotate-180" : ""}`} />
+          </Button>
+        </div>
+      )}
+
+      {(view !== "run" || setupOpen) && (<>
+      {/* Placeholder controls: timezone + LO */}
       <Card className="border-dashed">
         <CardContent className="p-3 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -2070,16 +2122,6 @@ export default function CallScriptPage() {
             <span className="text-[11px] text-muted-foreground">
               Greeting: <span className="text-teal-500 font-medium">{placeholders.timeOfDay}</span>
             </span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Borrower name:</label>
-            <Input
-              value={borrowerName}
-              onChange={e => setBorrowerName(e.target.value)}
-              placeholder="Enter borrower's first name"
-              className={`h-8 text-sm w-56 ${isRecording && !borrowerName.trim() ? "ring-2 ring-emerald-500 border-emerald-500" : ""}`}
-              data-testid="script-borrower-name"
-            />
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">
@@ -2224,6 +2266,8 @@ export default function CallScriptPage() {
         </div>
       )}
 
+      </>)}
+
       {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
@@ -2270,30 +2314,41 @@ export default function CallScriptPage() {
         view === "run"
           ? (
             <>
-              <CallRecorder
-                borrowerName={borrowerName}
-                onBorrowerNameChange={setBorrowerName}
-                loDropdownOptions={loDropdownOptions}
-                currentLoName={effectiveLoName}
-                onStartRecording={handleStartRecording}
-                isRecording={isRecording}
-                recordingStartedAt={recordingStartedAt}
-                scriptEndSignal={scriptEndSignal}
-                scriptPathSteps={scriptPathSteps}
-                onScriptEndConsumed={() => setScriptEndSignal(null)}
-                assistantUserId={userId ?? null}
-                onLogged={() => {
-                  setScriptPathSteps([]);
-                  setScriptResetCounter(c => c + 1);
-                }}
-              />
-              <ScriptRunner
-                key={activeScript.id}
-                scriptId={activeScript.id}
-                onPathChange={setScriptPathSteps}
-                onEnd={(snap) => setScriptEndSignal(snap)}
-                resetSignal={scriptResetCounter}
-              />
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
+                <div className="space-y-4 min-w-0">
+                  <CallRecorder
+                    borrowerName={borrowerName}
+                    onBorrowerNameChange={setBorrowerName}
+                    loDropdownOptions={loDropdownOptions}
+                    currentLoName={effectiveLoName}
+                    onStartRecording={handleStartRecording}
+                    isRecording={isRecording}
+                    recordingStartedAt={recordingStartedAt}
+                    scriptEndSignal={scriptEndSignal}
+                    scriptPathSteps={scriptPathSteps}
+                    capture={capture}
+                    onCaptureConsumed={() => setCapture(emptyLeadCapture())}
+                    onScriptEndConsumed={() => setScriptEndSignal(null)}
+                    assistantUserId={userId ?? null}
+                    onLogged={() => {
+                      setScriptPathSteps([]);
+                      setScriptResetCounter(c => c + 1);
+                    }}
+                  />
+                  <ScriptRunner
+                    key={activeScript.id}
+                    scriptId={activeScript.id}
+                    onPathChange={setScriptPathSteps}
+                    onEnd={(snap) => setScriptEndSignal(snap)}
+                    resetSignal={scriptResetCounter}
+                  />
+                </div>
+                {/* The Lead Card rides shotgun on desktop and stays reachable
+                    while stepping the script; on mobile it stacks below. */}
+                <div className="lg:sticky lg:top-4 min-w-0">
+                  <LeadCapturePanel capture={capture} onChange={setCapture} />
+                </div>
+              </div>
             </>
           )
           : view === "flowchart"

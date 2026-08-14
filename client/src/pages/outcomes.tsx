@@ -29,6 +29,7 @@ import {
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, INVESTMENT_ROUTING_HINT, composeLeadCaptureNotes } from "@/lib/lead-capture";
 import { copyToClipboard } from "@/lib/utils";
 
 // Compliance reminder displayed above every CLR-facing notes textarea.
@@ -497,25 +498,12 @@ function OutcomeFormDialog({
   // sees one text block in the shape LOs already know from the call script.
   const composeConversationNotes = (): string => {
     const v = form.getValues();
-    const yn = (x?: string) => (x === "yes" ? "Yes" : x === "no" ? "No" : "");
-    const lines: string[] = [];
-    const src = v.leadSource === "other" ? (v.leadSourceOther || "").trim() : (v.leadSource || "");
-    if (src) lines.push(`Lead Source: ${src}`);
-    const qual: string[] = [];
-    if (v.qualOwnHome) qual.push(`Owns Home: ${yn(v.qualOwnHome)}`);
-    if (v.qualBankruptcy) qual.push(`Bankruptcy Last 6 Months: ${yn(v.qualBankruptcy)}`);
-    if (v.qualInvestment) qual.push(`Investment/2nd Home: ${yn(v.qualInvestment)}${v.qualInvestment === "yes" ? " — give to LOA Justin, Mateo, or John" : ""}`);
-    if (v.qualCredit500) qual.push(`Credit Over 500 (est): ${yn(v.qualCredit500)}${(v.qualCreditEst || "").trim() ? ` (${(v.qualCreditEst || "").trim()})` : ""}`);
-    if (qual.length) lines.push(qual.join("\n"));
-    const info: Array<[string, string | undefined]> = [
-      ["Address", v.infoAddress], ["Goal", v.infoGoal], ["Take Out", v.infoTakeOut],
-      ["Home Value", v.infoValue], ["Mortgage Balance", v.infoBalance], ["Mortgage Rate", v.infoRate],
-      ["Monthly Payment", v.infoPayment], ["Monthly Income", v.infoIncome],
-      ["W2/SE/Retired", v.infoEmployment], ["Credit Score", v.infoCreditScore], ["Military", v.infoMilitary],
-    ];
-    const filled = info.filter(([, val]) => (val || "").trim());
-    if (filled.length) lines.push(filled.map(([k, val]) => `${k}: ${String(val).trim()}`).join("\n"));
-    return lines.join("\n\n");
+    const c: LeadCapture = { ...emptyLeadCapture() };
+    for (const k of Object.keys(c) as (keyof LeadCapture)[]) {
+      const raw = (v as any)[k];
+      if (typeof raw === "string") c[k] = raw as any;
+    }
+    return composeLeadCaptureNotes(c);
   };
 
   // Validate the form, then show the Bonzo question instead of logging
@@ -714,12 +702,9 @@ function OutcomeFormDialog({
                     <SelectTrigger data-testid="select-lead-source"><SelectValue placeholder="Select lead source" /></SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="Retail">Retail</SelectItem>
-                    <SelectItem value="BulkTexts">BulkTexts</SelectItem>
-                    <SelectItem value="Single Dialing">Single Dialing</SelectItem>
-                    <SelectItem value="Mojo">Mojo</SelectItem>
-                    <SelectItem value="CallTools">CallTools</SelectItem>
-                    <SelectItem value="Responded">Responded</SelectItem>
+                    {LEAD_SOURCE_OPTIONS.map(opt => (
+                      <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                    ))}
                     <SelectItem value="other">Other — type it in</SelectItem>
                   </SelectContent>
                 </Select>
@@ -795,13 +780,8 @@ function OutcomeFormDialog({
             <>
               <p className="text-sm font-semibold text-foreground">Qualification</p>
               <NotesPolicyNote />
-              {([
-                { name: "qualOwnHome" as const, label: "Do you own a home?", cue: "must be Yes" },
-                { name: "qualBankruptcy" as const, label: "Bankruptcy in the last 6 months?", cue: "should be No" },
-                { name: "qualInvestment" as const, label: "Investment property / secondary residence?", cue: "" },
-                { name: "qualCredit500" as const, label: "Credit score over 500? (est)", cue: "" },
-              ]).map(q => (
-                <FormField key={q.name} control={form.control} name={q.name} render={({ field }) => (
+              {QUAL_QUESTIONS.map(q => (
+                <FormField key={q.name} control={form.control} name={q.name as any} render={({ field }) => (
                   <FormItem>
                     <div className="flex items-center justify-between gap-3">
                       <FormLabel className="mb-0 text-[13px] leading-snug">
@@ -825,7 +805,7 @@ function OutcomeFormDialog({
               ))}
               {form.watch("qualInvestment") === "yes" && (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400" data-testid="qual-investment-hint">
-                  Investment / secondary residence — give this to LOA Justin, Mateo, or John.
+                  {INVESTMENT_ROUTING_HINT}
                 </p>
               )}
               {form.watch("qualCredit500") === "yes" && (
@@ -837,20 +817,8 @@ function OutcomeFormDialog({
               )}
 
               <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
-              {([
-                { name: "infoAddress" as const, label: "Address" },
-                { name: "infoGoal" as const, label: "Goal" },
-                { name: "infoTakeOut" as const, label: "How much are you looking to take out?" },
-                { name: "infoValue" as const, label: "Value of home" },
-                { name: "infoBalance" as const, label: "Balance on mortgage" },
-                { name: "infoRate" as const, label: "Rate on mortgage" },
-                { name: "infoPayment" as const, label: "Monthly payment" },
-                { name: "infoIncome" as const, label: "Monthly income" },
-                { name: "infoEmployment" as const, label: "W2 / SE / Retired" },
-                { name: "infoCreditScore" as const, label: "Credit score" },
-                { name: "infoMilitary" as const, label: "Military" },
-              ]).map(f => (
-                <FormField key={f.name} control={form.control} name={f.name} render={({ field }) => (
+              {INFO_FIELDS.map(f => (
+                <FormField key={f.name} control={form.control} name={f.name as any} render={({ field }) => (
                   <FormItem className="grid grid-cols-[9.5rem_1fr] items-center gap-2 space-y-0">
                     <FormLabel className="mb-0 text-[12px] text-muted-foreground">{f.label}</FormLabel>
                     <FormControl><Input {...field} className="h-8" data-testid={`input-${f.name}`} /></FormControl>
