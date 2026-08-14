@@ -66,7 +66,7 @@ test("the direct move is attempted first, the tag only as fallback", () => {
 
 test("advanced deals are still never dragged backwards", () => {
   assert.match(sync, /const advanced = isAdvancedStage\(snap\.stageName, stages, snap\.stageId\)/);
-  assert.match(sync, /const shouldMove = !advanced && !alreadyThere/);
+  assert.match(sync, /const shouldMove = !advanced && !disqualified && !alreadyThere/);
   assert.match(sync, /App Taken→Funded deals are not moved back/);
 });
 
@@ -81,9 +81,9 @@ test("both new Bonzo writes verify by read-back", () => {
 });
 
 test("an explicit per-LO stage id beats name resolution", () => {
-  // /pipelines does not list every seat's pipeline — Chris's personal pipeline
-  // (13553) is absent even though his prospects prove its HOT TRANSFER stage
-  // (428447) exists. The seeded id sidesteps the listing entirely.
+  // Pins the destination even if the stage is renamed. Chris's target is stage
+  // 428447 "HOT TRANSFER" on pipeline 13553 "HOT LEADS & APPS" — resolvable by
+  // name once the listing is paged (it sits on page 3), but the id is exact.
   assert.match(readFileSync(join(root, "server/storage.ts"), "utf8"),
     /ALTER TABLE loan_officers ADD COLUMN bonzo_transfer_stage_id INTEGER/);
   const mv = sync.slice(sync.indexOf('let moved = "none"'), sync.indexOf("// ── 3. Rename"));
@@ -136,4 +136,31 @@ test("stage lookup pages through every pipeline, not just the first 25", () => {
   assert.ok(!/req\("GET", `\/pipelines`\)/.test(fn), "the unpaginated single fetch must be gone");
   // Returns as soon as the pipeline is found — no need to read all 17 pages.
   assert.ok(fn.indexOf("if (p) {") < fn.indexOf("lastPage"), "early return before the page-advance check");
+});
+
+test("a disqualified lead is never revived into Responded", () => {
+  // A CLR logging a transfer does not undo the LO's "does not qualify"
+  // decision. This is separate from the advanced-deal guard: that protects
+  // deals too far along, this protects deals deliberately ended.
+  // Built from the SHIPPED pattern, not a copy of it — a copy silently stops
+  // testing the real thing (and hid a mangled \b escape that would have shipped
+  // a guard matching literal backspace characters).
+  const m = /const DISQUALIFIED_STAGE_RE = \/(.+?)\/i;/.exec(routes);
+  assert.ok(m, "DISQUALIFIED_STAGE_RE must be a plain /…/i literal");
+  const re = new RegExp(m![1], "i");
+  for (const name of ["DNQ", "DNQ - DEAD", "dnq", "Does Not Qualify", "Dead Lead",
+                      "DNC", "Do Not Contact", "Opted Out", "No Text (STOP or Bad Number)"]) {
+    assert.ok(re.test(name), `must be protected: ${name}`);
+  }
+  // …and stages that merely sound similar must still move normally.
+  for (const name of ["Responded", "Follow-Up", "No Contact", "Deadline Review", "New Leads", "Nurture"]) {
+    assert.ok(!re.test(name), `must NOT be blocked: ${name}`);
+  }
+  assert.match(routes, /const DISQUALIFIED_STAGE_RE = /);
+  assert.match(sync, /const shouldMove = !advanced && !disqualified && !alreadyThere;/);
+  // It blocks moves; it must never be used to pick a destination.
+  const target = sync.slice(sync.indexOf('let moved = "none"'), sync.indexOf("// ── 3. Rename"));
+  assert.ok(!/DISQUALIFIED_STAGE_RE/.test(target), "never a move target, only a blocker");
+  assert.match(sync, /disqualified are never revived|disqualified leads are never revived/,
+    "the LO gets a note explaining why the stage stands");
 });

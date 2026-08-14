@@ -17742,6 +17742,14 @@ ${text}`,
   // those exact labels.
   const ADVANCED_STAGE_RE = /app\s*taken|pitched|collecting\s*doc|need\s*docs|processing|in\s*process|submitted|underwrit|conditional|approved|clear\s*to\s*close|ctc|locked|funded/i;
   const RESPONDED_STAGE_RE = /^responded/i;
+  // Stages that record a deliberate DISQUALIFICATION. A transfer must never drag
+  // one of these forward — a CLR logging a transfer does not undo the LO's "this
+  // lead does not qualify" decision, and silently reviving a DNQ lead into
+  // Responded corrupts the LO's board. Distinct from ADVANCED_STAGE_RE, which
+  // protects deals that are too far along; this protects deals deliberately
+  // ended. Opt-out/DNC labels are included because reviving those is worse, not
+  // better. Nothing here is ever a move TARGET, only a move BLOCKER.
+  const DISQUALIFIED_STAGE_RE = /\bdnq\b|do(es)?\s*not\s*qualify|\bdead\b|\bdnc\b|do\s*not\s*contact|opted?\s*out|\bstop\b|no\s*text/i;
 
   // True when this prospect's current stage is an advanced deal stage that a
   // transfer must not move. Falls back to name matching when the pipeline isn't
@@ -17855,8 +17863,9 @@ ${text}`,
       try { stages = await getPipelineStages(snap.pipelineId); } catch { stages = []; }
     }
     const advanced = isAdvancedStage(snap.stageName, stages, snap.stageId);
+    const disqualified = DISQUALIFIED_STAGE_RE.test(String(snap.stageName ?? ""));
     const alreadyThere = wantStageRe.test(String(snap.stageName ?? ""));
-    const shouldMove = !advanced && !alreadyThere;
+    const shouldMove = !advanced && !disqualified && !alreadyThere;
     let moved = "none";
     if (shouldMove) {
       // An explicit per-LO stage id wins — it pins the destination even if the
@@ -17916,16 +17925,16 @@ ${convo}`);
         noted = `failed:${String(e?.message ?? e).slice(0, 120)}`;
       }
     }
-    // Leave a note on the prospect when we deliberately did NOT move an advanced
-    // deal, so the LO can see the transfer was logged and why the stage stands.
-    if (advanced) {
+    // Leave a note on the prospect when we deliberately did NOT move the stage,
+    // so the LO can see the transfer was logged and why the stage stands.
+    if (advanced || disqualified) {
       try {
-        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (App Taken→Funded deals are not moved back).`);
+        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (${disqualified ? "disqualified leads are never revived by C3" : "App Taken→Funded deals are not moved back"}).`);
       } catch { /* note is best-effort */ }
     }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} disqualified=${disqualified} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag
