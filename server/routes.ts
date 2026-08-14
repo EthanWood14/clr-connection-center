@@ -2048,8 +2048,11 @@ cron.schedule("0 4 * * *", () => {
 
 // Comp reminders: nudge the approver about requests still not accepted (pending)
 // or not paid (approved + unpaid). First reminder at 3 days, then every 6 days.
-// Runs daily at 5am UTC.
-cron.schedule("0 5 * * *", async () => {
+// TWICE A WEEK, not nightly (owner 2026-08-14): per-request pacing still staggered the due dates so some
+// group came due almost every night, and the approver got a digest daily. Mondays and Thursdays 5am UTC
+// batches everything due into two emails a week. A brand-new request still sends its own approval email
+// immediately on submit, so nothing waits on this schedule to be seen.
+cron.schedule("0 5 * * 1,4", async () => {
   try {
     const settings = storageExtra.getEmailSettings() as any;
     const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
@@ -2926,15 +2929,14 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
 
   for (const org of orgs) {
     // Get CLRs: role=assistant OR (role=admin AND is_clr=1), active, in this org
+    // Admins are excluded (owner 2026-08-14): an admin flagged is_clr still shows on CLR reports, but they
+    // do not work a call list, so nagging them for a daily EOD produced only noise. Assistants/CLRs unchanged.
     const clrs: Array<{ id: number; name: string; email: string; created_at: string }> = sqlite.prepare(`
       SELECT id, name, email, created_at
       FROM users
       WHERE is_active = 1
         AND org_id = ?
-        AND (
-          role = 'assistant'
-          OR (role = 'admin' AND is_clr = 1)
-        )
+        AND role = 'assistant'
     `).all(org.id) as any[];
 
     if (!clrs.length) continue;
@@ -15571,7 +15573,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         ...managerRecipients.filter((m: string) => m !== clrEmail),
       ];
 
-      if (allRecipients.length > 0) {
+      // EMPTY REPORTS ARE NOT NEWS (owner 2026-08-14, "why am I getting so many emails"): a report with no
+      // calls, transfers, appointments, fell-throughs, messages or notes carries nothing anyone acts on —
+      // it is usually filed just to clear the reminder. Record it, but do not mail it to anybody.
+      const _eodEmpty = Number(callsNum ?? 0) === 0
+        && Number(transfers ?? 0) === 0
+        && Number(appointments ?? 0) === 0
+        && Number(messagesNum ?? 0) === 0
+        && Number(additionalConversationsNum ?? 0) === 0
+        && !String(notes ?? "").trim();
+
+      if (allRecipients.length > 0 && !_eodEmpty) {
         const calls = callsNum;
         const conversations = importedActivity.conversations + additionalConversationsNum;
         const activeMinutes = Math.round(importedActivity.activeSeconds / 60);
