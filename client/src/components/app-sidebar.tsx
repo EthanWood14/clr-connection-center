@@ -209,7 +209,6 @@ const toolItems: NavItem[] = [
   { title: "State Lookup",    url: "/state-lookup",   icon: MapPin },
   { title: "Call Hours",      url: "/call-hours",     icon: Clock },
   { title: "Install App",     url: "/install",        icon: Smartphone },
-  { title: "Shark Tank",      url: "/shark-tank",     icon: Fish },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
 ];

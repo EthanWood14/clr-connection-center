@@ -64,7 +64,6 @@ import OutboundCalls from "@/pages/outbound-calls";
 import Contacts from "@/pages/contacts";
 import MojoImport from "@/pages/mojo-import";
 import Forum from "@/pages/forum";
-import SharkTank from "@/pages/shark-tank";
 import LeadSources from "@/pages/lead-sources";
 import CheckIns from "@/pages/check-ins";
 import ClrProfiles from "@/pages/clr-profiles";
@@ -137,7 +136,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/contacts":         "Contact Hub",
   "/mojo-import":      "Mojo Import",
   "/forum":            "Forum",
-  "/shark-tank":       "Shark Tank",
   "/lead-sources":     "Lead Sources",
   "/check-ins":        "Check-In",
   "/clr-profiles":     "CLR Profiles",
@@ -194,7 +192,6 @@ function AppRouter() {
       <Route path="/contacts" component={Contacts} />
       <Route path="/mojo-import" component={MojoImport} />
       <Route path="/forum" component={Forum} />
-      <Route path="/shark-tank" component={SharkTank} />
       <Route path="/lead-sources" component={LeadSources} />
       <Route path="/check-ins" component={CheckIns} />
       <Route path="/clr-profiles" component={ClrProfiles} />

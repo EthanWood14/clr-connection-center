@@ -26,7 +26,6 @@ import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-det
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
-import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import {
@@ -2015,26 +2014,6 @@ cron.schedule("0 8 * * *", () => {
     console.log("[backup] Daily backup complete");
   } catch (e) { console.error("[backup] Daily backup error:", e); }
 });
-
-// ── Shark Tank pool sync (pulled from LeadVault) ──────────────────────────────
-// Refresh the cold-lead calling pool once a day so opt-outs (STOP) and
-// responders — which drop out of LeadVault's scrubbed feed — get pruned out of
-// the CLR pool within 24h. 3:30 AM PT, after LeadVault's overnight opt-out
-// sweeps. Also runs ~90s after boot if the pool has never synced.
-cron.schedule("30 3 * * *", () => {
-  runSharkTankSync("cron").catch((e) => console.error("[shark-tank-sync] cron error:", e));
-}, { timezone: "America/Los_Angeles" });
-
-if (sharkTankSyncConfigured()) {
-  setTimeout(() => {
-    try {
-      const meta = storageExtra.getSharkTankSyncMeta();
-      if (!meta || !meta.lastRunAt) {
-        runSharkTankSync("boot").catch((e) => console.error("[shark-tank-sync] boot error:", e));
-      }
-    } catch (e) { console.error("[shark-tank-sync] boot check error:", e); }
-  }, 90_000);
-}
 
 // Purge comp-request attachments older than ~1 year (retention policy). Runs
 // daily at 4am UTC.
@@ -17380,57 +17359,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const contact = storageExtra.getUnifiedContactById(id);
     if (!contact) return res.status(404).json({ error: "Contact not found" });
     res.json(contact);
-  });
-
-  // ── Shark Tank pool (read-only mirror, synced daily from LeadVault) ───────
-  // Cold, re-workable mortgage leads already scrubbed of opt-outs, responders,
-  // engaged stages, CA/CO, and the out-of-inquiry-window by the source feed.
-  app.get("/api/shark-tank/leads", requireAuth, (req: any, res) => {
-    const q = req.query ?? {};
-    const result = storageExtra.getSharkTankLeads({
-      search: typeof q.search === "string" ? q.search : undefined,
-      state: typeof q.state === "string" ? q.state : undefined,
-      bucket: typeof q.bucket === "string" ? q.bucket : undefined,
-      sort: typeof q.sort === "string" ? q.sort : undefined,
-      limit: q.limit ? Number(q.limit) : 100,
-      offset: q.offset ? Number(q.offset) : 0,
-    });
-    res.json(result);
-  });
-
-  // CSV export of the (filtered) pool. Priority-sorted by default so the top of
-  // the file is whoever has gone longest without a touch — never-contacted
-  // leads first. Managers/admins only (it's lead PII leaving the app).
-  app.get("/api/shark-tank/export", requireAuth, (req: any, res) => {
-    if (!requireManagerOrAdmin(req, res)) return;
-    const q = req.query ?? {};
-    const rows = storageExtra.getSharkTankLeadsForExport({
-      search: typeof q.search === "string" ? q.search : undefined,
-      state: typeof q.state === "string" ? q.state : undefined,
-      bucket: typeof q.bucket === "string" ? q.bucket : undefined,
-      sort: typeof q.sort === "string" ? q.sort : "priority",
-    });
-    const csv = toCsv(
-      ["Borrower", "Phone", "City", "State", "Loan Purpose", "Owner", "Stage", "Bucket", "Lead Created", "Last Contacted", "Never Contacted"],
-      rows.map((r: any) => [
-        r.borrowerName || "", r.phone || "", r.city || "", r.state || "",
-        r.loanPurpose || "", r.ownerName || "", r.stage || "", r.bucket || "",
-        r.sourceCreatedAt || "", r.lastContactedAt || "", r.lastContactedAt ? "no" : "yes",
-      ]),
-    );
-    sendCsv(res, `shark_tank_${todayIso()}.csv`, csv);
-  });
-
-  // Sync status (last run / count / errors) + whether the feed token is set.
-  app.get("/api/shark-tank/meta", requireAuth, (_req: any, res) => {
-    res.json({ sync: storageExtra.getSharkTankSyncMeta(), configured: sharkTankSyncConfigured() });
-  });
-
-  // Manager/admin can force an out-of-band refresh (otherwise it's a daily cron).
-  app.post("/api/shark-tank/sync", requireAuth, async (req: any, res) => {
-    if (!requireManagerOrAdmin(req, res)) return;
-    const out = await runSharkTankSync("manual");
-    res.json(out);
   });
 
   // ── CSV import route ─────────────────────────────────────────────────────

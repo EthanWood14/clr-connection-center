@@ -146,7 +146,7 @@ Required in prod: `DATABASE_PATH=/data/clr.db`, `SESSION_SECRET`, `NODE_ENV=prod
 
 Integrations (set as needed; features degrade gracefully if absent):
 `RESEND_API_KEY` (email), `BONZO_API_TOKEN` / `BONZO_API_BASE` (Bonzo CRM),
-`TRANSFER_API_TOKEN`, `CLR_SHARK_FEED_TOKEN`, `LEADVAULT_BASE_URL` /
+`TRANSFER_API_TOKEN`, `LEADVAULT_BASE_URL` /
 `LEADVAULT_REPORTING_TOKEN`, `EMAIL_SEND_DELAY_MS` (default 30000),
 `GIPHY_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`,
 `BOOTSTRAP_TOKEN`. Web-push VAPID keys live in the DB, not env.
