@@ -31,7 +31,7 @@ test("Chris's suffix uses the capital-I separator; others keep the CLR form", ()
 });
 
 test("transfers reassign the prospect to the C3 transferee", () => {
-  assert.match(sync, /reassignProspect\(prospectId, bonzoUserId\)/);
+  assert.match(sync, /reassignProspect\(prospectId, bonzoUserId, bonzoUserEmail\)/);
   assert.match(sync, /snap\.assignedTo !== bonzoUserId/, "no-op when already assigned right");
   // The stage decision must see the post-reassignment pipeline, not the old one.
   assert.ok(
@@ -94,4 +94,32 @@ test("an explicit per-LO stage id beats name resolution", () => {
   );
   assert.match(mv, /snap\.stageId !== overrideStageId/, "already-in-target must not re-move");
   assert.match(mv, /already_in_target/);
+});
+
+test("cross-team reassignment falls back to the email endpoint", () => {
+  // Verified live 2026-08-14: PUT assigned_to 422s across teams ("This person
+  // doesn't belong to your team") on every token, and the 200s for other field
+  // names were Bonzo silently ignoring unknown keys. The working route is
+  // POST /prospects/{id}/reassign { user_email } under the org token — it moves
+  // the business entity with the assignee, which also resets the pipeline.
+  const fn = bonzo.slice(bonzo.indexOf("export async function reassignProspect"), bonzo.indexOf("export async function getProspectNotes"));
+  assert.match(fn, /\/reassign`/);
+  assert.match(fn, /user_email: userEmail/);
+  assert.match(fn, /orgToken\(\)/, "the cross-team call runs under the org token");
+  assert.ok(fn.indexOf("assigned_to: bonzoUserId") < fn.indexOf("/reassign`"),
+    "same-team PUT stays the fast path");
+  assert.match(fn, /now === bonzoUserId/, "both paths verify by read-back");
+  // The sync learns the email the same way it learns the id.
+  assert.match(sync, /SET bonzo_user_email=\? WHERE id=\? AND bonzo_user_email IS NULL/);
+  assert.match(sync, /reassignProspect\(prospectId, bonzoUserId, bonzoUserEmail\)/);
+});
+
+test("transfer notes post to Bonzo once, never twice", () => {
+  assert.match(sync, /getProspectNotes\(prospectId\)/);
+  assert.match(sync, /normalize\(n\.content\)\.includes\(want\)/,
+    "a CLR's manual paste of the same text must suppress the auto-note");
+  assert.match(sync, /C3 transfer notes \(CLR /);
+  assert.match(sync, /duplicate_skipped/);
+  // Empty conversation notes post nothing.
+  assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
 });

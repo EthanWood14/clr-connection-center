@@ -28,6 +28,18 @@ export function bonzoConfigured(): boolean {
   return token().length > 0;
 }
 
+// The ORG-level token (an RSU/manager seat). Cross-TEAM reassignment goes
+// through POST /prospects/{id}/reassign, and that call runs under this token;
+// everything else stays on the standard token. Falls back to the standard
+// token when no org token is stored.
+function orgToken(): string {
+  try {
+    const s = getWebhookSettings() as any;
+    if (s?.bonzo_org_token) return String(s.bonzo_org_token).trim();
+  } catch {}
+  return token();
+}
+
 async function req(method: string, path: string, body?: any): Promise<{ status: number; ok: boolean; json: any }> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 25_000);
@@ -174,7 +186,7 @@ export async function getProspectAssignee(prospectId: number): Promise<number | 
 export async function getProspectSnapshot(prospectId: number): Promise<{
   firstName: string; lastName: string; tags: string[];
   pipelineId: number | null; stageId: number | null; stageName: string | null;
-  assignedTo: number | null; assignedUserName: string | null;
+  assignedTo: number | null; assignedUserName: string | null; assignedUserEmail: string | null;
 } | null> {
   const r = await req("GET", `/prospects/${prospectId}`);
   const d = r.json?.data ?? r.json;
@@ -189,17 +201,64 @@ export async function getProspectSnapshot(prospectId: number): Promise<{
     stageName: d.pipeline_stage?.name != null ? String(d.pipeline_stage.name) : null,
     assignedTo: d.assigned_to != null ? Number(d.assigned_to) : null,
     assignedUserName: d.assigned_user?.name != null ? String(d.assigned_user.name) : null,
+    assignedUserEmail: d.assigned_user?.email != null ? String(d.assigned_user.email) : null,
   };
 }
 
-// Reassign a prospect to another Bonzo user. PUT accepts assigned_to — the
-// same call BrokerBot's [SEND PROSPECT] transfer uses in production. Read back
-// because a 200 from this API has been observed elsewhere to not persist.
-export async function reassignProspect(prospectId: number, bonzoUserId: number): Promise<{ ok: boolean; verified: boolean; error?: string }> {
+// Reassign a prospect to another Bonzo user.
+//
+// Two mechanisms, verified live 2026-08-14:
+// - Same team: PUT /prospects/{id} { assigned_to } works.
+// - Cross TEAM: that PUT 422s ("This person doesn't belong to your team")
+//   regardless of token. The real route is POST /prospects/{id}/reassign
+//   { user_email }, run under the org token — it moves the prospect's business
+//   entity along with the assignee (which also resets its pipeline).
+// Every path is read-back verified; 200s from this API do not prove anything.
+export async function reassignProspect(
+  prospectId: number,
+  bonzoUserId: number,
+  userEmail?: string | null,
+): Promise<{ ok: boolean; verified: boolean; via: "assigned_to" | "reassign_email" | "none"; error?: string }> {
   const r = await req("PUT", `/prospects/${prospectId}`, { assigned_to: bonzoUserId });
-  if (!r.ok) return { ok: false, verified: false, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };
-  const now = await getProspectAssignee(prospectId);
-  return { ok: true, verified: now === bonzoUserId };
+  if (r.ok) {
+    const now = await getProspectAssignee(prospectId);
+    if (now === bonzoUserId) return { ok: true, verified: true, via: "assigned_to" };
+  }
+  const firstError = `${r.status} ${JSON.stringify(r.json).slice(0, 160)}`;
+  if (!userEmail) {
+    return { ok: r.ok, verified: false, via: r.ok ? "assigned_to" : "none", error: firstError };
+  }
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 25_000);
+  try {
+    const res = await fetch(`${BASE}/prospects/${prospectId}/reassign`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${orgToken()}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_email: userEmail }),
+      signal: ctrl.signal,
+    });
+    let json: any = null;
+    try { json = await res.json(); } catch {}
+    if (!res.ok) return { ok: false, verified: false, via: "reassign_email", error: `${res.status} ${JSON.stringify(json).slice(0, 160)}` };
+    const now = await getProspectAssignee(prospectId);
+    return { ok: true, verified: now === bonzoUserId, via: "reassign_email" };
+  } catch (e: any) {
+    return { ok: false, verified: false, via: "reassign_email", error: String(e?.message ?? e) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// The prospect's note feed — used to avoid double-posting transfer notes when a
+// CLR has already pasted the same text by hand.
+export async function getProspectNotes(prospectId: number): Promise<{ id: number; content: string }[]> {
+  const r = await req("GET", `/prospects/${prospectId}/notes`);
+  const list = Array.isArray(r.json?.data) ? r.json.data : Array.isArray(r.json) ? r.json : [];
+  return list.map((n: any) => ({ id: Number(n?.id), content: String(n?.content ?? "") })).filter((n: any) => Number.isFinite(n.id));
 }
 
 // Move a prospect into a pipeline stage.

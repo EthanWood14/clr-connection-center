@@ -27,7 +27,7 @@ import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } f
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import {
   evaluateCheckinIp,
@@ -17809,10 +17809,20 @@ ${text}`,
         console.log(`[bonzo-transfer] learned bonzo_user_id=${bonzoUserId} for LO "${lo.fullName}" from prospect ${prospectId}`);
       } catch { /* learning is best-effort */ }
     }
+    // The email is what the cross-team endpoint keys on. Learned the same way
+    // the id is: from a prospect already sitting on this LO's seat.
+    let bonzoUserEmail: string | null = lo?.bonzoUserEmail ?? lo?.bonzo_user_email ?? null;
+    if (lo && bonzoUserId != null && snap.assignedTo === bonzoUserId && !bonzoUserEmail && snap.assignedUserEmail) {
+      bonzoUserEmail = snap.assignedUserEmail;
+      try {
+        db.prepare(`UPDATE loan_officers SET bonzo_user_email=? WHERE id=? AND bonzo_user_email IS NULL`).run(bonzoUserEmail, lo.id);
+        console.log(`[bonzo-transfer] learned bonzo_user_email for LO "${lo.fullName}"`);
+      } catch { /* learning is best-effort */ }
+    }
     let reassigned = "not_needed";
     if (bonzoUserId != null && snap.assignedTo !== bonzoUserId) {
-      const r = await reassignProspect(prospectId, bonzoUserId);
-      reassigned = !r.ok ? `failed:${r.error}` : r.verified ? "verified" : "unverified";
+      const r = await reassignProspect(prospectId, bonzoUserId, bonzoUserEmail);
+      reassigned = !r.ok ? `failed:${r.error}` : r.verified ? `verified:${r.via}` : `unverified:${r.via}${r.error ? `:${r.error}` : ""}`;
       if (r.ok) {
         // Reassignment can change which pipeline the prospect sits in — refresh
         // before making any stage decision.
@@ -17871,6 +17881,29 @@ ${text}`,
       const r = await updateProspect(prospectId, updates);
       if (!r.ok) { console.error(`[bonzo-transfer] outcome=${outcomeId}: update failed: ${r.error}`); return; }
     }
+    // Post the transfer's conversation notes (the Lead Card block) to Bonzo so
+    // the LO sees them without the CLR pasting by hand. Skipped when any
+    // existing note already contains the same text — CLRs still can (and some
+    // will) paste manually, and the trail must not show it twice.
+    let noted = "none";
+    const convo = String(o.conversation_notes ?? "").trim();
+    if (convo) {
+      try {
+        const normalize = (t: string) => t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+        const want = normalize(convo);
+        const existing = await getProspectNotes(prospectId);
+        const dupe = existing.some((n) => normalize(n.content).includes(want));
+        if (dupe) {
+          noted = "duplicate_skipped";
+        } else {
+          const n = await addProspectNote(prospectId, `📋 C3 transfer notes (CLR ${clrFirst || "?"}):
+${convo}`);
+          noted = n.ok ? "posted" : `failed:${n.error}`;
+        }
+      } catch (e: any) {
+        noted = `failed:${String(e?.message ?? e).slice(0, 120)}`;
+      }
+    }
     // Leave a note on the prospect when we deliberately did NOT move an advanced
     // deal, so the LO can see the transfer was logged and why the stage stands.
     if (advanced) {
@@ -17880,7 +17913,7 @@ ${text}`,
     }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} moved=${moved} renamed=${"last_name" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag

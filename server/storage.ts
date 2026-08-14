@@ -655,6 +655,9 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // listing, so the mover cannot resolve the stage by name — Chris Redoble's
   // personal pipeline (13553, "HOT TRANSFER" = 428447) is exactly that case.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_transfer_stage_id INTEGER`); } catch {}
+  // The Bonzo user email for this LO — POST /prospects/{id}/reassign keys on
+  // email, and it is the only call that moves a prospect across TEAMS.
+  try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_email TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN reduced_odds INTEGER NOT NULL DEFAULT 0`); } catch {}
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}
@@ -2690,6 +2693,7 @@ function runNewMigrations() {
 
   // webhook_settings: add integration API tokens
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN bonzo_api_token TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN bonzo_org_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN mojo_api_key TEXT`); } catch {}
   // webhook_settings: LeadVault reporting token (outbound call summary feed)
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN leadvault_reporting_token TEXT`); } catch {}
