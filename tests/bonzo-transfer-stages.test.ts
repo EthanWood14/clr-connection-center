@@ -79,3 +79,19 @@ test("both new Bonzo writes verify by read-back", () => {
   assert.match(mv, /pipeline-stage\/\$\{stageId\}/, "the one endpoint the 2026-07-21 probe missed");
   assert.match(mv.slice(0, 800), /verified: snap\?\.stageId === Number\(stageId\)/);
 });
+
+test("an explicit per-LO stage id beats name resolution", () => {
+  // /pipelines does not list every seat's pipeline — Chris's personal pipeline
+  // (13553) is absent even though his prospects prove its HOT TRANSFER stage
+  // (428447) exists. The seeded id sidesteps the listing entirely.
+  assert.match(readFileSync(join(root, "server/storage.ts"), "utf8"),
+    /ALTER TABLE loan_officers ADD COLUMN bonzo_transfer_stage_id INTEGER/);
+  const mv = sync.slice(sync.indexOf('let moved = "none"'), sync.indexOf("// ── 3. Rename"));
+  assert.match(mv, /bonzoTransferStageId \?\? lo\?\.bonzo_transfer_stage_id/);
+  assert.ok(
+    mv.indexOf("overrideStageId") < mv.indexOf("stages.find"),
+    "the explicit id is consulted before name matching",
+  );
+  assert.match(mv, /snap\.stageId !== overrideStageId/, "already-in-target must not re-move");
+  assert.match(mv, /already_in_target/);
+});

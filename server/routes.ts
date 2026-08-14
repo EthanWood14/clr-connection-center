@@ -17717,10 +17717,11 @@ ${text}`,
   // (anything App Taken → Funded stays put), and never move a prospect already
   // sitting in the target stage.
   const CLR_MOVE_RESPONDED_TAG = "clrmoveresponded";
-  // Chris's automation tag. NOTE: as of 2026-08-13 no visible pipeline in the
-  // org has a "Hot Transfers" stage, so until that stage exists (plus a Bonzo
-  // automation on this tag), Chris's moves neither resolve directly nor fire an
-  // automation — the tag still lands, so the intent is recorded either way.
+  // Chris's automation tag — the fallback when no stage resolves. His personal
+  // pipeline (13553) is invisible to the org token's /pipelines listing but DOES
+  // have a "HOT TRANSFER" stage (428447, confirmed 2026-08-14 from prospects
+  // sitting in it); loan_officers.bonzo_transfer_stage_id carries that id, so
+  // his moves normally go direct and this tag is belt-and-braces.
   const CLR_MOVE_HOT_TAG = "clrmovehottransfers";
   const HOT_TRANSFERS_STAGE_RE = /hot\s*transfer/i;
   // Deal stages that must never be moved back, by name. Used both to bound the
@@ -17835,11 +17836,22 @@ ${text}`,
     const shouldMove = !advanced && !alreadyThere;
     let moved = "none";
     if (shouldMove) {
-      const target = stages.find((s) => wantStageRe.test(s.name));
+      // An explicit per-LO stage id wins. Name resolution reads the /pipelines
+      // listing, which does NOT include every seat's pipeline — Chris's personal
+      // pipeline is invisible there, though his prospects prove the stage
+      // exists. The seeded id sidesteps the listing entirely.
+      const overrideStageId = Number(lo?.bonzoTransferStageId ?? lo?.bonzo_transfer_stage_id) || null;
+      const target = overrideStageId != null && snap.stageId !== overrideStageId
+        ? { id: overrideStageId, name: isChris ? "Hot Transfers" : "target stage" }
+        : overrideStageId != null
+        ? null // already sitting in the override stage
+        : stages.find((s) => wantStageRe.test(s.name));
       if (target) {
         const r = await moveProspectStage(prospectId, target.id);
         moved = !r.ok ? `failed:${r.error}` : r.verified ? `direct:"${target.name}"` : `direct_unverified:"${target.name}"`;
         if (!r.ok) console.error(`[bonzo-transfer] outcome=${outcomeId}: stage move to "${target.name}" failed: ${r.error}`);
+      } else if (overrideStageId != null) {
+        moved = "already_in_target";
       } else {
         moved = "tagged"; // resolved below via the automation tag
       }

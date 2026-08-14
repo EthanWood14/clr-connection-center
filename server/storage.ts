@@ -650,6 +650,11 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // prospect to them. Seeded from BrokerBot's mapping; self-learned thereafter
   // when a prospect already on their seat confirms the id by display name.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_id INTEGER`); } catch {}
+  // Explicit Bonzo stage id a transfer should land this LO's prospects in.
+  // Needed when the LO's pipeline is not visible to the org token's /pipelines
+  // listing, so the mover cannot resolve the stage by name — Chris Redoble's
+  // personal pipeline (13553, "HOT TRANSFER" = 428447) is exactly that case.
+  try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_transfer_stage_id INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN reduced_odds INTEGER NOT NULL DEFAULT 0`); } catch {}
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}
