@@ -540,6 +540,14 @@ export default function EodReport() {
         </div>
       </div>
 
+      {/* Filling a PAST day (usually straight from a reminder) — say which day
+          loudly, so nobody types Wednesday's numbers into the wrong date. */}
+      {!isToday && !isFuture && !report && (
+        <div className="no-print rounded-lg border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2.5 text-sm font-medium text-amber-900 dark:text-amber-200" data-testid="past-day-banner">
+          You&apos;re filling the report for <span className="font-bold">{displayDate}</span> — not today.
+        </div>
+      )}
+
       {isFuture ? (
         <Card className="no-print">
           <CardContent className="py-12 text-center text-sm text-muted-foreground">

@@ -2837,6 +2837,17 @@ function purgeSubmittedEodReminders() {
   } catch {}
 }
 
+// "Wednesday, Aug 13" — a reminder about a PAST day must say which day it
+// means. A bare "2026-08-13" reads as noise at a glance, and "yesterday" would
+// be wrong by the time a Monday reminder covers Friday.
+function eodDayLabel(reportDate: string): string {
+  try {
+    return new Date(`${reportDate}T12:00:00Z`).toLocaleDateString("en-US", {
+      weekday: "long", month: "short", day: "numeric", timeZone: "UTC",
+    });
+  } catch { return reportDate; }
+}
+
 function buildEodReminderHtml({
   clrName, reportDate, daysLate, sendCount, appUrl,
 }: { clrName: string; reportDate: string; daysLate: number; sendCount: number; appUrl: string }): string {
@@ -2864,7 +2875,7 @@ function buildEodReminderHtml({
         <!-- Alert bar -->
         <tr><td style="background:${urgencyColor};padding:12px 32px">
           <p style="margin:0;font-size:13px;font-weight:600;color:#ffffff">
-            EOD Report Missing — ${reportDate} (${dayLabel} ago)
+            EOD Report Missing — ${eodDayLabel(reportDate)} (${dayLabel} ago)
           </p>
         </td></tr>
         <!-- Body -->
@@ -2990,10 +3001,10 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
         const toEmail = isTest && opts?.testEmail ? opts.testEmail : clr.email;
 
         const subject = sendCount === 1
-          ? `📋 EOD Report Reminder — ${reportDate}`
+          ? `📋 EOD Report Reminder — ${eodDayLabel(reportDate)}`
           : sendCount === 2
-          ? `🔔 Follow-up: EOD Report Still Missing — ${reportDate}`
-          : `⚠️ Overdue EOD Report — ${reportDate} (${sendCount}th reminder)`;
+          ? `🔔 Follow-up: EOD Report Still Missing — ${eodDayLabel(reportDate)}`
+          : `⚠️ Overdue EOD Report — ${eodDayLabel(reportDate)} (${sendCount}th reminder)`;
 
         try {
           // Immediate (not deferred): the eod_reminder_log upsert below must only
