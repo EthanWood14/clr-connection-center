@@ -210,9 +210,10 @@ export async function getProspectSnapshot(prospectId: number): Promise<{
 // Two mechanisms, verified live 2026-08-14:
 // - Same team: PUT /prospects/{id} { assigned_to } works.
 // - Cross TEAM: that PUT 422s ("This person doesn't belong to your team")
-//   regardless of token. The real route is POST /prospects/{id}/reassign
-//   { user_email }, run under the org token — it moves the prospect's business
-//   entity along with the assignee (which also resets its pipeline).
+//   regardless of token — including the org token. The real route is
+//   POST /prospects/{id}/reassign { user_email }, run under the org token — it
+//   moves the prospect's business entity along with the assignee (which also
+//   resets its pipeline, so a stage move must come after).
 // Every path is read-back verified; 200s from this API do not prove anything.
 export async function reassignProspect(
   prospectId: number,
@@ -277,14 +278,27 @@ export async function moveProspectStage(prospectId: number, stageId: number): Pr
 
 // The ordered stage list for a pipeline, or [] when the token can't see it
 // (pipelines are per-seat: an org token only sees its own LOs' pipelines).
+// ⚠️ /pipelines is PAGINATED and the default page is 25. The account has 402
+// pipelines (17 default pages) as of 2026-08-14 — reading only page one hid 94%
+// of them, so stage resolution found nothing and every transfer on a pipeline
+// outside that first page silently fell back to the automation tag. Page through
+// at per_page=100 and stop as soon as the pipeline is found.
 export async function getPipelineStages(pipelineId: number): Promise<{ id: number; name: string; order: number }[]> {
-  const r = await req("GET", `/pipelines`);
-  const list = Array.isArray(r.json?.data) ? r.json.data : [];
-  const p = list.find((x: any) => Number(x?.id) === Number(pipelineId));
-  const stages = Array.isArray(p?.stages) ? p.stages : [];
-  return stages
-    .map((s: any) => ({ id: Number(s.id), name: String(s.name ?? ""), order: Number(s.order ?? 0) }))
-    .sort((a: any, b: any) => a.order - b.order);
+  const want = Number(pipelineId);
+  for (let page = 1; page <= 25; page++) {
+    const r = await req("GET", `/pipelines?per_page=100&page=${page}`);
+    const list = Array.isArray(r.json?.data) ? r.json.data : [];
+    const p = list.find((x: any) => Number(x?.id) === want);
+    if (p) {
+      const stages = Array.isArray(p.stages) ? p.stages : [];
+      return stages
+        .map((s: any) => ({ id: Number(s.id), name: String(s.name ?? ""), order: Number(s.order ?? 0) }))
+        .sort((a: any, b: any) => a.order - b.order);
+    }
+    const lastPage = Number(r.json?.meta?.last_page ?? 1);
+    if (!r.ok || !list.length || page >= lastPage) break;
+  }
+  return [];
 }
 
 // PUT /prospects/{id} — partial update with FLAT keys (PATCH is rejected).

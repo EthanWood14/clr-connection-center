@@ -123,3 +123,17 @@ test("transfer notes post to Bonzo once, never twice", () => {
   // Empty conversation notes post nothing.
   assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
 });
+
+test("stage lookup pages through every pipeline, not just the first 25", () => {
+  // The account has 402 pipelines; /pipelines defaults to 25 per page (17
+  // pages). Reading only page one hid 94% of them, so stage resolution found
+  // nothing and transfers fell back to the tag. Verified live 2026-08-14: the
+  // target pipelines for stuck transfers sat on pages 3 and 4.
+  const fn = bonzo.slice(bonzo.indexOf("export async function getPipelineStages"), bonzo.indexOf("// PUT /prospects/{id}"));
+  assert.match(fn, /per_page=100&page=\$\{page\}/, "must request large pages explicitly");
+  assert.match(fn, /meta\?\.last_page/, "must follow pagination to the last page");
+  assert.match(fn, /for \(let page = 1/, "must loop, not fetch once");
+  assert.ok(!/req\("GET", `\/pipelines`\)/.test(fn), "the unpaginated single fetch must be gone");
+  // Returns as soon as the pipeline is found — no need to read all 17 pages.
+  assert.ok(fn.indexOf("if (p) {") < fn.indexOf("lastPage"), "early return before the page-advance check");
+});
