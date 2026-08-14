@@ -23,6 +23,7 @@ import { npaToState } from "./npa-state";
 import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-stats";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
+import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { runSharkTankSync, sharkTankSyncConfigured } from "./shark-tank-sync";
@@ -12772,6 +12773,105 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Manager-only manual trigger, so the digest can be proven end-to-end without
   // waiting for 10am.
+  // ── Transfer Scorecard digests ──────────────────────────────────────────────
+  // Four scheduled snapshots to every manager: mid-day and end-of-day covering
+  // that day, mid-week and end-of-week covering week-to-date. Same numbers and
+  // the same ranking as the dashboard scorecard, so the email and the screen
+  // can never disagree about who is on top.
+
+  function buildScorecardDigestRows(orgId: number, from: string, to: string) {
+    const sqlite = storageExtra.getRawSqlite();
+    const clrs = (storage.getUsers() as any[])
+      .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const outcomes = sqlite.prepare(
+      `SELECT assistant_id, outcome_type FROM lead_outcomes WHERE org_id=? AND date >= ? AND date <= ?`,
+    ).all(orgId, from, to) as any[];
+    const callsByUser = new Map<number, number>();
+    for (const r of sqlite.prepare(
+      `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS c FROM daily_call_logs
+        WHERE org_id=? AND log_date >= ? AND log_date <= ? GROUP BY assistant_id`,
+    ).all(orgId, from, to) as any[]) callsByUser.set(Number(r.assistant_id), Number(r.c) || 0);
+    const activity = callSyncActivityByUser(from, to);
+    return clrs.map((u) => {
+      const mine = outcomes.filter((o) => Number(o.assistant_id) === Number(u.id));
+      const count = (t: string) => mine.filter((o) => o.outcome_type === t).length;
+      return {
+        name: String(u.name ?? ""),
+        calls: (callsByUser.get(Number(u.id)) ?? 0) + (activity.get(Number(u.id))?.calls ?? 0),
+        transfers: count("transfer"),
+        appointments: count("appointment"),
+        fellThrough: count("fell_through"),
+      };
+    });
+  }
+
+  async function sendScorecardDigest(orgId: number, kind: ScorecardDigestKind): Promise<"sent" | "skipped"> {
+    // Plain PT calendar date, NOT businessToday — the end-of-day send fires at
+    // 19:00, the exact minute the business day rolls forward, and businessToday
+    // would report tomorrow and mail an empty scorecard.
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ });
+    const w = scorecardWindow(kind, today);
+    const rows = buildScorecardDigestRows(orgId, w.from, w.to);
+    // Nothing happened — a table of zeros teaches nobody anything.
+    if (!rows.some((r) => r.calls || r.transfers || r.appointments || r.fellThrough)) return "skipped";
+    const managers = attendanceManagerUsers(orgId)
+      .map((m: any) => String(m.email ?? "").trim())
+      .filter((e: string) => e.includes("@"));
+    if (!managers.length) return "skipped";
+    const dateLabel = w.from === w.to ? w.from : `${w.from} → ${w.to}`;
+    const totalTransfers = rows.reduce((s, r) => s + r.transfers, 0);
+    const subject = `Transfer Scorecard — ${w.label} · ${dateLabel} (${totalTransfers} transfers)`;
+    const html = buildEmail({
+      subject,
+      preheader: `${totalTransfers} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
+      body: buildScorecardDigestHtml(w.label, dateLabel, rows),
+    });
+    await sendEmail({ to: managers, subject, html });
+    console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${totalTransfers} transfers ${w.from}..${w.to}`);
+    return "sent";
+  }
+
+  function scheduleScorecardDigest(cronExpr: string, kind: ScorecardDigestKind) {
+    cron.schedule(cronExpr, async () => {
+      try {
+        const orgs = (storageExtra.getRawSqlite()
+          .prepare(`SELECT DISTINCT org_id FROM users WHERE is_active=1 ORDER BY org_id`)
+          .all() as any[]).map((r) => Number(r.org_id)).filter(Number.isFinite);
+        for (const orgId of orgs) {
+          try {
+            const result = await runWithOrg({ orgId, superAdmin: false }, () => sendScorecardDigest(orgId, kind));
+            if (result === "skipped") console.log(`[scorecard-digest] org ${orgId} ${kind}: nothing to report`);
+          } catch (e: any) {
+            console.error(`[scorecard-digest] org ${orgId} ${kind} failed:`, e?.message ?? e);
+          }
+        }
+      } catch (e: any) {
+        console.error(`[scorecard-digest] ${kind} cron error:`, e?.message ?? e);
+      }
+    }, { timezone: "America/Los_Angeles" });
+  }
+  scheduleScorecardDigest("0 12 * * 1-5", "midday");   // noon, that day so far
+  scheduleScorecardDigest("0 19 * * 1-5", "eod");      // 7pm, the closed day
+  scheduleScorecardDigest("30 12 * * 3", "midweek");   // Wed 12:30, Mon→today (offset from the midday send)
+  scheduleScorecardDigest("10 19 * * 5", "eow");       // Fri 7:10pm, the closed week
+
+  // Manager-only manual trigger so each variant can be proven without waiting
+  // for its slot: {"kind":"midday"|"eod"|"midweek"|"eow"}.
+  app.post("/api/scorecard-digest/send-now", requireAuth, async (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const kind = String(req.body?.kind ?? "");
+    if (!["midday", "eod", "midweek", "eow"].includes(kind)) {
+      return res.status(400).json({ error: "kind must be midday, eod, midweek, or eow" });
+    }
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    try {
+      const result = await sendScorecardDigest(orgId, kind as ScorecardDigestKind);
+      res.json({ ok: true, result, kind });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Failed to send" });
+    }
+  });
+
   app.post("/api/checkin/digest/send-now", requireAuth, async (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
