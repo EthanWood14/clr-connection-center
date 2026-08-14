@@ -9559,7 +9559,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
         "followupReason", "followupDate", "leadType", "appointmentDatetime",
         "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",
-        "rescheduleDatetime", "nextSteps",
+        "rescheduleDatetime", "nextSteps", "leadSource",
       ];
       for (const k of nullableFields) body[k] = nullify(body[k]);
       body.requiresFollowup = boolToInt(body.requiresFollowup);
@@ -9762,7 +9762,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       "conversationNotes", "loActionPlan", "leadTimeframe", "requiresFollowup",
       "followupReason", "followupDate", "leadType", "appointmentDatetime",
       "leadGoal", "prequalificationNotes", "missedReason", "rescheduled",
-      "rescheduleDatetime", "nextSteps",
+      "rescheduleDatetime", "nextSteps", "leadSource",
     ];
     for (const k of nullableFields) {
       if (k in body) body[k] = nullify(body[k]);
@@ -9805,6 +9805,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         } else if (body.rescheduled === 1 || ("rescheduleDatetime" in body && body.rescheduleDatetime) || ("appointmentDatetime" in body && body.appointmentDatetime)) {
           const newDt = body.rescheduleDatetime || body.appointmentDatetime || null;
           setImmediate(() => syncAppointmentResultToBonzo(id, "rescheduled", newDt).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+        } else if ("notes" in body) {
+          // A plain notes edit — mirror it so the Bonzo record stays current.
+          setImmediate(() => syncAppointmentNotesToBonzo(id).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
         }
       }
     } catch {}
@@ -17522,6 +17525,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_task_id=?, bonzo_synced_at=? WHERE id=?`)
       .run(prospect.id, taskId, new Date().toISOString(), outcomeId);
     console.log(`[bonzo-appt] outcome=${outcomeId} → prospect=${prospect.id} task=${taskId ?? "none"} assignee=${prospect.assignedUserName ?? "?"}`);
+  }
+
+  // A notes edit on an appointment (Upcoming Appointments tab) is mirrored to
+  // Bonzo as a fresh note. Appended rather than editing the original — Bonzo
+  // notes are an activity trail, and the LO should see that the notes changed
+  // and when, not silently different text under an old timestamp.
+  async function syncAppointmentNotesToBonzo(outcomeId: number): Promise<void> {
+    if (!bonzoConfigured()) return;
+    const db = storageExtra.getRawSqlite();
+    const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
+    if (!o?.bonzo_prospect_id) return; // never mirrored — nothing to update
+    const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
+    const text = String(o.notes ?? "").trim();
+    if (!text) return; // clearing notes is not worth a Bonzo entry
+    const note = await addProspectNote(
+      o.bonzo_prospect_id,
+      `📝 Appointment notes updated in C3 by ${clr?.name ?? "a CLR"}:
+${text}`,
+    );
+    if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: notes-update note failed: ${note.error}`);
   }
 
   async function syncAppointmentResultToBonzo(outcomeId: number, result: "transferred" | "fell_through" | "rescheduled", newDatetime?: string | null): Promise<void> {

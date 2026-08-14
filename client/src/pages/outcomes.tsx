@@ -154,18 +154,7 @@ function formatFollowUp(value: string): string {
   });
 }
 
-const TIMEFRAME_OPTIONS = [
-  { value: "ready_now", label: "Ready now" },
-  { value: "1_2_weeks", label: "1-2 weeks" },
-  { value: "1_3_months", label: "1-3 months" },
-  { value: "3_6_months", label: "3-6 months" },
-  { value: "6_plus_months", label: "6+ months" },
-] as const;
 
-const LEAD_TYPE_OPTIONS = [
-  { value: "appointment_transfer", label: "Appointment Transfer" },
-  { value: "missed_appointment", label: "Missed Appointment" },
-] as const;
 
 const outcomeFormSchema = z.object({
   loaId: z.coerce.number().optional().nullable(),
@@ -195,6 +184,29 @@ const outcomeFormSchema = z.object({
   rescheduled: z.boolean().optional(),
   rescheduleDatetime: z.string().optional(),
   nextSteps: z.string().optional(),
+  // Which lead source this came in from. "other" pairs with the free-text field
+  // so a CLR can always answer even when the list doesn't fit.
+  leadSource: z.string().optional(),
+  leadSourceOther: z.string().optional(),
+  // Qualification checklist ("yes" | "no" | "") + info-gathering fields — these
+  // compose into conversationNotes on submit so everything downstream (Bonzo
+  // paste, LO handoff, reports) still sees one text block.
+  qualOwnHome: z.string().optional(),
+  qualBankruptcy: z.string().optional(),
+  qualInvestment: z.string().optional(),
+  qualCredit500: z.string().optional(),
+  qualCreditEst: z.string().optional(),
+  infoAddress: z.string().optional(),
+  infoGoal: z.string().optional(),
+  infoTakeOut: z.string().optional(),
+  infoValue: z.string().optional(),
+  infoBalance: z.string().optional(),
+  infoRate: z.string().optional(),
+  infoPayment: z.string().optional(),
+  infoIncome: z.string().optional(),
+  infoEmployment: z.string().optional(),
+  infoCreditScore: z.string().optional(),
+  infoMilitary: z.string().optional(),
 }).superRefine((val, ctx) => {
   if (val.outcomeType === "transfer" && val.transferType !== "direct" && val.transferType !== "appointment") {
     ctx.addIssue({
@@ -388,6 +400,24 @@ function OutcomeFormDialog({
       rescheduled: false,
       rescheduleDatetime: "",
       nextSteps: "",
+      leadSource: "",
+      leadSourceOther: "",
+      qualOwnHome: "",
+      qualBankruptcy: "",
+      qualInvestment: "",
+      qualCredit500: "",
+      qualCreditEst: "",
+      infoAddress: "",
+      infoGoal: "",
+      infoTakeOut: "",
+      infoValue: "",
+      infoBalance: "",
+      infoRate: "",
+      infoPayment: "",
+      infoIncome: "",
+      infoEmployment: "",
+      infoCreditScore: "",
+      infoMilitary: "",
     },
   });
 
@@ -401,17 +431,14 @@ function OutcomeFormDialog({
   const { data: helperCfg } = useQuery<{ askHelper: boolean; helperName: string }>({ queryKey: ["/api/settings/helper"] });
   const askHelper = !!helperCfg?.askHelper;
   const helperName = helperCfg?.helperName || "Elleine";
-  // Step 0 = result picker (always shown first), step 1 = details, step 2/3 = transfer wizard
+  // Step 0 = result picker (always shown first), step 1 = details, step 2 = transfer qualification
   const [step, setStep] = useState(0);
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
   const watchedBulkTexter = form.watch("bulkTexter");
   const watchedHelper = form.watch("helperAssisted");
-  const watchedRequiresFollowup = form.watch("requiresFollowup");
-  const watchedLeadType = form.watch("leadType");
-  const watchedRescheduled = form.watch("rescheduled");
   const isTransfer = watchedType === "transfer";
-  const totalSteps = isTransfer ? 3 : 1;
+  const totalSteps = isTransfer ? 2 : 1;
 
   // Clear transferType whenever outcome moves away from "transfer" so stale
   // values don't trip the superRefine on a later transfer selection.
@@ -438,8 +465,6 @@ function OutcomeFormDialog({
       const ok = await form.trigger(["date", "assistantId", "loId", "outcomeType", "transferType"]);
       if (!ok) return;
       setStep(2);
-    } else if (step === 2) {
-      setStep(3);
     }
   };
 
@@ -455,30 +480,48 @@ function OutcomeFormDialog({
   };
 
   const handleSkip = () => {
-    // Clear the fields on the current step then advance (or confirm from step 3)
+    // Clear this step's fields, then go straight to the Bonzo confirmation.
     if (step === 2) {
       form.setValue("conversationNotes", "");
-      form.setValue("leadTimeframe", "");
-      form.setValue("requiresFollowup", false);
-      form.setValue("followupReason", "");
-      form.setValue("followupDate", "");
-      setStep(3);
-    } else if (step === 3) {
-      form.setValue("leadType", "");
-      form.setValue("appointmentDatetime", "");
-      form.setValue("leadGoal", "");
-      form.setValue("prequalificationNotes", "");
-      form.setValue("missedReason", "");
-      form.setValue("rescheduled", false);
-      form.setValue("rescheduleDatetime", "");
-      form.setValue("nextSteps", "");
+      for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment", "qualCredit500", "qualCreditEst",
+        "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
+        "infoPayment", "infoIncome", "infoEmployment", "infoCreditScore", "infoMilitary"] as const) {
+        form.setValue(k, "");
+      }
       setConfirmBonzo(true);
     }
+  };
+
+  // The checklist and info fields serialize into conversationNotes, so
+  // everything downstream — the Bonzo paste, the LO handoff, reports — still
+  // sees one text block in the shape LOs already know from the call script.
+  const composeConversationNotes = (): string => {
+    const v = form.getValues();
+    const yn = (x?: string) => (x === "yes" ? "Yes" : x === "no" ? "No" : "");
+    const lines: string[] = [];
+    const src = v.leadSource === "other" ? (v.leadSourceOther || "").trim() : (v.leadSource || "");
+    if (src) lines.push(`Lead Source: ${src}`);
+    const qual: string[] = [];
+    if (v.qualOwnHome) qual.push(`Owns Home: ${yn(v.qualOwnHome)}`);
+    if (v.qualBankruptcy) qual.push(`Bankruptcy Last 6 Months: ${yn(v.qualBankruptcy)}`);
+    if (v.qualInvestment) qual.push(`Investment/2nd Home: ${yn(v.qualInvestment)}${v.qualInvestment === "yes" ? " — give to LOA Justin, Mateo, or John" : ""}`);
+    if (v.qualCredit500) qual.push(`Credit Over 500 (est): ${yn(v.qualCredit500)}${(v.qualCreditEst || "").trim() ? ` (${(v.qualCreditEst || "").trim()})` : ""}`);
+    if (qual.length) lines.push(qual.join("\n"));
+    const info: Array<[string, string | undefined]> = [
+      ["Address", v.infoAddress], ["Goal", v.infoGoal], ["Take Out", v.infoTakeOut],
+      ["Home Value", v.infoValue], ["Mortgage Balance", v.infoBalance], ["Mortgage Rate", v.infoRate],
+      ["Monthly Payment", v.infoPayment], ["Monthly Income", v.infoIncome],
+      ["W2/SE/Retired", v.infoEmployment], ["Credit Score", v.infoCreditScore], ["Military", v.infoMilitary],
+    ];
+    const filled = info.filter(([, val]) => (val || "").trim());
+    if (filled.length) lines.push(filled.map(([k, val]) => `${k}: ${String(val).trim()}`).join("\n"));
+    return lines.join("\n\n");
   };
 
   // Validate the form, then show the Bonzo question instead of logging
   // immediately. Actual submit only happens from the confirmation step.
   const handleAttemptSubmit = async () => {
+    if (isTransfer) form.setValue("conversationNotes", composeConversationNotes());
     const ok = await form.trigger();
     if (!ok) return;
     setConfirmBonzo(true);
@@ -663,6 +706,32 @@ function OutcomeFormDialog({
                 <FormMessage />
               </FormItem>
             )} />
+            <FormField control={form.control} name="leadSource" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Which lead source did this come in from?</FormLabel>
+                <Select value={field.value || ""} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger data-testid="select-lead-source"><SelectValue placeholder="Select lead source" /></SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="Retail">Retail</SelectItem>
+                    <SelectItem value="BulkTexts">BulkTexts</SelectItem>
+                    <SelectItem value="Single Dialing">Single Dialing</SelectItem>
+                    <SelectItem value="Mojo">Mojo</SelectItem>
+                    <SelectItem value="CallTools">CallTools</SelectItem>
+                    <SelectItem value="Responded">Responded</SelectItem>
+                    <SelectItem value="other">Other — type it in</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormItem>
+            )} />
+            {form.watch("leadSource") === "other" && (
+              <FormField control={form.control} name="leadSourceOther" render={({ field }) => (
+                <FormItem>
+                  <FormControl><Input {...field} placeholder="Where did this lead come from?" data-testid="input-lead-source-other" /></FormControl>
+                </FormItem>
+              )} />
+            )}
             <FormField control={form.control} name="borrowerName" render={({ field }) => (
               <FormItem>
                 <FormLabel>Borrower Name</FormLabel>
@@ -692,7 +761,7 @@ function OutcomeFormDialog({
             {/* Only show the followUpDate field when appointmentDatetime is NOT already shown.
                 For appointment/callback types, the appointmentDatetime IS the follow-up date.
                 For other types, this one field feeds the Upcoming Appointments tab. */}
-            {watchedType !== "appointment" && (
+            {watchedType !== "appointment" && !isTransfer && (
               <FormField control={form.control} name="followUpDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>
@@ -721,173 +790,80 @@ function OutcomeFormDialog({
           </>
           )}
 
-          {/* ── Step 2: Conversation Notes ───────────────────────── */}
+          {/* ── Step 2: Qualification + Info Gathering ───────────── */}
           {!confirmBonzo && isTransfer && step === 2 && (
             <>
-              <p className="text-sm font-semibold text-foreground">Conversation Notes</p>
+              <p className="text-sm font-semibold text-foreground">Qualification</p>
               <NotesPolicyNote />
-              <FormField control={form.control} name="conversationNotes" render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center justify-between gap-2">
-                    <FormLabel>Summary of conversation with lead</FormLabel>
-                    <CopyNotesButton text={field.value || ""} />
-                  </div>
-                  <FormControl><Textarea {...field} rows={3} placeholder="What did the lead say? Main questions or concerns?" /></FormControl>
-                  <p className="text-xs text-muted-foreground">What did the lead say? What were their main questions or concerns?</p>
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="leadTimeframe" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Timeframe</FormLabel>
-                  <Select value={field.value || ""} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger><SelectValue placeholder="Select timeframe" /></SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {TIMEFRAME_OPTIONS.map(t => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="requiresFollowup" render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center gap-3">
-                    <FormLabel className="mb-0">Requires follow-up?</FormLabel>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => field.onChange(true)}
-                        className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === true ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
-                      >Yes</button>
-                      <button
-                        type="button"
-                        onClick={() => field.onChange(false)}
-                        className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === false ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
-                      >No</button>
-                    </div>
-                  </div>
-                </FormItem>
-              )} />
-              {watchedRequiresFollowup === true && (
-                <div className="grid grid-cols-1 gap-3 pl-2 border-l-2 border-primary/30">
-                  <FormField control={form.control} name="followupReason" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Why follow-up needed</FormLabel>
-                      <FormControl><Textarea {...field} rows={2} placeholder="Reason for follow-up" /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="followupDate" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        Follow-up date &amp; time{" "}
-                        <span className="text-[11px] font-normal text-muted-foreground">
-                          ({Intl.DateTimeFormat().resolvedOptions().timeZone})
-                        </span>
+              {([
+                { name: "qualOwnHome" as const, label: "Do you own a home?", cue: "must be Yes" },
+                { name: "qualBankruptcy" as const, label: "Bankruptcy in the last 6 months?", cue: "should be No" },
+                { name: "qualInvestment" as const, label: "Investment property / secondary residence?", cue: "" },
+                { name: "qualCredit500" as const, label: "Credit score over 500? (est)", cue: "" },
+              ]).map(q => (
+                <FormField key={q.name} control={form.control} name={q.name} render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel className="mb-0 text-[13px] leading-snug">
+                        {q.label}
+                        {q.cue && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">({q.cue})</span>}
                       </FormLabel>
-                      <FormControl><Input type="datetime-local" {...field} /></FormControl>
-                    </FormItem>
-                  )} />
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── Step 3: Lead Information ────────────────────────── */}
-          {!confirmBonzo && isTransfer && step === 3 && (
-            <>
-              <p className="text-sm font-semibold text-foreground">Lead Information</p>
-              <FormField control={form.control} name="leadType" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Lead type</FormLabel>
-                  <Select value={field.value || ""} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger><SelectValue placeholder="Select lead type" /></SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {LEAD_TYPE_OPTIONS.map(t => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormItem>
-              )} />
-
-              {watchedLeadType === "appointment_transfer" && (
-                <>
-                  <FormField control={form.control} name="appointmentDatetime" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Appointment date & time</FormLabel>
-                      <FormControl><Input type="datetime-local" {...field} /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="leadGoal" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Lead's stated goal</FormLabel>
-                      <FormControl><Input {...field} placeholder="e.g. Buy first home, Refinance" /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="prequalificationNotes" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Any pre-qualification info?</FormLabel>
-                      <FormControl><Textarea {...field} rows={2} placeholder="Income range, credit score range, etc." /></FormControl>
-                    </FormItem>
-                  )} />
-                </>
-              )}
-
-              {watchedLeadType === "missed_appointment" && (
-                <>
-                  <FormField control={form.control} name="missedReason" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Why was the appointment missed?</FormLabel>
-                      <FormControl><Textarea {...field} rows={2} placeholder="Reason" /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="rescheduled" render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center gap-3">
-                        <FormLabel className="mb-0">Rescheduled?</FormLabel>
-                        <div className="flex gap-2">
+                      <div className="flex gap-2 shrink-0">
+                        {(["yes", "no"] as const).map(v => (
                           <button
+                            key={v}
                             type="button"
-                            onClick={() => field.onChange(true)}
-                            className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === true ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
-                          >Yes</button>
-                          <button
-                            type="button"
-                            onClick={() => field.onChange(false)}
-                            className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === false ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
-                          >No</button>
-                        </div>
+                            onClick={() => field.onChange(field.value === v ? "" : v)}
+                            data-testid={`qual-${q.name}-${v}`}
+                            className={`text-xs px-3 py-1.5 rounded-md border font-medium ${field.value === v ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"}`}
+                          >{v === "yes" ? "Yes" : "No"}</button>
+                        ))}
                       </div>
-                    </FormItem>
-                  )} />
-                  {watchedRescheduled === true && (
-                    <FormField control={form.control} name="rescheduleDatetime" render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>New appointment date & time</FormLabel>
-                        <FormControl><Input type="datetime-local" {...field} /></FormControl>
-                      </FormItem>
-                    )} />
-                  )}
-                  <FormField control={form.control} name="nextSteps" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Next steps</FormLabel>
-                      <FormControl><Textarea {...field} rows={2} placeholder="What happens next?" /></FormControl>
-                    </FormItem>
-                  )} />
-                </>
+                    </div>
+                  </FormItem>
+                )} />
+              ))}
+              {form.watch("qualInvestment") === "yes" && (
+                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400" data-testid="qual-investment-hint">
+                  Investment / secondary residence — give this to LOA Justin, Mateo, or John.
+                </p>
+              )}
+              {form.watch("qualCredit500") === "yes" && (
+                <FormField control={form.control} name="qualCreditEst" render={({ field }) => (
+                  <FormItem>
+                    <FormControl><Input {...field} placeholder="Estimated credit score" data-testid="input-credit-est" /></FormControl>
+                  </FormItem>
+                )} />
               )}
 
+              <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
+              {([
+                { name: "infoAddress" as const, label: "Address" },
+                { name: "infoGoal" as const, label: "Goal" },
+                { name: "infoTakeOut" as const, label: "How much are you looking to take out?" },
+                { name: "infoValue" as const, label: "Value of home" },
+                { name: "infoBalance" as const, label: "Balance on mortgage" },
+                { name: "infoRate" as const, label: "Rate on mortgage" },
+                { name: "infoPayment" as const, label: "Monthly payment" },
+                { name: "infoIncome" as const, label: "Monthly income" },
+                { name: "infoEmployment" as const, label: "W2 / SE / Retired" },
+                { name: "infoCreditScore" as const, label: "Credit score" },
+                { name: "infoMilitary" as const, label: "Military" },
+              ]).map(f => (
+                <FormField key={f.name} control={form.control} name={f.name} render={({ field }) => (
+                  <FormItem className="grid grid-cols-[9.5rem_1fr] items-center gap-2 space-y-0">
+                    <FormLabel className="mb-0 text-[12px] text-muted-foreground">{f.label}</FormLabel>
+                    <FormControl><Input {...field} className="h-8" data-testid={`input-${f.name}`} /></FormControl>
+                  </FormItem>
+                )} />
+              ))}
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
                   <div className="flex items-center justify-between gap-2">
-                    <FormLabel>Additional notes</FormLabel>
+                    <FormLabel>Other Notes</FormLabel>
                     <CopyNotesButton text={field.value || ""} />
                   </div>
-                  <FormControl><Textarea {...field} rows={2} placeholder="Any other notes…" /></FormControl>
+                  <FormControl><Textarea {...field} rows={2} placeholder="Anything else worth passing along…" data-testid="textarea-other-notes" /></FormControl>
                 </FormItem>
               )} />
             </>
@@ -942,7 +918,7 @@ function OutcomeFormDialog({
                   <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
                 </div>
                 <div className="flex gap-2">
-                  {isTransfer && (step === 2 || step === 3) && (
+                  {isTransfer && step === 2 && (
                     <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
                       Skip for now
                     </Button>
@@ -1662,6 +1638,10 @@ export default function Outcomes() {
           const normalized = {
             ...values,
             followUpDate: values.followUpDate || values.appointmentDatetime || "",
+            // "other" is a UI value; what gets stored is what the CLR typed.
+            leadSource: values.leadSource === "other"
+              ? (values.leadSourceOther || "").trim() || null
+              : values.leadSource || null,
           };
           createMutation.mutate(normalized);
         }}

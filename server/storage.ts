@@ -532,6 +532,7 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN verified_at TEXT`); } ca
 // fell-through / reschedule) can post the follow-up note and move the task.
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_prospect_id INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_task_id INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lead_source TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_synced_at TEXT`); } catch {}
 
 // ── Migration: manually_configured flag on daily_assignments ──────────

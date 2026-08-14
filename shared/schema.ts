@@ -217,6 +217,9 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   tags: text("tags").notNull().default("[]"),
   // Transfer wizard fields — only populated for transfer outcomes, all nullable
   conversationNotes: text("conversation_notes"),
+  // Where the lead came from, asked on every logged outcome (Retail, BulkTexts,
+  // Single Dialing, Mojo, CallTools, Responded, or a free-text answer).
+  leadSource: text("lead_source"),
   loActionPlan: text("lo_action_plan"),
   leadTimeframe: text("lead_timeframe"),
   requiresFollowup: integer("requires_followup"),
