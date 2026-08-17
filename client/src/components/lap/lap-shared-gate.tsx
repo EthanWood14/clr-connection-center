@@ -8,7 +8,7 @@ import { FormEvent, useState } from "react";
 import { KeyRound, ShieldAlert } from "lucide-react";
 import { LapBrand } from "./lap-brand";
 
-export function LapSharedGate({ onUnlocked }: { onUnlocked: () => void }) {
+export function LapSharedGate({ onUnlocked, onStaffLogin }: { onUnlocked: () => void; onStaffLogin?: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,6 +75,17 @@ export function LapSharedGate({ onUnlocked }: { onUnlocked: () => void }) {
             >
               {loading ? "Unlocking…" : "Enter portal"}
             </button>
+
+            {onStaffLogin && (
+              <button
+                type="button"
+                onClick={onStaffLogin}
+                className="w-full text-center text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                data-testid="lap-staff-login-link"
+              >
+                Administrator? Sign in with your account
+              </button>
+            )}
 
             <p className="flex items-start gap-2 rounded-lg bg-muted/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />

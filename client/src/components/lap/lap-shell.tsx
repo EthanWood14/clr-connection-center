@@ -185,6 +185,7 @@ export function LapApp({ product = "lap" }: { product?: PortalProduct } = {}) {
   // server answers whether this browser is already through the gate; until it
   // does we show nothing, so the gate never flashes for an unlocked device.
   const [gate, setGate] = useState<{ configured: boolean; unlocked: boolean } | null>(null);
+  const [staffLogin, setStaffLogin] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/lap/gate", { credentials: "include" })
@@ -208,13 +209,38 @@ export function LapApp({ product = "lap" }: { product?: PortalProduct } = {}) {
   // Not signed in and the shared password is configured -> the shared door.
   // Falls back to the old per-person login if the gate was never set up, so a
   // misconfiguration cannot lock everyone out of the portal.
-  const needsSharedGate = !user && gate?.configured && !gate.unlocked;
+  // The shared password is the ONLY door: no email, no per-person account. The
+  // individual login survives solely as (a) the fallback when no shared password
+  // has been configured, so a misconfiguration cannot lock the portal, and
+  // (b) an opt-in escape hatch for an administrator who needs to act as
+  // themselves — device revocation and password rotation are admin-only.
+  const gateReady = gate !== null;
+  const showSharedGate = gateReady && !user && !gate!.unlocked && gate!.configured && !staffLogin;
+  const showAccountLogin = gateReady && !user && !gate!.unlocked && (!gate!.configured || staffLogin);
+
+  // Nothing is rendered until the server has answered, so an already-unlocked
+  // device never sees the door flash before its dashboard.
+  if (!gateReady) {
+    return (
+      <PortalProductContext.Provider value={product}>
+        <div className="lap-login flex min-h-screen items-center justify-center">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-xl">
+            <span className="h-3 w-3 animate-pulse rounded-full bg-primary" />
+            <span className="text-sm font-medium text-muted-foreground">Opening {productLabel(product)}…</span>
+          </div>
+        </div>
+      </PortalProductContext.Provider>
+    );
+  }
 
   return (
     <PortalProductContext.Provider value={product}>
-      {needsSharedGate
-        ? <LapSharedGate onUnlocked={async () => { setGate({ configured: true, unlocked: true }); await refetchUser(); }} />
-        : !user && !gate?.unlocked ? <LapLogin />
+      {showSharedGate
+        ? <LapSharedGate
+            onUnlocked={async () => { setGate({ configured: true, unlocked: true }); await refetchUser(); }}
+            onStaffLogin={() => setStaffLogin(true)}
+          />
+        : showAccountLogin ? <LapLogin />
         : user?.mustChangePassword ? <LapPasswordGate />
         : <LapAuthenticatedShell />}
     </PortalProductContext.Provider>

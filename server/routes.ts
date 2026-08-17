@@ -5173,9 +5173,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Auth guard for all /api/* routes except /api/auth/* and /api/invite/* ──
+  // Runs before the LAP routes: a valid device cookie stands in for a login. A
+  // real signed-in session still wins, so existing accounts keep working and
+  // keep their own name in the audit trail.
+  app.use("/api/lap", (req: any, _res, next) => {
+    if (req.session_user) return next();
+    const device = lapGateDevice(req);
+    if (!device) return next();
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      sqlite.prepare(`UPDATE lap_devices SET last_seen_at=?, last_ip=?, actions=actions+1 WHERE id=?`)
+        .run(new Date().toISOString(), String(req.ip ?? ""), device.id);
+      req.session_user = { userId: lapSharedUserId(device.orgId), orgId: device.orgId, role: "assistant", portal: "lap" };
+      req.lap_device = device;
+    } catch (e: any) {
+      console.error("[lap-gate] device session failed:", e?.message ?? e);
+    }
+    next();
+  });
+
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/auth")) return next();
     if (req.path.startsWith("/invite")) return next();
+    // The LAP shared-access door itself cannot require a session — it is what
+    // creates one. The handler verifies the password and rate limits by IP.
+    if (req.path === "/lap/gate") return next();
     if (req.path === "/version") return next();
     // Public, token-secured comp approve/deny from the approver email (no session).
     if (req.path === "/comp/email-decision") return next();
@@ -13295,25 +13317,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch { return null; }
   }
 
-  // Runs before the LAP routes: a valid device cookie stands in for a login. A
-  // real signed-in session still wins, so existing accounts keep working and
-  // keep their own name in the audit trail.
-  app.use("/api/lap", (req: any, _res, next) => {
-    if (req.session_user) return next();
-    const device = lapGateDevice(req);
-    if (!device) return next();
-    try {
-      const sqlite = storageExtra.getRawSqlite();
-      sqlite.prepare(`UPDATE lap_devices SET last_seen_at=?, last_ip=?, actions=actions+1 WHERE id=?`)
-        .run(new Date().toISOString(), String(req.ip ?? ""), device.id);
-      req.session_user = { userId: lapSharedUserId(device.orgId), orgId: device.orgId, role: "assistant", portal: "lap" };
-      req.lap_device = device;
-    } catch (e: any) {
-      console.error("[lap-gate] device session failed:", e?.message ?? e);
-    }
-    next();
-  });
-
   // Enter LAP with the shared password. Deliberately NOT requireAuth.
   app.post("/api/lap/gate", async (req: any, res) => {
     const ip = String(req.ip ?? "unknown");
@@ -13549,10 +13552,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // been submitted in LAP. The transfer list comes straight from C3 — nobody
   // re-keys it — and the document side is matched on the borrower's name,
   // since a lead_outcomes row and a lap_result_packages row share no key.
+  // Readable by any LAP session, NOT admin-only. With the shared password
+  // replacing individual logins there is no administrator on the portal side —
+  // gating this on isAdmin would have made it unreachable for exactly the
+  // people who chase the missing paperwork. Device management and the password
+  // rotation below stay admin-only, because those change who has access.
   app.get("/api/lap/transfer-audit", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
-    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
 
     const requested = Number(req.query.window ?? 7);
     const window = (AUDIT_WINDOWS as readonly number[]).includes(requested)

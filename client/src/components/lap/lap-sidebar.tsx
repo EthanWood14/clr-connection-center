@@ -179,10 +179,8 @@ export function LapSidebar() {
           <SidebarGroupLabel>{canViewArchive ? "Administration" : "Account"}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {isAdmin && renderItems([
-                { title: "Transfer Documents", href: "/transfer-audit", icon: FileWarning },
-                { title: "Users", href: "/users", icon: UsersRound },
-              ])}
+              {renderItems([{ title: "Transfer Documents", href: "/transfer-audit", icon: FileWarning }])}
+              {isAdmin && renderItems([{ title: "Users", href: "/users", icon: UsersRound }])}
               {renderItems([{ title: "Settings", href: "/settings", icon: Settings }])}
             </SidebarMenu>
           </SidebarGroupContent>

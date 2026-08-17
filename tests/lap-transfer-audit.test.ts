@@ -75,9 +75,8 @@ test("windows cover N days inclusive, and all-time has no lower bound", () => {
   assert.equal(windowStart("2026-03-01", 3), "2026-02-27", "windows cross month boundaries");
 });
 
-test("the audit endpoint is admin-only and finds Chris by name", () => {
+test("the audit endpoint finds Chris by name and ignores removed documents", () => {
   const fn = routes.slice(routes.indexOf('app.get("/api/lap/transfer-audit"'), routes.indexOf('app.get("/api/lap/results"'));
-  assert.match(fn, /if \(!ctx\.isAdmin\) return res\.status\(403\)/);
   assert.match(fn, /full_name LIKE '%Redoble%'/, "by name, so a changed LO id cannot break it");
   assert.match(fn, /outcome_type='transfer'/);
   assert.match(fn, /f\.is_current = 1 AND f\.removed_at IS NULL/, "a removed document is not submitted");
@@ -107,14 +106,41 @@ test("the shared gate is rate limited, device tagged, and never stores the passw
   assert.match(label, /^iPhone Safari · [0-9a-f]{6}$/);
 });
 
+test("the shared password is the only door, and the gate itself is reachable", () => {
+  // Three things broke this in production: the global /api guard ran requireAuth
+  // before the gate could issue a session (so even POST /api/lap/gate 401'd),
+  // the device middleware was registered AFTER that guard, and the client then
+  // fell back to the email/password login it was meant to replace.
+  assert.match(routes, /if \(req\.path === "\/lap\/gate"\) return next\(\);/,
+    "the door cannot require the session it creates");
+  const guardAt = routes.indexOf('if (req.path === "/lap/gate") return next();');
+  const deviceAt = routes.indexOf('app.use("/api/lap", (req: any, _res, next) => {');
+  assert.ok(deviceAt > 0 && deviceAt < guardAt,
+    "the device cookie must establish a session BEFORE requireAuth runs");
+  // The account login survives only as a fallback and an explicit admin choice.
+  assert.match(shell, /!gate!\.configured \|\| staffLogin/);
+  assert.match(shell, /gate!\.configured && !staffLogin/);
+});
+
+test("the transfer audit is reachable without an admin account", () => {
+  // With logins replaced by one shared password nobody on the portal side is an
+  // administrator, so gating this on isAdmin made it unreachable for the people
+  // who chase the paperwork.
+  const fn = routes.slice(routes.indexOf('app.get("/api/lap/transfer-audit"'), routes.indexOf('app.get("/api/lap/results"'));
+  assert.ok(!/isAdmin/.test(fn), "must not be admin-only");
+  // …but the surfaces that change WHO has access stay admin-only.
+  const devices = routes.slice(routes.indexOf('app.get("/api/lap/devices"'), routes.indexOf('app.post("/api/lap/gate/password"'));
+  assert.match(devices, /if \(!ctx\.isAdmin\) return res\.status\(403\)/);
+});
+
 test("a signed-in session still wins over the shared device", () => {
   // Otherwise every existing LAP account would lose its name in the audit trail.
   const mw = routes.slice(routes.indexOf('app.use("/api/lap"'), routes.indexOf('app.post("/api/lap/gate"'));
   assert.match(mw, /if \(req\.session_user\) return next\(\)/);
   assert.match(mw, /req\.lap_device = device/);
-  // And a misconfigured gate must not lock everyone out.
-  assert.match(shell, /gate\?\.configured && !gate\.unlocked/);
-  assert.match(shell, /: !user && !gate\?\.unlocked \? <LapLogin \/>/);
+  // A misconfigured gate must still not lock everyone out — that is the ONLY
+  // remaining path to the per-account login, along with an explicit admin click.
+  assert.match(shell, /!gate!\.configured \|\| staffLogin/);
 });
 
 test("a package can be created with a single document", () => {
