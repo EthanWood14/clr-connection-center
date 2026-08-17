@@ -1,27 +1,32 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# Node 22, not 20. better-sqlite3 12.x publishes prebuilds only from ABI 127
+# (Node 22) upward — there is no Node 20 build, glibc or musl. On node:20-alpine
+# npm therefore had nothing to fetch, which is how a driver upgrade produced an
+# image that built green and then could not start. Node 20 also went EOL in
+# April 2026. On Node 22 the linuxmusl-x64 prebuild applies and nothing is
+# compiled at deploy time.
+#
+# The toolchain below is insurance, not the normal path: with a matching
+# prebuild npm never uses it. It is kept so that a future version bump which
+# drops prebuilds degrades into a slower build rather than a broken image.
+FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Install deps (same toolchain caveat as the runner stage below)
+# Install deps
 COPY package*.json ./
-RUN apk add --no-cache --virtual .build-deps python3 make g++   && npm ci   && apk del .build-deps
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+  && npm ci \
+  && apk del .build-deps
 
 # Copy source and build
 COPY . .
 RUN npm run build
 
 # ── Stage 2: production ────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
-# Only copy production deps + built output.
-#
-# better-sqlite3 is a native module and this base image is alpine (musl), which
-# its prebuilds do not always cover — when they don't, npm has to compile it,
-# and a bare node:20-alpine has no toolchain. Installing one as a virtual
-# package and dropping it again keeps the final image the same size while
-# making the install work whether or not a prebuild exists. (Without this, a
-# driver upgrade builds green and then fails at container start.)
+# Only copy production deps + built output
 COPY package*.json ./
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
   && npm ci --omit=dev \

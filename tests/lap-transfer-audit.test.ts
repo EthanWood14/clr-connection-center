@@ -91,10 +91,10 @@ test("the shared gate is rate limited, device tagged, and never stores the passw
   // Only the hash is persisted.
   assert.match(routes, /lap_gate_password_hash/);
   // The shared password is seeded straight into the production database, never
-  // committed. (routes.ts does still carry ONE pre-existing literal — the
-  // "WCL2026!" default for the seeded Randy Hammond account — which is a
-  // separate, older issue; this pins it so no SECOND one creeps in.)
-  assert.equal((routes.match(/WCL2026/g) ?? []).length, 1, "no new password literal may be added to the repo");
+  // committed. The one pre-existing literal (the "WCL2026!" default for the
+  // imported Randy Hammond account) has since been removed too, so the
+  // invariant is now simply: no password literals at all.
+  assert.equal((routes.match(/WCL2026/g) ?? []).length, 0, "no password literal may live in the repo");
   const gateFn = routes.slice(routes.indexOf('app.post("/api/lap/gate"'), routes.indexOf('app.get("/api/lap/gate"'));
   assert.ok(!/WCL2026/.test(gateFn), "the gate must never embed the password");
   assert.match(routes, /bcrypt\.compare\(password, hash\)/);

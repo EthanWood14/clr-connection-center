@@ -4160,12 +4160,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
       if (randyRow) {
         randyId = randyRow.id;
       } else {
-        const hash = bcrypt.hashSync("WCL2026!", 10);
+        // No shared default password. This account is created by an import, not
+        // by someone standing at a keyboard, so it gets an unguessable secret
+        // nobody is told and must_change_password=1 — the owner sets a real one
+        // through the reset flow. A literal here would be a known-good
+        // credential for a live account, sitting in the repo forever.
+        const hash = bcrypt.hashSync(crypto.randomBytes(24).toString("hex"), 10);
         const nowIso = new Date().toISOString();
         const ins = sqlite.prepare(`
           INSERT INTO users
             (name, email, role, is_active, is_clr, is_manager, super_admin, password_hash, must_change_password, org_id, has_seen_intro, created_at)
-          VALUES (?, ?, 'assistant', 1, 1, 0, 0, ?, 0, ?, 0, ?)
+          VALUES (?, ?, 'assistant', 1, 1, 0, 0, ?, 1, ?, 0, ?)
         `).run("Randy Hammond", "rhammond@westcapitallending.com", hash, orgId, nowIso);
         randyId = Number(ins.lastInsertRowid);
         randyCreated = true;
