@@ -18,6 +18,7 @@ import {
   Timer,
   UserCheck,
   UsersRound,
+  FileWarning,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
@@ -178,7 +179,10 @@ export function LapSidebar() {
           <SidebarGroupLabel>{canViewArchive ? "Administration" : "Account"}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {isAdmin && renderItems([{ title: "Users", href: "/users", icon: UsersRound }])}
+              {isAdmin && renderItems([
+                { title: "Transfer Documents", href: "/transfer-audit", icon: FileWarning },
+                { title: "Users", href: "/users", icon: UsersRound },
+              ])}
               {renderItems([{ title: "Settings", href: "/settings", icon: Settings }])}
             </SidebarMenu>
           </SidebarGroupContent>

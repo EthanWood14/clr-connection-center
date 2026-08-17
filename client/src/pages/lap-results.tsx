@@ -189,7 +189,7 @@ function RequiredDocumentPicker({
       }`}
       role="button"
       tabIndex={disabled ? -1 : 0}
-      aria-label={`${file ? "Replace" : "Attach"} required ${label}`}
+      aria-label={`${file ? "Replace" : "Attach"} ${label}`}
       onClick={openPicker}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -529,9 +529,9 @@ function ResultEditor({
       <div>
         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h3 className="font-semibold">Required attachments</h3>
+            <h3 className="font-semibold">Documents</h3>
             <p className="text-xs text-muted-foreground">
-              Credit Report, AUS, and Formal Quote are all required. Click or drop a file into any slot to replace it.
+              Credit Report, AUS, and Formal Quote make a complete package. Add them as they come in — click or drop a file into any slot.
             </p>
           </div>
           {isAdmin && (
@@ -658,8 +658,12 @@ export default function LapResults() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const missingDocument = LAP_DOCUMENTS.find((document) => !createFiles[document.key]);
-      if (missingDocument) throw new Error(`${missingDocument.label} is required.`);
+      // Documents arrive one at a time — a credit report today, the AUS when it
+      // comes back, the quote after that. Requiring all three up front forced
+      // the LOA to sit on the first one until the set was complete. Any single
+      // document is enough to open the package; the rest attach to it later.
+      const attachedCount = LAP_DOCUMENTS.filter((document) => !!createFiles[document.key]).length;
+      if (attachedCount === 0) throw new Error("Attach at least one document to create the package.");
 
       const response = await lapRequest("POST", "/api/lap/results", payloadFromForm(createForm));
       const result = unwrapLapResult(response);
@@ -716,7 +720,7 @@ export default function LapResults() {
         navigate(`/results/${result.id}`);
         toast({
           title: `Package saved, but ${partialUploadError.failedDocumentLabel} did not upload`,
-          description: `${uploadedCount} of 3 required attachments uploaded. Open Required attachments and retry ${partialUploadError.failedDocumentLabel}. ${error?.message || ""}`.trim(),
+          description: `${uploadedCount} of 3 documents uploaded. Open the package and retry ${partialUploadError.failedDocumentLabel}. ${error?.message || ""}`.trim(),
           variant: "destructive",
         });
         return;
@@ -920,7 +924,7 @@ export default function LapResults() {
           <DialogHeader>
             <DialogTitle>Create result package</DialogTitle>
             <DialogDescription>
-              Enter the package details and attach all three required files before creating it.
+              Enter the package details and attach whichever documents you have — you can add the rest later.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2 sm:grid-cols-2">
@@ -965,9 +969,9 @@ export default function LapResults() {
             </div>
             <div className="space-y-3 border-t pt-4 sm:col-span-2">
               <div>
-                <h3 className="text-sm font-semibold">Required attachments</h3>
+                <h3 className="text-sm font-semibold">Documents</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  All three files are required. PDF, PNG, or JPEG · 12 MB maximum per file.
+                  Attach at least one now; the rest can follow. PDF, PNG, or JPEG · 12 MB maximum per file.
                 </p>
               </div>
               <div className="grid gap-3 lg:grid-cols-3">

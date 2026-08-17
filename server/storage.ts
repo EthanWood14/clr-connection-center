@@ -658,6 +658,27 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // The Bonzo user email for this LO — POST /prospects/{id}/reassign keys on
   // email, and it is the only call that moves a prospect across TEAMS.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_email TEXT`); } catch {}
+
+  // ── LAP shared-access gate ────────────────────────────────────────────────
+  // LAP is entered with one shared password instead of per-person logins. That
+  // trades away "who did this" for convenience, so every gated browser is given
+  // a durable device id and every action it takes is tagged with it — the audit
+  // trail names a device rather than a person, which is the whole point of the
+  // tag. Only the bcrypt hash of the password is ever stored.
+  try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN lap_gate_password_hash TEXT NOT NULL DEFAULT ''`); } catch {}
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS lap_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    device_id TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    last_ip TEXT,
+    user_agent TEXT,
+    actions INTEGER NOT NULL DEFAULT 0,
+    revoked_at TEXT
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_lap_devices_org ON lap_devices(org_id, last_seen_at DESC)`); } catch {}
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN reduced_odds INTEGER NOT NULL DEFAULT 0`); } catch {}
 // loan_officers: free-form personal preferences (anyone can edit)
 try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN personal_preferences TEXT`); } catch {}

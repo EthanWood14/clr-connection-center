@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
@@ -11,6 +11,7 @@ import { LapFooter } from "./lap-footer";
 import { LapNotificationBell } from "./lap-notification-bell";
 import { LapThemeToggle } from "./lap-theme-toggle";
 import { LapPasswordGate } from "./lap-password-gate";
+import { LapSharedGate } from "./lap-shared-gate";
 import LapLogin from "@/pages/lap-login";
 import LapDashboard from "@/pages/lap-dashboard";
 import LapResults from "@/pages/lap-results";
@@ -19,6 +20,7 @@ import LapInstall from "@/pages/lap-install";
 import LapResources from "@/pages/lap-resources";
 import LapSettings from "@/pages/lap-settings";
 import LapUsers from "@/pages/lap-users";
+import LapTransferAudit from "@/pages/lap-transfer-audit";
 import CheckIns from "@/pages/check-ins";
 import WeeklySchedule from "@/pages/weekly-schedule";
 import Forum from "@/pages/forum";
@@ -132,6 +134,7 @@ function LapRouter() {
       <Route path="/call-hours" component={CallHours} />
       <Route path="/install" component={LapInstall} />
       <Route path="/resources" component={LapResources} />
+      <Route path="/transfer-audit" component={LapTransferAudit} />
       <Route path="/users" component={LapUsers} />
       <Route path="/settings" component={LapSettings} />
       <Route component={LapNotFound} />
@@ -177,7 +180,19 @@ function LapAuthenticatedShell() {
 
 export function LapApp({ product = "lap" }: { product?: PortalProduct } = {}) {
   useLapProductMetadata(product);
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, refetchUser } = useAuth();
+  // LAP is entered with one shared password rather than individual logins. The
+  // server answers whether this browser is already through the gate; until it
+  // does we show nothing, so the gate never flashes for an unlocked device.
+  const [gate, setGate] = useState<{ configured: boolean; unlocked: boolean } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/lap/gate", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setGate({ configured: !!d?.configured, unlocked: !!d?.unlocked }); })
+      .catch(() => { if (!cancelled) setGate({ configured: false, unlocked: false }); });
+    return () => { cancelled = true; };
+  }, [user]);
 
   if (isLoading) {
     return (
@@ -190,9 +205,18 @@ export function LapApp({ product = "lap" }: { product?: PortalProduct } = {}) {
     );
   }
 
+  // Not signed in and the shared password is configured -> the shared door.
+  // Falls back to the old per-person login if the gate was never set up, so a
+  // misconfiguration cannot lock everyone out of the portal.
+  const needsSharedGate = !user && gate?.configured && !gate.unlocked;
+
   return (
     <PortalProductContext.Provider value={product}>
-      {!user ? <LapLogin /> : user.mustChangePassword ? <LapPasswordGate /> : <LapAuthenticatedShell />}
+      {needsSharedGate
+        ? <LapSharedGate onUnlocked={async () => { setGate({ configured: true, unlocked: true }); await refetchUser(); }} />
+        : !user && !gate?.unlocked ? <LapLogin />
+        : user?.mustChangePassword ? <LapPasswordGate />
+        : <LapAuthenticatedShell />}
     </PortalProductContext.Provider>
   );
 }

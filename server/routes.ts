@@ -25,6 +25,8 @@ import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtm
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
+import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow } from "./lap-transfer-audit";
+import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
@@ -13253,6 +13255,152 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     isAdmin: boolean;
   };
 
+  // -- LAP shared-access gate -------------------------------------------------
+  // The shared password replaces individual LAP logins. Package rows still have
+  // created_by/updated_by foreign keys, so gated work is attributed to one
+  // dedicated system account, while the DEVICE tag carries the real "who".
+  const LAP_SHARED_USER_EMAIL = "lap-shared@westcapitallending.center";
+
+  function lapSharedUserId(orgId: number): number {
+    const sqlite = storageExtra.getRawSqlite();
+    const found = sqlite.prepare(`SELECT id FROM users WHERE email=? AND org_id=?`).get(LAP_SHARED_USER_EMAIL, orgId) as any;
+    if (found?.id) return Number(found.id);
+    const now = new Date().toISOString();
+    // An unguessable hash: this account is never meant to be logged into.
+    const hash = bcrypt.hashSync(newDeviceId() + newDeviceId(), 10);
+    const info = sqlite.prepare(
+      `INSERT INTO users (name, email, password_hash, role, is_active, exclude_from_stats, portal, org_id, created_at)
+       VALUES ('LAP Shared Access', ?, ?, 'assistant', 1, 1, 'lap', ?, ?)`,
+    ).run(LAP_SHARED_USER_EMAIL, hash, orgId, now);
+    return Number(info.lastInsertRowid);
+  }
+
+  /** The device behind this request, when it came through the shared gate. */
+  function lapGateDevice(req: any): { id: number; deviceId: string; label: string; orgId: number } | null {
+    const raw = req.signedCookies?.[LAP_DEVICE_COOKIE];
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const deviceId = parsed?.deviceId;
+      if (!deviceId) return null;
+      const row = storageExtra.getRawSqlite()
+        .prepare(`SELECT id, org_id, label, revoked_at FROM lap_devices WHERE device_id=?`).get(String(deviceId)) as any;
+      if (!row || row.revoked_at) return null;
+      return { id: Number(row.id), deviceId: String(deviceId), label: String(row.label || "Device"), orgId: Number(row.org_id) };
+    } catch { return null; }
+  }
+
+  // Runs before the LAP routes: a valid device cookie stands in for a login. A
+  // real signed-in session still wins, so existing accounts keep working and
+  // keep their own name in the audit trail.
+  app.use("/api/lap", (req: any, _res, next) => {
+    if (req.session_user) return next();
+    const device = lapGateDevice(req);
+    if (!device) return next();
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      sqlite.prepare(`UPDATE lap_devices SET last_seen_at=?, last_ip=?, actions=actions+1 WHERE id=?`)
+        .run(new Date().toISOString(), String(req.ip ?? ""), device.id);
+      req.session_user = { userId: lapSharedUserId(device.orgId), orgId: device.orgId, role: "assistant", portal: "lap" };
+      req.lap_device = device;
+    } catch (e: any) {
+      console.error("[lap-gate] device session failed:", e?.message ?? e);
+    }
+    next();
+  });
+
+  // Enter LAP with the shared password. Deliberately NOT requireAuth.
+  app.post("/api/lap/gate", async (req: any, res) => {
+    const ip = String(req.ip ?? "unknown");
+    if (!gateAttemptAllowed(ip)) {
+      return res.status(429).json({ error: "Too many attempts. Wait a few minutes and try again." });
+    }
+    const password = String(req.body?.password ?? "");
+    const orgId = 1;
+    const settings = storageExtra.getEmailSettings() as any;
+    const hash = String(settings?.lap_gate_password_hash ?? "");
+    if (!hash) return res.status(503).json({ error: "Shared access is not configured yet." });
+    if (!password || !(await bcrypt.compare(password, hash))) {
+      return res.status(401).json({ error: "That password is not right." });
+    }
+    gateAttemptSucceeded(ip);
+
+    const sqlite = storageExtra.getRawSqlite();
+    const now = new Date().toISOString();
+    const userAgent = String(req.headers["user-agent"] ?? "").slice(0, 300);
+    // Reuse the device row when this browser has been here before, so a
+    // device's history stays continuous instead of forking on every entry.
+    const existing = lapGateDevice(req);
+    const deviceId = existing ? existing.deviceId : newDeviceId();
+    if (existing) {
+      sqlite.prepare(`UPDATE lap_devices SET last_seen_at=?, last_ip=?, user_agent=? WHERE id=?`)
+        .run(now, ip, userAgent, existing.id);
+    } else {
+      const label = deviceLabelFrom(userAgent, deviceId);
+      sqlite.prepare(
+        `INSERT INTO lap_devices (org_id, device_id, label, first_seen_at, last_seen_at, last_ip, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(orgId, deviceId, label, now, now, ip, userAgent);
+      audit({
+        userId: null as any, userName: deviceAuditName(label), action: "create", entityType: "lap_device",
+        entityId: null as any, entityLabel: label,
+        details: JSON.stringify({ ip, userAgent, why: "new device entered LAP with the shared password" }),
+        orgId,
+      } as any);
+    }
+    res.cookie(LAP_DEVICE_COOKIE, JSON.stringify({ deviceId }), {
+      httpOnly: true, signed: true, sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: LAP_DEVICE_MAX_AGE_MS,
+    });
+    console.log(`[lap-gate] device entered from ${ip}`);
+    res.json({ ok: true });
+  });
+
+  // Is this browser already through the gate? Drives the client gate screen.
+  app.get("/api/lap/gate", (req: any, res) => {
+    const settings = storageExtra.getEmailSettings() as any;
+    res.json({
+      configured: !!String(settings?.lap_gate_password_hash ?? ""),
+      unlocked: !!lapGateDevice(req) || !!req.session_user,
+    });
+  });
+
+  // Admin: see and revoke the devices that hold shared access.
+  app.get("/api/lap/devices", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
+    const rows = storageExtra.getRawSqlite().prepare(
+      `SELECT id, label, first_seen_at, last_seen_at, last_ip, actions, revoked_at
+         FROM lap_devices WHERE org_id=? ORDER BY last_seen_at DESC LIMIT 200`,
+    ).all(ctx.orgId);
+    res.json({ devices: rows });
+  });
+
+  app.post("/api/lap/devices/:id/revoke", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
+    const id = Number(req.params.id);
+    const row = storageExtra.getRawSqlite().prepare(`SELECT label FROM lap_devices WHERE id=? AND org_id=?`).get(id, ctx.orgId) as any;
+    if (!row) return res.status(404).json({ error: "Device not found." });
+    storageExtra.getRawSqlite().prepare(`UPDATE lap_devices SET revoked_at=? WHERE id=?`).run(new Date().toISOString(), id);
+    res.json({ ok: true });
+  });
+
+  // Admin: rotate the shared password. The value never lives in the repo.
+  app.post("/api/lap/gate/password", requireAuth, async (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
+    const next = String(req.body?.password ?? "").trim();
+    if (next.length < 8) return res.status(400).json({ error: "Use at least 8 characters." });
+    const hash = await bcrypt.hash(next, 10);
+    storageExtra.getRawSqlite().prepare(`UPDATE email_settings SET lap_gate_password_hash=? WHERE id=1`).run(hash);
+    res.json({ ok: true });
+  });
+
   function lapSessionContext(req: any, res: Response): LapSessionContext | null {
     const userId = Number(req.session_user?.userId);
     if (!Number.isInteger(userId) || userId <= 0) {
@@ -13389,6 +13537,76 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
     return updateLicensedStates(req, res);
+  });
+
+  // ── Chris Redoble transfer audit ────────────────────────────────────────────
+  // Every transfer C3 logged to Chris, with whether its three documents have
+  // been submitted in LAP. The transfer list comes straight from C3 — nobody
+  // re-keys it — and the document side is matched on the borrower's name,
+  // since a lead_outcomes row and a lap_result_packages row share no key.
+  app.get("/api/lap/transfer-audit", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    if (!ctx.isAdmin) return res.status(403).json({ error: "Administrators only." });
+
+    const requested = Number(req.query.window ?? 7);
+    const window = (AUDIT_WINDOWS as readonly number[]).includes(requested)
+      ? (requested as AuditWindow)
+      : 7;
+    const sqlite = storageExtra.getRawSqlite();
+
+    // Chris by name, so this keeps working if his LO id ever changes.
+    const lo = sqlite.prepare(
+      `SELECT id, full_name FROM loan_officers
+        WHERE org_id=? AND internal_status='active' AND full_name LIKE '%Redoble%' LIMIT 1`,
+    ).get(ctx.orgId) as any;
+    if (!lo) return res.json({ window, label: windowLabel(window), rows: [], summary: auditSummary([]), loanOfficer: null });
+
+    const from = windowStart(todayIso(), window);
+    const params: any[] = [ctx.orgId, lo.id];
+    let dateSql = "";
+    if (from) { dateSql = " AND o.date >= ?"; params.push(from); }
+
+    const transfers = (sqlite.prepare(
+      `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.name AS loa_name
+         FROM lead_outcomes o
+         LEFT JOIN users u ON u.id = o.assistant_id
+         LEFT JOIN users l ON l.id = o.loa_id
+        WHERE o.org_id=? AND o.lo_id=? AND o.outcome_type='transfer'${dateSql}
+        ORDER BY o.date DESC, o.id DESC`,
+    ).all(...params) as any[]).map((r): TransferRow => ({
+      outcomeId: Number(r.id),
+      date: String(r.date),
+      borrowerName: String(r.borrower_name ?? ""),
+      clrName: r.clr_name ?? null,
+      loaName: r.loa_name ?? null,
+    }));
+
+    // Every package for this LO (or unattributed), with the documents currently
+    // on it. Removed versions do not count as submitted.
+    const packages = (sqlite.prepare(
+      `SELECT p.id, p.borrower_name, p.result_date,
+              (SELECT GROUP_CONCAT(DISTINCT f.document_type)
+                 FROM lap_result_file_versions f
+                WHERE f.package_id = p.id AND f.is_current = 1 AND f.removed_at IS NULL) AS doc_types
+         FROM lap_result_packages p
+        WHERE p.org_id=? AND p.archived_at IS NULL
+          AND (p.loan_officer_id = ? OR p.loan_officer_id IS NULL)`,
+    ).all(ctx.orgId, lo.id) as any[]).map((r): PackageRow => ({
+      packageId: Number(r.id),
+      borrowerName: String(r.borrower_name ?? ""),
+      resultDate: String(r.result_date ?? ""),
+      documentTypes: String(r.doc_types ?? "").split(",").filter(Boolean),
+    }));
+
+    const rows = buildAuditRows(transfers, packages);
+    res.json({
+      window,
+      label: windowLabel(window),
+      loanOfficer: { id: lo.id, name: lo.full_name },
+      summary: auditSummary(rows),
+      rows,
+    });
   });
 
   app.get("/api/lap/results", requireAuth, (req: any, res) => {
