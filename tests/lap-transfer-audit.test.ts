@@ -133,6 +133,16 @@ test("the transfer audit is reachable without an admin account", () => {
   assert.match(devices, /if \(!ctx\.isAdmin\) return res\.status\(403\)/);
 });
 
+test("requireAuth accepts a session an upstream middleware already established", () => {
+  // requireAuth re-derived the session from the C3 login cookie and ignored
+  // anything already on the request, so the gate's device session was silently
+  // discarded and every LAP call 401'd even with a valid gate cookie.
+  const fn = routes.slice(routes.indexOf("function requireAuth("), routes.indexOf("// Helper: get current reporting period"));
+  assert.match(fn, /if \(\(req as any\)\.session_user\) return next\(\);/);
+  assert.ok(fn.indexOf("session_user) return next()") < fn.indexOf("freshSessionFromSignedCookie"),
+    "the established session must be honored before falling back to the cookie");
+});
+
 test("a signed-in session still wins over the shared device", () => {
   // Otherwise every existing LAP account would lose its name in the audit trail.
   const mw = routes.slice(routes.indexOf('app.use("/api/lap"'), routes.indexOf('app.post("/api/lap/gate"'));

@@ -127,6 +127,13 @@ function freshSessionFromSignedCookie(req: Request): any | null {
 
 // Auth middleware — validates the signed cookie against the current DB user.
 function requireAuth(req: Request, res: Response, next: NextFunction) {
+  // An upstream middleware may already have established the session — today
+  // that is the LAP shared-access gate, which resolves its own signed device
+  // cookie against the lap_devices table before setting this. Without this
+  // check the device session was silently discarded here and every LAP request
+  // 401'd despite a valid gate cookie. Only server code can set this property;
+  // nothing a client sends reaches it.
+  if ((req as any).session_user) return next();
   const session = freshSessionFromSignedCookie(req);
   if (!session) return res.status(401).json({ error: "Unauthorized" });
   (req as any).session_user = session;
