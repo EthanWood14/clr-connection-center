@@ -24,6 +24,7 @@ import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-sta
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
+import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
@@ -17590,10 +17591,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
     const text = String(o.notes ?? "").trim();
     if (!text) return; // clearing notes is not worth a Bonzo entry
+    // Same HTML rule as the transfer note — plain newlines would collapse.
     const note = await addProspectNote(
       o.bonzo_prospect_id,
-      `📝 Appointment notes updated in C3 by ${clr?.name ?? "a CLR"}:
-${text}`,
+      notesToBonzoHtml(text, { title: `📝 Appointment notes updated in C3 by ${clr?.name ?? "a CLR"}` }),
     );
     if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: notes-update note failed: ${note.error}`);
   }
@@ -17838,15 +17839,26 @@ ${text}`,
     const convo = String(o.conversation_notes ?? "").trim();
     if (convo) {
       try {
-        const normalize = (t: string) => t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
-        const want = normalize(convo);
+        const marker = transferNoteMarker(outcomeId);
         const existing = await getProspectNotes(prospectId);
-        const dupe = existing.some((n) => normalize(n.content).includes(want));
-        if (dupe) {
-          noted = "duplicate_skipped";
+        // Two independent dedupe checks. The MARKER catches our own re-sync and
+        // is immune to formatting — a text comparison cannot do that job, since
+        // the rendered note deliberately no longer matches its plain source.
+        // The TEXT check separately catches a CLR who pasted the same content
+        // by hand before the sync ran.
+        const already = existing.some((n) => n.content.includes(marker));
+        const pasted = !already && notePlainText(convo).length > 0
+          && existing.some((n) => notePlainText(n.content).includes(notePlainText(convo)));
+        if (already || pasted) {
+          noted = already ? "already_posted" : "duplicate_skipped";
         } else {
-          const n = await addProspectNote(prospectId, `📋 C3 transfer notes (CLR ${clrFirst || "?"}):
-${convo}`);
+          // Bonzo renders notes as HTML — plain newlines collapse into one
+          // run-on paragraph, so this must be real markup.
+          const html = notesToBonzoHtml(convo, {
+            title: `📋 CLR Transfer — ${clrFirst || "C3"}`,
+            subtitle: `Logged in C3 · ${o.date ?? todayIso()} · ${marker}`,
+          });
+          const n = await addProspectNote(prospectId, html);
           noted = n.ok ? "posted" : `failed:${n.error}`;
         }
       } catch (e: any) {

@@ -116,10 +116,15 @@ test("cross-team reassignment falls back to the email endpoint", () => {
 
 test("transfer notes post to Bonzo once, never twice", () => {
   assert.match(sync, /getProspectNotes\(prospectId\)/);
-  assert.match(sync, /normalize\(n\.content\)\.includes\(want\)/,
+  // Two checks: a formatting-independent marker for our own re-sync, and a
+  // text comparison for a CLR who pasted the same content by hand. See
+  // tests/bonzo-notes.test.ts for the rendering itself.
+  assert.match(sync, /n\.content\.includes\(marker\)/);
+  assert.match(sync, /notePlainText\(n\.content\)\.includes\(notePlainText\(convo\)\)/,
     "a CLR's manual paste of the same text must suppress the auto-note");
-  assert.match(sync, /C3 transfer notes \(CLR /);
+  assert.match(sync, /CLR Transfer — /);
   assert.match(sync, /duplicate_skipped/);
+  assert.match(sync, /already_posted/);
   // Empty conversation notes post nothing.
   assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
 });

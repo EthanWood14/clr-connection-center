@@ -164,7 +164,15 @@ export async function deleteTask(taskId: number): Promise<boolean> {
 }
 
 export async function addProspectNote(prospectId: number, content: string): Promise<{ ok: boolean; id: number | null; error?: string }> {
-  const r = await req("POST", `/prospects/${prospectId}/notes`, { content: content.slice(0, 2000) });
+  // Bonzo renders notes as HTML, so a blind .slice() can cut mid-tag and leave
+  // the note visibly broken. Trim on a paragraph boundary when it looks like
+  // markup; fall back to a plain cut for prose.
+  let body = content;
+  if (body.length > 2000) {
+    const cut = body.lastIndexOf("</p>", 2000);
+    body = cut > 0 ? body.slice(0, cut + 4) : body.slice(0, 2000);
+  }
+  const r = await req("POST", `/prospects/${prospectId}/notes`, { content: body });
   const id = Number(r.json?.data?.id ?? r.json?.id) || null;
   return r.ok ? { ok: true, id } : { ok: false, id: null, error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}` };
 }
