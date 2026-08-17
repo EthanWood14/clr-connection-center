@@ -37,11 +37,27 @@ test("transfers no longer offer Schedule for Upcoming Appointments", () => {
     "the follow-up scheduler must be hidden on the transfer path");
 });
 
-test("the transfer wizard is two steps — step 3 is gone", () => {
-  assert.match(page, /const totalSteps = isTransfer \? 2 : 1;/);
-  assert.ok(!page.includes("Step 3: Lead Information"), "the step-3 block must be removed");
-  assert.ok(!/setStep\(3\)/.test(page), "nothing may navigate to a third step");
-  assert.ok(!page.includes("appointment_transfer"), "step-3-only lead types must be gone from the wizard");
+test("everything is on one page — no steps at all", () => {
+  // The wizard used to be a full-screen result picker, then details, then
+  // qualification. It is now a single scrolling form.
+  assert.ok(!/const totalSteps/.test(page), "the step counter must be gone");
+  assert.ok(!/setStep\(/.test(page), "nothing may navigate between steps");
+  assert.ok(!/function StepIndicator/.test(page), "the step indicator must be gone");
+  assert.ok(!/handleNext|handleBack/.test(page), "Next/Back must be gone");
+  assert.ok(!page.includes("Step 3: Lead Information"));
+  assert.ok(!page.includes("appointment_transfer"));
+});
+
+test("the outcome picker sits at the top and is always changeable", () => {
+  // It was a separate screen that had to be cleared before any field appeared.
+  assert.match(page, /Outcome type — the first thing on the page/);
+  assert.match(page, /role="radiogroup" aria-label="What was the result\?"/);
+  assert.match(page, /aria-checked=\{active\}/);
+  assert.ok(!/Selected outcome chip with Change link/.test(page),
+    "the chip and its Change link are redundant once the picker never leaves");
+  // The picker only sets the value now; it no longer advances anything.
+  const pick = page.slice(page.indexOf("const pickOutcome"), page.indexOf("const handleSkip"));
+  assert.ok(!/setStep/.test(pick));
 });
 
 test("the summary is replaced by the qualification checklist", () => {

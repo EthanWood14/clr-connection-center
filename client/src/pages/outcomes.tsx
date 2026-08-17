@@ -325,35 +325,6 @@ function TransferTypeOption({
   );
 }
 
-function StepIndicator({ step, total }: { step: number; total: number }) {
-  return (
-    <div className="flex items-center gap-2 mb-1">
-      {Array.from({ length: total }).map((_, i) => {
-        const n = i + 1;
-        const done = n < step;
-        const active = n === step;
-        return (
-          <div key={i} className="flex items-center gap-2">
-            <div
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold border ${
-                done
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : active
-                  ? "bg-primary/10 text-primary border-primary"
-                  : "bg-muted text-muted-foreground border-border"
-              }`}
-            >
-              {done ? <Check className="w-3 h-3" /> : n}
-            </div>
-            {i < total - 1 && <div className={`w-8 h-px ${done ? "bg-primary" : "bg-border"}`} />}
-          </div>
-        );
-      })}
-      <span className="ml-2 text-xs text-muted-foreground">Step {step} of {total}</span>
-    </div>
-  );
-}
-
 function OutcomeFormDialog({
   open,
   onClose,
@@ -432,14 +403,12 @@ function OutcomeFormDialog({
   const { data: helperCfg } = useQuery<{ askHelper: boolean; helperName: string }>({ queryKey: ["/api/settings/helper"] });
   const askHelper = !!helperCfg?.askHelper;
   const helperName = helperCfg?.helperName || "Elleine";
-  // Step 0 = result picker (always shown first), step 1 = details, step 2 = transfer qualification
-  const [step, setStep] = useState(0);
+
   const watchedType = form.watch("outcomeType");
   const watchedTransferType = form.watch("transferType");
   const watchedBulkTexter = form.watch("bulkTexter");
   const watchedHelper = form.watch("helperAssisted");
   const isTransfer = watchedType === "transfer";
-  const totalSteps = isTransfer ? 2 : 1;
 
   // Clear transferType whenever outcome moves away from "transfer" so stale
   // values don't trip the superRefine on a later transfer selection.
@@ -447,29 +416,13 @@ function OutcomeFormDialog({
     if (watchedType !== "transfer" && form.getValues("transferType") != null) {
       form.setValue("transferType", null, { shouldValidate: false });
     }
-    // If outcome changed away from transfer mid-wizard (steps 2/3), drop back to step 1.
-    if (watchedType !== "transfer" && step > 1) setStep(1);
-  }, [watchedType, form, step]);
+  }, [watchedType, form]);
 
   useEffect(() => {
-    if (open) { setConfirmBonzo(false); setStep(0); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
+    if (open) { setConfirmBonzo(false); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
   }, [open]);
 
-  const canAdvanceFromStep1 = !isTransfer || (
-    form.getValues("loId") > 0 &&
-    (watchedTransferType === "direct" || watchedTransferType === "appointment")
-  );
 
-  const handleNext = async () => {
-    if (step === 1) {
-      // Validate step 1 fields before advancing
-      const ok = await form.trigger(["date", "assistantId", "loId", "outcomeType", "transferType"]);
-      if (!ok) return;
-      setStep(2);
-    }
-  };
-
-  const handleBack = () => { if (step > 0) setStep(step - 1); };
 
   const pickOutcome = (type: typeof OUTCOME_TYPES[number]) => {
     form.setValue("outcomeType", type, { shouldValidate: false });
@@ -477,12 +430,12 @@ function OutcomeFormDialog({
     if (type !== "transfer") {
       form.setValue("transferType", null, { shouldValidate: false });
     }
-    setStep(1);
   };
 
   const handleSkip = () => {
-    // Clear this step's fields, then go straight to the Bonzo confirmation.
-    if (step === 2) {
+    // Clear the qualification answers, then go straight to the Bonzo
+    // confirmation — the escape hatch for a transfer logged in a hurry.
+    {
       form.setValue("conversationNotes", "");
       for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment", "qualCredit500", "qualCreditEst",
         "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
@@ -523,66 +476,49 @@ function OutcomeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md p-0 gap-0 max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="max-w-lg p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden">
         <DialogHeader className="space-y-1 px-4 sm:px-5 pt-4 sm:pt-5 pb-2 shrink-0">
           <DialogTitle className="text-base">
-            {confirmBonzo ? "One last thing — Bonzo" : step === 0 ? "What was the result?" : "Log Outcome"}
+            {confirmBonzo ? "One last thing — Bonzo" : "Log Outcome"}
           </DialogTitle>
-          {!confirmBonzo && step > 0 && isTransfer && <StepIndicator step={step} total={totalSteps} />}
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
             <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
 
-          {/* ── Step 0: Result Picker — 3 options, differences up front ── */}
-          {!confirmBonzo && step === 0 && (
-            <div className="space-y-2">
+          {/* Outcome type — the first thing on the page, always visible and
+              always changeable. It used to be a separate full-screen step that
+              had to be cleared before any field appeared. */}
+          {!confirmBonzo && (
+            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="What was the result?">
               {OUTCOME_TILES.map(tile => {
                 const Icon = tile.icon;
+                const active = watchedType === tile.type;
                 return (
                   <button
                     key={tile.type}
                     type="button"
+                    role="radio"
+                    aria-checked={active}
                     onClick={() => pickOutcome(tile.type)}
                     data-testid={`tile-outcome-${tile.type}`}
-                    className={`w-full flex items-start gap-3 rounded-lg border-2 p-3.5 text-left transition-colors ${tile.tone}`}
+                    className={`flex flex-col items-center gap-1 rounded-lg border-2 px-2 py-2.5 text-center transition-colors ${
+                      active ? tile.tone : "border-border bg-background hover:bg-muted/60"
+                    }`}
                   >
-                    <Icon className="w-6 h-6 mt-0.5 shrink-0" />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-bold leading-tight">{OUTCOME_LABELS[tile.type]}</span>
-                      <span className="block text-xs font-semibold mt-1 leading-snug">{tile.diff}</span>
-                      <span className="block text-[11px] opacity-75 mt-0.5 leading-snug">{tile.detail}</span>
-                    </span>
+                    <Icon className="w-5 h-5 shrink-0" />
+                    <span className="text-xs font-bold leading-tight">{OUTCOME_LABELS[tile.type]}</span>
                   </button>
                 );
               })}
             </div>
           )}
+          {!confirmBonzo && OUTCOME_HELPERS[watchedType] && (
+            <p className="text-[11px] text-muted-foreground -mt-1">{OUTCOME_HELPERS[watchedType]}</p>
+          )}
 
-          {!confirmBonzo && step === 1 && (
+          {!confirmBonzo && (
           <>
-            {/* Selected outcome chip with Change link */}
-            <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Outcome:</span>
-                <Badge className={OUTCOME_COLORS[watchedType] || ""} data-testid="badge-selected-outcome">
-                  {OUTCOME_LABELS[watchedType] || watchedType}
-                </Badge>
-                {OUTCOME_HELPERS[watchedType] && (
-                  <span className="text-[11px] text-muted-foreground hidden sm:inline">{OUTCOME_HELPERS[watchedType]}</span>
-                )}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setStep(0)}
-                data-testid="button-change-outcome"
-              >
-                <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Change
-              </Button>
-            </div>
             <FormField control={form.control} name="date" render={({ field }) => (
               <FormItem>
                 <FormLabel>Date</FormLabel>
@@ -775,8 +711,8 @@ function OutcomeFormDialog({
           </>
           )}
 
-          {/* ── Step 2: Qualification + Info Gathering ───────────── */}
-          {!confirmBonzo && isTransfer && step === 2 && (
+          {/* Qualification + Info Gathering — same page, below the details. */}
+          {!confirmBonzo && isTransfer && (
             <>
               <p className="text-sm font-semibold text-foreground">Qualification</p>
               <NotesPolicyNote />
@@ -878,42 +814,25 @@ function OutcomeFormDialog({
             ) : (
               <>
                 <div className="flex gap-2">
-                  {isTransfer && step > 1 && (
-                    <Button type="button" variant="outline" size="sm" onClick={handleBack}>
-                      <ChevronLeft className="w-4 h-4 mr-1" /> Back
-                    </Button>
-                  )}
                   <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
                 </div>
                 <div className="flex gap-2">
-                  {isTransfer && step === 2 && (
+                  {isTransfer && (
                     <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
-                      Skip for now
+                      Skip qualification
                     </Button>
                   )}
-                  {isTransfer && step >= 1 && step < totalSteps && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleNext}
-                      disabled={step === 1 && !canAdvanceFromStep1}
-                    >
-                      Next <ChevronRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  )}
-                  {step >= 1 && (!isTransfer || step === totalSteps) && (
-                    <Button
-                      type="button"
-                      onClick={handleAttemptSubmit}
-                      disabled={
-                        isPending ||
-                        (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
-                      }
-                      data-testid="button-save-outcome"
-                    >
-                      Log Outcome
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    onClick={handleAttemptSubmit}
+                    disabled={
+                      isPending ||
+                      (isTransfer && watchedTransferType !== "direct" && watchedTransferType !== "appointment")
+                    }
+                    data-testid="button-save-outcome"
+                  >
+                    Log Outcome
+                  </Button>
                 </div>
               </>
             )}
