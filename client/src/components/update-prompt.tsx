@@ -13,7 +13,6 @@
 import { useEffect, useState } from "react";
 import { APP_VERSION } from "@shared/version";
 import { notesBetween, itemsForAudience, type ReleaseNote } from "@shared/release-notes";
-import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -29,8 +28,6 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [serverSections, setServerSections] = useState<ReleaseNote[]>([]);
   const productName = portal === "lap" ? "LAP" : "C3";
-  const { user } = useAuth();
-  const isManager = user?.role === "admin" || !!(user as any)?.isManager || !!user?.superAdmin;
 
   useEffect(() => {
     let active = true;
@@ -73,7 +70,7 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
     ? serverSections
     : (latest ? notesBetween(APP_VERSION, latest) : []);
   const sections = missed
-    .map((n) => ({ version: n.version, headline: n.headline, items: itemsForAudience(n, portal, isManager) }))
+    .map((n) => ({ version: n.version, headline: n.headline, items: itemsForAudience(n, portal) }))
     .filter((n) => n.items.length > 0);
 
   return (

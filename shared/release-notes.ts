@@ -11,8 +11,11 @@
  * - Say what a person can now DO, not what was refactored.
  * - Name the screen, so they know where to look.
  * - Include fixes when the old behaviour was visibly wrong; skip pure plumbing.
- * - `audience` hides notes that are irrelevant to a reader ("manager" items are
- *   not shown to a CLR — a shipping note nobody can act on is noise).
+ * - `audience` records who a change is FOR. It no longer hides anything by role:
+ *   everyone sees every note regardless of manager status, because knowing what
+ *   changed in the tool you use should not depend on your permissions. The tag
+ *   is kept because it still documents intent, and because the portal split
+ *   below is a genuinely different axis.
  */
 
 export type ReleaseAudience = "everyone" | "manager" | "lap";
@@ -25,6 +28,13 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "3.87.0",
+    headline: "Everyone now sees the full list of what changed in each update.",
+    items: [
+      { text: "Update notes are no longer filtered by whether you're a manager — every person sees every change, including the ones that land on screens they don't use." },
+    ],
+  },
   {
     version: "3.86.0",
     headline: "The two retail Bonzo questions on the EOD are only for when you're asked.",
@@ -153,15 +163,16 @@ export function notesBetween(fromVersion: string, toVersion: string): ReleaseNot
     .sort((a, b) => cmp(b.version, a.version));
 }
 
-/** Hide items a given reader cannot act on. */
-export function itemsForAudience(note: ReleaseNote, portal: "c3" | "lap", isManager: boolean): string[] {
+/**
+ * The notes a reader sees. Role is deliberately NOT a filter: a CLR seeing that
+ * managers got a new dashboard costs them one line, while hiding it means the
+ * people asking "did anything change?" are the least likely to be told.
+ *
+ * The portal split remains, because a LAP-only change genuinely has no meaning
+ * inside C3 — it names screens that do not exist there.
+ */
+export function itemsForAudience(note: ReleaseNote, portal: "c3" | "lap"): string[] {
   return note.items
-    .filter((i) => {
-      const a = i.audience ?? "everyone";
-      if (a === "everyone") return true;
-      if (a === "manager") return isManager;
-      if (a === "lap") return portal === "lap";
-      return true;
-    })
+    .filter((i) => (i.audience ?? "everyone") !== "lap" || portal === "lap")
     .map((i) => i.text);
 }

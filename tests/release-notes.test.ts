@@ -46,16 +46,24 @@ test("versions sort numerically, not as strings", () => {
   assert.equal(new Set(all).size, all.length, "no duplicate version entries");
 });
 
-test("readers only see items they can act on", () => {
+test("role does not decide what you are told changed", () => {
+  // Hiding manager items meant the people most likely to ask "did something
+  // change?" were the least likely to be told. Everyone sees every note.
   const note = notesFor("3.81.0")!;
-  const clr = itemsForAudience(note, "c3", false);
-  const mgr = itemsForAudience(note, "c3", true);
-  assert.ok(mgr.length > clr.length, "manager-only items are hidden from a CLR");
-  assert.ok(clr.every(t => !/Managers see/.test(t)));
-  // A LAP-only note does not reach a C3 reader.
+  assert.equal(itemsForAudience(note, "c3").length, note.items.length,
+    "a CLR sees the manager-tagged items too");
+  assert.ok(itemsForAudience(note, "c3").some(t => /Managers see/.test(t)));
+});
+
+test("a LAP-only note still does not appear inside C3", () => {
+  // This is a different axis from role: a LAP note names screens that do not
+  // exist in C3, so it would be meaningless rather than merely extra.
   const lapNote = notesFor("3.77.0")!;
-  assert.equal(itemsForAudience(lapNote, "c3", false).length, 0);
-  assert.ok(itemsForAudience(lapNote, "lap", false).length > 0);
+  assert.equal(itemsForAudience(lapNote, "c3").length, 0);
+  assert.ok(itemsForAudience(lapNote, "lap").length > 0);
+  // …and a LAP reader still sees the everyone/manager items.
+  const mixed = notesFor("3.81.0")!;
+  assert.equal(itemsForAudience(mixed, "lap").length, mixed.items.length);
 });
 
 test("the popup leads with the change, and falls back safely", () => {
