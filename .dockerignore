@@ -1,6 +1,23 @@
+# Build context exclusions. Everything here is either rebuilt inside the image
+# or has no business in it.
+#
+# .git is the important one. Without it, "COPY . ." in the builder stage copies
+# the entire repository history — 305MB and growing — into the image. That is
+# what made GitHub-triggered builds take 8-10 minutes and then fail, while a
+# CLI deploy (which excludes .git via .railwayignore) finished in 2.
+.git
+.github
 node_modules
 dist
 *.db
+*.db-shm
+*.db-wal
 .env
 .env.*
 npm-debug.log
+
+# Not needed to build or run the server.
+tests
+docs
+*.md
+.claude
