@@ -9568,6 +9568,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         else if (body.assistantId == null || Number(body.assistantId) <= 0) body.assistantId = sessUserId;
       }
       const toBulk = (v: any) => (v === true || v === 1 || v === "1" ? 1 : v === false || v === 0 || v === "0" ? 0 : null);
+      // An appointment may be booked before anyone knows which LO will take it;
+      // anything else goes TO someone and still needs one. Enforced here rather
+      // than by the column, because the same table holds both.
+      if (body.loId === "" || body.loId === undefined || Number(body.loId) <= 0) body.loId = null;
+      if (body.loId == null && body.outcomeType !== "appointment") {
+        return res.status(400).json({ error: "loId is required for everything except appointments" });
+      }
       if (body.outcomeType === "transfer") {
         if (body.transferType !== "direct" && body.transferType !== "appointment") {
           return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
@@ -17837,7 +17844,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         assigneeId: prospect.assignedTo,
         title: `Appointment: ${o.borrower_name || prospect.name} (${dt.time})`,
         details:
-          `Set in C3 by ${clr?.name ?? "a CLR"} for LO ${lo?.fullName ?? "?"}.` +
+          `Set in C3 by ${clr?.name ?? "a CLR"} for LO ${lo?.fullName ?? "unassigned"}.` +
           (o.prequalification_notes ? `\nPre-qual: ${o.prequalification_notes}` : "") +
           (o.notes ? `\nNotes: ${o.notes}` : ""),
         date: dt.date,
@@ -17848,7 +17855,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const note = await addProspectNote(
       prospect.id,
-      `📅 Appointment scheduled for ${whenLabel} — set in C3 by ${clr?.name ?? "a CLR"} (LO: ${lo?.fullName ?? "?"}).` +
+      `📅 Appointment scheduled for ${whenLabel} — set in C3 by ${clr?.name ?? "a CLR"} (LO: ${lo?.fullName ?? "unassigned"}).` +
       (o.notes ? `\n${o.notes}` : "") + mismatch,
     );
     if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: note failed: ${note.error}`);

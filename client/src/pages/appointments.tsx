@@ -108,7 +108,7 @@ interface Outcome {
   id: number;
   date: string;
   assistantId: number;
-  loId: number;
+  loId: number | null;
   borrowerName?: string;
   phoneNumber?: string | null;
   outcomeType: string;
@@ -169,7 +169,7 @@ function EditDialog({
     if (open && outcome) {
       form.reset({
         outcomeType: outcome.outcomeType,
-        loId: outcome.loId,
+        loId: outcome.loId ?? undefined,
         borrowerName: outcome.borrowerName ?? "",
         followUpDate: outcome.followUpDate ?? "",
         notes: outcome.notes ?? "",
@@ -764,7 +764,7 @@ export default function Appointments() {
     if (!q) return true;
     const hay = [
       o.borrowerName ?? "",
-      loMap.get(o.loId) ?? "",
+      (o.loId != null ? loMap.get(o.loId) : null) ?? "Unassigned",
       clrNameFor(o.assistantId),
       o.notes ?? "",
     ].join(" ").toLowerCase();
@@ -1121,7 +1121,7 @@ export default function Appointments() {
           <div className="space-y-2">
             {overdueList.map((o) => (
               <AppointmentCard
-                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                key={o.id} outcome={o} loName={o.loId == null ? "Unassigned" : (loMap.get(o.loId) ?? `LO #${o.loId}`)}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
@@ -1145,7 +1145,7 @@ export default function Appointments() {
           <div className="space-y-2">
             {todayList.map((o) => (
               <AppointmentCard
-                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                key={o.id} outcome={o} loName={o.loId == null ? "Unassigned" : (loMap.get(o.loId) ?? `LO #${o.loId}`)}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
@@ -1169,7 +1169,7 @@ export default function Appointments() {
           <div className="space-y-2">
             {upcomingList.map((o) => (
               <AppointmentCard
-                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                key={o.id} outcome={o} loName={o.loId == null ? "Unassigned" : (loMap.get(o.loId) ?? `LO #${o.loId}`)}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
@@ -1193,7 +1193,7 @@ export default function Appointments() {
           <div className="space-y-2">
             {undatedList.map((o) => (
               <AppointmentCard
-                key={o.id} outcome={o} loName={loMap.get(o.loId) ?? `LO #${o.loId}`}
+                key={o.id} outcome={o} loName={o.loId == null ? "Unassigned" : (loMap.get(o.loId) ?? `LO #${o.loId}`)}
                 clrName={clrNameFor(o.assistantId)} isMine={myUserId != null && o.assistantId === myUserId}
                 seesAll={seesAll}
                 isConflict={conflictIds.has(o.id)}
@@ -1214,7 +1214,7 @@ export default function Appointments() {
       {completeTarget && (
         <CompleteDialog
           outcome={completeTarget}
-          loName={loMap.get(completeTarget.loId) ?? `LO #${completeTarget.loId}`}
+          loName={completeTarget.loId == null ? "Unassigned" : (loMap.get(completeTarget.loId) ?? `LO #${completeTarget.loId}`)}
           open={!!completeTarget}
           onClose={() => setCompleteTarget(null)}
           onComplete={handleConfirmComplete}

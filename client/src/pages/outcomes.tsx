@@ -157,11 +157,17 @@ function formatFollowUp(value: string): string {
 
 
 
+// Radix Select rejects "" as an item value, so the "no LO" choice needs a
+// non-empty sentinel. It never leaves the form — it maps to null on change.
+const UNASSIGNED_LO = "__none__";
+
 const outcomeFormSchema = z.object({
   loaId: z.coerce.number().optional().nullable(),
   date: z.string().min(1, "Date required"),
   assistantId: z.coerce.number().min(1, "Select an assistant"),
-  loId: z.coerce.number().min(1, "Select a loan officer"),
+  // Optional here; the refine below requires it for transfers only. An
+  // appointment can be booked before the LO is known.
+  loId: z.coerce.number().optional().nullable(),
   outcomeType: z.enum(OUTCOME_TYPES),
   transferType: z.enum(TRANSFER_TYPES).optional().nullable(),
   bulkTexter: z.boolean().optional().nullable(),
@@ -221,6 +227,16 @@ const outcomeFormSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["appointmentDatetime"],
       message: "Scheduled date & time is required for appointments",
+    });
+  }
+  // A transfer goes TO someone, so it still needs an LO. An appointment does
+  // not: it can be booked before anyone knows who will take it, and assigned
+  // later from Upcoming Appointments.
+  if (val.outcomeType !== "appointment" && !val.loId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["loId"],
+      message: "Select a loan officer",
     });
   }
 });
@@ -604,12 +620,27 @@ function OutcomeFormDialog({
             )} />
             <FormField control={form.control} name="loId" render={({ field }) => (
               <FormItem>
-                <FormLabel>Loan Officer</FormLabel>
-                <Select value={String(field.value || "")} onValueChange={v => field.onChange(Number(v))}>
+                <FormLabel>
+                  Loan Officer
+                  {watchedType === "appointment" && (
+                    <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">optional</span>
+                  )}
+                </FormLabel>
+                <Select
+                  value={field.value ? String(field.value) : UNASSIGNED_LO}
+                  onValueChange={v => field.onChange(v === UNASSIGNED_LO ? null : Number(v))}
+                >
                   <FormControl>
                     <SelectTrigger data-testid="select-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
                   </FormControl>
                   <SelectContent>
+                    {/* Booking without an LO has to be a deliberate choice, not
+                        an empty field someone forgot — so it is a real option. */}
+                    {watchedType === "appointment" && (
+                      <SelectItem value={UNASSIGNED_LO} data-testid="select-lo-unassigned">
+                        No LO yet — assign later
+                      </SelectItem>
+                    )}
                     {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
                       <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
                     ))}
@@ -1452,7 +1483,7 @@ export default function Outcomes() {
                   )}
                 </div>
                 <span className="text-sm text-muted-foreground truncate" data-testid={`text-outcome-lo-${o.id}`}>
-                  {o.lo?.fullName ?? `LO #${o.loId}`}
+                  {o.lo?.fullName ?? (o.loId ? `LO #${o.loId}` : "No LO assigned")}
                 </span>
                 <span className="text-sm text-muted-foreground truncate">
                   {o.assistant?.name ?? `Assistant #${o.assistantId}`}

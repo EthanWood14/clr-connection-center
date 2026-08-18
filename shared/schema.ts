@@ -200,7 +200,10 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   date: text("date").notNull(),
   assistantId: integer("assistant_id").notNull().references(() => users.id),
-  loId: integer("lo_id").notNull().references(() => loanOfficers.id),
+  // Nullable: an appointment can be booked before anyone knows which LO will
+  // take it. A transfer always has one — that is enforced where it is logged,
+  // not by the column, because the same table holds both.
+  loId: integer("lo_id").references(() => loanOfficers.id),
   loaId: integer("loa_id").references(() => loanOfficerAssistants.id),
   borrowerName: text("borrower_name"),
   outcomeType: text("outcome_type").notNull(),

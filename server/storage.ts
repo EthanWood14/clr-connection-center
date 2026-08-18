@@ -659,6 +659,55 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // email, and it is the only call that moves a prospect across TEAMS.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_email TEXT`); } catch {}
 
+  // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
+  // An appointment can be booked before anyone knows which LO will take it, so
+  // "no LO yet" has to be representable. It is a real absence, not a sentinel
+  // row: pointing those at a placeholder LO would quietly fold them into that
+  // LO's numbers and into the rotation.
+  //
+  // SQLite cannot drop NOT NULL in place, so this rebuilds the table. The DDL
+  // is derived from the LIVE definition rather than written out here — this
+  // table has grown a long tail of ALTER-added columns, and hand-listing them
+  // is how a rebuild silently drops one. Indexes are captured and replayed for
+  // the same reason. Idempotent: only runs while NOT NULL is still set.
+  try {
+    const t = sqlite.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='lead_outcomes'`).get() as { sql?: string } | undefined;
+    if (t?.sql && /lo_id\s+INTEGER\s+NOT\s+NULL/i.test(t.sql)) {
+      const newDdl = t.sql
+        .replace(/CREATE\s+TABLE\s+["'`]?lead_outcomes["'`]?/i, "CREATE TABLE lead_outcomes__new")
+        .replace(/(lo_id\s+INTEGER)\s+NOT\s+NULL/i, "$1");
+      const cols = (sqlite.prepare(`PRAGMA table_info(lead_outcomes)`).all() as any[])
+        .map((c) => `"${c.name}"`).join(", ");
+      const indexes = (sqlite.prepare(
+        `SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='lead_outcomes' AND sql IS NOT NULL`,
+      ).all() as any[]).map((r) => String(r.sql));
+      const before = (sqlite.prepare(`SELECT COUNT(*) c FROM lead_outcomes`).get() as any).c;
+
+      const prevFk = (sqlite.prepare(`PRAGMA foreign_keys`).get() as any)?.foreign_keys ?? 1;
+      sqlite.exec(`PRAGMA foreign_keys = OFF;`);
+      sqlite.exec("BEGIN");
+      try {
+        sqlite.exec(newDdl);
+        sqlite.exec(`INSERT INTO lead_outcomes__new (${cols}) SELECT ${cols} FROM lead_outcomes;`);
+        const after = (sqlite.prepare(`SELECT COUNT(*) c FROM lead_outcomes__new`).get() as any).c;
+        // Never trade the real table for an incomplete copy.
+        if (after !== before) throw new Error(`row count mismatch: ${before} -> ${after}`);
+        sqlite.exec(`DROP TABLE lead_outcomes;`);
+        sqlite.exec(`ALTER TABLE lead_outcomes__new RENAME TO lead_outcomes;`);
+        for (const ix of indexes) { try { sqlite.exec(ix); } catch { /* index may already exist */ } }
+        sqlite.exec("COMMIT");
+        console.log(`[migration] lead_outcomes.lo_id is now nullable (${before} rows, ${indexes.length} indexes replayed)`);
+      } catch (e) {
+        sqlite.exec("ROLLBACK");
+        throw e;
+      } finally {
+        sqlite.exec(`PRAGMA foreign_keys = ${prevFk ? "ON" : "OFF"};`);
+      }
+    }
+  } catch (e: any) {
+    console.error("[migration] lead_outcomes.lo_id nullable rebuild FAILED:", e?.message ?? e);
+  }
+
   // ── LAP shared-access gate ────────────────────────────────────────────────
   // LAP is entered with one shared password instead of per-person logins. That
   // trades away "who did this" for convenience, so every gated browser is given
