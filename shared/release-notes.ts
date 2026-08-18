@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.90.0",
+    headline: "The CLR Trainer Walkthrough is now a page in C3, written by Matt Lane.",
+    items: [
+      { text: "Matt Lane's two-week training plan is under CLR Training — all ten days, split morning and afternoon, with each day's end-of-day checkpoint called out. No more hunting for the document." },
+      { text: "Filter to Week 1 or Week 2, jump straight to a day, or print the whole thing for a trainee to keep at their desk." },
+    ],
+  },
+  {
     version: "3.89.0",
     headline: "Up to three loan officers can be flagged as needing transfers.",
     items: [

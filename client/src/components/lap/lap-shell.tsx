@@ -22,6 +22,7 @@ import LapSettings from "@/pages/lap-settings";
 import LapUsers from "@/pages/lap-users";
 import LapTransferAudit from "@/pages/lap-transfer-audit";
 import SeatingChart from "@/pages/seating-chart";
+import ClrTraining from "@/pages/clr-training";
 import CheckIns from "@/pages/check-ins";
 import WeeklySchedule from "@/pages/weekly-schedule";
 import Forum from "@/pages/forum";
@@ -132,6 +133,7 @@ function LapRouter() {
       <Route path="/chat" component={LapChat} />
       <Route path="/lo-profiles" component={LapLoProfiles} />
       <Route path="/seating-map" component={SeatingChart} />
+      <Route path="/clr-training" component={ClrTraining} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />
       <Route path="/install" component={LapInstall} />

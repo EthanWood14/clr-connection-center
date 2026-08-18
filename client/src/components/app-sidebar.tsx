@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, UserCheck, Landmark,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -199,6 +199,7 @@ const teamItems: NavItem[] = [
   // Embedded in C3 rather than opened off-site — the chart still lives in its
   // own app, you just no longer leave C3 (and re-authenticate) to look at it.
   { title: "Seating Map",           url: "/seating-map", icon: Armchair },
+  { title: "CLR Training",          url: "/clr-training", icon: GraduationCap },
 ];
 
 // Team items only managers/admins see — the endpoints behind these are
