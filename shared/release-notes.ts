@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.88.0",
+    headline: "C3 has its own app icon instead of the generic company W.",
+    items: [
+      { text: "The browser tab, taskbar and installed app now show the C³ mark. Your browser caches icons hard, so if you still see the old W, a hard refresh (Ctrl+Shift+R) or reopening the tab will pick it up." },
+      { text: "At small sizes the icon drops the superscript and shows the C on its own, so it stays readable in a crowded tab strip." },
+      { text: "The LO Assistant Portal keeps its own separate icon, so the two stay tellable apart when you have both open.", audience: "lap" },
+    ],
+  },
+  {
     version: "3.87.0",
     headline: "Everyone now sees the full list of what changed in each update.",
     items: [
