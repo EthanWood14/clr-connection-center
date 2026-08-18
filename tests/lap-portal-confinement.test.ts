@@ -66,8 +66,24 @@ test("writing loan officers requires a role and records the real actor", () => {
     routes.indexOf(`app.post("/api/loan-officers"`),
     routes.indexOf(`// Copy credential endpoint`),
   );
-  assert.equal((writes.match(/requireManagerOrAdmin\(req, res\)/g) ?? []).length, 3,
-    "POST, PATCH and DELETE must each carry a role check");
+  // Checked per route rather than by counting: a bare count breaks the moment a
+  // new loan-officer write is added (it did, when the needs-transfers endpoint
+  // landed) and, worse, would still pass if a check moved from one route to
+  // another. Each route is asserted on its own body.
+  const routeBody = (decl: string, end: string) => {
+    const i = routes.indexOf(decl);
+    assert.ok(i > 0, `missing route: ${decl}`);
+    return routes.slice(i, routes.indexOf(end, i + 1));
+  };
+  for (const [decl, end] of [
+    [`app.post("/api/loan-officers"`, `app.post("/api/loan-officers/:id/needs-transfers"`],
+    [`app.post("/api/loan-officers/:id/needs-transfers"`, `app.patch("/api/loan-officers/:id"`],
+    [`app.patch("/api/loan-officers/:id"`, `app.post("/api/lead-source-outcomes"`],
+    [`app.delete("/api/loan-officers/:id"`, `// Copy credential endpoint`],
+  ] as const) {
+    assert.match(routeBody(decl, end), /requireManagerOrAdmin\(req, res\)/,
+      `${decl} must carry a role check`);
+  }
   assert.ok(!writes.includes(`userName: "Ethan Wood"`),
     "audit rows must name the actual acting user, not a hardcoded one");
 });
