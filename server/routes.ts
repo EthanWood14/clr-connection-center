@@ -6710,6 +6710,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return out;
   }
 
+  // NOTE: this must stay ABOVE /api/loan-officers/:id. Express matches routes in
+  // registration order, so declared after it, "transfer-counts" is read as an
+  // :id, parsed as NaN and 404s — which is exactly how the State Lookup workload
+  // column silently sat at 0 for every LO. /performance-summary above is here
+  // for the same reason.
+  app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    res.json({ counts: loTransferCounts(orgId) });
+  });
+
   app.get("/api/loan-officers/:id", (req: any, res) => {
     const lo = storage.getLoanOfficerById(parseInt(req.params.id)) as any;
     if (!lo) return res.status(404).json({ error: "Not found" });
@@ -13543,11 +13553,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     return counts;
   }
-
-  app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
-    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
-    res.json({ counts: loTransferCounts(orgId) });
-  });
 
   app.get("/api/lap/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);

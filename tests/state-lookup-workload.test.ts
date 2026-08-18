@@ -8,6 +8,23 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const page = readFileSync(join(root, "client/src/pages/state-lookup.tsx"), "utf8");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 
+test("literal routes are declared before the :id that would swallow them", () => {
+  // This shipped broken: the route existed, the tests asserted it existed, and
+  // it still 404'd — Express matches in registration order, so declared after
+  // /api/loan-officers/:id the path was read as an id, parsed as NaN and lost.
+  // Every LO's workload column sat at 0. Asserting presence is not asserting
+  // reachability.
+  const idAt = routes.indexOf('app.get("/api/loan-officers/:id"');
+  const countsAt = routes.indexOf('app.get("/api/loan-officers/transfer-counts"');
+  assert.ok(countsAt > 0 && idAt > 0, "both routes must exist");
+  assert.ok(countsAt < idAt, "transfer-counts must be registered BEFORE :id");
+  // Same rule for every other literal segment under this prefix.
+  for (const literal of ["performance-summary", "snoozed"]) {
+    const at = routes.indexOf(`app.get("/api/loan-officers/${literal}"`);
+    if (at > 0) assert.ok(at < idAt, `${literal} must precede :id`);
+  }
+});
+
 test("transfer counts are served to both portals", () => {
   // State Lookup is the same page in C3 and LAP, and the LAP confinement guard
   // only lets /lap/* through — so the endpoint has to exist on both paths or it
@@ -18,7 +35,12 @@ test("transfer counts are served to both portals", () => {
 });
 
 test("counts are scoped, transfers only, and cover three windows", () => {
-  const fn = routes.slice(routes.indexOf("function loTransferCounts"), routes.indexOf('app.get("/api/loan-officers/transfer-counts"'));
+  // Anchored forward from the helper to whatever follows it — the route it used
+  // to be sliced against now sits ABOVE it, which made this range run backwards
+  // and silently match nothing.
+  const from = routes.indexOf("function loTransferCounts");
+  const fn = routes.slice(from, routes.indexOf("app.get(", from));
+  assert.ok(fn.length > 0, "helper slice must not be empty");
   assert.match(fn, /outcome_type = 'transfer'/, "appointments and fell-throughs are not transfers");
   assert.match(fn, /org_id = \?/, "must not count another org's work");
   assert.match(fn, /lo_id IS NOT NULL/);
