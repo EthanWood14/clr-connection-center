@@ -78,6 +78,7 @@ import InviteAccept from "@/pages/invite";
 import Portal from "@/pages/portal";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
+import SeatingChart from "@/pages/seating-chart";
 import { LapApp } from "@/components/lap/lap-shell";
 
 function ThemeToggle() {
@@ -106,6 +107,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/appointments": "Appointments",
   "/fall-throughs": "Fall-Throughs",
   "/leaderboard":  "Team Stats",
+  "/seating-map":      "Seating Map",
   "/state-lookup": "State Lookup",
   "/call-hours":   "Call Hours by State",
   "/snooze":       "LO Vacation",
@@ -162,6 +164,7 @@ function AppRouter() {
       <Route path="/leaderboard" component={TeamStats} />
       <Route path="/team-stats" component={TeamStats} />
       <Route path="/leaderboard-classic" component={Leaderboard} />
+      <Route path="/seating-map" component={SeatingChart} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />
       <Route path="/chat" component={Chat} />

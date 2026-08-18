@@ -196,7 +196,9 @@ const teamItems: NavItem[] = [
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
   { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
-  { title: "Seating Map",           url: "https://seating-chart-production-1287.up.railway.app", icon: Armchair, external: true },
+  // Embedded in C3 rather than opened off-site — the chart still lives in its
+  // own app, you just no longer leave C3 (and re-authenticate) to look at it.
+  { title: "Seating Map",           url: "/seating-map", icon: Armchair },
 ];
 
 // Team items only managers/admins see — the endpoints behind these are

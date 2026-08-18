@@ -58,12 +58,8 @@ const personalItems: NavItem[] = [
 const teamItems: NavItem[] = [
   { title: "Forum", href: "/forum", icon: MessagesSquare },
   { title: "Team Chat", href: "/chat", icon: MessageCircle },
-  {
-    title: "Seating Map",
-    href: "https://seating-chart-production-1287.up.railway.app",
-    icon: Armchair,
-    external: true,
-  },
+  // Embedded rather than opened off-site — see pages/seating-chart.tsx.
+  { title: "Seating Map", href: "/seating-map", icon: Armchair },
   { title: "LO Profiles", href: "/lo-profiles", icon: UsersRound },
 ];
 

@@ -26,6 +26,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.84.0",
+    headline: "The seating map opens inside C3 instead of throwing you out to another site.",
+    items: [
+      { text: "Seating Map now loads in place, so you stay signed in and keep your spot instead of bouncing to another tab. It is still the same seating chart app, just shown inside C3." },
+      { text: "Open in new tab is still there if you want it full screen." },
+    ],
+  },
+  {
     version: "3.83.0",
     headline: "Update notices now tell you what actually changed.",
     items: [
