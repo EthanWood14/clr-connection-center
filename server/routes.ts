@@ -26,7 +26,7 @@ import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-det
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
-import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow } from "./lap-transfer-audit";
+import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL } from "./business-day";
 import { createBackup, listBackups } from "./backup";
@@ -10772,6 +10772,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         email: u.email,
         submitted: !!r,
         submittedAt: r ? (r.createdAt || r.created_at || null) : null,
+        // What the CLR actually reported. Without these the card only says
+        // whether a report exists, which is the least interesting thing about
+        // it — a manager wants the day, not the receipt.
+        calls: r ? Number(r.callsMade ?? r.calls_made ?? 0) : 0,
+        messages: r ? Number(r.messagesSent ?? r.messages_sent ?? 0) : 0,
+        conversations: r ? Number(r.additionalConversations ?? r.additional_conversations ?? 0)
+                          + Number(r.callToolsConversations ?? r.calltools_conversations ?? 0) : 0,
+        transfers: r ? Number(r.transfers ?? 0) : 0,
+        appointments: r ? Number(r.appointments ?? 0) : 0,
+        // Notes are mandatory now, so this is always present on a filed report
+        // and is the one part a manager cannot reconstruct from the numbers.
+        notes: r ? String(r.notes ?? "").trim() || null : null,
+        losCalled: r ? (() => {
+          try { return (JSON.parse(String(r.assignedLosCalled ?? r.assigned_los_called ?? "[]")) as any[]).length; }
+          catch { return 0; }
+        })() : 0,
         // Filed after the 4pm deadline, and the four daily checklist answers.
         // null = the report predates the question, which must not read as "no".
         late: !!(r && (r.submittedLate ?? r.submitted_late)),
@@ -10785,6 +10801,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
     const eodSubmittedCount = eodStatus.filter(e => e.submitted).length;
     const eodLateCount = eodStatus.filter(e => e.late).length;
+    const eodTotals = ["calls", "messages", "conversations", "transfers", "appointments"].reduce(
+      (acc: any, k) => { acc[k] = eodStatus.reduce((n: number, e: any) => n + Number(e[k] ?? 0), 0); return acc; },
+      {} as Record<string, number>,
+    );
     // A "gap" is an explicit No — the work a manager can actually chase today.
     const eodChecklistGaps = (["bulkText", "respondedNew", "retailMeta", "retailUngraduated"] as const)
       .map((k) => ({
@@ -11393,8 +11413,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       },
       callActivity,
       clrCards,
+      // ── LO workload balance ─────────────────────────────────────────────
+      // Who is starved and who is buried, so transfers can be spread without
+      // opening State Lookup state by state.
+      loWorkload: (() => {
+        try {
+          const counts = loTransferCounts(Number(req.session_user?.orgId ?? 1) || 1);
+          const active = (storage.getLoanOfficers() as any[])
+            .filter((l: any) => (l.internalStatus ?? l.internal_status ?? "active") === "active");
+          const rows = active.map((l: any) => ({
+            id: Number(l.id), name: String(l.fullName ?? l.full_name ?? ""),
+            d30: counts[String(l.id)]?.d30 ?? 0,
+          })).sort((a, b) => a.d30 - b.d30);
+          return { window: "30 days", lightest: rows.slice(0, 5), heaviest: [...rows].reverse().slice(0, 5) };
+        } catch (e: any) {
+          console.error("[dashboard] loWorkload failed:", e?.message ?? e);
+          return null;
+        }
+      })(),
+
       eod: {
         late: eodLateCount,
+        totals: eodTotals,
         dueLabel: EOD_DUE_LABEL,
         checklistGaps: eodChecklistGaps,
         date: todayStr,

@@ -117,9 +117,12 @@ type ManagerData = {
     missing: number;
     late: number;
     dueLabel: string;
+    totals: Record<string, number>;
     checklistGaps: { key: string; label: string; no: string[] }[];
     rows: { userId: number; name: string; email: string; submitted: boolean; submittedAt: string | null;
-            late?: boolean; checklist?: Record<string, boolean | null> | null }[];
+            late?: boolean; checklist?: Record<string, boolean | null> | null;
+            calls?: number; messages?: number; conversations?: number; transfers?: number;
+            appointments?: number; notes?: string | null; losCalled?: number }[];
   };
   pipeline: {
     todayTransfers: any[];
@@ -1361,6 +1364,58 @@ export default function ManagerDashboard() {
               </div>
             )}
 
+            {/* What the floor actually reported today. The submission tracker
+                below still answers "did it arrive"; this answers "what does it
+                say", which is the part a manager was opening each email for. */}
+            <div className="mb-3 overflow-x-auto">
+              <table className="w-full text-xs" data-testid="eod-digest-table">
+                <thead>
+                  <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <th className="text-left font-medium px-2 py-1.5">CLR</th>
+                    <th className="text-right font-medium px-2 py-1.5">Calls</th>
+                    <th className="text-right font-medium px-2 py-1.5">Msgs</th>
+                    <th className="text-right font-medium px-2 py-1.5">Convos</th>
+                    <th className="text-right font-medium px-2 py-1.5">Xfer</th>
+                    <th className="text-right font-medium px-2 py-1.5">Appt</th>
+                    <th className="text-right font-medium px-2 py-1.5">LOs</th>
+                    <th className="text-left font-medium px-2 py-1.5 min-w-[14rem]">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eod.rows.filter(r => r.submitted).map(r => (
+                    <tr key={r.userId} className="border-b last:border-0 align-top hover:bg-muted/30">
+                      <td className="px-2 py-1.5 font-medium whitespace-nowrap">
+                        {r.name}
+                        {r.late && <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">late</span>}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{r.calls ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{r.messages ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{r.conversations ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ color: GREEN }}>{r.transfers ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{r.appointments ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{r.losCalled ?? 0}</td>
+                      <td className="px-2 py-1.5 text-muted-foreground leading-snug">{r.notes || "—"}</td>
+                    </tr>
+                  ))}
+                  {eod.rows.some(r => r.submitted) && (
+                    <tr className="bg-muted/40 font-semibold">
+                      <td className="px-2 py-1.5">Team</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{eod.totals?.calls ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{eod.totals?.messages ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{eod.totals?.conversations ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums" style={{ color: GREEN }}>{eod.totals?.transfers ?? 0}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{eod.totals?.appointments ?? 0}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  )}
+                  {!eod.rows.some(r => r.submitted) && (
+                    <tr><td colSpan={8} className="px-2 py-6 text-center text-muted-foreground">No reports filed yet today.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Submission status</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-1 max-h-72 overflow-y-auto">
               {eod.rows.map(row => (
                 <div key={row.userId} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/40">

@@ -75,3 +75,24 @@ test("managers see the answers, not just that a report exists", () => {
   assert.match(dash, /\{g\.no\.join\(", "\)\}/, "name the people, not just a count");
   assert.match(dash, /eod\.late > 0 && ` · \$\{eod\.late\} late`/);
 });
+
+test("the dashboard shows what the reports SAY, not just that they arrived", () => {
+  // The card used to answer "did it arrive", which is the least interesting
+  // thing about a report. Managers were opening each email to read the day.
+  for (const field of ["calls:", "messages:", "conversations:", "transfers:", "appointments:", "notes:", "losCalled:"]) {
+    assert.ok(routes.includes(field), `dashboard row must carry ${field}`);
+  }
+  assert.match(routes, /const eodTotals = /, "a team row, so the floor's output reads at a glance");
+  assert.match(dash, /data-testid="eod-digest-table"/);
+  assert.match(dash, /\{r\.notes \|\| "—"\}/, "notes are shown inline — they are mandatory now");
+  // The submission tracker survives underneath; the digest replaces nothing.
+  assert.match(dash, /Submission status/);
+});
+
+test("conversations combine what the CLR typed with what the dialer recorded", () => {
+  const fn = routes.slice(routes.indexOf("const eodStatus = allClrs.map"), routes.indexOf("const eodSubmittedCount"));
+  assert.match(fn, /additionalConversations \?\? r\.additional_conversations/);
+  assert.match(fn, /callToolsConversations \?\? r\.calltools_conversations/);
+  // A CLR who filed nothing reads as zero, never as undefined in the totals.
+  assert.match(fn, /r \? Number\(r\.callsMade \?\? r\.calls_made \?\? 0\) : 0/);
+});
