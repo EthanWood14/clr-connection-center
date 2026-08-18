@@ -115,7 +115,11 @@ type ManagerData = {
     total: number;
     submitted: number;
     missing: number;
-    rows: { userId: number; name: string; email: string; submitted: boolean; submittedAt: string | null }[];
+    late: number;
+    dueLabel: string;
+    checklistGaps: { key: string; label: string; no: string[] }[];
+    rows: { userId: number; name: string; email: string; submitted: boolean; submittedAt: string | null;
+            late?: boolean; checklist?: Record<string, boolean | null> | null }[];
   };
   pipeline: {
     todayTransfers: any[];
@@ -1337,9 +1341,26 @@ export default function ManagerDashboard() {
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
                   {eod.missing === 0 ? "All reports submitted" : `${eod.missing} outstanding`}
+                  {` · due ${eod.dueLabel}`}
+                  {eod.late > 0 && ` · ${eod.late} late`}
                 </div>
               </div>
             </div>
+            {/* The checklist turned into work a manager can act on: which task
+                got skipped, and by whom. A count alone ("3 gaps") tells them
+                something is wrong without telling them what to chase. */}
+            {eod.checklistGaps?.some(g => g.no.length > 0) && (
+              <div className="mb-3 rounded-md border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/20 px-3 py-2 space-y-1" data-testid="eod-checklist-gaps">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Checklist gaps today</p>
+                {eod.checklistGaps.filter(g => g.no.length > 0).map(g => (
+                  <div key={g.key} className="flex items-baseline justify-between gap-3 text-xs">
+                    <span className="text-foreground">{g.label}</span>
+                    <span className="text-red-700 dark:text-red-400 text-right">{g.no.join(", ")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-1 max-h-72 overflow-y-auto">
               {eod.rows.map(row => (
                 <div key={row.userId} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/40">
@@ -1351,9 +1372,17 @@ export default function ManagerDashboard() {
                     )}
                     <span className="text-sm truncate">{row.name}</span>
                   </div>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1.5">
                     {row.submitted && row.submittedAt
-                      ? format(new Date(row.submittedAt), "h:mm a")
+                      ? (<>
+                          {format(new Date(row.submittedAt), "h:mm a")}
+                          {row.late && (
+                            <Badge variant="outline" className="text-[10px] px-1 py-0 text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-800/60 dark:bg-amber-950/30" title={`Filed after ${eod.dueLabel}`}>late</Badge>
+                          )}
+                          {row.checklist && Object.values(row.checklist).some(v => v === false) && (
+                            <Badge variant="outline" className="text-[10px] px-1 py-0 text-red-700 border-red-300 bg-red-50 dark:text-red-300 dark:border-red-800/60 dark:bg-red-950/30" title="Answered No on part of the daily checklist">gap</Badge>
+                          )}
+                        </>)
                       : <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-800/60 dark:bg-amber-950/30">Missing</Badge>}
                   </span>
                 </div>

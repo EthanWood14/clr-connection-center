@@ -28,7 +28,7 @@ import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-not
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
@@ -10765,15 +10765,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const eodStatus = allClrs.map((u: any) => {
       const r = reportByUser.get(u.id);
+      const yn = (v: any) => (v === 1 ? true : v === 0 ? false : null);
       return {
         userId: u.id,
         name: u.name,
         email: u.email,
         submitted: !!r,
         submittedAt: r ? (r.createdAt || r.created_at || null) : null,
+        // Filed after the 4pm deadline, and the four daily checklist answers.
+        // null = the report predates the question, which must not read as "no".
+        late: !!(r && (r.submittedLate ?? r.submitted_late)),
+        checklist: r ? {
+          bulkText: yn(r.bulkTextAllLos ?? r.bulk_text_all_los),
+          respondedNew: yn(r.workedRespondedNew ?? r.worked_responded_new),
+          retailMeta: yn(r.retailMetaLeads ?? r.retail_meta_leads),
+          retailUngraduated: yn(r.retailUngraduatedLeads ?? r.retail_ungraduated_leads),
+        } : null,
       };
     });
     const eodSubmittedCount = eodStatus.filter(e => e.submitted).length;
+    const eodLateCount = eodStatus.filter(e => e.late).length;
+    // A "gap" is an explicit No — the work a manager can actually chase today.
+    const eodChecklistGaps = (["bulkText", "respondedNew", "retailMeta", "retailUngraduated"] as const)
+      .map((k) => ({
+        key: k,
+        label: { bulkText: "Bulk text — all assigned LOs", respondedNew: "Responded / new contacts",
+                 retailMeta: "Retail Bonzo — Meta leads", retailUngraduated: "Retail Bonzo — ungraduated/graduated" }[k],
+        no: eodStatus.filter((e: any) => e.checklist?.[k] === false).map((e: any) => e.name),
+      }));
 
     // ── Pipeline ──
     // Today's transfers (across whole org, with CLR + LO names)
@@ -11375,6 +11394,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       callActivity,
       clrCards,
       eod: {
+        late: eodLateCount,
+        dueLabel: EOD_DUE_LABEL,
+        checklistGaps: eodChecklistGaps,
         date: todayStr,
         total: allClrs.length,
         submitted: eodSubmittedCount,
@@ -15628,8 +15650,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.post('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
-    const { reportDate, callsMade, messagesSent, additionalConversations, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes } = req.body;
+    const { reportDate, callsMade, messagesSent, additionalConversations, voicemails, textsSent, emailsSent, loConnections, transfers, appointments, notes, assignedLosCalled, additionalLosCalled, additionalLosOtherNotes,
+      bulkTextAllLos, workedRespondedNew, retailMetaLeads, retailUngraduatedLeads } = req.body;
     if (!reportDate) return res.status(400).json({ error: 'reportDate required' });
+    // Notes are mandatory: the numbers are captured automatically, so the note
+    // is the only part of the report a manager cannot reconstruct.
+    if (!String(notes ?? "").trim()) {
+      return res.status(400).json({ error: 'Notes are required — say how the day went.' });
+    }
+    // Yes/no accountability questions. Unanswered is rejected rather than
+    // stored as "no", which would put words in the CLR's mouth.
+    const yesNo = (v: any, label: string) => {
+      if (v === true || v === 1 || v === "yes") return 1;
+      if (v === false || v === 0 || v === "no") return 0;
+      throw new Error(`Answer required: ${label}`);
+    };
+    // Stamped at submit because lateness depends on the CLR's own timezone at
+    // that moment, which a later reader cannot reconstruct.
+    const submittedLate = eodIsOverdue(reportDate, tzFromRequest(req, storageExtra.getRawSqlite())) ? 1 : 0;
+    let dailyQuestions: { bulkTextAllLos: number; workedRespondedNew: number; retailMetaLeads: number; retailUngraduatedLeads: number };
+    try {
+      dailyQuestions = {
+        bulkTextAllLos: yesNo(bulkTextAllLos, "bulk text for all assigned LOs"),
+        workedRespondedNew: yesNo(workedRespondedNew, "responded/new contacts"),
+        retailMetaLeads: yesNo(retailMetaLeads, "retail Bonzo — Meta leads"),
+        retailUngraduatedLeads: yesNo(retailUngraduatedLeads, "retail Bonzo — ungraduated/graduated leads"),
+      };
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message });
+    }
     // Calls made is mandatory — a blank field must not quietly file as 0. The
     // client sends null when empty; anything non-numeric/negative is rejected too.
     const nonNegativeWhole = (value: any): number | null => {
@@ -15668,6 +15717,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       assignedLosCalled: assignedIds,
       additionalLosCalled: additionalIds,
       additionalLosOtherNotes: otherNotesStr,
+      ...dailyQuestions,
+      // Stamped here because lateness depends on the CLR's own timezone at the
+      // moment they file, which a later reader cannot reconstruct.
+      submittedLate,
     });
     // Also sync call log for the day
     storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: callsNum, notes: null });
@@ -16213,6 +16266,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           </div>`;
           })() : ""}
 
+          ${(() => {
+            // The four daily questions, answered. A manager reading one report
+            // should not have to open C3 to see whether the work was done.
+            const q: Array<[string, any]> = [
+              ["Bulk text — all assigned LOs", dailyQuestions.bulkTextAllLos],
+              ["Responded / new contacts worked", dailyQuestions.workedRespondedNew],
+              ["Retail Bonzo — Meta leads", dailyQuestions.retailMetaLeads],
+              ["Retail Bonzo — ungraduated / graduated", dailyQuestions.retailUngraduatedLeads],
+            ];
+            const anyNo = q.some(([, v]) => v === 0);
+            return `
+            <div style="margin:18px 0 0;padding:12px 14px;border-radius:8px;background:${anyNo ? "#fef2f2" : "#f0fdf4"};border:1px solid ${anyNo ? "#fecaca" : "#bbf7d0"}">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:${anyNo ? "#991b1b" : "#166534"}">✅ Daily checklist</p>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                ${q.map(([label, v]) => `
+                  <tr>
+                    <td style="padding:3px 0;font-size:13px;color:#334155">${label}</td>
+                    <td style="padding:3px 0;font-size:13px;font-weight:700;text-align:right;color:${v === 1 ? "#16a34a" : "#dc2626"}">${v === 1 ? "Yes" : "No"}</td>
+                  </tr>`).join("")}
+              </table>
+            </div>`;
+          })()}
+          ${submittedLate ? `
+            <p style="margin:12px 0 0;padding:8px 12px;border-radius:6px;background:#fffbeb;border:1px solid #fde68a;font-size:12px;color:#92400e">
+              ⏰ Filed after the ${EOD_DUE_LABEL} deadline.
+            </p>` : ""}
           ${safeNotes ? `
           <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:20px">
             <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#713f12">📝 Additional Notes</p>

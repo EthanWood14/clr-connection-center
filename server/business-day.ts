@@ -11,6 +11,28 @@
 // not return Date objects, to avoid downstream timezone bugs.
 
 const ROLLOVER_HOUR = 19; // 7pm - first hour counted as the *next* business day
+
+/**
+ * When the day's EOD report is DUE, in the CLR's local time. Deliberately NOT
+ * the same as ROLLOVER_HOUR: the rollover decides which calendar day work
+ * counts toward and drives assignments, check-ins and every report window, so
+ * moving it would silently redefine "today" across the whole app. This is only
+ * a deadline — it decides whether a submission is on time.
+ */
+export const EOD_DUE_HOUR = 16; // 4pm
+export const EOD_DUE_LABEL = "4:00 PM";
+
+/** True once the local time is past the deadline for `businessDate`. */
+export function eodIsOverdue(
+  businessDate: string,
+  tz: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  const today = businessTodayInTz(tz, now);
+  if (businessDate < today) return true;              // an earlier day is late by definition
+  if (businessDate > today) return false;             // not yet owed
+  return hourInTz(now, tz || DEFAULT_TZ) >= EOD_DUE_HOUR;
+}
 const DEFAULT_TZ = "America/Los_Angeles";
 
 // Format any Date as "YYYY-MM-DD" *as observed in* the given IANA timezone.

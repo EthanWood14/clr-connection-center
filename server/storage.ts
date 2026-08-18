@@ -2674,6 +2674,15 @@ function runNewMigrations() {
   // Dialpad calls as they stood when the report was filed. Snapshotted like the
   // CallTools figures so a later re-sync cannot rewrite a submitted report.
   try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN dialpad_calls INTEGER NOT NULL DEFAULT 0`); } catch {}
+  // Daily accountability questions. NULL = not answered (rows filed before the
+  // questions existed), 1/0 = yes/no — so old reports read as "unanswered"
+  // rather than as a silent "no".
+  for (const col of ["bulk_text_all_los", "worked_responded_new", "retail_meta_leads", "retail_ungraduated_leads"]) {
+    try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN ${col} INTEGER`); } catch {}
+  }
+  // Whether the report landed after the 4pm deadline, stamped at submit time
+  // because it depends on the CLR's timezone at that moment.
+  try { sqlite.exec(`ALTER TABLE eod_reports ADD COLUMN submitted_late INTEGER NOT NULL DEFAULT 0`); } catch {}
   // Callbacks are appointments now. Preserve the schedule, borrower and notes
   // while removing the retired outcome type from every C3 surface.
   try { sqlite.exec(`UPDATE lead_outcomes SET outcome_type='appointment' WHERE outcome_type='callback_requested'`); } catch {}
@@ -3903,7 +3912,7 @@ export function getEodReport(reportDate: string, assistantId: number): any {
   return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
 }
 
-export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; dialpadCalls?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null }): any {
+export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; dialpadCalls?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null; bulkTextAllLos?: number | null; workedRespondedNew?: number | null; retailMetaLeads?: number | null; retailUngraduatedLeads?: number | null; submittedLate?: number }): any {
   const assignedJson = JSON.stringify(Array.isArray(data.assignedLosCalled) ? data.assignedLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const additionalJson = JSON.stringify(Array.isArray(data.additionalLosCalled) ? data.additionalLosCalled.map(n => Number(n)).filter(Number.isFinite) : []);
   const otherNotes = typeof data.additionalLosOtherNotes === "string" && data.additionalLosOtherNotes.trim()
@@ -3915,8 +3924,8 @@ export function upsertEodReport(data: { reportDate: string; assistantId: number;
   const callToolsActiveSeconds = Number.isFinite(Number(data.callToolsActiveSeconds)) ? Math.max(0, Math.round(Number(data.callToolsActiveSeconds))) : 0;
   const dialpadCalls = Number.isFinite(Number(data.dialpadCalls)) ? Math.max(0, Math.round(Number(data.dialpadCalls))) : 0;
   sqlite.prepare(`
-    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, additional_conversations, calltools_conversations, calltools_active_seconds, dialpad_calls, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, submitted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO eod_reports (report_date, assistant_id, calls_made, messages_sent, additional_conversations, calltools_conversations, calltools_active_seconds, dialpad_calls, transfers, appointments, notes, assigned_los_called, additional_los_called, additional_los_other_notes, bulk_text_all_los, worked_responded_new, retail_meta_leads, retail_ungraduated_leads, submitted_late, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(report_date, assistant_id) DO UPDATE SET
       calls_made=excluded.calls_made, messages_sent=excluded.messages_sent, transfers=excluded.transfers,
       additional_conversations=excluded.additional_conversations,
@@ -3927,8 +3936,14 @@ export function upsertEodReport(data: { reportDate: string; assistantId: number;
       assigned_los_called=excluded.assigned_los_called,
       additional_los_called=excluded.additional_los_called,
       additional_los_other_notes=excluded.additional_los_other_notes,
+      bulk_text_all_los=excluded.bulk_text_all_los,
+      worked_responded_new=excluded.worked_responded_new,
+      retail_meta_leads=excluded.retail_meta_leads,
+      retail_ungraduated_leads=excluded.retail_ungraduated_leads,
+      submitted_late=excluded.submitted_late,
       submitted_at=datetime('now')
-  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, additionalConversations, callToolsConversations, callToolsActiveSeconds, dialpadCalls, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes);
+  `).run(data.reportDate, data.assistantId, data.callsMade, messagesSent, additionalConversations, callToolsConversations, callToolsActiveSeconds, dialpadCalls, data.transfers, data.appointments, data.notes ?? null, assignedJson, additionalJson, otherNotes,
+       data.bulkTextAllLos ?? null, data.workedRespondedNew ?? null, data.retailMetaLeads ?? null, data.retailUngraduatedLeads ?? null, data.submittedLate ?? 0);
   return getEodReport(data.reportDate, data.assistantId);
 }
 

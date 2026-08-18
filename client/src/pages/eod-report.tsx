@@ -116,6 +116,12 @@ export default function EodReport() {
   const [messagesSent, setMessagesSent] = useState("");
   const [additionalConversations, setAdditionalConversations] = useState("");
   const [notes, setNotes]         = useState("");
+  // Daily accountability questions. null = unanswered, which blocks submit —
+  // storing an unanswered question as "no" would put words in the CLR's mouth.
+  const [bulkTextAllLos, setBulkTextAllLos] = useState<boolean | null>(null);
+  const [workedRespondedNew, setWorkedRespondedNew] = useState<boolean | null>(null);
+  const [retailMetaLeads, setRetailMetaLeads] = useState<boolean | null>(null);
+  const [retailUngraduatedLeads, setRetailUngraduatedLeads] = useState<boolean | null>(null);
   const [dirty, setDirty]         = useState(false);
   const [assignedCalled, setAssignedCalled] = useState<number[]>([]);
   const [additionalCalled, setAdditionalCalled] = useState<number[]>([]);
@@ -228,6 +234,11 @@ export default function EodReport() {
       setMessagesSent(String(report.messages_sent ?? report.messagesSent ?? ""));
       setAdditionalConversations(String(report.additional_conversations ?? report.additionalConversations ?? ""));
       setNotes(report.notes ?? "");
+      const yn = (v: any) => (v === 1 || v === true ? true : v === 0 || v === false ? false : null);
+      setBulkTextAllLos(yn(report.bulkTextAllLos ?? report.bulk_text_all_los));
+      setWorkedRespondedNew(yn(report.workedRespondedNew ?? report.worked_responded_new));
+      setRetailMetaLeads(yn(report.retailMetaLeads ?? report.retail_meta_leads));
+      setRetailUngraduatedLeads(yn(report.retailUngraduatedLeads ?? report.retail_ungraduated_leads));
       setAssignedCalled(Array.isArray(report.assignedLosCalled) ? report.assignedLosCalled : []);
       setAdditionalCalled(Array.isArray(report.additionalLosCalled) ? report.additionalLosCalled : []);
       const savedOther = (report.additionalLosOtherNotes ?? report.additional_los_other_notes ?? "") as string;
@@ -361,6 +372,7 @@ export default function EodReport() {
         transfers:    autoTransfers,
         appointments: autoAppointments,
         notes:        notes.trim() || null,
+        bulkTextAllLos, workedRespondedNew, retailMetaLeads, retailUngraduatedLeads,
         assignedLosCalled: assignedCalled,
         additionalLosCalled: additionalCalled,
         additionalLosOtherNotes: additionalOtherNotes.trim() || null,
@@ -435,6 +447,17 @@ export default function EodReport() {
   const canGoForward = !isFuture && !(isTomorrow);
   const displayDate = format(parseISO(selectedDate), "EEEE, MMMM d, yyyy");
 
+  // What still blocks submission, named rather than left as a dead button.
+  const missingParts = [
+    !notes.trim() && "notes",
+    bulkTextAllLos === null && "the bulk-text question",
+    workedRespondedNew === null && "the responded/new contacts question",
+    retailMetaLeads === null && "the Meta leads question",
+    retailUngraduatedLeads === null && "the ungraduated/graduated leads question",
+  ].filter(Boolean) as string[];
+  const canSubmit = missingParts.length === 0;
+  const missingLabel = canSubmit ? "" : `Still needed: ${missingParts.join(", ")}`;
+
   // Calls made is mandatory on the EOD — blank blocks submission (0 is fine).
   const importedConversations = Number(data?.callToolsActivity?.conversations ?? report?.calltools_conversations ?? 0);
   const importedActiveSeconds = Number(data?.callToolsActivity?.activeSeconds ?? report?.calltools_active_seconds ?? 0);
@@ -488,7 +511,7 @@ export default function EodReport() {
                 ? "EOD Reporting — Tomorrow"
                 : "EOD Reporting"}
             <HelpIcon title="EOD Report">
-              Submit your end-of-day summary. Include which LOs you called for, and add any notable notes. This sends an email to your managers.
+              Submit your end-of-day summary. Include which LOs you called for, and add any notable notes. This sends an email to your managers. <strong>Due by 4:00 PM</strong> each day.
             </HelpIcon>
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -821,21 +844,66 @@ export default function EodReport() {
                 />
               </div>
 
+              {/* Daily accountability questions. Every one must be answered —
+                  a blank on a checklist whose whole purpose is "did you do the
+                  work" tells a manager nothing. */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">Today's checklist</label>
+                {([
+                  ["Did you run a bulk text for all your assigned LOs?", bulkTextAllLos, setBulkTextAllLos, "bulk-text"],
+                  ["Did you work through all the responded / new contacts for your assigned LOs?", workedRespondedNew, setWorkedRespondedNew, "responded-new"],
+                  ["Did you work in the retail Bonzo for Meta leads?", retailMetaLeads, setRetailMetaLeads, "retail-meta"],
+                  ["Did you work in the retail Bonzo for ungraduated / graduated leads?", retailUngraduatedLeads, setRetailUngraduatedLeads, "retail-ungrad"],
+                ] as const).map(([label, value, setter, testId]) => (
+                  <div key={testId} className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+                    <span className="text-[13px] leading-snug">{label}</span>
+                    <div className="flex gap-1 shrink-0">
+                      {([["Yes", true], ["No", false]] as const).map(([text, v]) => (
+                        <button
+                          key={text}
+                          type="button"
+                          onClick={() => { (setter as any)(v); setDirty(true); }}
+                          data-testid={`eod-${testId}-${text.toLowerCase()}`}
+                          className={`text-[11px] px-2.5 py-1 rounded-md border font-medium ${
+                            value === v ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"
+                          }`}
+                        >{text}</button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Notes / Comments</label>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Notes / Comments <span className="text-destructive">*</span>
+                </label>
                 <Textarea
                   placeholder="Anything notable about today? Challenges, wins, feedback from LOs..."
                   value={notes}
                   onChange={e => { setNotes(e.target.value); setDirty(true); }}
                   className="min-h-[80px] resize-none text-sm"
+                  data-testid="eod-notes"
                 />
+                {/* The numbers are captured automatically; the note is the only
+                    part of the report a manager cannot reconstruct. */}
+                {!notes.trim() && (
+                  <p className="text-[11px] text-muted-foreground">Required — the rest of this report is counted for you.</p>
+                )}
               </div>
+
+              {!canSubmit && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="eod-missing-parts">
+                  {missingLabel}
+                </p>
+              )}
 
               <div className="flex flex-wrap gap-2">
                 <Button
                   className="flex-1 min-w-[180px] gap-2"
                   onClick={() => saveMutation.mutate()}
-                  disabled={saveMutation.isPending || (!dirty && !!report)}
+                  disabled={saveMutation.isPending || (!dirty && !!report) || !canSubmit}
+                  title={canSubmit ? undefined : missingLabel}
                 >
                   {saveMutation.isPending ? (
                     <><Clock className="w-4 h-4 animate-spin" /> Saving…</>
