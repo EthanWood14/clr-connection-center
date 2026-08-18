@@ -5,3 +5,4 @@ clr.db-journal
 # committed copy is never used by anything. It was adding ~5MB of permanent
 # objects on every deploy.
 dist/
+node_modules/.vite/
