@@ -658,6 +658,10 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // The Bonzo user email for this LO — POST /prospects/{id}/reassign keys on
   // email, and it is the only call that moves a prospect across TEAMS.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_email TEXT`); } catch {}
+  // Up to three LOs can be flagged as needing transfers. Deliberately a small
+  // cap: the point is a shortlist a CLR can act on, and "everyone is a
+  // priority" carries no information.
+  try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN needs_transfers INTEGER NOT NULL DEFAULT 0`); } catch {}
 
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
   // An appointment can be booked before anyone knows which LO will take it, so
@@ -1401,6 +1405,7 @@ function normalizeLoanOfficer(row: any): any {
     created_at: "createdAt",
     updated_at: "updatedAt",
     do_not_call: "doNotCall",
+    needs_transfers: "needsTransfers",
     profile_url: "profileUrl",
     license_status: "licenseStatus",
     bonzo_username: "bonzoUsername",

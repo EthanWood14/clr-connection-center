@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.89.0",
+    headline: "Up to three loan officers can be flagged as needing transfers.",
+    items: [
+      { text: "Flagged LOs are highlighted and pinned to the top of every state they're licensed in on State Lookup, so you can see who to send the next transfer to without checking the counts." },
+      { text: "The current shortlist is shown at the top of the state panel, so you don't have to hunt for a highlight." },
+      { text: "Managers set the list from State Lookup — three at a time, on purpose. Flagging a fourth is refused rather than quietly dropping someone, so you choose who comes off." },
+    ],
+  },
+  {
     version: "3.88.0",
     headline: "C3 has its own app icon instead of the generic company W.",
     items: [

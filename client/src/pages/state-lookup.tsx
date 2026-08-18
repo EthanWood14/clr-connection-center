@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight, AlertTriangle } from "lucide-react";
+import { MapPin, Search, Copy, Phone, Mail, User, ChevronRight, AlertTriangle, Flame } from "lucide-react";
 import { Link } from "wouter";
 import { copyToClipboard } from "@/lib/utils";
 import { businessTodayClient } from "@/lib/business-day";
@@ -102,6 +103,22 @@ export default function StateLookup() {
   const { data: allLOs = [], isLoading } = useQuery<any[]>({
     queryKey: [loanOfficersEndpoint],
   });
+
+  // Managers flag who needs volume. Capped at three server-side; a refusal is
+  // surfaced rather than swallowed, so the manager picks who drops off.
+  const { toast } = useToast();
+  const flagMut = useMutation({
+    mutationFn: ({ id, on }: { id: number; on: boolean }) =>
+      apiRequest("POST", `/api/loan-officers/${id}/needs-transfers`, { on }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [loanOfficersEndpoint] }),
+    onError: (e: any) => toast({
+      title: "Couldn't update", description: e?.message ?? "Try again.", variant: "destructive",
+    }),
+  });
+  const flaggedNames = useMemo(
+    () => allLOs.filter((l: any) => l.needsTransfers).map((l: any) => l.fullName),
+    [allLOs],
+  );
 
   // Transfer counts per LO, so a state's list can be ordered by who has taken
   // the least work rather than by tier alone. Several windows arrive together;
@@ -388,6 +405,16 @@ export default function StateLookup() {
 
               {/* Who in this state has taken the least work. The whole point of
                   the view: pick the next LO without guessing. */}
+              {flaggedNames.length > 0 && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/25 px-3 py-2" data-testid="needs-transfers-summary">
+                  <Flame className="w-3.5 h-3.5 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <p className="text-xs text-amber-900 dark:text-amber-200">
+                    <span className="font-semibold">Needs transfers:</span> {flaggedNames.join(", ")}
+                    <span className="text-amber-700 dark:text-amber-400/80"> — pinned to the top of any state they cover.</span>
+                  </p>
+                </div>
+              )}
+
               {licensedLOs.length > 1 && (
                 <div className="flex items-center gap-2 flex-wrap" data-testid="lo-workload-controls">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Order:</span>
@@ -450,12 +477,15 @@ export default function StateLookup() {
                 <div className="space-y-3">
                   {[...licensedLOs]
                     .sort((a, b) =>
-                      orderBy === "fewest"
+                      // Anyone flagged as needing transfers comes first, whatever
+                      // the chosen order — that is the point of flagging them.
+                      ((b.needsTransfers ? 1 : 0) - (a.needsTransfers ? 1 : 0)) ||
+                      (orderBy === "fewest"
                         // Fewest transfers first; tier breaks ties so the
                         // ordering stays stable among LOs with equal counts.
                         ? (transfersFor(a.id) - transfersFor(b.id))
                           || ((a.priorityTier ?? 99) - (b.priorityTier ?? 99))
-                        : ((a.priorityTier ?? 99) - (b.priorityTier ?? 99)))
+                        : ((a.priorityTier ?? 99) - (b.priorityTier ?? 99))))
                     .map((lo) => {
                       const allStates = parseLicensedStates(lo.licensedStates);
                       // Null/missing status is treated as active everywhere else, so
@@ -463,12 +493,39 @@ export default function StateLookup() {
                       const status = lo.internalStatus ?? lo.internal_status ?? "active";
                       const tier = lo.priorityTier ?? lo.priority_tier;
                       return (
-                        <Card key={lo.id} className={status !== "active" ? "opacity-60" : ""}>
+                        <Card
+                          key={lo.id}
+                          className={`${status !== "active" ? "opacity-60" : ""} ${
+                            lo.needsTransfers ? "border-2 border-amber-400 dark:border-amber-500 bg-amber-50/60 dark:bg-amber-950/20" : ""
+                          }`}
+                          data-testid={lo.needsTransfers ? `lo-needs-transfers-${lo.id}` : undefined}
+                        >
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-semibold text-sm">{lo.fullName}</span>
+                                  {lo.needsTransfers && (
+                                    <Badge className="text-xs bg-amber-500 text-white border-0 gap-1">
+                                      <Flame className="w-3 h-3" /> Needs transfers
+                                    </Badge>
+                                  )}
+                                  {isAdminOrManager && (
+                                    <button
+                                      type="button"
+                                      onClick={() => flagMut.mutate({ id: lo.id, on: !lo.needsTransfers })}
+                                      disabled={flagMut.isPending}
+                                      data-testid={`toggle-needs-transfers-${lo.id}`}
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                                        lo.needsTransfers
+                                          ? "border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-400"
+                                          : "border-border text-muted-foreground hover:bg-muted"
+                                      }`}
+                                      title={lo.needsTransfers ? "Remove from the needs-transfers list" : "Flag as needing transfers"}
+                                    >
+                                      {lo.needsTransfers ? "unflag" : "flag"}
+                                    </button>
+                                  )}
                                   {/* The count itself, not just the ordering —
                                       "3 transfers" answers the question the
                                       sort only implies. Highlighted when this

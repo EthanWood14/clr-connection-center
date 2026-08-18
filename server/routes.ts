@@ -6783,6 +6783,47 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // ── "Needs transfers" shortlist ─────────────────────────────────────────────
+  // Managers flag up to three LOs who need volume; State Lookup pins them to the
+  // top of whichever state they are licensed in. The cap is the feature: a
+  // shortlist everyone can act on, not a priority field that drifts to
+  // "everybody".
+  const NEEDS_TRANSFERS_MAX = 3;
+
+  app.post("/api/loan-officers/:id/needs-transfers", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    const on = req.body?.on === true || req.body?.on === 1 || req.body?.on === "true";
+    const sqlite = storageExtra.getRawSqlite();
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const lo = sqlite.prepare(`SELECT id, full_name, needs_transfers FROM loan_officers WHERE id=? AND org_id=?`).get(id, orgId) as any;
+    if (!lo) return res.status(404).json({ error: "Loan officer not found" });
+
+    if (on) {
+      const current = sqlite.prepare(
+        `SELECT COUNT(*) c FROM loan_officers WHERE org_id=? AND needs_transfers=1 AND id<>?`,
+      ).get(orgId, id) as any;
+      if (Number(current.c) >= NEEDS_TRANSFERS_MAX) {
+        // Refuse rather than silently dropping someone else off the list — the
+        // manager should choose who stops being a priority.
+        const names = (sqlite.prepare(
+          `SELECT full_name FROM loan_officers WHERE org_id=? AND needs_transfers=1 ORDER BY full_name`,
+        ).all(orgId) as any[]).map((r) => r.full_name).join(", ");
+        return res.status(409).json({
+          error: `Only ${NEEDS_TRANSFERS_MAX} loan officers can need transfers at once. Currently: ${names}. Clear one first.`,
+        });
+      }
+    }
+    sqlite.prepare(`UPDATE loan_officers SET needs_transfers=?, updated_at=? WHERE id=?`)
+      .run(on ? 1 : 0, new Date().toISOString(), id);
+    audit({
+      userId: req.session_user?.userId, userName: req.session_user?.name ?? "manager",
+      action: "update", entityType: "loan_officer", entityId: id, entityLabel: lo.full_name,
+      details: JSON.stringify({ needsTransfers: on }), orgId,
+    } as any);
+    res.json({ ok: true, id, needsTransfers: on });
+  });
+
   app.patch("/api/loan-officers/:id", (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const id = parseInt(req.params.id);
