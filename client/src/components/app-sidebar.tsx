@@ -194,18 +194,10 @@ const personalItems: NavItem[] = [
 
 const teamItems: NavItem[] = [
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
-  { title: "Forum",                 url: "/forum",         icon: MessagesSquare,  help: help.forum },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
   // Embedded in C3 rather than opened off-site — the chart still lives in its
   // own app, you just no longer leave C3 (and re-authenticate) to look at it.
   { title: "Seating Map",           url: "/seating-map", icon: Armchair },
-  { title: "CLR Training",          url: "/clr-training", icon: GraduationCap },
-];
-
-// Team items only managers/admins see — the endpoints behind these are
-// manager-gated, so showing them to a CLR would just 403.
-const teamManagerItems: NavItem[] = [
-  { title: "CLR Profiles",          url: "/clr-profiles",  icon: UserCheck },
 ];
 
 const toolItems: NavItem[] = [
@@ -214,6 +206,18 @@ const toolItems: NavItem[] = [
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
+];
+
+// Reference material and manager tooling, moved into Advanced Settings to keep
+// the everyday sidebar short. CLR Profiles stays manager-gated at the render
+// site — relocating a link must not turn it into a 403 for a CLR.
+const referenceItems: NavItem[] = [
+  { title: "Forum",           url: "/forum",         icon: MessagesSquare, help: help.forum },
+  { title: "CLR Training",    url: "/clr-training",  icon: GraduationCap },
+];
+
+const referenceManagerItems: NavItem[] = [
+  { title: "CLR Profiles",    url: "/clr-profiles",  icon: UserCheck },
 ];
 
 // LO management tools — parked in Advanced Settings for now, pending a
@@ -471,6 +475,7 @@ export function AppSidebar() {
   // ── Render ─────────────────────────────────────────────────────────────────
   const { isMobile, state } = useSidebar();
   const showAdvanced = advancedOpen;
+  const isManagerOrAdmin = user?.role === "admin" || !!(user as any)?.isManager;
 
   return (
     <Sidebar collapsible="offcanvas" className="glass-rail [&_[data-sidebar=sidebar]]:bg-transparent [&_[data-sidebar=sidebar]]:border-0">
@@ -496,8 +501,7 @@ export function AppSidebar() {
 
         {/* Compressed groups — headers stay visible, items fold away */}
         {renderCollapsibleGroup("personal", "Personal", personalItems)}
-        {renderCollapsibleGroup("team", "Team",
-          (user?.role === "admin" || (user as any)?.isManager) ? [...teamItems, ...teamManagerItems] : teamItems)}
+        {renderCollapsibleGroup("team", "Team", teamItems)}
         {renderCollapsibleGroup("tools", "Tools", toolItems)}
 
         {/* ADVANCED SETTINGS — collapsible folder for admin/help/etc.
@@ -519,6 +523,19 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {showAdvanced && <>
+        {/* REFERENCE — forum, training, and (for managers) CLR profiles */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Reference
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems(referenceItems)}
+              {isManagerOrAdmin && renderItems(referenceManagerItems)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {/* LO MANAGEMENT — parked here pending its own dedicated group */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">

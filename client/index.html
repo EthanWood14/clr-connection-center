@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <!-- Product metadata is switched synchronously for direct LAP/recovery loads. -->
+    <!-- SVG first: it carries a prefers-color-scheme rule so the mark renders
+         navy on light backgrounds and white on dark, on a transparent field.
+         Browsers without SVG-favicon support fall through to the PNGs, which
+         are navy on transparent (light backgrounds being the common default). -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" type="image/png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512.png" />
@@ -51,6 +56,11 @@
         };
         setLink('link[rel="manifest"]', { href: lap ? "/manifest-lap.json" : "/manifest.json" });
         if (lap) {
+          // The adaptive SVG is C3's mark. LAP has its own icon, so drop the
+          // SVG entirely rather than pointing it at a PNG — a link that claims
+          // type="image/svg+xml" while serving a PNG is what browsers ignore
+          // or render blank.
+          document.head.querySelector('link[rel="icon"][type="image/svg+xml"]')?.remove();
           setLink('link[rel="icon"]:not([sizes])', { href: "/lap-icon-192.png" });
           setLink('link[rel="icon"][sizes="192x192"]', { href: "/lap-icon-192.png" });
           setLink('link[rel="icon"][sizes="512x512"]', { href: "/lap-icon-512.png" });

@@ -134,6 +134,22 @@ export default function ClrTraining() {
         ) : null,
       )}
 
+      {/* The plan's day-10 final test, as an actual test. */}
+      <a
+        href="#/clr-training/test"
+        className="flex items-center gap-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-4 transition-colors hover:bg-primary/10 print:hidden"
+        data-testid="link-certification-test"
+      >
+        <ClipboardCheck className="h-5 w-5 shrink-0 text-primary" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Take the certification test</p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            60 questions from these two weeks. 54 correct (90%) to pass.
+          </p>
+        </div>
+        <span className="ml-auto text-sm font-medium text-primary">Start →</span>
+      </a>
+
       <div className="flex items-start gap-3 rounded-xl border bg-muted/30 p-4">
         <Award className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
         <div>

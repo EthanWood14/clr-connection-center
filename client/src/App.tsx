@@ -80,6 +80,7 @@ import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
 import SeatingChart from "@/pages/seating-chart";
 import ClrTraining from "@/pages/clr-training";
+import ClrTrainingTest from "@/pages/clr-training-test";
 import { LapApp } from "@/components/lap/lap-shell";
 
 function ThemeToggle() {
@@ -110,6 +111,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/leaderboard":  "Team Stats",
   "/seating-map":      "Seating Map",
   "/clr-training":     "CLR Training",
+  "/clr-training/test": "Certification Test",
   "/state-lookup": "State Lookup",
   "/call-hours":   "Call Hours by State",
   "/snooze":       "LO Vacation",
@@ -168,6 +170,7 @@ function AppRouter() {
       <Route path="/leaderboard-classic" component={Leaderboard} />
       <Route path="/seating-map" component={SeatingChart} />
       <Route path="/clr-training" component={ClrTraining} />
+      <Route path="/clr-training/test" component={ClrTrainingTest} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />
       <Route path="/chat" component={Chat} />

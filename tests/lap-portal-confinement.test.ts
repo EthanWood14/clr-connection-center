@@ -186,8 +186,18 @@ test("LO credentials are stripped in every key casing, not just camelCase", () =
   // snake_case columns survive. Masking `bonzoPassword` alone still shipped
   // `bonzo_password` in clear text — this asserts the real behaviour by running
   // the actual masking function against a row shaped like the DB's.
-  const src = routes.slice(routes.indexOf("function maskLoCredentials"), routes.indexOf("app.get(\"/api/loan-officers/:id\""));
-  const body = src.slice(src.indexOf("{")).split(": any").join("");
+  // Extracted by brace matching rather than by slicing to the next route: the
+  // route order has changed twice, and each time this silently scooped up extra
+  // TypeScript that new Function() could not parse.
+  const start = routes.indexOf("function maskLoCredentials");
+  assert.ok(start > 0, "maskLoCredentials not found");
+  const open = routes.indexOf("{", start);
+  let depth = 0, end = open;
+  for (let i = open; i < routes.length; i++) {
+    if (routes[i] === "{") depth++;
+    else if (routes[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  const body = routes.slice(open, end).split(": any").join("");
   // eslint-disable-next-line no-new-func
   const mask = new Function(`return function maskLoCredentials(lo) ${body}`)();
 

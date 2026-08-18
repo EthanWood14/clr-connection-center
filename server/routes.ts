@@ -5,6 +5,7 @@ import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
+import { questionsWithoutAnswers, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -6716,6 +6717,52 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // :id, parsed as NaN and 404s — which is exactly how the State Lookup workload
   // column silently sat at 0 for every LO. /performance-summary above is here
   // for the same reason.
+  // ── CLR training certification test ─────────────────────────────────────────
+  // The answer key stays server-side until an attempt is submitted; sending it
+  // with the questions would put it one devtools tab away from the trainee.
+  app.get("/api/training-test", requireAuth, (_req: any, res) => {
+    res.json({
+      questions: questionsWithoutAnswers(),
+      total: TEST_QUESTION_COUNT,
+      passCorrect: TEST_PASS_CORRECT,
+      passPercent: TEST_PASS_PERCENT,
+    });
+  });
+
+  app.post("/api/training-test/attempts", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(userId) as any;
+    const answers = (req.body?.answers ?? {}) as Record<string, number>;
+    // Grading happens here, never in the browser.
+    const graded = gradeTest(answers);
+    const now = new Date().toISOString();
+    storageExtra.getRawSqlite().prepare(
+      `INSERT INTO training_test_attempts (org_id, user_id, user_name, taken_at, correct_count, total, percent, passed, answers)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(orgId, userId, String(me?.name ?? "Unknown"), now, graded.correctCount, graded.total, graded.percent,
+          graded.passed ? 1 : 0, JSON.stringify(answers));
+    console.log(`[training-test] ${me?.name ?? userId}: ${graded.correctCount}/${graded.total} (${graded.percent}%) ${graded.passed ? "PASS" : "FAIL"}`);
+    res.json({ ...graded, passCorrect: TEST_PASS_CORRECT, passPercent: TEST_PASS_PERCENT, takenAt: now });
+  });
+
+  // Your own history; managers can see anyone's.
+  app.get("/api/training-test/attempts", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(userId) as any;
+    const isManager = me?.role === "admin" || me?.superAdmin || me?.super_admin || me?.isManager || me?.is_manager;
+    const rows = isManager
+      ? storageExtra.getRawSqlite().prepare(
+          `SELECT id, user_id, user_name, taken_at, correct_count, total, percent, passed
+             FROM training_test_attempts WHERE org_id=? ORDER BY taken_at DESC LIMIT 200`).all(orgId)
+      : storageExtra.getRawSqlite().prepare(
+          `SELECT id, user_id, user_name, taken_at, correct_count, total, percent, passed
+             FROM training_test_attempts WHERE org_id=? AND user_id=? ORDER BY taken_at DESC LIMIT 50`).all(orgId, userId);
+    res.json({ attempts: rows, isManager: !!isManager });
+  });
+
   app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     res.json({ counts: loTransferCounts(orgId) });

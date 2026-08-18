@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.91.0",
+    headline: "A 60-question certification test, and a shorter sidebar.",
+    items: [
+      { text: "CLR Training now has a certification test: 60 questions from Matt Lane's two-week plan, 54 correct (90%) to pass. After you submit it shows every answer with a short explanation, so the review with your trainer has something to work from." },
+      { text: "Attempts are saved, so you and your trainer can see your history. Trainers see everyone's." },
+      { text: "Forum, CLR Training and CLR Profiles moved into Advanced Settings to keep the everyday sidebar short." },
+      { text: "The app icon is transparent now, and adapts — navy on light backgrounds, white on dark. The installed-app icon keeps its tile, because iOS puts transparent icons on a black square." },
+    ],
+  },
+  {
     version: "3.90.0",
     headline: "The CLR Trainer Walkthrough is now a page in C3, written by Matt Lane.",
     items: [

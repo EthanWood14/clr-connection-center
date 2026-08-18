@@ -663,6 +663,23 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // priority" carries no information.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN needs_transfers INTEGER NOT NULL DEFAULT 0`); } catch {}
 
+  // Training test attempts. Every attempt is kept, not just the best or the
+  // latest — a trainer reviewing someone's progress needs to see that they sat
+  // it three times, which a single overwritten row would hide.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS training_test_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    taken_at TEXT NOT NULL,
+    correct_count INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    percent INTEGER NOT NULL,
+    passed INTEGER NOT NULL,
+    answers TEXT NOT NULL DEFAULT '{}'
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tta_user ON training_test_attempts(org_id, user_id, taken_at DESC)`); } catch {}
+
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
   // An appointment can be booked before anyone knows which LO will take it, so
   // "no LO yet" has to be representable. It is a real absence, not a sentinel
