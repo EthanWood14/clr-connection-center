@@ -3,3 +3,5 @@ dist
 .git
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
