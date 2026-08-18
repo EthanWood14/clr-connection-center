@@ -26,6 +26,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.85.0",
+    headline: "Update notices now actually list what changed — the last version could not.",
+    items: [
+      { text: "What's new in each update is sent by the server rather than read from the tab you already have open, so the list is correct even for releases that happened after your tab loaded." },
+    ],
+  },
+  {
     version: "3.84.0",
     headline: "The seating map opens inside C3 instead of throwing you out to another site.",
     items: [

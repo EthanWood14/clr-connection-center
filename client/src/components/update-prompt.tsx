@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { APP_VERSION } from "@shared/version";
-import { notesBetween, itemsForAudience } from "@shared/release-notes";
+import { notesBetween, itemsForAudience, type ReleaseNote } from "@shared/release-notes";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +27,7 @@ type UpdatePromptProps = {
 export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   const [latest, setLatest] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
+  const [serverSections, setServerSections] = useState<ReleaseNote[]>([]);
   const productName = portal === "lap" ? "LAP" : "C3";
   const { user } = useAuth();
   const isManager = user?.role === "admin" || !!(user as any)?.isManager || !!user?.superAdmin;
@@ -35,11 +36,17 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
     let active = true;
     const check = async () => {
       try {
-        const r = await fetch("/api/version", { cache: "no-store", credentials: "include" });
+        // Ask what changed since the build this tab is running. The server is
+        // the only side that knows — a bundle cannot contain notes for releases
+        // that happened after it was built.
+        const r = await fetch(`/api/version?from=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store", credentials: "include" });
         if (!r.ok) return;
         const data = await r.json();
         const v = data && typeof data.version === "string" ? data.version : "";
-        if (active && v) setLatest(v);
+        if (active && v) {
+          setLatest(v);
+          setServerSections(Array.isArray(data?.sections) ? data.sections : []);
+        }
       } catch { /* offline / transient — try again next tick */ }
     };
     check();
@@ -59,8 +66,12 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   const updateAvailable = !!latest && latest !== APP_VERSION && latest !== dismissed;
 
   // Everything missed since the build this tab is running — someone who skipped
-  // three deploys should see all three, not just the newest.
-  const missed = latest ? notesBetween(APP_VERSION, latest) : [];
+  // three deploys should see all three, not just the newest. Prefer the
+  // server's list; fall back to the bundled copy only if an older server does
+  // not send one.
+  const missed = serverSections.length
+    ? serverSections
+    : (latest ? notesBetween(APP_VERSION, latest) : []);
   const sections = missed
     .map((n) => ({ version: n.version, headline: n.headline, items: itemsForAudience(n, portal, isManager) }))
     .filter((n) => n.items.length > 0);

@@ -65,3 +65,18 @@ test("the popup leads with the change, and falls back safely", () => {
   assert.match(prompt, /you also missed this one/);
   assert.match(prompt, /notesBetween\(APP_VERSION, latest\)/);
 });
+
+test("notes come from the SERVER, not the bundle that is being replaced", () => {
+  // The bug this guards: a tab built at 3.84.0 carries notes up to 3.84.0 and
+  // cannot know what 3.85.0 contained. Reading them from its own copy meant
+  // every future update silently fell back to "features and fixes" — the
+  // feature would have looked broken forever while every test still passed.
+  const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+  const ep = routes.slice(routes.indexOf('app.get("/api/version"'), routes.indexOf('app.get("/api/outcomes"'));
+  assert.match(ep, /notesBetween\(from, APP_VERSION\)/, "the server computes what changed");
+  assert.match(ep, /sections/);
+  // The client must ASK, passing the version it is running.
+  assert.match(prompt, /\/api\/version\?from=\$\{encodeURIComponent\(APP_VERSION\)\}/);
+  assert.match(prompt, /serverSections\.length[\s\S]{0,80}notesBetween\(APP_VERSION, latest\)/,
+    "server list wins, bundled copy is only a fallback");
+});

@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
+import { notesBetween } from "@shared/release-notes";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -9413,9 +9414,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── Lead Outcomes ────────────────────────────────────────────────────────────
   // Currently-deployed app version — the client polls this to detect new builds
   // and show an "update available" prompt. Public + no-store (always fresh).
-  app.get("/api/version", (_req, res) => {
+  app.get("/api/version", (req: any, res) => {
     res.set("Cache-Control", "no-store");
-    res.json({ version: APP_VERSION });
+    // The notes ship with the RESPONSE, not with the client bundle. A tab built
+    // at 3.84.0 carries release notes up to 3.84.0 and can never know what
+    // 3.85.0 contained — reading them from its own copy meant every future
+    // update fell back to "features and fixes". The running server always has
+    // the current list, so it sends it.
+    const from = typeof req.query.from === "string" ? req.query.from : "";
+    const sections = from ? notesBetween(from, APP_VERSION) : [];
+    res.json({ version: APP_VERSION, sections });
   });
 
   app.get("/api/outcomes", (req, res) => {
