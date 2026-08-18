@@ -1,0 +1,144 @@
+/**
+ * What changed, in each release, in language the people using C3 will
+ * recognise — not commit messages.
+ *
+ * The update popup reads from here, so shipping a version without an entry
+ * means telling everyone "something changed" and nothing more. A test asserts
+ * the CURRENT APP_VERSION has notes, which is what keeps this honest: the
+ * release fails before it reaches anyone.
+ *
+ * Guidelines that keep these useful:
+ * - Say what a person can now DO, not what was refactored.
+ * - Name the screen, so they know where to look.
+ * - Include fixes when the old behaviour was visibly wrong; skip pure plumbing.
+ * - `audience` hides notes that are irrelevant to a reader ("manager" items are
+ *   not shown to a CLR — a shipping note nobody can act on is noise).
+ */
+
+export type ReleaseAudience = "everyone" | "manager" | "lap";
+
+export type ReleaseNote = {
+  version: string;
+  /** One line answering "why should I refresh?" */
+  headline: string;
+  items: { text: string; audience?: ReleaseAudience }[];
+};
+
+export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "3.83.0",
+    headline: "Update notices now tell you what actually changed.",
+    items: [
+      { text: "This popup now lists what's new in the version you're updating to, instead of just saying an update exists." },
+      { text: "Notes are written per release, so you can tell at a glance whether a refresh affects your work." },
+    ],
+  },
+  {
+    version: "3.82.0",
+    headline: "Managers can read the day's EOD reports without opening a single email.",
+    items: [
+      { text: "The EOD card on the manager dashboard now shows what each CLR reported — calls, messages, conversations, transfers, appointments, LOs covered — with their notes inline and a team total.", audience: "manager" },
+      { text: "Loan officer workload balance: the five lightest and five heaviest loaded LOs over 30 days, so transfers can be spread without checking state by state.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.81.0",
+    headline: "EOD reports are due by 4:00 PM and now ask four daily questions.",
+    items: [
+      { text: "Your EOD report is due by 4:00 PM. Filing later still works — it's just marked late." },
+      { text: "Four new questions: bulk text for all assigned LOs, responded/new contacts worked, retail Bonzo Meta leads, retail Bonzo ungraduated/graduated leads." },
+      { text: "Notes are now required. Everything else on the report is counted for you, so the note is the only part that can't be reconstructed." },
+      { text: "Managers see who filed late and which checklist items were skipped, by name.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.80.0",
+    headline: "CLR profiles show an all-time record measured against the floor.",
+    items: [
+      { text: "Profiles now carry lifetime transfers, appointments, calls and active days, compared against the team on five rates.", audience: "manager" },
+      { text: "Comparisons are per active day, not totals, so someone who started recently isn't buried by tenure. Under five active days the ranking is marked provisional.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.79.0",
+    headline: "You can book an appointment before you know which LO will take it.",
+    items: [
+      { text: 'Input Results has a "No LO yet — assign later" option on appointments. Transfers still need an LO, since a transfer goes to someone.' },
+      { text: "Unassigned appointments read as Unassigned everywhere, including the export." },
+    ],
+  },
+  {
+    version: "3.78.0",
+    headline: "State Lookup leads with the LO who has taken the fewest transfers.",
+    items: [
+      { text: "Open a state and the licensed LOs are ordered fewest-transfers-first, each showing their count, with the lightest-loaded highlighted." },
+      { text: "Switch the window between 7 days, 30 days and all time, or sort by priority tier instead." },
+    ],
+  },
+  {
+    version: "3.77.0",
+    headline: "LAP opens with one shared password instead of individual logins.",
+    items: [
+      { text: "Enter LAP with the shared access password. Your work is recorded against your device rather than your name.", audience: "lap" },
+      { text: "The transfer-documents screen is open to anyone in LAP, not just administrators.", audience: "lap" },
+    ],
+  },
+  {
+    version: "3.76.0",
+    headline: "Input Results is a single page.",
+    items: [
+      { text: "Logging an outcome is one form instead of three screens. The appointment/transfer picker sits at the top and can be changed at any point." },
+      { text: "No more Next and Back — everything you need is on the page." },
+    ],
+  },
+  {
+    version: "3.75.0",
+    headline: "LAP: documents can be submitted one at a time.",
+    items: [
+      { text: "Create a document package with whatever you have — a credit report alone is enough — and attach the AUS and formal quote when they arrive.", audience: "lap" },
+      { text: "A Transfer Documents screen lists every transfer to Chris Redoble over 3, 7 or 30 days or all time, showing which of the three documents came in.", audience: "lap" },
+    ],
+  },
+  {
+    version: "3.74.0",
+    headline: "Transfer notes arrive in Bonzo readable instead of as one block of text.",
+    items: [
+      { text: "The notes C3 posts to Bonzo now have proper headings, one field per line and the LOA routing instruction called out, rather than running together into a wall of text." },
+    ],
+  },
+];
+
+/** Notes for a version, or null when that release shipped without any. */
+export function notesFor(version: string): ReleaseNote | null {
+  return RELEASE_NOTES.find((n) => n.version === version) ?? null;
+}
+
+/**
+ * Everything a reader has missed between the build they are running and the one
+ * that is live, newest first — so someone who skipped three deploys sees all
+ * three rather than only the latest.
+ */
+export function notesBetween(fromVersion: string, toVersion: string): ReleaseNote[] {
+  const cmp = (a: string, b: string) => {
+    const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+    for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+    return 0;
+  };
+  if (cmp(fromVersion, toVersion) >= 0) return [];
+  return RELEASE_NOTES
+    .filter((n) => cmp(n.version, fromVersion) > 0 && cmp(n.version, toVersion) <= 0)
+    .sort((a, b) => cmp(b.version, a.version));
+}
+
+/** Hide items a given reader cannot act on. */
+export function itemsForAudience(note: ReleaseNote, portal: "c3" | "lap", isManager: boolean): string[] {
+  return note.items
+    .filter((i) => {
+      const a = i.audience ?? "everyone";
+      if (a === "everyone") return true;
+      if (a === "manager") return isManager;
+      if (a === "lap") return portal === "lap";
+      return true;
+    })
+    .map((i) => i.text);
+}

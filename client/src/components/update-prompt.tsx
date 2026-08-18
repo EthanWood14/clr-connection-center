@@ -12,6 +12,8 @@
 
 import { useEffect, useState } from "react";
 import { APP_VERSION } from "@shared/version";
+import { notesBetween, itemsForAudience } from "@shared/release-notes";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -26,6 +28,8 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   const [latest, setLatest] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const productName = portal === "lap" ? "LAP" : "C3";
+  const { user } = useAuth();
+  const isManager = user?.role === "admin" || !!(user as any)?.isManager || !!user?.superAdmin;
 
   useEffect(() => {
     let active = true;
@@ -54,19 +58,50 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
 
   const updateAvailable = !!latest && latest !== APP_VERSION && latest !== dismissed;
 
+  // Everything missed since the build this tab is running — someone who skipped
+  // three deploys should see all three, not just the newest.
+  const missed = latest ? notesBetween(APP_VERSION, latest) : [];
+  const sections = missed
+    .map((n) => ({ version: n.version, headline: n.headline, items: itemsForAudience(n, portal, isManager) }))
+    .filter((n) => n.items.length > 0);
+
   return (
     <Dialog open={updateAvailable} onOpenChange={(open) => { if (!open) setDismissed(latest); }}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary" />
             Update available
           </DialogTitle>
           <DialogDescription>
-            A new version of {productName}{latest ? ` (v${latest})` : ""} is ready. Refresh to get the latest
-            features and fixes.
+            {sections[0]?.headline
+              // Lead with what actually changed; the version number is the
+              // least interesting thing on this popup.
+              ? sections[0].headline
+              : `A new version of ${productName}${latest ? ` (v${latest})` : ""} is ready. Refresh to get the latest features and fixes.`}
           </DialogDescription>
         </DialogHeader>
+
+        {sections.length > 0 && (
+          <div className="max-h-64 overflow-y-auto space-y-3 text-sm" data-testid="update-release-notes">
+            {sections.map((n) => (
+              <div key={n.version}>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  v{n.version}
+                  {n.version !== latest && " · you also missed this one"}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {n.items.map((text, i) => (
+                    <li key={i} className="flex gap-2 leading-snug">
+                      <span className="text-primary mt-[3px]">•</span>
+                      <span>{text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
         <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="ghost" onClick={() => setDismissed(latest)}>Later</Button>
           <Button className="gap-1.5" onClick={() => window.location.reload()}>
