@@ -10813,13 +10813,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       (acc: any, k) => { acc[k] = eodStatus.reduce((n: number, e: any) => n + Number(e[k] ?? 0), 0); return acc; },
       {} as Record<string, number>,
     );
-    // A "gap" is an explicit No — the work a manager can actually chase today.
-    const eodChecklistGaps = (["bulkText", "respondedNew", "retailMeta", "retailUngraduated"] as const)
+    // A "gap" is an explicit No on work expected EVERY day. The retail Bonzo
+    // questions are not that — they happen when a manager asks, or when a CLR
+    // asks to pick them up — so a No there is the ordinary answer and flagging
+    // it would indict the whole floor for doing exactly what was expected.
+    const eodChecklistGaps = (["bulkText", "respondedNew"] as const)
       .map((k) => ({
         key: k,
-        label: { bulkText: "Bulk text — all assigned LOs", respondedNew: "Responded / new contacts",
-                 retailMeta: "Retail Bonzo — Meta leads", retailUngraduated: "Retail Bonzo — ungraduated/graduated" }[k],
+        label: { bulkText: "Bulk text — all assigned LOs", respondedNew: "Responded / new contacts" }[k],
         no: eodStatus.filter((e: any) => e.checklist?.[k] === false).map((e: any) => e.name),
+      }));
+    // For the ask-only work the interesting answer is YES: who picked it up.
+    const eodExtraWork = (["retailMeta", "retailUngraduated"] as const)
+      .map((k) => ({
+        key: k,
+        label: { retailMeta: "Retail Bonzo — Meta leads", retailUngraduated: "Retail Bonzo — ungraduated/graduated" }[k],
+        yes: eodStatus.filter((e: any) => e.checklist?.[k] === true).map((e: any) => e.name),
       }));
 
     // ── Pipeline ──
@@ -11445,6 +11454,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         totals: eodTotals,
         dueLabel: EOD_DUE_LABEL,
         checklistGaps: eodChecklistGaps,
+        extraWork: eodExtraWork,
         date: todayStr,
         total: allClrs.length,
         submitted: eodSubmittedCount,
@@ -16317,21 +16327,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           ${(() => {
             // The four daily questions, answered. A manager reading one report
             // should not have to open C3 to see whether the work was done.
-            const q: Array<[string, any]> = [
-              ["Bulk text — all assigned LOs", dailyQuestions.bulkTextAllLos],
-              ["Responded / new contacts worked", dailyQuestions.workedRespondedNew],
-              ["Retail Bonzo — Meta leads", dailyQuestions.retailMetaLeads],
-              ["Retail Bonzo — ungraduated / graduated", dailyQuestions.retailUngraduatedLeads],
+            // askOnly: work that happens when a manager asks, or the CLR asks to
+            // pick it up. "No" there is the normal answer, so it is neither red
+            // nor counted toward the header colour.
+            const q: Array<[string, any, boolean]> = [
+              ["Bulk text — all assigned LOs", dailyQuestions.bulkTextAllLos, false],
+              ["Responded / new contacts worked", dailyQuestions.workedRespondedNew, false],
+              ["Retail Bonzo — Meta leads", dailyQuestions.retailMetaLeads, true],
+              ["Retail Bonzo — ungraduated / graduated", dailyQuestions.retailUngraduatedLeads, true],
             ];
-            const anyNo = q.some(([, v]) => v === 0);
+            const anyNo = q.some(([, v, askOnly]) => v === 0 && !askOnly);
             return `
             <div style="margin:18px 0 0;padding:12px 14px;border-radius:8px;background:${anyNo ? "#fef2f2" : "#f0fdf4"};border:1px solid ${anyNo ? "#fecaca" : "#bbf7d0"}">
               <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:${anyNo ? "#991b1b" : "#166534"}">✅ Daily checklist</p>
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                ${q.map(([label, v]) => `
+                ${q.map(([label, v, askOnly]) => `
                   <tr>
-                    <td style="padding:3px 0;font-size:13px;color:#334155">${label}</td>
-                    <td style="padding:3px 0;font-size:13px;font-weight:700;text-align:right;color:${v === 1 ? "#16a34a" : "#dc2626"}">${v === 1 ? "Yes" : "No"}</td>
+                    <td style="padding:3px 0;font-size:13px;color:#334155">${label}${askOnly ? ` <span style="color:#94a3b8;font-size:11px">(only when asked)</span>` : ""}</td>
+                    <td style="padding:3px 0;font-size:13px;font-weight:700;text-align:right;color:${
+                      v === 1 ? "#16a34a" : askOnly ? "#94a3b8" : "#dc2626"
+                    }">${v === 1 ? "Yes" : "No"}</td>
                   </tr>`).join("")}
               </table>
             </div>`;

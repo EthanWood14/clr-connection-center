@@ -849,14 +849,25 @@ export default function EodReport() {
                   work" tells a manager nothing. */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-muted-foreground">Today's checklist</label>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  The first two are part of every day. The retail Bonzo questions are only for when a manager asks
+                  you to work it, or you ask to — answering No there is expected.
+                </p>
                 {([
-                  ["Did you run a bulk text for all your assigned LOs?", bulkTextAllLos, setBulkTextAllLos, "bulk-text"],
-                  ["Did you work through all the responded / new contacts for your assigned LOs?", workedRespondedNew, setWorkedRespondedNew, "responded-new"],
-                  ["Did you work in the retail Bonzo for Meta leads?", retailMetaLeads, setRetailMetaLeads, "retail-meta"],
-                  ["Did you work in the retail Bonzo for ungraduated / graduated leads?", retailUngraduatedLeads, setRetailUngraduatedLeads, "retail-ungrad"],
-                ] as const).map(([label, value, setter, testId]) => (
+                  ["Did you run a bulk text for all your assigned LOs?", bulkTextAllLos, setBulkTextAllLos, "bulk-text", ""],
+                  ["Did you work through all the responded / new contacts for your assigned LOs?", workedRespondedNew, setWorkedRespondedNew, "responded-new", ""],
+                  // The retail Bonzo work is NOT part of the standard day. It
+                  // happens when a manager asks, or when the CLR asks to pick
+                  // it up — so "No" is the ordinary answer and must not read
+                  // as a miss.
+                  ["Did you work in the retail Bonzo for Meta leads?", retailMetaLeads, setRetailMetaLeads, "retail-meta", "Only when asked — No is normal"],
+                  ["Did you work in the retail Bonzo for ungraduated / graduated leads?", retailUngraduatedLeads, setRetailUngraduatedLeads, "retail-ungrad", "Only when asked — No is normal"],
+                ] as const).map(([label, value, setter, testId, hint]) => (
                   <div key={testId} className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
-                    <span className="text-[13px] leading-snug">{label}</span>
+                    <span className="text-[13px] leading-snug">
+                      {label}
+                      {hint && <span className="block text-[11px] text-muted-foreground mt-0.5">{hint}</span>}
+                    </span>
                     <div className="flex gap-1 shrink-0">
                       {([["Yes", true], ["No", false]] as const).map(([text, v]) => (
                         <button

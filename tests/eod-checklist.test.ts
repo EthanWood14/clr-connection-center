@@ -96,3 +96,29 @@ test("conversations combine what the CLR typed with what the dialer recorded", (
   // A CLR who filed nothing reads as zero, never as undefined in the totals.
   assert.match(fn, /r \? Number\(r\.callsMade \?\? r\.calls_made \?\? 0\) : 0/);
 });
+
+test("the retail Bonzo questions are ask-only, so No is not a failure", () => {
+  // These two are not part of the standard day — a manager asks, or the CLR
+  // asks to pick them up. Treating a No as a miss would have flagged nearly
+  // the whole floor for doing exactly what was expected of them.
+  assert.match(form, /Only when asked — No is normal/);
+  assert.match(form, /answering No there is expected/);
+
+  // Gaps are computed from the every-day questions ONLY.
+  assert.match(routes, /const eodChecklistGaps = \(\["bulkText", "respondedNew"\] as const\)/);
+  assert.ok(!/eodChecklistGaps[\s\S]{0,200}retailMeta/.test(routes),
+    "retail Bonzo must not be able to produce a gap");
+
+  // For ask-only work the reported answer is who DID it.
+  assert.match(routes, /const eodExtraWork = \(\["retailMeta", "retailUngraduated"\] as const\)/);
+  assert.match(routes, /yes: eodStatus\.filter\(\(e: any\) => e\.checklist\?\.\[k\] === true\)/);
+  assert.match(dash, /data-testid="eod-extra-work"/);
+  assert.match(dash, /Retail Bonzo worked today/);
+
+  // The per-CLR "gap" badge ignores the ask-only answers.
+  assert.match(dash, /row\.checklist\.bulkText === false \|\| row\.checklist\.respondedNew === false/);
+
+  // The email neither reddens them nor lets them drive the header colour.
+  assert.match(routes, /const anyNo = q\.some\(\(\[, v, askOnly\]\) => v === 0 && !askOnly\)/);
+  assert.match(routes, /only when asked/);
+});

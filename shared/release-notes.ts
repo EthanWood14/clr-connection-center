@@ -26,6 +26,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.86.0",
+    headline: "The two retail Bonzo questions on the EOD are only for when you're asked.",
+    items: [
+      { text: "The retail Bonzo questions (Meta leads, ungraduated/graduated) are not part of the standard day — they're for when a manager asks you to work it, or you ask to. Answering No is expected and is not counted against you." },
+      { text: "Managers now see who DID pick up retail Bonzo work, rather than a list of everyone who didn't.", audience: "manager" },
+    ],
+  },
+  {
     version: "3.85.0",
     headline: "Update notices now actually list what changed — the last version could not.",
     items: [

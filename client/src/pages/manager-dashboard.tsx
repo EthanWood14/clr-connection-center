@@ -119,6 +119,7 @@ type ManagerData = {
     dueLabel: string;
     totals: Record<string, number>;
     checklistGaps: { key: string; label: string; no: string[] }[];
+    extraWork?: { key: string; label: string; yes: string[] }[];
     rows: { userId: number; name: string; email: string; submitted: boolean; submittedAt: string | null;
             late?: boolean; checklist?: Record<string, boolean | null> | null;
             calls?: number; messages?: number; conversations?: number; transfers?: number;
@@ -1415,6 +1416,20 @@ export default function ManagerDashboard() {
               </table>
             </div>
 
+            {/* Ask-only work: the interesting answer is who picked it up, not
+                who didn't — nobody is expected to by default. */}
+            {eod.extraWork?.some(w => w.yes.length > 0) && (
+              <div className="mb-3 rounded-md border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/20 px-3 py-2 space-y-1" data-testid="eod-extra-work">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Retail Bonzo worked today</p>
+                {eod.extraWork.filter(w => w.yes.length > 0).map(w => (
+                  <div key={w.key} className="flex items-baseline justify-between gap-3 text-xs">
+                    <span className="text-foreground">{w.label}</span>
+                    <span className="text-emerald-700 dark:text-emerald-400 text-right">{w.yes.join(", ")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Submission status</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-1 max-h-72 overflow-y-auto">
               {eod.rows.map(row => (
@@ -1434,7 +1449,9 @@ export default function ManagerDashboard() {
                           {row.late && (
                             <Badge variant="outline" className="text-[10px] px-1 py-0 text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-800/60 dark:bg-amber-950/30" title={`Filed after ${eod.dueLabel}`}>late</Badge>
                           )}
-                          {row.checklist && Object.values(row.checklist).some(v => v === false) && (
+                          {/* Only the every-day questions can be a gap — a No on
+                              the ask-only retail Bonzo work is the normal answer. */}
+                          {row.checklist && (row.checklist.bulkText === false || row.checklist.respondedNew === false) && (
                             <Badge variant="outline" className="text-[10px] px-1 py-0 text-red-700 border-red-300 bg-red-50 dark:text-red-300 dark:border-red-800/60 dark:bg-red-950/30" title="Answered No on part of the daily checklist">gap</Badge>
                           )}
                         </>)
