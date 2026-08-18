@@ -18,7 +18,23 @@ import { PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles
 
 const money = (c: number) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+type Comparison = {
+  key: string; label: string; value: number; teamMedian: number;
+  deltaPct: number | null; better: boolean; lowerIsBetter: boolean;
+  rank: number; outOf: number;
+};
+
 type Resp = {
+  lifetime?: {
+    totals: { transfers: number; appointments: number; calls: number; fellThrough: number;
+              activeDays: number; firstDay: string | null; lastDay: string | null };
+    rates: { transfersPerDay: number; appointmentsPerDay: number; callsPerDay: number;
+             transferRate: number; fellThroughRate: number };
+    comparisons: Comparison[];
+    peerCount: number;
+    thin: boolean;
+    minDays: number;
+  };
   clr: {
     userId: number; name: string; email: string; role: string; isManager: boolean;
     excludeFromStats: boolean; startDate: string | null; createdAt: string | null;
@@ -37,6 +53,40 @@ type Resp = {
   eodReports: number;
   comp: { earnedCents: number; reimbursedCents: number };
 };
+
+// One metric, this CLR against the floor. The bar is a relative position, not a
+// percentage of anything — a CLR at twice the median fills it, so the eye can
+// scan a column of them without reading every number.
+function CompareRow({ c }: { c: Comparison }) {
+  const ratio = c.teamMedian > 0 ? c.value / c.teamMedian : (c.value > 0 ? 2 : 0);
+  const width = Math.max(2, Math.min(100, ratio * 50));
+  const good = c.better;
+  return (
+    <div className="space-y-1" data-testid={`compare-${c.key}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{c.label}</span>
+        <span className="text-xs tabular-nums">
+          <span className="font-semibold text-foreground">{c.value}</span>
+          <span className="text-muted-foreground"> vs {c.teamMedian} team</span>
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className={`h-full rounded-full ${good ? "bg-emerald-500" : "bg-amber-500"}`}
+          style={{ width: `${width}%` }}
+        />
+      </div>
+      <div className="flex items-center justify-between text-[11px]">
+        <span className={good ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+          {c.deltaPct == null
+            ? "no team baseline yet"
+            : `${c.deltaPct > 0 ? "+" : ""}${c.deltaPct}% vs median${c.lowerIsBetter ? " (lower is better)" : ""}`}
+        </span>
+        <span className="text-muted-foreground">#{c.rank} of {c.outOf}</span>
+      </div>
+    </div>
+  );
+}
 
 function Stat({ icon: Icon, label, value, sub }: { icon: any; label: string; value: string | number; sub?: string }) {
   return (
@@ -169,6 +219,53 @@ export default function ClrProfile() {
             <Stat icon={Percent} label="Transfer ratio" value={`${m!.transferRate}%`} sub="transfers ÷ calls" />
             <Stat icon={CalendarCheck} label="Appointments" value={m!.appointments} sub={`${m!.callbacks} callbacks`} />
           </div>
+
+          {/* Lifetime record, and how it sits against the floor. Independent of
+              the period selector above on purpose — this is the "all time"
+              question, the tiles answer the other one. */}
+          {data.lifetime && (
+            <Card data-testid="lifetime-card">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4" /> All time vs the team
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <Stat icon={PhoneForwarded} label="Transfers (all time)" value={data.lifetime.totals.transfers.toLocaleString()}
+                        sub={`${data.lifetime.rates.transfersPerDay} per active day`} />
+                  <Stat icon={CalendarCheck} label="Appointments" value={data.lifetime.totals.appointments.toLocaleString()}
+                        sub={`${data.lifetime.rates.appointmentsPerDay} per active day`} />
+                  <Stat icon={PhoneCall} label="Calls" value={data.lifetime.totals.calls.toLocaleString()}
+                        sub={`${data.lifetime.rates.callsPerDay} per active day`} />
+                  <Stat icon={Percent} label="Active days" value={data.lifetime.totals.activeDays}
+                        sub={data.lifetime.totals.firstDay ? `since ${fmtStartDate(data.lifetime.totals.firstDay)}` : "no activity yet"} />
+                </div>
+
+                {/* Totals reward tenure, so the comparison is per active day.
+                    Said out loud, because a manager reading a rank deserves to
+                    know what it is a rank OF. */}
+                <p className="text-[11px] text-muted-foreground">
+                  Compared against the median of {data.lifetime.peerCount} other counted CLR
+                  {data.lifetime.peerCount === 1 ? "" : "s"}, per active day rather than by total — otherwise
+                  whoever has been here longest always wins.
+                </p>
+
+                {data.lifetime.thin && (
+                  <p className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300"
+                     data-testid="thin-sample-warning">
+                    Only {data.lifetime.totals.activeDays} active day
+                    {data.lifetime.totals.activeDays === 1 ? "" : "s"} logged — under {data.lifetime.minDays} these
+                    rates swing on a single call, so treat the ranking as provisional.
+                  </p>
+                )}
+
+                <div className="space-y-3">
+                  {data.lifetime.comparisons.map((c: any) => <CompareRow key={c.key} c={c} />)}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Goals vs actual (weekly targets) */}
           {(data.goals.calls > 0 || data.goals.transfers > 0 || data.goals.appointments > 0) && (

@@ -25,6 +25,7 @@ import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtm
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
+import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest } from "./business-day";
@@ -16393,6 +16394,59 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     };
   }
 
+  // All-time totals for every CLR, in one pass. Used for the profile's
+  // lifetime figures and as the baseline it is compared against, so the two can
+  // never disagree.
+  //
+  // "Active days" counts days with real activity rather than calendar days —
+  // otherwise time off, training and part-time schedules read as weak numbers.
+  function clrAllTimeTotals(orgId: number): ClrTotals[] {
+    const sqlite = storageExtra.getRawSqlite();
+    const roster = clrRoster().filter((u: any) => Number(u.orgId ?? u.org_id ?? orgId) === orgId);
+
+    const outcomeRows = sqlite.prepare(
+      `SELECT assistant_id,
+              SUM(CASE WHEN outcome_type='transfer' THEN 1 ELSE 0 END)     AS transfers,
+              SUM(CASE WHEN outcome_type='appointment' THEN 1 ELSE 0 END)  AS appointments,
+              SUM(CASE WHEN outcome_type='fell_through' THEN 1 ELSE 0 END) AS fell_through,
+              MIN(date) AS first_day, MAX(date) AS last_day
+         FROM lead_outcomes WHERE org_id=? GROUP BY assistant_id`,
+    ).all(orgId) as any[];
+    const callRows = sqlite.prepare(
+      `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS calls, MIN(log_date) AS first_day, MAX(log_date) AS last_day
+         FROM daily_call_logs WHERE org_id=? GROUP BY assistant_id`,
+    ).all(orgId) as any[];
+    // A day counts as active if it carries logged calls OR a logged outcome.
+    const activeRows = sqlite.prepare(
+      `SELECT assistant_id, COUNT(*) AS days FROM (
+         SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
+         UNION
+         SELECT assistant_id, log_date AS d FROM daily_call_logs WHERE org_id=? AND calls_made > 0
+       ) GROUP BY assistant_id`,
+    ).all(orgId, orgId) as any[];
+
+    const byId = <T extends { assistant_id: any }>(rows: T[]) =>
+      new Map<number, T>(rows.map((r) => [Number(r.assistant_id), r]));
+    const oMap = byId(outcomeRows), cMap = byId(callRows), aMap = byId(activeRows);
+    const minIso = (a: string | null, b: string | null) => (a && b ? (a < b ? a : b) : a || b);
+    const maxIso = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : a || b);
+
+    return roster.map((u: any): ClrTotals => {
+      const o = oMap.get(Number(u.id)) as any, c = cMap.get(Number(u.id)) as any;
+      return {
+        userId: Number(u.id),
+        name: String(u.name ?? ""),
+        calls: Number(c?.calls) || 0,
+        transfers: Number(o?.transfers) || 0,
+        appointments: Number(o?.appointments) || 0,
+        fellThrough: Number(o?.fell_through) || 0,
+        activeDays: Number((aMap.get(Number(u.id)) as any)?.days) || 0,
+        firstDay: minIso(o?.first_day ?? null, c?.first_day ?? null),
+        lastDay: maxIso(o?.last_day ?? null, c?.last_day ?? null),
+      };
+    });
+  }
+
   app.get("/api/clr-profiles", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const period = (req.query.period as string) || "month";
@@ -16523,6 +16577,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         },
         period, startDate, endDate,
         metrics, goals, daily, dailyTooLong,
+        // Lifetime figures and how they sit against the rest of the floor.
+        // Independent of the selected period on purpose: "all time" is the
+        // question this answers, and the period tiles above answer the other.
+        lifetime: (() => {
+          const all = clrAllTimeTotals(orgId);
+          const mine = all.find((t) => t.userId === userId)
+            ?? { userId, name: String(u.name ?? ""), calls: 0, transfers: 0, appointments: 0, fellThrough: 0, activeDays: 0, firstDay: null, lastDay: null };
+          // The baseline excludes people marked non-counted — they are on the
+          // roster for other reasons and would skew what "typical" means.
+          const counted = new Set(
+            clrRoster().filter((x: any) => !(x.excludeFromStats ?? x.exclude_from_stats)).map((x: any) => Number(x.id)),
+          );
+          const peers = all.filter((t) => counted.has(t.userId));
+          return {
+            totals: mine,
+            rates: clrMetricsFor(mine),
+            comparisons: compareClr(mine, peers),
+            peerCount: peers.filter((p) => p.activeDays > 0 && p.userId !== userId).length,
+            thin: comparisonIsThin(mine),
+            minDays: MIN_DAYS_FOR_COMPARISON,
+          };
+        })(),
         // Whole weeks in the window — the client scales WEEKLY goals by this so
         // a month's actuals aren't compared against a single week's target.
         periodWeeks: Math.max(1, Math.round(((Date.parse(endDate) - Date.parse(startDate)) / 86400000 + 1) / 7)),
