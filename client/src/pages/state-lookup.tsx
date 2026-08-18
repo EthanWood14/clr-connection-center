@@ -103,6 +103,26 @@ export default function StateLookup() {
     queryKey: [loanOfficersEndpoint],
   });
 
+  // Transfer counts per LO, so a state's list can be ordered by who has taken
+  // the least work rather than by tier alone. Several windows arrive together;
+  // switching between them costs no request.
+  const transferCountsEndpoint = isLapPortal
+    ? "/api/lap/loan-officers/transfer-counts"
+    : "/api/loan-officers/transfer-counts";
+  const { data: transferData } = useQuery<{ counts: Record<string, { d7: number; d30: number; allTime: number }> }>({
+    queryKey: [transferCountsEndpoint],
+  });
+  const transferCounts = transferData?.counts ?? {};
+  // Ordering the panel by fewest transfers is the point of the feature, so it
+  // is the default; tier order stays one click away.
+  const [orderBy, setOrderBy] = useState<"fewest" | "tier">("fewest");
+  const [countWindow, setCountWindow] = useState<"d7" | "d30" | "allTime">("d30");
+  const transfersFor = useCallback(
+    (loId: number | string) => transferCounts[String(loId)]?.[countWindow] ?? 0,
+    [transferCounts, countWindow],
+  );
+
+
   // Treat missing/null internalStatus as "active" so newly-added LOs aren't
   // silently dropped just because the column wasn't filled in. We only
   // exclude rows explicitly marked archived or inactive. Snoozed LOs are
@@ -147,6 +167,12 @@ export default function StateLookup() {
       )
     );
   }, [activeLOs, selectedState]);
+  // The lightest load among the LOs licensed in the selected state, so the
+  // card for that LO (or LOs, on a tie) can be marked.
+  const fewestInState = useMemo(
+    () => (licensedLOs.length ? Math.min(...licensedLOs.map((lo: any) => transfersFor(lo.id))) : 0),
+    [licensedLOs, transfersFor],
+  );
 
   // Build coverage count map — active LOs only
   const coverageMap = useMemo(() => {
@@ -360,6 +386,41 @@ export default function StateLookup() {
                 </Badge>
               </div>
 
+              {/* Who in this state has taken the least work. The whole point of
+                  the view: pick the next LO without guessing. */}
+              {licensedLOs.length > 1 && (
+                <div className="flex items-center gap-2 flex-wrap" data-testid="lo-workload-controls">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Order:</span>
+                  {([["fewest", "Fewest transfers"], ["tier", "Priority tier"]] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setOrderBy(key)}
+                      data-testid={`lo-order-${key}`}
+                      className={`text-[11px] px-2 py-1 rounded-full border font-medium ${
+                        orderBy === key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"
+                      }`}
+                    >{label}</button>
+                  ))}
+                  {orderBy === "fewest" && (
+                    <>
+                      <span className="text-[11px] text-muted-foreground ml-1">over</span>
+                      {([["d7", "7d"], ["d30", "30d"], ["allTime", "All time"]] as const).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setCountWindow(key)}
+                          data-testid={`lo-window-${key}`}
+                          className={`text-[11px] px-2 py-1 rounded-full border font-medium ${
+                            countWindow === key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"
+                          }`}
+                        >{label}</button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
               {isLoading ? (
                 <div className="space-y-3">
                   {[1, 2, 3].map((i) => (
@@ -388,7 +449,13 @@ export default function StateLookup() {
               ) : (
                 <div className="space-y-3">
                   {[...licensedLOs]
-                    .sort((a, b) => (a.priorityTier ?? 99) - (b.priorityTier ?? 99))
+                    .sort((a, b) =>
+                      orderBy === "fewest"
+                        // Fewest transfers first; tier breaks ties so the
+                        // ordering stays stable among LOs with equal counts.
+                        ? (transfersFor(a.id) - transfersFor(b.id))
+                          || ((a.priorityTier ?? 99) - (b.priorityTier ?? 99))
+                        : ((a.priorityTier ?? 99) - (b.priorityTier ?? 99)))
                     .map((lo) => {
                       const allStates = parseLicensedStates(lo.licensedStates);
                       // Null/missing status is treated as active everywhere else, so
@@ -402,6 +469,22 @@ export default function StateLookup() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="font-semibold text-sm">{lo.fullName}</span>
+                                  {/* The count itself, not just the ordering —
+                                      "3 transfers" answers the question the
+                                      sort only implies. Highlighted when this
+                                      LO is the lightest-loaded in the state. */}
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-xs ${
+                                      orderBy === "fewest" && transfersFor(lo.id) === fewestInState
+                                        ? "border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+                                        : "text-muted-foreground"
+                                    }`}
+                                    data-testid={`lo-transfers-${lo.id}`}
+                                  >
+                                    {transfersFor(lo.id)} transfer{transfersFor(lo.id) === 1 ? "" : "s"}
+                                    {countWindow !== "allTime" && ` · ${countWindow === "d7" ? "7d" : "30d"}`}
+                                  </Badge>
                                   {TIER_LABELS[tier] && (
                                     <Badge className={`text-xs ${TIER_COLORS[tier]}`}>
                                       {TIER_LABELS[tier]}

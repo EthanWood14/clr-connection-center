@@ -13506,6 +13506,47 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     resultDate: z.union([z.string().trim(), z.null()]).optional(),
   }).strict();
 
+  // ── Transfer counts per loan officer ────────────────────────────────────────
+  // Feeds the State Lookup map: when a CLR opens a state, they can see which of
+  // the LOs licensed there has taken the fewest transfers, and route the next
+  // one to spread the work. Returns several windows in one payload so the UI
+  // can switch between them without another round trip.
+  //
+  // Registered on both the C3 and the LAP path because State Lookup is the same
+  // page in both portals, and the LAP confinement guard only lets /lap/* through.
+  function loTransferCounts(orgId: number) {
+    const sqlite = storageExtra.getRawSqlite();
+    const rows = sqlite.prepare(
+      `SELECT lo_id,
+              COUNT(*) AS all_time,
+              SUM(CASE WHEN date >= date('now','-30 day') THEN 1 ELSE 0 END) AS d30,
+              SUM(CASE WHEN date >= date('now','-7 day')  THEN 1 ELSE 0 END) AS d7
+         FROM lead_outcomes
+        WHERE org_id = ? AND outcome_type = 'transfer' AND lo_id IS NOT NULL
+        GROUP BY lo_id`,
+    ).all(orgId) as any[];
+    const counts: Record<string, { d7: number; d30: number; allTime: number }> = {};
+    for (const r of rows) {
+      counts[String(r.lo_id)] = {
+        d7: Number(r.d7) || 0,
+        d30: Number(r.d30) || 0,
+        allTime: Number(r.all_time) || 0,
+      };
+    }
+    return counts;
+  }
+
+  app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    res.json({ counts: loTransferCounts(orgId) });
+  });
+
+  app.get("/api/lap/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    res.json({ counts: loTransferCounts(ctx.orgId) });
+  });
+
   app.get("/api/lap/loan-officers", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
