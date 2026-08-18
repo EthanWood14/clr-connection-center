@@ -1,1 +1,7 @@
 clr.db-journal
+
+# Built output. The Docker image builds this itself (see Dockerfile), and both
+# .dockerignore and .railwayignore exclude it from the build context — so a
+# committed copy is never used by anything. It was adding ~5MB of permanent
+# objects on every deploy.
+dist/

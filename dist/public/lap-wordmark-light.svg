@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 610 132" role="img" aria-labelledby="title">
-  <title id="title">LAP — LO Assistant Portal</title>
-  <rect x="4" y="4" width="124" height="124" rx="29" fill="#FFF9F4" fill-opacity=".09" stroke="#F3CBD1" stroke-opacity=".3" stroke-width="2"/>
-  <path d="M28 32v69h39V88H43V32H28Z" fill="#FFF9F4"/>
-  <path d="M73 32h17c18 0 28 9 28 23 0 15-11 24-29 24h-1v22H73V32Zm15 12v23h2c9 0 13-4 13-12s-4-11-13-11h-2Z" fill="#FFF9F4"/>
-  <path d="m51 76 19-44h13l-5 13-14 31H51Z" fill="#E8B8BE"/>
-  <text x="153" y="68" fill="#FFF9F4" font-family="Inter, Arial, sans-serif" font-size="54" font-weight="750" letter-spacing="3">LAP</text>
-  <text x="155" y="101" fill="#E8B8BE" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="1.8">LO ASSISTANT PORTAL</text>
-</svg>
