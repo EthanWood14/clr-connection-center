@@ -6,3 +6,14 @@ clr.db-journal
 # objects on every deploy.
 dist/
 node_modules/.vite/
+
+# Dependencies and live databases must never be tracked. 27,196 of the repo's
+# 27,562 tracked files were node_modules, packing the repo to 250MB — which is
+# what made Railway's GitHub-triggered deploys die in the Initializing stage
+# with "Repository snapshot operation timed out".
+node_modules/
+clr.db
+lap-files.db
+*.db-shm
+*.db-wal
+*.db-journal
