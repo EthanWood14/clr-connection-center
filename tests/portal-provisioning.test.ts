@@ -84,10 +84,30 @@ test("schedule changes notify managers", () => {
   assert.match(fn, /attendanceManagerUsers\(orgId, actorUserId\)/, "the person making the change is not notified of it");
   assert.match(fn, /createNotification/);
   assert.match(fn, /sendPushToUser/);
+  assert.match(fn, /attendanceManagerEmails\(orgId, actorUserId\)/,
+    "configured manager recipients must receive schedule-change email too");
+  assert.match(fn, /sendEmail\(/, "schedule changes must not be push-only");
   assert.match(fn, /if \(!isFirst && !changes\.length\) return;/,
     "a notes-only edit must not ping anyone");
   // The save must not fail because a notification did not send.
   assert.match(routes, /notifyScheduleChange\([\s\S]{0,160}?\.catch\(/);
+});
+
+test("late requests and time-off notices email the manager recipient list", () => {
+  const attendance = routes.slice(
+    routes.indexOf("async function notifyAttendanceManagers"),
+    routes.indexOf("function portalAttendanceRequestStatus"),
+  );
+  assert.match(attendance, /attendanceManagerEmails\(orgId, excludeUserId\)/);
+  assert.match(attendance, /sendEmail\(/, "late-excuse requests must reach manager email");
+
+  const timeOff = routes.slice(
+    routes.indexOf(`app.post("/api/time-off"`),
+    routes.indexOf(`app.get("/api/time-off/email-decision"`),
+  );
+  assert.match(timeOff, /attendanceManagerEmails\(orgId\)/,
+    "time-off requests must include configured manager recipients");
+  assert.match(timeOff, /new Set\(/, "the primary approver and manager list must be deduplicated");
 });
 
 test("portal accounts can save their own schedule but not review others'", () => {

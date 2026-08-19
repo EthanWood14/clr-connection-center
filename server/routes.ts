@@ -5850,6 +5850,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     return excludeUserId ? rows.filter((u) => Number(u.id) !== excludeUserId) : rows;
   }
 
+  function attendanceManagerEmails(orgId: number, excludeUserId?: number): string[] {
+    const out = new Set<string>();
+    const excludedEmail = excludeUserId
+      ? String((storage.getUserById(excludeUserId) as any)?.email ?? "").trim().toLowerCase()
+      : "";
+    for (const manager of attendanceManagerUsers(orgId, excludeUserId)) {
+      const email = String(manager.email ?? "").trim().toLowerCase();
+      if (email.includes("@") && email !== excludedEmail) out.add(email);
+    }
+    // Keep explicitly configured report recipients on every attendance/time
+    // notice too. This covers managers who need the emails without granting
+    // them any additional in-app authority.
+    try {
+      const settings = storageExtra.getEmailSettings() as any;
+      for (const value of JSON.parse(settings?.manager_emails || "[]")) {
+        const email = String(value ?? "").trim().toLowerCase();
+        if (email.includes("@") && email !== excludedEmail) out.add(email);
+      }
+    } catch { /* ignore malformed legacy settings */ }
+    return Array.from(out);
+  }
+
   // Which working days/start times actually moved, so the notification says
   // something useful instead of "a schedule changed".
   function scheduleDayDiff(before: any, after: any): string[] {
@@ -5909,6 +5931,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         portal: "c3",
       }),
     ));
+    const emails = attendanceManagerEmails(orgId, actorUserId);
+    if (emails.length) {
+      const body = `<p style="margin:0;font-size:14px;color:#1e293b;line-height:1.6">${eodActivityEsc(message)}</p>`;
+      await sendEmail({
+        to: emails,
+        subject: title,
+        html: buildEmail({ subject: title, preheader: message, body }),
+      });
+    }
   }
 
   async function notifyAttendanceManagers(
@@ -5937,6 +5968,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         url: "/#/check-ins",
       }),
     ));
+    const emails = attendanceManagerEmails(orgId, excludeUserId);
+    if (emails.length) {
+      const body = `<p style="margin:0;font-size:14px;color:#1e293b;line-height:1.6">${eodActivityEsc(message)}</p>`
+        + `<p style="margin:16px 0 0;font-size:12px;color:#64748b">Review it in C3 under Check-Ins.</p>`;
+      await sendEmail({
+        to: emails,
+        subject: title,
+        html: buildEmail({ subject: title, preheader: message, body }),
+      });
+    }
   }
 
   function portalAttendanceRequestStatus(row: any) {
@@ -7368,10 +7409,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const approverId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || 0;
         const approver = approverId ? (storage.getUserById(approverId) as any) : null;
         const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
-        if (approverEmail) {
+        const recipients = Array.from(new Set([
+          ...(approverEmail ? [approverEmail.toLowerCase()] : []),
+          ...attendanceManagerEmails(orgId),
+        ]));
+        if (recipients.length) {
           const { subject, html } = buildTimeOffApprovalEmail(row, requester?.name ?? "A team member");
-          await sendEmail({ to: approverEmail, subject, html });
-          emailedTo = approverEmail;
+          await sendEmail({ to: recipients, subject, html });
+          emailedTo = recipients.join(", ");
         }
       } catch (e: any) { console.error("[time-off] approver email failed:", e?.message ?? e); }
 
@@ -12283,23 +12328,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Everyone who should hear about a policy breach: the configured manager list
   // plus every active manager/admin with an email.
-  function checkinManagerEmails(): string[] {
-    const out = new Set<string>();
-    try {
-      const s = storageExtra.getEmailSettings() as any;
-      for (const e of JSON.parse(s?.manager_emails || "[]")) {
-        const t = String(e || "").trim();
-        if (t.includes("@")) out.add(t);
-      }
-    } catch { /* ignore a malformed list */ }
-    for (const u of storage.getUsers() as any[]) {
-      const active = u.isActive ?? u.is_active;
-      const mgr = (u.isManager ?? u.is_manager) || u.role === "admin";
-      if (active && mgr && String(u.email || "").includes("@")) out.add(String(u.email));
-    }
-    return Array.from(out);
-  }
-
   function attendanceSelfRequest(row: any) {
     return row ? {
       id: Number(row.id),
@@ -12480,7 +12508,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (onTime === 0 && lateStats.count >= CHECKIN_LATE_ALLOWANCE
         && !storageExtra.lateAlertSentInWindow(userId, lateStats.windowStart, date)) {
       try {
-        const to = checkinManagerEmails();
+        const to = attendanceManagerEmails(orgId);
         if (to.length) {
           // Only the lates that actually count — an excused one must not show up
           // as evidence, or the table contradicts the headline number.

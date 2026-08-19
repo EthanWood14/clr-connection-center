@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.91.1",
+    headline: "Managers now receive the full set of attendance and time notices by email.",
+    items: [
+      { text: "Late-excuse requests, schedule changes and time-off requests now email the configured manager recipients, in addition to their existing C3 and push notifications." },
+      { text: "Scott Petrie is included through the manager email list; this does not change his C3 permissions." },
+    ],
+  },
+  {
     version: "3.91.0",
     headline: "A 60-question certification test, and a shorter sidebar.",
     items: [
