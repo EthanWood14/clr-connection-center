@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -47,4 +48,34 @@ test("no login credential is hardcoded in the server", () => {
   assert.match(block, /crypto\.randomBytes\(24\)/, "unguessable secret instead of a shared default");
   assert.match(block, /VALUES \(\?, \?, 'assistant', 1, 1, 0, 0, \?, 1, \?, 0, \?\)/,
     "must_change_password must be 1 so the placeholder secret cannot be used");
+});
+
+test("dependencies and live databases stay out of the index", () => {
+  // 27,196 of the repo's 27,562 tracked files were once node_modules, packing
+  // it to 250MB. Railway's GitHub-triggered deploys then died before the build
+  // even started, with "Repository snapshot operation timed out". The CLI path
+  // hid it, because .railwayignore excludes node_modules from that upload.
+  const tracked = (pattern: string) =>
+    execFileSync("git", ["ls-files", "--", pattern], { cwd: root, encoding: "utf8" })
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+  assert.deepEqual(tracked("node_modules"), [], "npm ci builds these inside the image");
+  for (const db of ["clr.db", "lap-files.db"]) {
+    // These carry the users table (bcrypt hashes) and audit_logs. A tracked
+    // copy is a credential leak that survives in history forever.
+    assert.deepEqual(tracked(db), [], `${db} is a live database, not source`);
+  }
+});
+
+test("the ignore rules that keep them out are still in place", () => {
+  // Untracking alone does not hold — dist/ and node_modules/.vite were each
+  // committed by a later `git add -A` before they were ignored.
+  const ignore = readFileSync(join(root, ".gitignore"), "utf8");
+  for (const rule of ["node_modules/", "clr.db", "lap-files.db"]) {
+    assert.ok(
+      ignore.split(/\r?\n/).some((line) => line.trim() === rule),
+      `.gitignore must list ${rule}`,
+    );
+  }
 });
