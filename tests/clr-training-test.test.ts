@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 
 import {
   TEST_QUESTIONS, TEST_QUESTION_COUNT, TEST_PASS_CORRECT, TEST_PASS_PERCENT,
-  questionsWithoutAnswers, gradeTest,
+  questionsWithoutAnswers, checkTestAnswer, gradeTest,
 } from "../shared/clr-training-test";
 import { TRAINING_DAYS } from "../shared/clr-training";
 
@@ -66,18 +66,52 @@ test("every question is well formed and tied to a real training day", () => {
   }
 });
 
-test("the answer key never reaches the browser before submission", () => {
+test("the complete answer key never reaches the browser before answering", () => {
   const shipped = questionsWithoutAnswers();
   assert.equal(shipped.length, 60);
   for (const q of shipped) {
     assert.ok(!("correct" in q), "the key must be stripped");
     assert.ok(!("why" in q), "explanations must be stripped too — they give it away");
   }
-  const get = routes.slice(routes.indexOf('app.get("/api/training-test"'), routes.indexOf('app.post("/api/training-test/attempts"'));
+  const get = routes.slice(routes.indexOf('app.get("/api/training-test"'), routes.indexOf('app.post("/api/training-test/check"'));
   assert.match(get, /questionsWithoutAnswers\(\)/);
   // Grading is server-side.
   assert.match(routes, /const graded = gradeTest\(answers\)/);
   assert.ok(!page.includes("gradeTest"), "the browser must not grade its own test");
+});
+
+test("immediate feedback checks only the answered question on the server", () => {
+  const question = TEST_QUESTIONS[8];
+  assert.deepEqual(checkTestAnswer(question.id, question.correct), {
+    id: question.id,
+    chosen: question.correct,
+    correct: question.correct,
+    isCorrect: true,
+    why: question.why,
+  });
+  assert.equal(checkTestAnswer(question.id, (question.correct + 1) % 4)?.isCorrect, false);
+  assert.equal(checkTestAnswer(999, 0), null);
+  assert.equal(checkTestAnswer(question.id, 8), null);
+
+  const check = routes.slice(
+    routes.indexOf('app.post("/api/training-test/check"'),
+    routes.indexOf('app.post("/api/training-test/attempts"'),
+  );
+  assert.match(check, /requireAuth/);
+  assert.match(check, /checkTestAnswer\(questionId, chosen\)/);
+  assert.doesNotMatch(check, /training_test_attempts|gradeTest/);
+});
+
+test("the test is a one-question game with feedback and motion", () => {
+  assert.match(page, /const currentQuestion = questions\[currentIndex\]/);
+  assert.match(page, /data-testid="training-question-card"/);
+  assert.match(page, /data-testid="training-feedback"/);
+  assert.match(page, /data-testid="training-next"/);
+  assert.match(page, /\/api\/training-test\/check/);
+  assert.match(page, /quiz-question-in/);
+  assert.match(page, /quiz-confetti/);
+  assert.match(page, /Current streak/);
+  assert.match(page, /Checkpoint unlocked/);
 });
 
 test("every attempt is recorded, not just the best one", () => {

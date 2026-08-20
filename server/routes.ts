@@ -5,7 +5,7 @@ import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
-import { questionsWithoutAnswers, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
+import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -6760,8 +6760,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // column silently sat at 0 for every LO. /performance-summary above is here
   // for the same reason.
   // ── CLR training certification test ─────────────────────────────────────────
-  // The answer key stays server-side until an attempt is submitted; sending it
-  // with the questions would put it one devtools tab away from the trainee.
+  // The complete answer key stays server-side. Immediate feedback reveals only
+  // the question the trainee has just answered, never all 60 at once.
   app.get("/api/training-test", requireAuth, (_req: any, res) => {
     res.json({
       questions: questionsWithoutAnswers(),
@@ -6769,6 +6769,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       passCorrect: TEST_PASS_CORRECT,
       passPercent: TEST_PASS_PERCENT,
     });
+  });
+
+  app.post("/api/training-test/check", requireAuth, (req: any, res) => {
+    const questionId = Number(req.body?.questionId);
+    const chosen = Number(req.body?.chosen);
+    const feedback = checkTestAnswer(questionId, chosen);
+    if (!feedback) return res.status(400).json({ error: "Choose a valid answer for this question." });
+    res.json(feedback);
   });
 
   app.post("/api/training-test/attempts", requireAuth, (req: any, res) => {

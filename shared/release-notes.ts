@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.93.0",
+    headline: "The CLR certification test now feels like a game instead of a 60-question form.",
+    items: [
+      { text: "The test shows one question at a time, gives immediate right-or-wrong feedback with the explanation, celebrates streaks and checkpoints, and uses motion to keep the full 60-question run engaging." },
+      { text: "Scoring still happens securely on the server, the full answer key stays hidden, and only completed attempts enter test history." },
+    ],
+  },
+  {
     version: "3.92.1",
     headline: "Managers can reverse a time-off approval without deleting the request.",
     items: [

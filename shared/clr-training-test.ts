@@ -130,6 +130,26 @@ export function questionsWithoutAnswers(): Omit<TestQuestion, "correct" | "why">
   return TEST_QUESTIONS.map(({ correct, why, ...rest }) => rest);
 }
 
+/** Reveal feedback for exactly one answered question, never the whole key. */
+export function checkTestAnswer(questionId: number, chosen: number): {
+  id: number;
+  chosen: number;
+  correct: number;
+  isCorrect: boolean;
+  why: string;
+} | null {
+  if (!Number.isInteger(questionId) || !Number.isInteger(chosen) || chosen < 0 || chosen > 3) return null;
+  const question = TEST_QUESTIONS.find((item) => item.id === questionId);
+  if (!question) return null;
+  return {
+    id: question.id,
+    chosen,
+    correct: question.correct,
+    isCorrect: chosen === question.correct,
+    why: question.why,
+  };
+}
+
 export function gradeTest(answers: Record<string, number>): {
   correctCount: number; total: number; percent: number; passed: boolean;
   results: { id: number; chosen: number | null; correct: number; isCorrect: boolean; why: string }[];
