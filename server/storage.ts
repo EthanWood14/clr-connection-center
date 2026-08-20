@@ -690,6 +690,7 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     created_by_user_id INTEGER NOT NULL,
     priority TEXT NOT NULL DEFAULT 'normal',
     recurrence TEXT NOT NULL DEFAULT 'none',
+    schedule_days TEXT NOT NULL DEFAULT '[]',
     due_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
@@ -714,6 +715,7 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     UNIQUE(task_id, due_at)
   )`);
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_tasks_org_assignee ON clr_tasks(org_id, assigned_user_id, status, due_at)`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_task_completions_task ON clr_task_completions(task_id, completed_at DESC)`); } catch {}
 
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────

@@ -82,7 +82,9 @@ function Confetti({ running, dramatic = false }: { running: boolean; dramatic?: 
     particlesRef.current = [];
     startRef.current = performance.now();
 
-    const multiplier = dramatic ? 2.1 : 1;
+    // Transfer wins intentionally use eight times the normal particle count so
+    // confetti blankets the full viewport instead of framing only the card.
+    const multiplier = dramatic ? 8 : 1;
     const burstLeft = () => spawnBurst(particlesRef.current, 40, window.innerHeight - 40, Math.round(80 * multiplier), 22, 29);
     const burstRight = () => spawnBurst(particlesRef.current, window.innerWidth - 40, window.innerHeight - 40, Math.round(80 * multiplier), 22, 29);
     const burstCenter = () => spawnBurst(particlesRef.current, window.innerWidth / 2, window.innerHeight / 3, Math.round(60 * multiplier), 18, 21);

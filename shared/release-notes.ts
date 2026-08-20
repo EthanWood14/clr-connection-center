@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.95.0",
+    headline: "Task Center now supports custom weekly schedules.",
+    items: [
+      { text: "Managers can choose any combination of weekdays for a recurring task, including schedules such as Monday, Wednesday, and Friday." },
+      { text: "Transfer wins now use the upgraded cinematic full-screen celebration with eight times the confetti, animated light rays, energy rings, and a larger centerpiece." },
+    ],
+  },
+  {
     version: "3.94.2",
     headline: "Transfer celebrations got a major visual upgrade.",
     items: [

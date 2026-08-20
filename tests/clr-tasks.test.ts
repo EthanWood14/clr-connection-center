@@ -17,10 +17,13 @@ test("recurring deadlines advance to the first future cycle", () => {
   assert.equal(nextTaskDueAt("2026-08-21T17:00:00.000Z", "weekdays", new Date("2026-08-21T18:00:00.000Z")), "2026-08-24T17:00:00.000Z");
   assert.equal(nextTaskDueAt("2026-01-31T17:00:00.000Z", "monthly", new Date("2026-01-31T18:00:00.000Z")), "2026-02-28T17:00:00.000Z");
   assert.equal(nextTaskDueAt("2026-08-17T17:00:00.000Z", "none"), null);
+  assert.equal(nextTaskDueAt("2026-08-17T17:00:00.000Z", "custom_weekly", new Date("2026-08-17T18:00:00.000Z"), [1, 3, 5]), "2026-08-19T17:00:00.000Z");
+  assert.equal(nextTaskDueAt("2026-08-21T17:00:00.000Z", "custom_weekly", new Date("2026-08-21T18:00:00.000Z"), [1, 3, 5]), "2026-08-24T17:00:00.000Z");
 });
 
 test("task storage preserves definitions, completion history, and one alert per missed cycle", () => {
   assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_tasks/);
+  assert.match(storage, /schedule_days TEXT NOT NULL DEFAULT '\[\]'/);
   assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_task_completions/);
   assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_task_alerts/);
   assert.match(storage, /UNIQUE\(task_id, due_at\)/);
@@ -49,6 +52,8 @@ test("the task center is a ready-to-use manager and CLR workflow", () => {
   assert.match(app, /path="\/tasks" component=\{ClrTasks\}/);
   assert.match(sidebar, /title: "Tasks"/);
   assert.match(page, /CLR Task Center/);
+  assert.match(page, /Custom weekdays/);
+  assert.match(page, /Monday, Wednesday, and Friday/);
   assert.match(page, /Assign task/);
   assert.match(page, /Mark done/);
   assert.match(page, /completion history/i);

@@ -6,7 +6,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
 import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
-import { isTaskPriority, isTaskRecurrence, nextTaskDueAt } from "@shared/clr-tasks";
+import { isTaskPriority, isTaskRecurrence, nextTaskDueAt, normalizeTaskScheduleDays } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -6844,6 +6844,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     createdByName: String(row.created_by_name ?? "Manager"),
     priority: String(row.priority ?? "normal"),
     recurrence: String(row.recurrence ?? "none"),
+    scheduleDays: normalizeTaskScheduleDays((() => { try { return JSON.parse(String(row.schedule_days ?? "[]")); } catch { return []; } })()),
     dueAt: String(row.due_at),
     status: String(row.status ?? "active"),
     createdAt: String(row.created_at),
@@ -6914,18 +6915,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignedUserId = Number(req.body?.assignedUserId);
     const priority = String(req.body?.priority ?? "normal");
     const recurrence = String(req.body?.recurrence ?? "none");
+    const scheduleDays = normalizeTaskScheduleDays(req.body?.scheduleDays);
     const due = new Date(String(req.body?.dueAt ?? ""));
     if (!title || title.length > 140) return res.status(400).json({ error: "Task title must be 1–140 characters." });
     if (description.length > 3000) return res.status(400).json({ error: "Task details must be 3,000 characters or fewer." });
     if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence)) return res.status(400).json({ error: "Choose a valid priority and repeat schedule." });
+    if (recurrence === "custom_weekly" && !scheduleDays.length) return res.status(400).json({ error: "Choose at least one weekday for the custom repeat." });
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
     const now = new Date().toISOString();
     const result = taskSqlite().prepare(`
-      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,due_at,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?, 'active',?,?)
-    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, due.toISOString(), now, now);
+      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,due_at,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?, 'active',?,?)
+    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), due.toISOString(), now, now);
     const id = Number(result.lastInsertRowid);
     storage.createNotification({
       userId: assignedUserId, type: "task_assigned", title: `New task: ${title}`,
@@ -6934,7 +6937,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } as any);
     sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: "create", entityType: "clr_task", entityId: id, entityLabel: title,
-      details: JSON.stringify({ assignedUserId, priority, recurrence, dueAt: due.toISOString() }) });
+      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString() }) });
     res.status(201).json({ ok: true, id });
   });
 
@@ -6950,21 +6953,24 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignedUserId = req.body?.assignedUserId === undefined ? Number(before.assigned_user_id) : Number(req.body.assignedUserId);
     const priority = req.body?.priority === undefined ? String(before.priority) : String(req.body.priority);
     const recurrence = req.body?.recurrence === undefined ? String(before.recurrence) : String(req.body.recurrence);
+    const previousDays = (() => { try { return JSON.parse(String(before.schedule_days ?? "[]")); } catch { return []; } })();
+    const scheduleDays = normalizeTaskScheduleDays(req.body?.scheduleDays === undefined ? previousDays : req.body.scheduleDays);
     const status = req.body?.status === undefined ? String(before.status) : String(req.body.status);
     const due = req.body?.dueAt === undefined ? new Date(String(before.due_at)) : new Date(String(req.body.dueAt));
     if (!title || title.length > 140 || description.length > 3000) return res.status(400).json({ error: "Check the task title and details." });
     if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence) || !["active", "completed", "archived"].includes(status)) return res.status(400).json({ error: "Invalid task settings." });
+    if (recurrence === "custom_weekly" && !scheduleDays.length) return res.status(400).json({ error: "Choose at least one weekday for the custom repeat." });
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
-    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
-      .run(title, description, assignedUserId, priority, recurrence, due.toISOString(), status, new Date().toISOString(), id, orgId);
+    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
+      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), due.toISOString(), status, new Date().toISOString(), id, orgId);
     if (assignedUserId !== Number(before.assigned_user_id)) {
       storage.createNotification({ userId: assignedUserId, type: "task_assigned", title: `Task assigned: ${title}`, message: `A manager assigned this task to you.`, isRead: false } as any);
     }
     const actor = storage.getUserById(actorId) as any;
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: status === "archived" ? "archive" : "update", entityType: "clr_task", entityId: id, entityLabel: title,
-      details: JSON.stringify({ assignedUserId, priority, recurrence, dueAt: due.toISOString(), status }) });
+      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString(), status }) });
     res.json({ ok: true });
   });
 
@@ -6980,7 +6986,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const note = String(req.body?.note ?? "").trim();
     if (note.length > 2000) return res.status(400).json({ error: "Completion note must be 2,000 characters or fewer." });
     const completedAt = new Date().toISOString();
-    const nextDue = nextTaskDueAt(String(task.due_at), String(task.recurrence) as any, new Date(completedAt));
+    const scheduleDays = (() => { try { return JSON.parse(String(task.schedule_days ?? "[]")); } catch { return []; } })();
+    const nextDue = nextTaskDueAt(String(task.due_at), String(task.recurrence) as any, new Date(completedAt), scheduleDays);
     try {
       taskSqlite().transaction(() => {
         taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note) VALUES (?,?,?,?,?,?)`)

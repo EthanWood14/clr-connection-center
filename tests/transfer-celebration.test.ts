@@ -33,5 +33,6 @@ test("the initiating CLR gets a full-screen animated and audible celebration", (
   assert.match(overlay, /celebration-orbit/);
   assert.match(overlay, /celebration-shine/);
   assert.match(overlay, /dramatic \? 8500 : 6000/);
+  assert.match(overlay, /const multiplier = dramatic \? 8 : 1/);
   assert.match(overlay, /prefers-reduced-motion/);
 });

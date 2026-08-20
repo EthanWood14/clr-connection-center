@@ -21,7 +21,8 @@ type Completion = { id: number; dueAt: string; completedAt: string; completedByN
 type ClrTask = {
   id: number; title: string; description: string; assignedUserId: number; assignedUserName: string;
   createdByUserId: number; createdByName: string; priority: "low" | "normal" | "high" | "urgent";
-  recurrence: "none" | "daily" | "weekdays" | "weekly" | "monthly";
+  recurrence: "none" | "daily" | "weekdays" | "weekly" | "custom_weekly" | "monthly";
+  scheduleDays: number[];
   dueAt: string; status: "active" | "completed"; createdAt: string; updatedAt: string;
   completionCount: number; lastCompletedAt: string | null; overdueAlerted: boolean; history: Completion[];
 };
@@ -31,8 +32,9 @@ type TaskPayload = {
 };
 
 const RECURRENCE_LABELS: Record<ClrTask["recurrence"], string> = {
-  none: "One time", daily: "Every day", weekdays: "Every weekday", weekly: "Every week", monthly: "Every month",
+  none: "One time", daily: "Every day", weekdays: "Every weekday", weekly: "Every week", custom_weekly: "Custom weekdays", monthly: "Every month",
 };
+const WEEKDAYS = [{ day: 1, label: "Mon" }, { day: 2, label: "Tue" }, { day: 3, label: "Wed" }, { day: 4, label: "Thu" }, { day: 5, label: "Fri" }, { day: 6, label: "Sat" }, { day: 0, label: "Sun" }];
 const PRIORITY_STYLES: Record<ClrTask["priority"], string> = {
   low: "border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300",
   normal: "border-blue-300 text-blue-700 dark:border-blue-800 dark:text-blue-300",
@@ -71,6 +73,7 @@ function TaskEditor({ open, onClose, task, payload }: {
   const [assignedUserId, setAssignedUserId] = useState("");
   const [priority, setPriority] = useState<ClrTask["priority"]>("normal");
   const [recurrence, setRecurrence] = useState<ClrTask["recurrence"]>("none");
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1, 3, 5]);
   const [dueAt, setDueAt] = useState(defaultDeadline());
 
   useEffect(() => {
@@ -79,12 +82,13 @@ function TaskEditor({ open, onClose, task, payload }: {
     setAssignedUserId(String(task?.assignedUserId ?? payload.assignees[0]?.id ?? ""));
     setPriority(task?.priority ?? "normal");
     setRecurrence(task?.recurrence ?? "none");
+    setScheduleDays(task?.scheduleDays?.length ? task.scheduleDays : [1, 3, 5]);
     setDueAt(task ? localDateTime(task.dueAt) : defaultDeadline());
   }, [task, open, payload.assignees]);
 
   const save = useMutation({
     mutationFn: () => apiRequest(task ? "PATCH" : "POST", task ? `/api/clr-tasks/${task.id}` : "/api/clr-tasks", {
-      title, description, assignedUserId: Number(assignedUserId), priority, recurrence,
+      title, description, assignedUserId: Number(assignedUserId), priority, recurrence, scheduleDays,
       dueAt: new Date(dueAt).toISOString(),
     }),
     onSuccess: () => {
@@ -111,8 +115,9 @@ function TaskEditor({ open, onClose, task, payload }: {
             <div className="space-y-1.5"><Label>Repeats</Label><Select value={recurrence} onValueChange={(value) => setRecurrence(value as ClrTask["recurrence"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(RECURRENCE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1.5"><Label>Priority</Label><Select value={priority} onValueChange={(value) => setPriority(value as ClrTask["priority"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Low</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="urgent">Urgent</SelectItem></SelectContent></Select></div>
           </div>
+          {recurrence === "custom_weekly" && <div className="space-y-2 rounded-xl border bg-muted/25 p-3"><div><Label>Repeat on</Label><p className="text-xs text-muted-foreground">Choose any combination—like Monday, Wednesday, and Friday for three times a week.</p></div><div className="flex flex-wrap gap-2">{WEEKDAYS.map(({ day, label }) => { const selected = scheduleDays.includes(day); return <Button key={day} type="button" size="sm" variant={selected ? "default" : "outline"} className="min-w-12" aria-pressed={selected} onClick={() => setScheduleDays((days) => selected ? days.filter((item) => item !== day) : [...days, day])}>{label}</Button>; })}</div></div>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button><Button onClick={() => save.mutate()} disabled={!title.trim() || !assignedUserId || !dueAt || save.isPending}>{save.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : task ? "Save changes" : "Assign task"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button><Button onClick={() => save.mutate()} disabled={!title.trim() || !assignedUserId || !dueAt || (recurrence === "custom_weekly" && !scheduleDays.length) || save.isPending}>{save.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : task ? "Save changes" : "Assign task"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
