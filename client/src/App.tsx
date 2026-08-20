@@ -22,6 +22,8 @@ import { TransferCelebration } from "@/components/transfer-celebration";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { DailyLoPrioritiesModal, dailyLoPrioritiesStorageKey } from "@/components/daily-lo-priorities-modal";
+import { businessTodayInTz } from "@/lib/business-day";
 
 import Dashboard from "@/pages/dashboard";
 import Directory from "@/pages/directory";
@@ -216,11 +218,25 @@ function AppRouter() {
 
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
-  const showIntro = !!user && !user.hasSeenIntro && !user.mustChangePassword;
+  const priorityBusinessDate = user ? businessTodayInTz(user.timezone) : "";
+  const priorityStorageKey = user
+    ? dailyLoPrioritiesStorageKey(user.id, user.orgId ?? 1, priorityBusinessDate)
+    : "";
+  const [dismissedPriorityKey, setDismissedPriorityKey] = useState("");
+  const alreadySawDailyPriorities = (() => {
+    if (!priorityStorageKey || dismissedPriorityKey === priorityStorageKey) return true;
+    try { return localStorage.getItem(priorityStorageKey) === "seen"; } catch { return false; }
+  })();
+  const showDailyPriorities = !!user
+    && user.portal !== "lap"
+    && user.portal !== "lop"
+    && !user.mustChangePassword
+    && !alreadySawDailyPriorities;
+  const showIntro = !!user && !user.hasSeenIntro && !user.mustChangePassword && !showDailyPriorities;
   // Pipeline-stages refresher: shown to CLRs every 14 days. Suppressed while the
   // intro/welcome flow or the change-password gate is active so they don't stack.
   const showPipelineSop = (() => {
-    if (!user || !user.isClr || user.mustChangePassword || showIntro) return false;
+    if (!user || !user.isClr || user.mustChangePassword || showIntro || showDailyPriorities) return false;
     const last = user.lastSeenPipelineSop ? new Date(user.lastSeenPipelineSop).getTime() : 0;
     if (!last) return true; // never seen → show on first eligible load
     const daysSince = (Date.now() - last) / (1000 * 60 * 60 * 24);
@@ -271,6 +287,14 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
+      {showDailyPriorities && (
+        <DailyLoPrioritiesModal
+          userId={user.id}
+          orgId={user.orgId ?? 1}
+          timezone={user.timezone}
+          onDismiss={() => setDismissedPriorityKey(priorityStorageKey)}
+        />
+      )}
       {showIntro && <IntroModal />}
       {showPipelineSop && <PipelineSopModal />}
       <CookieNotice />

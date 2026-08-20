@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.91.4",
+    headline: "Every C3 workday now opens with the loan officers who need attention first.",
+    items: [
+      { text: "The first C3 screen of the day shows every loan officer marked as needing transfers, followed by your ranked daily LO assignment order." },
+      { text: "The briefing appears at the start of each C3 business day and includes a direct button to open Daily Assignments." },
+    ],
+  },
+  {
     version: "3.91.3",
     headline: "New CLRs are clearly marked while they complete their first 20 business workdays.",
     items: [
