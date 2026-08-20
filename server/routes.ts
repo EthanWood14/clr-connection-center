@@ -6,6 +6,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
 import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
+import { isTaskPriority, isTaskRecurrence, nextTaskDueAt } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -6813,6 +6814,235 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ attempts: rows, isManager: !!isManager });
   });
 
+  // ── CLR task center ────────────────────────────────────────────────────────
+  // Managers create the work; CLRs can only see and complete work assigned to
+  // them. Recurring definitions always expose one current deadline, with every
+  // completed cycle retained separately for accountability.
+  const taskSqlite = () => storageExtra.getRawSqlite();
+  const taskManager = (user: any) => !!user && (
+    user.role === "admin" || (user.isManager ?? user.is_manager) || (user.superAdmin ?? user.super_admin)
+  );
+  const taskManagers = (orgId: number) => (storage.getUsers() as any[]).filter((user: any) =>
+    (user.isActive ?? user.is_active)
+    && (Number(user.orgId ?? user.org_id ?? 1) || 1) === orgId
+    && taskManager(user)
+    && (user.portal == null || user.portal === "c3")
+  );
+  const taskClrs = (orgId: number) => (storage.getUsers() as any[]).filter((user: any) =>
+    (user.isActive ?? user.is_active)
+    && (Number(user.orgId ?? user.org_id ?? 1) || 1) === orgId
+    && (user.isClr ?? user.is_clr ?? (user.role === "assistant"))
+    && (user.portal == null || user.portal === "c3")
+  );
+  const taskRow = (row: any, history: any[] = []) => ({
+    id: Number(row.id),
+    title: String(row.title ?? ""),
+    description: String(row.description ?? ""),
+    assignedUserId: Number(row.assigned_user_id),
+    assignedUserName: String(row.assigned_user_name ?? "Unknown CLR"),
+    createdByUserId: Number(row.created_by_user_id),
+    createdByName: String(row.created_by_name ?? "Manager"),
+    priority: String(row.priority ?? "normal"),
+    recurrence: String(row.recurrence ?? "none"),
+    dueAt: String(row.due_at),
+    status: String(row.status ?? "active"),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    completionCount: Number(row.completion_count ?? 0),
+    lastCompletedAt: row.last_completed_at ? String(row.last_completed_at) : null,
+    overdueAlerted: !!row.overdue_alerted,
+    history: history.map((entry: any) => ({
+      id: Number(entry.id), dueAt: String(entry.due_at), completedAt: String(entry.completed_at),
+      completedByName: String(entry.completed_by_name ?? "Unknown"), note: String(entry.note ?? ""),
+    })),
+  });
+
+  app.get("/api/clr-tasks", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    const canManage = taskManager(me);
+    const rows = taskSqlite().prepare(`
+      SELECT t.*, assigned.name AS assigned_user_name, creator.name AS created_by_name,
+        (SELECT COUNT(*) FROM clr_task_completions c WHERE c.task_id=t.id) AS completion_count,
+        (SELECT MAX(c.completed_at) FROM clr_task_completions c WHERE c.task_id=t.id) AS last_completed_at,
+        EXISTS(SELECT 1 FROM clr_task_alerts a WHERE a.task_id=t.id AND a.due_at=t.due_at) AS overdue_alerted
+      FROM clr_tasks t
+      LEFT JOIN users assigned ON assigned.id=t.assigned_user_id
+      LEFT JOIN users creator ON creator.id=t.created_by_user_id
+      WHERE t.org_id=? AND t.status <> 'archived' ${canManage ? "" : "AND t.assigned_user_id=?"}
+      ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.due_at ASC
+    `).all(...(canManage ? [orgId] : [orgId, userId])) as any[];
+    const ids = rows.map((row) => Number(row.id));
+    const historyRows = ids.length ? taskSqlite().prepare(`
+      SELECT c.*, u.name AS completed_by_name FROM clr_task_completions c
+      LEFT JOIN users u ON u.id=c.completed_by_user_id
+      WHERE c.org_id=? AND c.task_id IN (${ids.map(() => "?").join(",")})
+      ORDER BY c.completed_at DESC LIMIT 500
+    `).all(orgId, ...ids) as any[] : [];
+    const byTask = new Map<number, any[]>();
+    for (const entry of historyRows) {
+      const list = byTask.get(Number(entry.task_id)) ?? [];
+      if (list.length < 8) list.push(entry);
+      byTask.set(Number(entry.task_id), list);
+    }
+    const now = Date.now();
+    const tasks = rows.map((row) => taskRow(row, byTask.get(Number(row.id)) ?? []));
+    const visibleActive = tasks.filter((task) => task.status === "active");
+    res.json({
+      tasks, canManage,
+      assignees: taskClrs(orgId).map((user: any) => ({ id: Number(user.id), name: String(user.name ?? "") })),
+      summary: {
+        active: visibleActive.length,
+        overdue: visibleActive.filter((task) => new Date(task.dueAt).getTime() < now).length,
+        dueSoon: visibleActive.filter((task) => {
+          const due = new Date(task.dueAt).getTime();
+          return due >= now && due <= now + 24 * 60 * 60 * 1000;
+        }).length,
+        completed: tasks.filter((task) => task.status === "completed").length,
+      },
+    });
+  });
+
+  app.post("/api/clr-tasks", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const actor = storage.getUserById(actorId) as any;
+    const title = String(req.body?.title ?? "").trim();
+    const description = String(req.body?.description ?? "").trim();
+    const assignedUserId = Number(req.body?.assignedUserId);
+    const priority = String(req.body?.priority ?? "normal");
+    const recurrence = String(req.body?.recurrence ?? "none");
+    const due = new Date(String(req.body?.dueAt ?? ""));
+    if (!title || title.length > 140) return res.status(400).json({ error: "Task title must be 1–140 characters." });
+    if (description.length > 3000) return res.status(400).json({ error: "Task details must be 3,000 characters or fewer." });
+    if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence)) return res.status(400).json({ error: "Choose a valid priority and repeat schedule." });
+    if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
+    const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
+    if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
+    const now = new Date().toISOString();
+    const result = taskSqlite().prepare(`
+      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,due_at,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?, 'active',?,?)
+    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, due.toISOString(), now, now);
+    const id = Number(result.lastInsertRowid);
+    storage.createNotification({
+      userId: assignedUserId, type: "task_assigned", title: `New task: ${title}`,
+      message: `Due ${due.toLocaleString("en-US", { timeZone: assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}${recurrence === "none" ? "" : ` · repeats ${recurrence}`}.`,
+      isRead: false,
+    } as any);
+    sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
+    audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: "create", entityType: "clr_task", entityId: id, entityLabel: title,
+      details: JSON.stringify({ assignedUserId, priority, recurrence, dueAt: due.toISOString() }) });
+    res.status(201).json({ ok: true, id });
+  });
+
+  app.patch("/api/clr-tasks/:id", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const id = Number(req.params.id);
+    const before = taskSqlite().prepare(`SELECT * FROM clr_tasks WHERE id=? AND org_id=?`).get(id, orgId) as any;
+    if (!before) return res.status(404).json({ error: "Task not found." });
+    const title = req.body?.title === undefined ? String(before.title) : String(req.body.title).trim();
+    const description = req.body?.description === undefined ? String(before.description ?? "") : String(req.body.description).trim();
+    const assignedUserId = req.body?.assignedUserId === undefined ? Number(before.assigned_user_id) : Number(req.body.assignedUserId);
+    const priority = req.body?.priority === undefined ? String(before.priority) : String(req.body.priority);
+    const recurrence = req.body?.recurrence === undefined ? String(before.recurrence) : String(req.body.recurrence);
+    const status = req.body?.status === undefined ? String(before.status) : String(req.body.status);
+    const due = req.body?.dueAt === undefined ? new Date(String(before.due_at)) : new Date(String(req.body.dueAt));
+    if (!title || title.length > 140 || description.length > 3000) return res.status(400).json({ error: "Check the task title and details." });
+    if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence) || !["active", "completed", "archived"].includes(status)) return res.status(400).json({ error: "Invalid task settings." });
+    if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
+    const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
+    if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
+    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
+      .run(title, description, assignedUserId, priority, recurrence, due.toISOString(), status, new Date().toISOString(), id, orgId);
+    if (assignedUserId !== Number(before.assigned_user_id)) {
+      storage.createNotification({ userId: assignedUserId, type: "task_assigned", title: `Task assigned: ${title}`, message: `A manager assigned this task to you.`, isRead: false } as any);
+    }
+    const actor = storage.getUserById(actorId) as any;
+    audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: status === "archived" ? "archive" : "update", entityType: "clr_task", entityId: id, entityLabel: title,
+      details: JSON.stringify({ assignedUserId, priority, recurrence, dueAt: due.toISOString(), status }) });
+    res.json({ ok: true });
+  });
+
+  app.post("/api/clr-tasks/:id/complete", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    const id = Number(req.params.id);
+    const task = taskSqlite().prepare(`SELECT * FROM clr_tasks WHERE id=? AND org_id=?`).get(id, orgId) as any;
+    if (!task) return res.status(404).json({ error: "Task not found." });
+    if (!taskManager(me) && Number(task.assigned_user_id) !== userId) return res.status(403).json({ error: "This task is assigned to another CLR." });
+    if (task.status !== "active") return res.status(409).json({ error: "This task is not currently open." });
+    const note = String(req.body?.note ?? "").trim();
+    if (note.length > 2000) return res.status(400).json({ error: "Completion note must be 2,000 characters or fewer." });
+    const completedAt = new Date().toISOString();
+    const nextDue = nextTaskDueAt(String(task.due_at), String(task.recurrence) as any, new Date(completedAt));
+    try {
+      taskSqlite().transaction(() => {
+        taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note) VALUES (?,?,?,?,?,?)`)
+          .run(id, orgId, task.due_at, userId, completedAt, note);
+        taskSqlite().prepare(`UPDATE clr_tasks SET due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
+          .run(nextDue ?? task.due_at, nextDue ? "active" : "completed", completedAt, id, orgId);
+      })();
+    } catch (error: any) {
+      if (String(error?.message ?? "").includes("UNIQUE")) return res.status(409).json({ error: "This task cycle was already completed." });
+      throw error;
+    }
+    const creator = storage.getUserById(Number(task.created_by_user_id)) as any;
+    if (creator?.isActive ?? creator?.is_active) {
+      storage.createNotification({ userId: Number(task.created_by_user_id), type: "task_completed", title: `Task completed: ${task.title}`,
+        message: `${me?.name ?? "A CLR"} completed the task${note ? ` — ${note}` : "."}`, isRead: false } as any);
+    }
+    audit({ userId, userName: me?.name ?? "Unknown", action: "complete", entityType: "clr_task", entityId: id, entityLabel: String(task.title),
+      details: JSON.stringify({ dueAt: task.due_at, nextDueAt: nextDue, note: note || null }) });
+    res.json({ ok: true, nextDueAt: nextDue, recurring: !!nextDue });
+  });
+
+  async function alertOverdueClrTasks() {
+    const now = new Date().toISOString();
+    const overdue = taskSqlite().prepare(`
+      SELECT t.*, u.name AS assigned_user_name FROM clr_tasks t
+      LEFT JOIN users u ON u.id=t.assigned_user_id
+      WHERE t.status='active' AND t.due_at < ?
+        AND NOT EXISTS (SELECT 1 FROM clr_task_alerts a WHERE a.task_id=t.id AND a.due_at=t.due_at)
+      ORDER BY t.due_at ASC LIMIT 100
+    `).all(now) as any[];
+    for (const task of overdue) {
+      const claimed = taskSqlite().prepare(`INSERT OR IGNORE INTO clr_task_alerts (task_id,org_id,due_at,alerted_at) VALUES (?,?,?,?)`)
+        .run(task.id, task.org_id, task.due_at, now);
+      if (!claimed.changes) continue;
+      const managers = taskManagers(Number(task.org_id));
+      const title = `Overdue CLR task: ${String(task.title)}`;
+      const message = `${String(task.assigned_user_name ?? "A CLR")} did not complete this task by ${new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ })}.`;
+      for (const manager of managers) {
+        storage.createNotification({ userId: Number(manager.id), type: "task_overdue", title, message, isRead: false } as any);
+      }
+      if (managers.length) {
+        sendPushToUsers(managers.map((manager: any) => Number(manager.id)), { title, body: message, url: "/#/tasks", portal: "c3" }).catch(() => {});
+      }
+      const recipients = managers.map((manager: any) => String(manager.email ?? "").trim()).filter((email: string) => email.includes("@"));
+      if (recipients.length) {
+        const safeTitle = eodActivityEsc(String(task.title));
+        const safeAssignee = eodActivityEsc(String(task.assigned_user_name ?? "A CLR"));
+        const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ }));
+        await sendEmail({
+          to: recipients, subject: title,
+          html: buildEmail({ subject: title, preheader: `${safeAssignee} missed a recurring task deadline.`, body:
+            `<p><strong>${safeAssignee}</strong> did not complete <strong>${safeTitle}</strong> by ${safeDue}.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open the C3 Task Center</a> to review it.</p>` }),
+        }).catch((error: any) => console.error("[clr-tasks] overdue email failed:", error?.message ?? error));
+      }
+      console.log(`[clr-tasks] overdue alert task=${task.id} org=${task.org_id} managers=${managers.length}`);
+    }
+  }
+
+  cron.schedule("* * * * *", () => {
+    alertOverdueClrTasks().catch((error: any) => console.error("[clr-tasks] deadline scan failed:", error?.message ?? error));
+  });
+
   app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     res.json({ counts: loTransferCounts(orgId) });
@@ -13389,28 +13619,30 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // ── Daily Call Logs ────────────────────────────────────────────────────────────────
 
-  // Check if current user has a call log for TODAY.
-  // Admins / non-CLR users are exempt (the gate never shows for them).
+  // Check the most recent COMPLETED workday, never the day that just started.
+  // Before 7pm Tuesday that means Monday; at/after Tuesday's 7pm cutoff it means
+  // Tuesday. Admins / non-CLR users are exempt (the gate never shows for them).
   app.get("/api/call-logs/check-previous-day", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
     const user = storage.getUserById(userId) as any;
     const isClr = !!(user && (user.isClr ?? user.is_clr) && user.role !== "admin");
-    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const timezone = tzFromRequest(req, storageExtra.getRawSqlite());
+    const reportDate = requiredEodWeekdaysInTz(timezone, new Date(), 1, 7)[0];
 
     if (!isClr) {
-      return res.json({ hasLog: true, date: todayStr, exempt: true, outcomes: emptyOutcomeBreakdown() });
+      return res.json({ hasLog: true, date: reportDate, exempt: true, outcomes: emptyOutcomeBreakdown() });
     }
 
-    const logs = storage.getDailyCallLogs(todayStr);
+    const logs = storage.getDailyCallLogs(reportDate);
     // Normalize snake_case (raw SQLite) vs camelCase (Drizzle) field names
     const logForUser = logs.find(l => (l.assistantId ?? l.assistant_id) === userId);
     const hasLog = !!logForUser;
-    const outcomes = getOutcomeBreakdownFor(userId, todayStr);
+    const outcomes = getOutcomeBreakdownFor(userId, reportDate);
     res.json({
       hasLog,
-      date: todayStr,
+      date: reportDate,
       outcomes,
       callsMadeLogged: logForUser?.callsMade ?? logForUser?.calls_made ?? 0,
     });

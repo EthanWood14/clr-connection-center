@@ -678,6 +678,44 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   )`);
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tta_user ON training_test_attempts(org_id, user_id, taken_at DESC)`); } catch {}
 
+  // Manager-assigned CLR tasks. A recurring definition keeps exactly one open
+  // deadline at a time; completions preserve each finished cycle, while alerts
+  // are uniquely keyed to a deadline so a missed task cannot spam managers.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS clr_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    assigned_user_id INTEGER NOT NULL,
+    created_by_user_id INTEGER NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal',
+    recurrence TEXT NOT NULL DEFAULT 'none',
+    due_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS clr_task_completions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    org_id INTEGER NOT NULL,
+    due_at TEXT NOT NULL,
+    completed_by_user_id INTEGER NOT NULL,
+    completed_at TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    UNIQUE(task_id, due_at)
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS clr_task_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    org_id INTEGER NOT NULL,
+    due_at TEXT NOT NULL,
+    alerted_at TEXT NOT NULL,
+    UNIQUE(task_id, due_at)
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_tasks_org_assignee ON clr_tasks(org_id, assigned_user_id, status, due_at)`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_task_completions_task ON clr_task_completions(task_id, completed_at DESC)`); } catch {}
+
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
   // An appointment can be booked before anyone knows which LO will take it, so
   // "no LO yet" has to be representable. It is a real absence, not a sentinel

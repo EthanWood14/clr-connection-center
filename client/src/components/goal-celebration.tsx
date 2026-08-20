@@ -169,11 +169,13 @@ export function GoalCelebration({
   onClose,
   headline = "Weekly goals crushed!",
   subline = "You hit every target this week. Keep the momentum going.",
+  buttonLabel = "Keep going",
 }: {
   show: boolean;
   onClose: () => void;
   headline?: string;
   subline?: string;
+  buttonLabel?: string;
 }) {
   const [mounted, setMounted] = useState(false);
 
@@ -206,6 +208,11 @@ export function GoalCelebration({
           alignItems: "center",
           justifyContent: "center",
           pointerEvents: show ? "auto" : "none",
+          background: show
+            ? "radial-gradient(circle at center, rgba(59,130,246,.28) 0%, rgba(15,24,45,.76) 48%, rgba(2,6,23,.9) 100%)"
+            : "transparent",
+          backdropFilter: show ? "blur(3px)" : undefined,
+          animation: show ? "celebration-backdrop-in 300ms ease-out both" : undefined,
         }}
         onClick={onClose}
       >
@@ -252,7 +259,7 @@ export function GoalCelebration({
           </h2>
           <p className="text-sm text-white/80 mb-6">{subline}</p>
           <Button onClick={onClose} className="bg-white/10 hover:bg-white/20 text-white border-0">
-            Keep going
+            {buttonLabel}
           </Button>
         </div>
       </div>
@@ -265,6 +272,13 @@ export function GoalCelebration({
         @keyframes celebration-trophy {
           0%, 100% { transform: rotate(-6deg); }
           50% { transform: rotate(6deg); }
+        }
+        @keyframes celebration-backdrop-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [role="dialog"] > div { animation: none !important; }
         }
       `}</style>
     </>

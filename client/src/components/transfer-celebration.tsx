@@ -4,21 +4,21 @@
  * The server records every transfer in an ephemeral in-memory feed (NOT the
  * notifications table — those clog the bell). This component polls that feed
  * (/api/transfer-celebrations), and when a new celebration appears it plays a
- * happy chime and pops a festive toast — on every open client.
+ * happy chime and takes over the screen with confetti — on every opted-in client.
  *
  * Sound notes:
  * - The chime is synthesized with WebAudio (no audio file to load).
  * - Browsers block audio until the user has interacted with the page, so we
  *   unlock an AudioContext on the first pointer/key interaction. If a
- *   celebration lands before any interaction, the toast still shows silently.
+ *   celebration lands before any interaction, the animation still shows silently.
  * - Last-processed notification id is persisted per user in localStorage so
  *   reloading doesn't replay old celebrations.
  */
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { GoalCelebration } from "@/components/goal-celebration";
 
 const lastKey = (uid: number) => `clr_transfer_celebrate_last_v2_${uid}`;
 
@@ -81,18 +81,30 @@ function playChime() {
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
+type TransferCelebrationItem = {
+  id: number;
+  title: string;
+  message: string;
+  createdAt: string;
+};
+
 export function TransferCelebration() {
   const { user } = useAuth();
-  const { toast } = useToast();
   const uid = user?.id ?? 0;
   const initializedRef = useRef(false);
+  const [queue, setQueue] = useState<TransferCelebrationItem[]>([]);
+  const current = queue[0] ?? null;
 
   useEffect(() => { ensureUnlockListeners(); }, []);
+  useEffect(() => {
+    initializedRef.current = false;
+    setQueue([]);
+  }, [uid]);
 
-  const { data } = useQuery<{ items: any[]; latestId: number }>({
+  const { data } = useQuery<{ items: TransferCelebrationItem[]; latestId: number }>({
     queryKey: ["/api/transfer-celebrations"],
     enabled: uid > 0,
-    refetchInterval: 20000, // org-wide celebrations land within ~20s
+    refetchInterval: 5000, // keep the full-screen celebration close to real time
   });
 
   useEffect(() => {
@@ -112,9 +124,9 @@ export function TransferCelebration() {
     initializedRef.current = true;
 
     const fresh = items
-      .filter((c: any) => (Number(c.id) || 0) > last)
-      .sort((a: any, b: any) => (Number(a.id) || 0) - (Number(b.id) || 0))
-      .slice(-3); // never spam more than 3 at once
+      .filter((c: TransferCelebrationItem) => (Number(c.id) || 0) > last)
+      .sort((a: TransferCelebrationItem, b: TransferCelebrationItem) => (Number(a.id) || 0) - (Number(b.id) || 0))
+      .slice(-3); // queue at most three if several transfers land together
 
     if (fresh.length === 0) {
       // Keep the cursor moving even when the new celebrations were for other orgs.
@@ -122,16 +134,29 @@ export function TransferCelebration() {
       return;
     }
 
-    const newLast = Math.max(latest, ...fresh.map((c: any) => Number(c.id) || 0));
+    const newLast = Math.max(latest, ...fresh.map((c: TransferCelebrationItem) => Number(c.id) || 0));
     try { localStorage.setItem(lastKey(uid), String(newLast)); } catch {}
-
-    playChime();
-    fresh.forEach((c: any, i: number) => {
-      setTimeout(() => {
-        toast({ title: c.title ?? "🎉 Transfer!", description: (c.message ?? "") + " 🎊", duration: 6000 });
-      }, i * 700);
+    setQueue((existing) => {
+      const known = new Set(existing.map((item) => item.id));
+      return [...existing, ...fresh.filter((item) => !known.has(item.id))];
     });
-  }, [data, uid, toast]);
+  }, [data, uid]);
 
-  return null;
+  useEffect(() => {
+    if (current) playChime();
+  }, [current?.id]);
+
+  const dismiss = useCallback(() => {
+    setQueue((existing) => existing.slice(1));
+  }, []);
+
+  return (
+    <GoalCelebration
+      show={!!current}
+      onClose={dismiss}
+      headline={current?.title ?? "🎉 Transfer!"}
+      subline={current?.message ?? "A new transfer just landed. Keep the momentum going!"}
+      buttonLabel={queue.length > 1 ? "Celebrate the next one" : "Keep it rolling"}
+    />
+  );
 }

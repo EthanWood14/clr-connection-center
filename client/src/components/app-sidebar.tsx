@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -181,6 +181,7 @@ const mainItems: NavItem[] = [
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
+  { title: "Tasks",                 url: "/tasks",        icon: ListTodo,        badge: "tasks" },
 ];
 
 const personalItems: NavItem[] = [
@@ -310,6 +311,13 @@ export function AppSidebar() {
 
   const appointmentCount = outcomes.length;
 
+  const { data: taskData } = useQuery<{ summary: { overdue: number; dueSoon: number } }>({
+    queryKey: ["/api/clr-tasks"],
+    refetchInterval: 30000,
+    enabled: !!user,
+  });
+  const taskCount = (taskData?.summary?.overdue ?? 0) + (taskData?.summary?.dueSoon ?? 0);
+
   // ── Chat unread badge ──────────────────────────────────────────────────────
   const storageKey = `lastSeenChatId_${user?.id ?? "guest"}`;
   const [lastSeenId, setLastSeenId] = useState<number>(() => {
@@ -365,6 +373,7 @@ export function AppSidebar() {
     if (badge === "appointments") return appointmentCount;
     if (badge === "chat") return unreadChatCount;
     if (badge === "nmls") return nmlsCount;
+    if (badge === "tasks") return taskCount;
     return 0;
   }
 

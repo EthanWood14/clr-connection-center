@@ -1,0 +1,58 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { nextTaskDueAt } from "../shared/clr-tasks";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
+const page = readFileSync(join(root, "client/src/pages/clr-tasks.tsx"), "utf8");
+const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
+const sidebar = readFileSync(join(root, "client/src/components/app-sidebar.tsx"), "utf8");
+
+test("recurring deadlines advance to the first future cycle", () => {
+  assert.equal(nextTaskDueAt("2026-08-17T17:00:00.000Z", "daily", new Date("2026-08-17T18:00:00.000Z")), "2026-08-18T17:00:00.000Z");
+  assert.equal(nextTaskDueAt("2026-08-21T17:00:00.000Z", "weekdays", new Date("2026-08-21T18:00:00.000Z")), "2026-08-24T17:00:00.000Z");
+  assert.equal(nextTaskDueAt("2026-01-31T17:00:00.000Z", "monthly", new Date("2026-01-31T18:00:00.000Z")), "2026-02-28T17:00:00.000Z");
+  assert.equal(nextTaskDueAt("2026-08-17T17:00:00.000Z", "none"), null);
+});
+
+test("task storage preserves definitions, completion history, and one alert per missed cycle", () => {
+  assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_tasks/);
+  assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_task_completions/);
+  assert.match(storage, /CREATE TABLE IF NOT EXISTS clr_task_alerts/);
+  assert.match(storage, /UNIQUE\(task_id, due_at\)/);
+});
+
+test("managers assign tasks while CLRs can only complete their own", () => {
+  const create = routes.slice(routes.indexOf('app.post("/api/clr-tasks"'), routes.indexOf('app.patch("/api/clr-tasks/:id"'));
+  assert.match(create, /requireManagerOrAdmin/);
+  assert.match(create, /Choose an active CLR in this organization/);
+  const complete = routes.slice(routes.indexOf('app.post("/api/clr-tasks/:id/complete"'), routes.indexOf('async function alertOverdueClrTasks'));
+  assert.match(complete, /Number\(task\.assigned_user_id\) !== userId/);
+  assert.match(complete, /nextTaskDueAt/);
+  assert.match(complete, /clr_task_completions/);
+});
+
+test("a missed recurring deadline alerts every manager exactly once", () => {
+  const alert = routes.slice(routes.indexOf("async function alertOverdueClrTasks"), routes.indexOf('cron.schedule("* * * * *"', routes.indexOf("async function alertOverdueClrTasks")) + 120);
+  assert.match(alert, /NOT EXISTS \(SELECT 1 FROM clr_task_alerts/);
+  assert.match(alert, /INSERT OR IGNORE INTO clr_task_alerts/);
+  assert.match(alert, /for \(const manager of managers\)/);
+  assert.match(alert, /sendPushToUsers/);
+  assert.match(alert, /await sendEmail/);
+});
+
+test("the task center is a ready-to-use manager and CLR workflow", () => {
+  assert.match(app, /path="\/tasks" component=\{ClrTasks\}/);
+  assert.match(sidebar, /title: "Tasks"/);
+  assert.match(page, /CLR Task Center/);
+  assert.match(page, /Assign task/);
+  assert.match(page, /Mark done/);
+  assert.match(page, /completion history/i);
+  assert.match(page, /Due in 24h/);
+  assert.match(page, /OVERDUE/);
+  assert.match(page, /Every weekday/);
+});

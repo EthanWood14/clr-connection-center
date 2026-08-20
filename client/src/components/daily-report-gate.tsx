@@ -161,7 +161,7 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
             {checkData?.outcomes && (
               <div className="rounded-lg border bg-muted/30 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  Today's logged outcomes
+                  Logged outcomes for that day
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                   {OUTCOME_LABELS.map(({ label, keys }) => (

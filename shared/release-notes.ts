@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.94.0",
+    headline: "C3 adds a real task center, livelier transfers, and a better certification experience.",
+    items: [
+      { text: "Managers can assign one-time or recurring tasks to CLRs, set priorities and deadlines, track completion history, and automatically alert every manager when a deadline is missed." },
+      { text: "Opted-in transfer alerts now fill the screen with confetti, a victory animation, and the celebration chime instead of appearing as a small corner message." },
+      { text: "Celebrations arrive within a few seconds, queue cleanly when multiple transfers land together, and respect reduced-motion accessibility settings." },
+      { text: "The morning activity popup now asks only about the most recent completed workday—it will never demand a report for the day that just started." },
+    ],
+  },
+  {
     version: "3.93.0",
     headline: "The CLR certification test now feels like a game instead of a 60-question form.",
     items: [

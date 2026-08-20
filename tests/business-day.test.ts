@@ -82,6 +82,21 @@ test("Friday's report becomes required at 7pm and weekends are skipped", () => {
   );
 });
 
+test("the morning activity gate can only ask for a completed workday", () => {
+  const routes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server/routes.ts"), "utf8");
+  const gate = routes.slice(
+    routes.indexOf('app.get("/api/call-logs/check-previous-day"'),
+    routes.indexOf('app.get("/api/call-logs"'),
+  );
+  assert.match(gate, /requiredEodWeekdaysInTz\(timezone, new Date\(\), 1, 7\)\[0\]/);
+  assert.doesNotMatch(gate, /businessTodayForRequest/);
+  assert.deepEqual(
+    requiredEodWeekdaysInTz(PACIFIC, new Date("2026-08-18T15:00:00.000Z"), 1, 7),
+    ["2026-08-17"],
+    "Tuesday morning must ask for Monday, never Tuesday",
+  );
+});
+
 test("weekday counting excludes Saturdays and Sundays", () => {
   // August 2026: the 1st is a Saturday, the 31st a Monday. 21 weekdays.
   assert.equal(countWeekdaysInMonth(2026, 8), 21);
