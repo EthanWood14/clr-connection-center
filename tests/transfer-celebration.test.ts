@@ -9,21 +9,21 @@ const transfer = readFileSync(join(root, "client/src/components/transfer-celebra
 const overlay = readFileSync(join(root, "client/src/components/goal-celebration.tsx"), "utf8");
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+const queryClient = readFileSync(join(root, "client/src/lib/queryClient.ts"), "utf8");
 
-test("every successful transfer still reaches the organization-wide celebration feed", () => {
+test("only the browser that successfully logs a transfer receives the celebration", () => {
   assert.match(app, /<TransferCelebration \/>/);
-  assert.match(routes, /if \(outcome\.outcomeType === "transfer"\)[\s\S]*?broadcastTransferCelebration/);
-  assert.match(routes, /app\.get\("\/api\/transfer-celebrations", requireAuth/);
-  assert.match(routes, /transferNotificationsEnabled \?\? me\?\.transfer_notifications_enabled/,
-    "the existing per-user celebration preference must remain authoritative");
+  assert.match(routes, /celebrateTransfer: true/);
+  assert.match(queryClient, /window\.dispatchEvent\(new CustomEvent\("c3-transfer-logged"/);
+  assert.match(transfer, /window\.addEventListener\(TRANSFER_CELEBRATION_EVENT/);
+  assert.doesNotMatch(routes, /\/api\/transfer-celebrations/);
+  assert.doesNotMatch(transfer, /useQuery|refetchInterval/);
 });
 
-test("transfer alerts are full-screen, animated, audible, and queued", () => {
+test("the initiating CLR gets a full-screen animated and audible celebration", () => {
   assert.match(transfer, /<GoalCelebration/);
-  assert.match(transfer, /refetchInterval: 5000/);
-  assert.match(transfer, /setQueue\(\(existing\)/);
   assert.match(transfer, /playChime\(\)/);
-  assert.match(transfer, /Celebrate the next one/);
+  assert.match(transfer, /Keep it rolling/);
   assert.match(overlay, /<Confetti running=\{show\}/);
   assert.match(overlay, /position: "fixed"/);
   assert.match(overlay, /inset: 0/);

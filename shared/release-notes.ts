@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.94.1",
+    headline: "Transfer celebrations now appear for the right person.",
+    items: [
+      { text: "After you successfully log a transfer, the full-screen animation and confetti now appear immediately in your browser—and only your browser." },
+    ],
+  },
+  {
     version: "3.94.0",
     headline: "C3 adds a real task center, livelier transfers, and a better certification experience.",
     items: [

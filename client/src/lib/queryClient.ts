@@ -42,7 +42,17 @@ export async function apiRequest(method: string, path: string, body?: any) {
     }
     throw new Error(errMsg);
   }
-  return res.json();
+  const data = await res.json();
+  // Keep the celebration local to the browser that performed the successful
+  // save; no teammate receives or replays somebody else's animation.
+  if (data?.celebrateTransfer && typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("c3-transfer-logged", {
+        detail: data.transferCelebration ?? {},
+      }));
+    } catch {}
+  }
+  return data;
 }
 
 export const queryClient = new QueryClient({

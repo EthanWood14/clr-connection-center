@@ -9881,53 +9881,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
-  // 🎉 Org-wide transfer hype. Deliberately EPHEMERAL — celebrations are NOT
-  // written to the notifications table (they used to, and clogged the bell).
-  // Instead they live in a small in-memory ring buffer that the client polls via
-  // GET /api/transfer-celebrations to play the chime + pop a festive toast. Web
-  // push still fires for a real-time alert. Buffer is per-process (fine for the
-  // single Railway instance) and lost on restart, which is harmless for hype.
-  // The id seed is wall-clock based so ids keep increasing across restarts and a
-  // client's stored cursor never gets stranded above freshly-issued ids.
-  let celebSeq = Date.now();
-  const recentCelebrations: Array<{ id: number; orgId: number; title: string; message: string; createdAt: string }> = [];
-  function broadcastTransferCelebration(assistantId: number, loName: string | null, borrowerName: string | null) {
-    const clr = storage.getUserById(assistantId) as any;
-    const clrOrg = Number(clr?.orgId ?? clr?.org_id ?? 1) || 1;
-    // Transfer celebrations are opt-in (transfer_notifications_enabled) — off
-    // for everyone by default, on for the owner. Only push to opted-in users.
-    const users = (storage.getUsers() as any[]).filter((u: any) =>
-      (u.isActive ?? u.is_active) && (Number(u.orgId ?? u.org_id ?? 1) || 1) === clrOrg
-      && (u.transferNotificationsEnabled ?? u.transfer_notifications_enabled)
-    );
-    const clrName = clr?.name ?? "A CLR";
-    const detail = [borrowerName, loName ? "→ " + loName : null].filter(Boolean).join(" ");
-    const title = `🎉 ${clrName} just got a transfer!`;
-    const message = (detail ? detail + " — " : "") + "Keep the momentum going!";
-    recentCelebrations.push({ id: ++celebSeq, orgId: clrOrg, title, message, createdAt: new Date().toISOString() });
-    if (recentCelebrations.length > 100) recentCelebrations.splice(0, recentCelebrations.length - 100);
-    if (users.length) {
-      sendPushToUsers(users.map((u: any) => u.id), {
-        title,
-        body: message,
-        url: "/#/leaderboard",
-        portal: "c3",
-      }).catch(() => {});
-    }
-  }
-
-  // Ephemeral celebration feed (org-scoped). Returns recent celebrations and the
-  // latest id; the client baselines to latestId on first load (no replay) and
-  // toasts anything newer than its stored cursor.
-  app.get("/api/transfer-celebrations", requireAuth, (req: any, res) => {
-    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
-    const since = Number(req.query.since ?? 0) || 0;
-    // In-app toast is opt-in too: users who haven't enabled transfer
-    // notifications get no items (but still a cursor so they don't backfill).
-    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
-    const optedIn = !!(me?.transferNotificationsEnabled ?? me?.transfer_notifications_enabled);
-    const items = optedIn ? recentCelebrations.filter((c) => c.orgId === orgId && c.id > since) : [];
-    res.json({ items, latestId: celebSeq });
+  const transferCelebration = (loName: string | null, borrowerName: string | null) => ({
+    headline: "🎉 Transfer logged!",
+    message: [borrowerName, loName ? `→ ${loName}` : null, "Keep the momentum going!"]
+      .filter(Boolean).join(" — "),
   });
 
   app.post("/api/outcomes", (req: any, res) => {
@@ -9992,11 +9949,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const outcome = storage.createLeadOutcome(body);
       const lo = outcome.loId ? storage.getLoanOfficerById(outcome.loId) : null;
       audit({ userId: sessUserId || 0, userName: me?.name ?? "Unknown", action: "create", entityType: "outcome", entityId: outcome.id, entityLabel: outcome.borrowerName ?? lo?.fullName ?? null, details: JSON.stringify({ outcomeType: outcome.outcomeType, transferType: outcome.transferType ?? null, assistantId: outcome.assistantId }) });
-      // 🎉 Transfer celebration — notify the whole org (in-app + push). The
-      // client plays a celebration sound when it sees this notification type.
-      if (outcome.outcomeType === "transfer") {
-        try { broadcastTransferCelebration(outcome.assistantId, lo?.fullName ?? null, outcome.borrowerName ?? null); } catch {}
-      }
       // Update unified_contact + fire-and-forget Bonzo push
       try {
         storageExtra.updateUnifiedContactFromOutcome({
@@ -10041,7 +9993,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (outcome.outcomeType === "transfer") {
         setImmediate(() => syncTransferToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-transfer] sync failed:", e?.message ?? e)));
       }
-      res.json(outcome);
+      res.json(outcome.outcomeType === "transfer"
+        ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(lo?.fullName ?? null, outcome.borrowerName ?? null) }
+        : outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -10090,16 +10044,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } as any);
     if (!updated) return res.status(500).json({ error: "Failed to resurrect outcome" });
 
-    // Credit + celebrate the reviving CLR's transfer.
-    try {
-      const lo = existing.lo_id ? (storage.getLoanOfficerById(existing.lo_id) as any) : null;
-      broadcastTransferCelebration(userId, lo?.fullName ?? null, existing.borrower_name ?? null);
-    } catch {}
+    const lo = existing.lo_id ? (storage.getLoanOfficerById(existing.lo_id) as any) : null;
     try {
       audit({ userId, userName: reviverName, action: "resurrect", entityType: "outcome", entityId: id, entityLabel: existing.borrower_name ?? null, details: JSON.stringify({ from: existing.assistant_id, to: userId, transferType }) });
     } catch {}
 
-    res.json(updated);
+    res.json({ ...updated, celebrateTransfer: true, transferCelebration: transferCelebration(lo?.fullName ?? null, existing.borrower_name ?? null) });
   });
 
   app.patch("/api/outcomes/:id", requireAuth, (req: any, res) => {
@@ -10197,14 +10147,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         details: JSON.stringify({ ...body, sharedOverdueEdit: !isAdmin && !isOwner && isSharedOverdueEdit }),
       });
     }
-    // 🎉 Celebrate conversions to transfer (e.g. appointment completed as a
-    // transfer) — but not edits of something that was already a transfer.
-    if (outcome && body.outcomeType === "transfer" && existing.outcome_type !== "transfer") {
-      try {
-        const lo = outcome.loId ? (storage.getLoanOfficerById(outcome.loId) as any) : null;
-        broadcastTransferCelebration(outcome.assistantId, lo?.fullName ?? null, outcome.borrowerName ?? null);
-      } catch {}
-    }
     // Appointment → Bonzo follow-up notes (fire-and-forget). Fires only for
     // outcomes that were mirrored to Bonzo when the appointment was set.
     try {
@@ -10239,7 +10181,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         console.error(`[appt-30m] failed to reset reminder flag for outcome=${id}:`, e?.message ?? e);
       }
     }
-    res.json(outcome);
+    const becameTransfer = !!outcome && body.outcomeType === "transfer" && existing.outcome_type !== "transfer";
+    const celebrationLo = becameTransfer && outcome?.loId ? (storage.getLoanOfficerById(outcome.loId) as any) : null;
+    res.json(becameTransfer
+      ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(celebrationLo?.fullName ?? null, outcome?.borrowerName ?? null) }
+      : outcome);
   });
 
   app.delete("/api/outcomes/:id", requireAuth, (req: any, res) => {
