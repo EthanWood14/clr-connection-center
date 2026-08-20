@@ -6871,12 +6871,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // ── "Needs transfers" shortlist ─────────────────────────────────────────────
-  // Managers flag up to three LOs who need volume; State Lookup pins them to the
-  // top of whichever state they are licensed in. The cap is the feature: a
-  // shortlist everyone can act on, not a priority field that drifts to
-  // "everybody".
-  const NEEDS_TRANSFERS_MAX = 3;
+  // ── "Needs transfers" list ──────────────────────────────────────────────────
+  // Managers can flag every LO who currently needs volume; State Lookup pins
+  // all of them to the top of whichever states they are licensed in.
 
   app.post("/api/loan-officers/:id/needs-transfers", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
@@ -6887,21 +6884,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const lo = sqlite.prepare(`SELECT id, full_name, needs_transfers FROM loan_officers WHERE id=? AND org_id=?`).get(id, orgId) as any;
     if (!lo) return res.status(404).json({ error: "Loan officer not found" });
 
-    if (on) {
-      const current = sqlite.prepare(
-        `SELECT COUNT(*) c FROM loan_officers WHERE org_id=? AND needs_transfers=1 AND id<>?`,
-      ).get(orgId, id) as any;
-      if (Number(current.c) >= NEEDS_TRANSFERS_MAX) {
-        // Refuse rather than silently dropping someone else off the list — the
-        // manager should choose who stops being a priority.
-        const names = (sqlite.prepare(
-          `SELECT full_name FROM loan_officers WHERE org_id=? AND needs_transfers=1 ORDER BY full_name`,
-        ).all(orgId) as any[]).map((r) => r.full_name).join(", ");
-        return res.status(409).json({
-          error: `Only ${NEEDS_TRANSFERS_MAX} loan officers can need transfers at once. Currently: ${names}. Clear one first.`,
-        });
-      }
-    }
     sqlite.prepare(`UPDATE loan_officers SET needs_transfers=?, updated_at=? WHERE id=?`)
       .run(on ? 1 : 0, new Date().toISOString(), id);
     audit({

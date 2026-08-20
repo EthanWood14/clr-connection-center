@@ -658,9 +658,7 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // The Bonzo user email for this LO — POST /prospects/{id}/reassign keys on
   // email, and it is the only call that moves a prospect across TEAMS.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN bonzo_user_email TEXT`); } catch {}
-  // Up to three LOs can be flagged as needing transfers. Deliberately a small
-  // cap: the point is a shortlist a CLR can act on, and "everyone is a
-  // priority" carries no information.
+  // Managers can flag any number of LOs who currently need transfers.
   try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN needs_transfers INTEGER NOT NULL DEFAULT 0`); } catch {}
 
   // Training test attempts. Every attempt is kept, not just the best or the

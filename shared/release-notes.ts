@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.91.2",
+    headline: "There is no longer a limit on who can be marked as needing transfers.",
+    items: [
+      { text: "Managers can flag as many loan officers as needed from State Lookup. Every flagged LO remains highlighted and pinned to the top of the states they cover." },
+    ],
+  },
+  {
     version: "3.91.1",
     headline: "Managers now receive the full set of attendance and time notices by email.",
     items: [
