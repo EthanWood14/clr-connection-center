@@ -44,6 +44,8 @@ test("a missed recurring deadline alerts every manager exactly once", () => {
   assert.match(alert, /NOT EXISTS \(SELECT 1 FROM clr_task_alerts/);
   assert.match(alert, /INSERT OR IGNORE INTO clr_task_alerts/);
   assert.match(alert, /for \(const manager of managers\)/);
+  assert.match(alert, /userId: Number\(task\.assigned_user_id\), type: "task_overdue"/);
+  assert.match(alert, /assignee overdue email failed/);
   assert.match(alert, /sendPushToUsers/);
   assert.match(alert, /await sendEmail/);
 });
@@ -59,5 +61,14 @@ test("the task center is a ready-to-use manager and CLR workflow", () => {
   assert.match(page, /completion history/i);
   assert.match(page, /Due in 24h/);
   assert.match(page, /OVERDUE/);
+  assert.match(page, /You have an overdue task/);
   assert.match(page, /Every weekday/);
+});
+
+test("assignment sends the CLR an in-app alert, push, and email", () => {
+  const create = routes.slice(routes.indexOf('app.post("/api/clr-tasks"'), routes.indexOf('app.patch("/api/clr-tasks/:id"'));
+  assert.match(create, /type: "task_assigned"/);
+  assert.match(create, /sendPushToUser\(assignedUserId/);
+  assert.match(create, /emailTaskAssignment\(assignee/);
+  assert.match(routes, /New C3 task:/);
 });

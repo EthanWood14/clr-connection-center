@@ -6857,6 +6857,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       completedByName: String(entry.completed_by_name ?? "Unknown"), note: String(entry.note ?? ""),
     })),
   });
+  const emailTaskAssignment = (assignee: any, task: { title: string; description: string; due: Date; assignedBy: string }) => {
+    const email = String(assignee?.email ?? "").trim();
+    if (!email.includes("@")) return;
+    const subject = `New C3 task: ${task.title}`;
+    const safeTitle = eodActivityEsc(task.title);
+    const safeDetails = eodActivityEsc(task.description || "No additional instructions were provided.");
+    const safeManager = eodActivityEsc(task.assignedBy || "A manager");
+    const safeDue = eodActivityEsc(task.due.toLocaleString("en-US", { timeZone: assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
+    void sendEmail({ to: [email], subject, html: buildEmail({ subject, preheader: `Due ${safeDue}`, body:
+      `<p><strong>${safeManager}</strong> assigned you a new task in C3.</p><div style="padding:16px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0"><p style="margin:0 0 8px"><strong>${safeTitle}</strong></p><p style="margin:0 0 8px">${safeDetails}</p><p style="margin:0;color:#b45309"><strong>Due: ${safeDue}</strong></p></div><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }) })
+      .catch((error: any) => console.error("[clr-tasks] assignment email failed:", error?.message ?? error));
+  };
 
   app.get("/api/clr-tasks", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -6936,6 +6948,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       isRead: false,
     } as any);
     sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
+    emailTaskAssignment(assignee, { title, description, due, assignedBy: actor?.name ?? "A manager" });
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: "create", entityType: "clr_task", entityId: id, entityLabel: title,
       details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString() }) });
     res.status(201).json({ ok: true, id });
@@ -6967,6 +6980,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), due.toISOString(), status, new Date().toISOString(), id, orgId);
     if (assignedUserId !== Number(before.assigned_user_id)) {
       storage.createNotification({ userId: assignedUserId, type: "task_assigned", title: `Task assigned: ${title}`, message: `A manager assigned this task to you.`, isRead: false } as any);
+      sendPushToUser(assignedUserId, { title: "C3 task assigned to you", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
+      emailTaskAssignment(assignee, { title, description, due, assignedBy: (storage.getUserById(actorId) as any)?.name ?? "A manager" });
     }
     const actor = storage.getUserById(actorId) as any;
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: status === "archived" ? "archive" : "update", entityType: "clr_task", entityId: id, entityLabel: title,
@@ -7025,6 +7040,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const managers = taskManagers(Number(task.org_id));
       const title = `Overdue CLR task: ${String(task.title)}`;
       const message = `${String(task.assigned_user_name ?? "A CLR")} did not complete this task by ${new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ })}.`;
+      const assignee = storage.getUserById(Number(task.assigned_user_id)) as any;
+      storage.createNotification({ userId: Number(task.assigned_user_id), type: "task_overdue", title: `Your task is overdue: ${String(task.title)}`,
+        message: `This was due ${new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}. Open Task Center to complete it.`, isRead: false } as any);
+      sendPushToUser(Number(task.assigned_user_id), { title: "Your C3 task is overdue", body: String(task.title), url: "/#/tasks", portal: "c3" }).catch(() => {});
       for (const manager of managers) {
         storage.createNotification({ userId: Number(manager.id), type: "task_overdue", title, message, isRead: false } as any);
       }
@@ -7041,6 +7060,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           html: buildEmail({ subject: title, preheader: `${safeAssignee} missed a recurring task deadline.`, body:
             `<p><strong>${safeAssignee}</strong> did not complete <strong>${safeTitle}</strong> by ${safeDue}.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open the C3 Task Center</a> to review it.</p>` }),
         }).catch((error: any) => console.error("[clr-tasks] overdue email failed:", error?.message ?? error));
+      }
+      const assigneeEmail = String(assignee?.email ?? "").trim();
+      if (assigneeEmail.includes("@")) {
+        const assigneeSubject = `Your C3 task is overdue: ${String(task.title)}`;
+        const safeTitle = eodActivityEsc(String(task.title));
+        const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
+        await sendEmail({ to: [assigneeEmail], subject: assigneeSubject, html: buildEmail({ subject: assigneeSubject,
+          preheader: `This task was due ${safeDue}.`, body: `<p>Your task <strong>${safeTitle}</strong> is overdue.</p><p>It was due <strong>${safeDue}</strong>. Complete it now so your manager can see it is handled.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }) })
+          .catch((error: any) => console.error("[clr-tasks] assignee overdue email failed:", error?.message ?? error));
       }
       console.log(`[clr-tasks] overdue alert task=${task.id} org=${task.org_id} managers=${managers.length}`);
     }

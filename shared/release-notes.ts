@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.95.1",
+    headline: "Task assignments and overdue deadlines are much harder to miss.",
+    items: [
+      { text: "CLRs now receive an email, push alert, and C3 notification when a task is assigned to them." },
+      { text: "When a task becomes overdue, both the assigned CLR and every manager receive alerts and email, and Task Center displays a prominent red overdue banner." },
+    ],
+  },
+  {
     version: "3.95.0",
     headline: "Task Center now supports custom weekly schedules.",
     items: [

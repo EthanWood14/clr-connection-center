@@ -170,6 +170,8 @@ export default function ClrTasks() {
           </div>
         </header>
 
+        {payload.summary.overdue > 0 && <button type="button" onClick={() => setFilter("overdue")} className="flex w-full animate-pulse items-center gap-4 rounded-2xl border-2 border-red-500 bg-red-50 p-4 text-left shadow-lg shadow-red-500/15 transition hover:bg-red-100 dark:bg-red-950/35 dark:hover:bg-red-950/50"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 text-white shadow-md"><AlertTriangle className="h-6 w-6" /></span><span className="min-w-0 flex-1"><span className="block text-lg font-black text-red-800 dark:text-red-200">{payload.summary.overdue === 1 ? "You have an overdue task" : `${payload.summary.overdue} tasks are overdue`}</span><span className="block text-sm text-red-700/80 dark:text-red-300/80">Open the overdue list now. The assigned CLR and managers have been notified.</span></span><ChevronRight className="h-6 w-6 shrink-0 text-red-600" /></button>}
+
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             { label: "Open", value: payload.summary.active, icon: Target, color: "text-indigo-600" },
