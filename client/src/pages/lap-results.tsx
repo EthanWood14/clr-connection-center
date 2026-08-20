@@ -11,6 +11,7 @@ import {
   FileCheck2,
   FileSearch,
   FileText,
+  Combine,
   Pencil,
   Plus,
   RefreshCw,
@@ -126,11 +127,11 @@ function ResultStatus({ result, compact = false }: { result: LapResult; compact?
   const completed = LAP_DOCUMENTS.filter((document) => !!result.files?.[document.key]).length;
   return result.complete ? (
     <Badge className="gap-1 border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-      <CheckCircle2 className="h-3 w-3" /> Complete
+      <CheckCircle2 className="h-3 w-3" /> All 3 attached
     </Badge>
   ) : (
     <Badge variant="outline" className="gap-1 text-muted-foreground">
-      <FileSearch className="h-3 w-3" /> {compact ? `${completed}/3` : `${completed} of 3 documents`}
+      <FileSearch className="h-3 w-3" /> {compact ? `${completed}/3` : `${completed} of 3 optional documents`}
     </Badge>
   );
 }
@@ -141,7 +142,7 @@ function DocumentIcon({ documentKey }: { documentKey: LapFileKey }) {
   return <FileCheck2 className="h-5 w-5" />;
 }
 
-function RequiredDocumentPicker({
+function OptionalDocumentPicker({
   documentKey,
   label,
   description,
@@ -229,7 +230,7 @@ function RequiredDocumentPicker({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold">{label}</p>
-            <Badge variant="outline" className="h-5 border-primary/30 text-[10px] text-primary">Required</Badge>
+            <Badge variant="outline" className="h-5 border-primary/30 text-[10px] text-primary">Optional</Badge>
           </div>
           {file ? (
             <>
@@ -426,12 +427,16 @@ function DocumentSlot({
 function ResultEditor({
   result,
   isAdmin,
+  mergeCandidates,
 }: {
   result: LapResult;
   isAdmin: boolean;
+  mergeCandidates: LapResult[];
 }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [sourcePackageId, setSourcePackageId] = useState("");
   const [form, setForm] = useState<FormState>(() => formFromResult(result));
 
   useEffect(() => {
@@ -447,6 +452,21 @@ function ResultEditor({
       await queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] });
     },
     onError: (error: any) => toast({ title: "Could not save changes", description: error?.message, variant: "destructive" }),
+  });
+
+  const mergeMutation = useMutation({
+    mutationFn: () => lapRequest("POST", `/api/lap/results/${result.id}/merge`, { sourcePackageId: Number(sourcePackageId) }),
+    onSuccess: async () => {
+      toast({ title: "Packages merged", description: "Documents, transfer links, notes, and history now live in one package." });
+      setMerging(false);
+      setSourcePackageId("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/transfer-audit"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/stats"] }),
+      ]);
+    },
+    onError: (error: any) => toast({ title: "Could not merge packages", description: error?.message, variant: "destructive" }),
   });
 
   return (
@@ -531,7 +551,7 @@ function ResultEditor({
           <div>
             <h3 className="font-semibold">Documents</h3>
             <p className="text-xs text-muted-foreground">
-              Credit Report, AUS, and Formal Quote make a complete package. Add them as they come in — click or drop a file into any slot.
+              Every document is optional. Add a Credit Report, AUS, or Formal Quote whenever it is useful.
             </p>
           </div>
           {isAdmin && (
@@ -559,6 +579,20 @@ function ResultEditor({
       <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-[11px] text-muted-foreground">
         <span>Created by {result.createdByName || "Unknown"} · {formatLapDate(result.createdAt, true)}</span>
         <span>Last updated by {result.updatedByName || result.createdByName || "Unknown"} · {formatLapDate(result.updatedAt, true)}</span>
+      </div>
+      <div className="rounded-xl border border-dashed p-3">
+        {!merging ? (
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="text-sm font-medium">Started this borrower twice?</p><p className="text-xs text-muted-foreground">Merge another package into this one without losing documents or history.</p></div>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setMerging(true)} disabled={mergeCandidates.length === 0}><Combine /> Merge package</Button>
+          </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+            <div className="flex-1 space-y-1"><Label>Package to merge into {result.borrowerName}</Label><Select value={sourcePackageId} onValueChange={setSourcePackageId}><SelectTrigger><SelectValue placeholder="Choose a duplicate package" /></SelectTrigger><SelectContent>{mergeCandidates.map((candidate) => <SelectItem key={candidate.id} value={String(candidate.id)}>{candidate.borrowerName} · {formatLapDate(candidate.resultDate)}</SelectItem>)}</SelectContent></Select></div>
+            <Button variant="ghost" onClick={() => { setMerging(false); setSourcePackageId(""); }} disabled={mergeMutation.isPending}>Cancel</Button>
+            <Button onClick={() => mergeMutation.mutate()} disabled={!sourcePackageId || mergeMutation.isPending}>{mergeMutation.isPending ? <RefreshCw className="animate-spin" /> : <Combine />} Merge</Button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -606,8 +640,13 @@ export default function LapResults() {
     queryFn: () => lapRequest<unknown>("GET", `/api/lap/results/${requestedResultId}`),
     enabled: hasValidRequestedResultId,
   });
+  const mergeOptionsQuery = useQuery({
+    queryKey: ["/api/lap/results", "merge-options"],
+    queryFn: () => lapRequest<any>("GET", "/api/lap/results?limit=200"),
+  });
 
   const results = useMemo(() => unwrapLapResults(resultsQuery.data), [resultsQuery.data]);
+  const mergeOptions = useMemo(() => unwrapLapResults(mergeOptionsQuery.data), [mergeOptionsQuery.data]);
   const requestedResult = useMemo(() => {
     if (!requestedResultQuery.data) return null;
     try { return unwrapLapResult(requestedResultQuery.data); }
@@ -649,8 +688,6 @@ export default function LapResults() {
     ? requestedResult
     : results.find((result) => result.id === selectedId) ?? null;
 
-  const allCreateFilesSelected = LAP_DOCUMENTS.every((document) => !!createFiles[document.key]);
-
   function resetCreateDialog() {
     setCreateForm(emptyForm());
     setCreateFiles(emptyCreateFiles());
@@ -658,13 +695,6 @@ export default function LapResults() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      // Documents arrive one at a time — a credit report today, the AUS when it
-      // comes back, the quote after that. Requiring all three up front forced
-      // the LOA to sit on the first one until the set was complete. Any single
-      // document is enough to open the package; the rest attach to it later.
-      const attachedCount = LAP_DOCUMENTS.filter((document) => !!createFiles[document.key]).length;
-      if (attachedCount === 0) throw new Error("Attach at least one document to create the package.");
-
       const response = await lapRequest("POST", "/api/lap/results", payloadFromForm(createForm));
       const result = unwrapLapResult(response);
 
@@ -700,8 +730,8 @@ export default function LapResults() {
       setSelectedId(result.id);
       navigate(`/results/${result.id}`);
       toast({
-        title: "Complete result package created",
-        description: "Credit Report, AUS, and Formal Quote were uploaded.",
+        title: "Result package created",
+        description: "Add whichever documents are useful whenever they become available.",
       });
     },
     onError: async (error: any) => {
@@ -778,8 +808,8 @@ export default function LapResults() {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All packages</SelectItem>
-                <SelectItem value="incomplete">Needs documents</SelectItem>
-                <SelectItem value="complete">Complete</SelectItem>
+                <SelectItem value="incomplete">Fewer than 3 attached</SelectItem>
+                <SelectItem value="complete">All 3 attached</SelectItem>
               </SelectContent>
             </Select>
           </CardHeader>
@@ -895,7 +925,7 @@ export default function LapResults() {
                 </Button>
               </div>
             ) : selected ? (
-              <ResultEditor result={selected} isAdmin={isAdmin} />
+              <ResultEditor result={selected} isAdmin={isAdmin} mergeCandidates={mergeOptions.filter((candidate) => candidate.id !== selected.id)} />
             ) : (
               <div className="flex min-h-[560px] flex-col items-center justify-center text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -971,12 +1001,12 @@ export default function LapResults() {
               <div>
                 <h3 className="text-sm font-semibold">Documents</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Attach at least one now; the rest can follow. PDF, PNG, or JPEG · 12 MB maximum per file.
+                  Every document is optional. Attach any files you have now or add them later. PDF, PNG, or JPEG · 12 MB maximum per file.
                 </p>
               </div>
               <div className="grid gap-3 lg:grid-cols-3">
                 {LAP_DOCUMENTS.map((document) => (
-                  <RequiredDocumentPicker
+                  <OptionalDocumentPicker
                     key={document.type}
                     documentKey={document.key}
                     label={document.label}
@@ -1005,12 +1035,11 @@ export default function LapResults() {
               disabled={
                 !createForm.borrowerName.trim()
                 || !createForm.resultDate
-                || !allCreateFilesSelected
                 || createMutation.isPending
               }
             >
               {createMutation.isPending ? <RefreshCw className="animate-spin" /> : <UploadCloud />}
-              {createMutation.isPending ? "Creating and uploading…" : "Create complete package"}
+              {createMutation.isPending ? "Creating and uploading…" : "Create package"}
             </Button>
           </DialogFooter>
         </DialogContent>

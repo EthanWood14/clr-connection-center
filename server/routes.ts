@@ -9772,6 +9772,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             id: outcome.id,
             borrowerName: outcome.borrowerName,
             outcomeType: outcome.outcomeType,
+            loId: outcome.loId,
             appointmentDatetime: (outcome as any).appointmentDatetime,
             followUpDate: outcome.followUpDate,
             notes: outcome.notes,
@@ -13806,10 +13807,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Chris Redoble transfer audit ────────────────────────────────────────────
-  // Every transfer C3 logged to Chris, with whether its three documents have
-  // been submitted in LAP. The transfer list comes straight from C3 — nobody
-  // re-keys it — and the document side is matched on the borrower's name,
-  // since a lead_outcomes row and a lap_result_packages row share no key.
+  // Every transfer C3 logged to Chris, with its LAP package and any optional
+  // documents. The transfer list comes straight from C3 — nobody re-keys it.
+  // Borrower-name matches remain suggestions until an LOA confirms an exact
+  // durable transfer-to-package link.
   // Readable by any LAP session, NOT admin-only. With the shared password
   // replacing individual logins there is no administrator on the portal side —
   // gating this on isAdmin would have made it unreachable for exactly the
@@ -13858,7 +13859,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       `SELECT p.id, p.borrower_name, p.result_date,
               (SELECT GROUP_CONCAT(DISTINCT f.document_type)
                  FROM lap_result_file_versions f
-                WHERE f.package_id = p.id AND f.is_current = 1 AND f.removed_at IS NULL) AS doc_types
+                WHERE f.package_id = p.id AND f.is_current = 1 AND f.removed_at IS NULL) AS doc_types,
+              (SELECT GROUP_CONCAT(t.outcome_id)
+                 FROM lap_result_transfer_links t
+                WHERE t.org_id=p.org_id AND t.package_id=p.id) AS linked_outcome_ids
          FROM lap_result_packages p
         WHERE p.org_id=? AND p.archived_at IS NULL
           AND (p.loan_officer_id = ? OR p.loan_officer_id IS NULL)`,
@@ -13867,6 +13871,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       borrowerName: String(r.borrower_name ?? ""),
       resultDate: String(r.result_date ?? ""),
       documentTypes: String(r.doc_types ?? "").split(",").filter(Boolean),
+      linkedOutcomeIds: String(r.linked_outcome_ids ?? "").split(",").filter(Boolean).map(Number),
     }));
 
     const rows = buildAuditRows(transfers, packages);
@@ -13877,6 +13882,58 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       summary: auditSummary(rows),
       rows,
     });
+  });
+
+  // Turn a C3 transfer into LAP work without duplicating a package an LOA may
+  // already have started. Supplying packageId links that existing package;
+  // omitting it creates one optional-document package and links it immediately.
+  app.post("/api/lap/transfer-audit/:outcomeId/package", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const outcomeId = lapPositiveRouteId(req.params.outcomeId);
+    if (!outcomeId) return res.status(400).json({ error: "Invalid C3 transfer id." });
+    const sqlite = storageExtra.getRawSqlite();
+    const transfer = sqlite.prepare(`
+      SELECT o.id, o.date, o.borrower_name, o.lo_id, lo.full_name AS lo_name
+        FROM lead_outcomes o
+        JOIN loan_officers lo ON lo.id=o.lo_id AND lo.org_id=o.org_id
+       WHERE o.id=? AND o.org_id=? AND o.outcome_type='transfer'
+    `).get(outcomeId, ctx.orgId) as any;
+    if (!transfer) return res.status(404).json({ error: "C3 transfer was not found." });
+    const eligible = /\bredoble\b/i.test(String(transfer.lo_name ?? ""))
+      || storageExtra.hasAvailableLapAssistant(ctx.orgId, Number(transfer.lo_id));
+    if (!eligible) return res.status(400).json({ error: "That transfer is not routed to LAP." });
+    try {
+      const requestedPackageId = req.body?.packageId == null ? null : lapPositiveRouteId(req.body.packageId);
+      if (req.body?.packageId != null && !requestedPackageId) {
+        return res.status(400).json({ error: "Invalid LAP package id." });
+      }
+      let result;
+      if (requestedPackageId) {
+        if (!lapPackageVisible(ctx, requestedPackageId)) {
+          return res.status(404).json({ error: "LAP result package was not found." });
+        }
+        result = storageExtra.linkLapTransferToPackage({
+          orgId: ctx.orgId, outcomeId, packageId: requestedPackageId, actorUserId: ctx.userId,
+        });
+      } else {
+        result = storageExtra.createLapResultPackage({
+          orgId: ctx.orgId,
+          actorUserId: ctx.userId,
+          borrowerName: String(transfer.borrower_name ?? "Unnamed borrower"),
+          dealReference: `C3 transfer #${outcomeId}`,
+          loanOfficerId: Number(transfer.lo_id),
+          notes: "Started from a C3 transfer. Documents are optional and may be added whenever available.",
+          resultDate: String(transfer.date),
+        });
+        result = storageExtra.linkLapTransferToPackage({
+          orgId: ctx.orgId, outcomeId, packageId: result.id, actorUserId: ctx.userId,
+        });
+      }
+      res.status(requestedPackageId ? 200 : 201).json({ result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to connect the C3 transfer to LAP.");
+    }
   });
 
   app.get("/api/lap/results", requireAuth, (req: any, res) => {
@@ -15688,6 +15745,341 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ report, activities, callToolsActivity, dialpadActivity });
   });
 
+  app.post("/api/lap/results/:id/merge", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const targetPackageId = lapPositiveRouteId(req.params.id);
+    const sourcePackageId = lapPositiveRouteId(req.body?.sourcePackageId);
+    if (!targetPackageId || !sourcePackageId) {
+      return res.status(400).json({ error: "Choose both packages to merge." });
+    }
+    if (!lapPackageVisible(ctx, targetPackageId) || !lapPackageVisible(ctx, sourcePackageId)) {
+      return res.status(404).json({ error: "One of the LAP result packages was not found." });
+    }
+    try {
+      const result = storageExtra.mergeLapResultPackages({
+        orgId: ctx.orgId, targetPackageId, sourcePackageId, actorUserId: ctx.userId,
+      });
+      res.json({ result });
+    } catch (error) {
+      sendLapError(res, error, "Unable to merge the LAP result packages.");
+    }
+  });
+
+  // Manager-facing EOD analytics. This endpoint intentionally calculates the
+  // expected-report denominator here instead of treating every weekday as a
+  // miss: standing schedules, account start dates, approved time off, and the
+  // 4pm deadline all affect whether a report was actually owed.
+  app.get('/api/eod-reports/analytics', requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+      const tz = tzFromRequest(req, sqlite);
+      const today = businessTodayForRequest(req, sqlite);
+      const requestedDays = Number(req.query.days);
+      const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+      const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to)
+        ? (req.query.to > today ? today : req.query.to)
+        : today;
+      const from = addIsoDays(to, -(days - 1));
+      const priorTo = addIsoDays(from, -1);
+      const priorFrom = addIsoDays(priorTo, -(days - 1));
+      const requestedClrId = Number(req.query.clrId);
+      const clrId = Number.isInteger(requestedClrId) && requestedClrId > 0 ? requestedClrId : null;
+
+      const roster = sqlite.prepare(`
+        SELECT id, name, email, role, is_manager, is_clr, exclude_from_stats,
+               start_date, created_at
+          FROM users
+         WHERE org_id=? AND is_active=1
+           AND (role='assistant' OR (role='admin' AND COALESCE(is_clr, 0)=1))
+         ORDER BY name COLLATE NOCASE
+      `).all(orgId) as any[];
+      const filteredRoster = clrId ? roster.filter((u) => Number(u.id) === clrId) : roster;
+      if (clrId && filteredRoster.length === 0) {
+        return res.status(404).json({ error: "CLR not found" });
+      }
+      const rosterIds = filteredRoster.map((u) => Number(u.id));
+      const placeholders = rosterIds.map(() => "?").join(",");
+
+      const schedules = sqlite.prepare(`
+        SELECT user_id, days
+          FROM weekly_schedules
+         WHERE org_id=? AND week_start='standing' AND COALESCE(status, '')!='denied'
+      `).all(orgId) as any[];
+      const scheduleByUser = new Map<number, any>();
+      for (const row of schedules) {
+        try { scheduleByUser.set(Number(row.user_id), JSON.parse(row.days || "{}")); } catch { /* fall back to weekdays */ }
+      }
+
+      const timeOffRows = sqlite.prepare(`
+        SELECT user_id, start_date, end_date
+          FROM time_off_requests
+         WHERE org_id=? AND status='approved' AND end_date>=? AND start_date<=?
+      `).all(orgId, priorFrom, to) as any[];
+      const timeOffByUser = new Map<number, Array<{ start: string; end: string }>>();
+      for (const row of timeOffRows) {
+        const list = timeOffByUser.get(Number(row.user_id)) ?? [];
+        list.push({ start: String(row.start_date), end: String(row.end_date) });
+        timeOffByUser.set(Number(row.user_id), list);
+      }
+
+      const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+      const dateRange = (start: string, end: string) => {
+        const result: string[] = [];
+        for (let d = start; d <= end; d = addIsoDays(d, 1)) result.push(d);
+        return result;
+      };
+      const isExpected = (user: any, date: string, deadlineAware: boolean) => {
+        const started = String(user.start_date ?? user.created_at ?? "").slice(0, 10);
+        if (started && date < started) return false;
+        if (deadlineAware && date === today && !eodIsOverdue(date, tz)) return false;
+        const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+        const schedule = scheduleByUser.get(Number(user.id));
+        const scheduledDay = schedule?.[dayKeys[dow]];
+        const working = scheduledDay && typeof scheduledDay === "object"
+          ? !!scheduledDay.working
+          : dow !== 0 && dow !== 6;
+        if (!working) return false;
+        const away = (timeOffByUser.get(Number(user.id)) ?? [])
+          .some((period) => period.start <= date && period.end >= date);
+        return !away;
+      };
+
+      const allReports: any[] = rosterIds.length === 0 ? [] : sqlite.prepare(`
+        SELECT e.*, u.name AS clr_name, u.email AS clr_email
+          FROM eod_reports e
+          JOIN users u ON u.id=e.assistant_id
+         WHERE u.org_id=? AND e.assistant_id IN (${placeholders})
+           AND e.report_date BETWEEN ? AND ?
+         ORDER BY e.report_date DESC, u.name COLLATE NOCASE
+      `).all(orgId, ...rosterIds, priorFrom, to) as any[];
+      const currentReports = allReports.filter((r) => r.report_date >= from && r.report_date <= to);
+      const priorReports = allReports.filter((r) => r.report_date >= priorFrom && r.report_date <= priorTo);
+
+      const activityRows: any[] = rosterIds.length === 0 ? [] : sqlite.prepare(`
+        SELECT a.id, a.assistant_id, a.report_date, a.activity_type, a.description
+          FROM eod_activities a
+          JOIN users u ON u.id=a.assistant_id
+         WHERE u.org_id=? AND a.assistant_id IN (${placeholders})
+           AND a.report_date BETWEEN ? AND ?
+         ORDER BY a.report_date, a.id
+      `).all(orgId, ...rosterIds, from, to) as any[];
+      const activitiesByReport = new Map<string, any[]>();
+      for (const activity of activityRows) {
+        const key = `${activity.assistant_id}|${activity.report_date}`;
+        const list = activitiesByReport.get(key) ?? [];
+        list.push({ id: activity.id, type: activity.activity_type, description: activity.description ?? "" });
+        activitiesByReport.set(key, list);
+      }
+
+      const num = (value: any) => Number(value) || 0;
+      const pct = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+      const parsedCount = (value: any) => {
+        try { const parsed = JSON.parse(value || "[]"); return Array.isArray(parsed) ? parsed.length : 0; } catch { return 0; }
+      };
+      const totalsFor = (reports: any[]) => reports.reduce((acc, r) => {
+        acc.reportedCalls += num(r.calls_made);
+        acc.messages += num(r.messages_sent);
+        acc.additionalConversations += num(r.additional_conversations);
+        acc.callToolsConversations += num(r.calltools_conversations);
+        acc.conversations += num(r.additional_conversations) + num(r.calltools_conversations);
+        acc.callToolsActiveSeconds += num(r.calltools_active_seconds);
+        acc.dialpadCalls += num(r.dialpad_calls);
+        acc.transfers += num(r.transfers);
+        acc.appointments += num(r.appointments);
+        acc.assignedLosCalled += parsedCount(r.assigned_los_called);
+        acc.additionalLosCalled += parsedCount(r.additional_los_called);
+        return acc;
+      }, {
+        reportedCalls: 0, messages: 0, additionalConversations: 0,
+        callToolsConversations: 0, conversations: 0, callToolsActiveSeconds: 0,
+        dialpadCalls: 0, transfers: 0, appointments: 0,
+        assignedLosCalled: 0, additionalLosCalled: 0,
+      });
+      const averagesFor = (totals: ReturnType<typeof totalsFor>, reportCount: number) => ({
+        reportedCalls: reportCount ? Math.round(totals.reportedCalls / reportCount) : 0,
+        messages: reportCount ? Math.round(totals.messages / reportCount) : 0,
+        conversations: reportCount ? Math.round((totals.conversations / reportCount) * 10) / 10 : 0,
+        callToolsActiveMinutes: reportCount ? Math.round(totals.callToolsActiveSeconds / reportCount / 60) : 0,
+        dialpadCalls: reportCount ? Math.round(totals.dialpadCalls / reportCount) : 0,
+        transfers: reportCount ? Math.round((totals.transfers / reportCount) * 10) / 10 : 0,
+        appointments: reportCount ? Math.round((totals.appointments / reportCount) * 10) / 10 : 0,
+      });
+      const checklistFor = (reports: any[]) => {
+        const fields = [
+          ["bulkTextAllLos", "bulk_text_all_los"],
+          ["workedRespondedNew", "worked_responded_new"],
+          ["retailMetaLeads", "retail_meta_leads"],
+          ["retailUngraduatedLeads", "retail_ungraduated_leads"],
+        ] as const;
+        const result: Record<string, any> = {};
+        let yes = 0, answered = 0;
+        for (const [key, column] of fields) {
+          const fieldYes = reports.filter((r) => r[column] === 1).length;
+          const no = reports.filter((r) => r[column] === 0).length;
+          const unanswered = reports.length - fieldYes - no;
+          result[key] = { yes: fieldYes, no, unanswered, yesRate: pct(fieldYes, fieldYes + no) };
+          yes += fieldYes;
+          answered += fieldYes + no;
+        }
+        return { ...result, overallYesRate: pct(yes, answered) };
+      };
+
+      const currentDates = dateRange(from, to);
+      const priorDates = dateRange(priorFrom, priorTo);
+      const expectedPairs = filteredRoster.flatMap((u) => currentDates
+        .filter((date) => isExpected(u, date, true))
+        .map((date) => `${u.id}|${date}`));
+      const priorExpectedPairs = filteredRoster.flatMap((u) => priorDates
+        .filter((date) => isExpected(u, date, false))
+        .map((date) => `${u.id}|${date}`));
+      const reportPairSet = new Set(currentReports.map((r) => `${r.assistant_id}|${r.report_date}`));
+
+      const trainingByUser = clrTrainingByUser(orgId);
+      const clrs = filteredRoster.map((user) => {
+        const reports = currentReports.filter((r) => Number(r.assistant_id) === Number(user.id));
+        const expected = currentDates.filter((date) => isExpected(user, date, true)).length;
+        const submittedExpected = reports.filter((r) => isExpected(user, r.report_date, true)).length;
+        const late = reports.filter((r) => num(r.submitted_late) === 1).length;
+        const totals = totalsFor(reports);
+        const mid = addIsoDays(from, Math.floor(days / 2));
+        const firstHalf = reports.filter((r) => r.report_date < mid);
+        const secondHalf = reports.filter((r) => r.report_date >= mid);
+        const firstAvg = averagesFor(totalsFor(firstHalf), firstHalf.length).callToolsActiveMinutes;
+        const secondAvg = averagesFor(totalsFor(secondHalf), secondHalf.length).callToolsActiveMinutes;
+        return {
+          userId: Number(user.id),
+          name: String(user.name ?? ""),
+          email: String(user.email ?? ""),
+          excludeFromStats: !!user.exclude_from_stats,
+          ...trainingForUser(trainingByUser, Number(user.id)),
+          expected,
+          submitted: reports.length,
+          missing: Math.max(0, expected - submittedExpected),
+          submissionRate: pct(submittedExpected, expected),
+          onTime: reports.length - late,
+          late,
+          onTimeRate: pct(reports.length - late, reports.length),
+          totals,
+          averages: averagesFor(totals, reports.length),
+          checklist: checklistFor(reports),
+          activeTimeDirectionPct: firstAvg > 0 && firstHalf.length >= 2 && secondHalf.length >= 2
+            ? Math.round(((secondAvg - firstAvg) / firstAvg) * 100)
+            : null,
+        };
+      });
+
+      const daily = currentDates.map((date) => {
+        const reports = currentReports.filter((r) => r.report_date === date);
+        const expected = filteredRoster.filter((u) => isExpected(u, date, true)).length;
+        const submittedExpected = reports.filter((r) => {
+          const user = filteredRoster.find((u) => Number(u.id) === Number(r.assistant_id));
+          return user ? isExpected(user, date, true) : false;
+        }).length;
+        const late = reports.filter((r) => num(r.submitted_late) === 1).length;
+        return {
+          date,
+          expected,
+          submitted: reports.length,
+          missing: Math.max(0, expected - submittedExpected),
+          late,
+          onTime: reports.length - late,
+          onTimeRate: pct(reports.length - late, reports.length),
+          ...totalsFor(reports),
+        };
+      });
+
+      const currentTotals = totalsFor(currentReports);
+      const priorTotals = totalsFor(priorReports);
+      const currentLate = currentReports.filter((r) => num(r.submitted_late) === 1).length;
+      const priorLate = priorReports.filter((r) => num(r.submitted_late) === 1).length;
+      const currentExpectedSubmitted = expectedPairs.filter((key) => reportPairSet.has(key)).length;
+      const priorReportPairSet = new Set(priorReports.map((r) => `${r.assistant_id}|${r.report_date}`));
+      const priorExpectedSubmitted = priorExpectedPairs.filter((key) => priorReportPairSet.has(key)).length;
+
+      const insights: Array<{ level: "attention" | "watch" | "positive"; title: string; detail: string; userId?: number }> = [];
+      for (const clr of clrs) {
+        if (clr.missing >= 2) insights.push({
+          level: "attention", userId: clr.userId, title: `${clr.name} has ${clr.missing} missing reports`,
+          detail: `${clr.submissionRate}% of expected EOD reports were submitted in this range.`,
+        });
+        if (clr.submitted >= 3 && clr.onTimeRate < 75) insights.push({
+          level: "watch", userId: clr.userId, title: `${clr.name}'s reports are often late`,
+          detail: `${clr.late} of ${clr.submitted} reports arrived after ${EOD_DUE_LABEL}.`,
+        });
+        if (clr.activeTimeDirectionPct != null && clr.activeTimeDirectionPct <= -25) insights.push({
+          level: "watch", userId: clr.userId, title: `${clr.name}'s active time is trending down`,
+          detail: `Average CallTools active time fell ${Math.abs(clr.activeTimeDirectionPct)}% between the first and second half of this range.`,
+        });
+        if (clr.submitted >= 3 && clr.checklist.overallYesRate < 80) insights.push({
+          level: "watch", userId: clr.userId, title: `${clr.name} has checklist gaps`,
+          detail: `${clr.checklist.overallYesRate}% yes across the four daily EOD accountability items.`,
+        });
+      }
+      if (insights.length === 0 && currentReports.length > 0) insights.push({
+        level: "positive", title: "No recurring EOD concerns detected",
+        detail: "Submission, timeliness, active-time, and checklist patterns are within the current attention thresholds.",
+      });
+
+      const reports = currentReports.map((r) => ({
+        id: Number(r.id), date: r.report_date, userId: Number(r.assistant_id),
+        name: r.clr_name ?? "Unknown CLR", email: r.clr_email ?? "",
+        submittedAt: r.submitted_at ?? null, late: num(r.submitted_late) === 1,
+        reportedCalls: num(r.calls_made), messages: num(r.messages_sent),
+        additionalConversations: num(r.additional_conversations),
+        callToolsConversations: num(r.calltools_conversations),
+        conversations: num(r.additional_conversations) + num(r.calltools_conversations),
+        callToolsActiveSeconds: num(r.calltools_active_seconds), dialpadCalls: num(r.dialpad_calls),
+        transfers: num(r.transfers), appointments: num(r.appointments), notes: r.notes ?? "",
+        assignedLosCalled: parsedCount(r.assigned_los_called),
+        additionalLosCalled: parsedCount(r.additional_los_called),
+        additionalLosOtherNotes: r.additional_los_other_notes ?? null,
+        checklist: {
+          bulkTextAllLos: r.bulk_text_all_los,
+          workedRespondedNew: r.worked_responded_new,
+          retailMetaLeads: r.retail_meta_leads,
+          retailUngraduatedLeads: r.retail_ungraduated_leads,
+        },
+        activities: activitiesByReport.get(`${r.assistant_id}|${r.report_date}`) ?? [],
+      }));
+
+      res.json({
+        window: { from, to, days, priorFrom, priorTo, dueLabel: EOD_DUE_LABEL },
+        team: {
+          expected: expectedPairs.length,
+          submitted: currentReports.length,
+          submittedExpected: currentExpectedSubmitted,
+          missing: Math.max(0, expectedPairs.length - currentExpectedSubmitted),
+          submissionRate: pct(currentExpectedSubmitted, expectedPairs.length),
+          onTime: currentReports.length - currentLate,
+          late: currentLate,
+          onTimeRate: pct(currentReports.length - currentLate, currentReports.length),
+          totals: currentTotals,
+          averages: averagesFor(currentTotals, currentReports.length),
+          checklist: checklistFor(currentReports),
+          prior: {
+            expected: priorExpectedPairs.length,
+            submitted: priorReports.length,
+            submittedExpected: priorExpectedSubmitted,
+            submissionRate: pct(priorExpectedSubmitted, priorExpectedPairs.length),
+            onTimeRate: pct(priorReports.length - priorLate, priorReports.length),
+            totals: priorTotals,
+            averages: averagesFor(priorTotals, priorReports.length),
+          },
+        },
+        daily,
+        clrs,
+        reports,
+        insights: insights.slice(0, 12),
+      });
+    } catch (error: any) {
+      console.error("[eod-analytics]", error?.message ?? error);
+      res.status(500).json({ error: "Failed to load EOD analytics" });
+    }
+  });
+
   // History: all past EOD reports for the current user (or all users for admin)
   // Enriched with transfer prospect names pulled from lead_outcomes
   app.get('/api/eod-reports/history', requireAuth, (req: any, res) => {
@@ -16693,13 +17085,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
          UNION
          SELECT assistant_id, activity_date AS d FROM callsync_activity_events WHERE org_id=?
          UNION
+         SELECT assistant_id, report_date AS d FROM eod_reports
+          WHERE (calls_made > 0 OR messages_sent > 0 OR additional_conversations > 0
+             OR calltools_conversations > 0 OR calltools_active_seconds > 0
+             OR dialpad_calls > 0 OR transfers > 0 OR appointments > 0)
+            AND assistant_id IN (SELECT id FROM users WHERE org_id=?)
+         UNION
+         SELECT user_id AS assistant_id, stat_date AS d FROM dialpad_daily_stats
+          WHERE org_id=? AND calls > 0 AND user_id IS NOT NULL
+         UNION
          SELECT user_id AS assistant_id, date AS d FROM morning_checkins WHERE org_id=?
          UNION
          SELECT user_id AS assistant_id, date(clock_in) AS d FROM time_clock_entries WHERE org_id=?
        )
        WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')
        GROUP BY assistant_id`,
-    ).all(orgId, orgId, orgId, orgId, orgId) as any[];
+    ).all(orgId, orgId, orgId, orgId, orgId, orgId, orgId) as any[];
 
     const byId = <T extends { assistant_id: any }>(rows: T[]) =>
       new Map<number, T>(rows.map((r) => [Number(r.assistant_id), r]));
@@ -18366,6 +18767,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
     if (!o || o.outcome_type !== "transfer") return;
     const lo = o.lo_id ? (storage.getLoanOfficerById(o.lo_id) as any) : null;
+    // When an LO has an active LOA, LAP is their document/workflow handoff.
+    // Do not also mutate the borrower in Bonzo; that would create two competing
+    // destinations for the same transfer. The transfer remains fully recorded
+    // in C3 and visible in LAP.
+    if (o.lo_id && storageExtra.hasAvailableLapAssistant(Number(o.org_id ?? 1), Number(o.lo_id))) {
+      console.log(`[bonzo-transfer] outcome=${outcomeId}: routed to available LAP assistant — Bonzo skipped`);
+      return;
+    }
     const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
     // Prefer the prospect this outcome was already mirrored to (appointment →
     // transfer keeps its bonzo_prospect_id); else look up by phone (never create).
@@ -18597,6 +19006,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Appointments are owned by the richer syncAppointmentToBonzo path
     // (task + note + completion follow-up) — don't double-post here.
     if (outcome?.outcomeType === "appointment") return { attempted: false, ok: false, reason: "handled_by_appointment_sync" };
+    const outcomeLoId = Number(outcome?.loId ?? outcome?.lo_id ?? 0);
+    if (outcome?.outcomeType === "transfer" && outcomeLoId > 0
+        && storageExtra.hasAvailableLapAssistant(Number(outcome?.orgId ?? outcome?.org_id ?? currentOrgId() ?? 1), outcomeLoId)) {
+      return { attempted: false, ok: true, reason: "routed_to_lap_assistant" };
+    }
     const settings = storageExtra.getWebhookSettings();
     const token = settings.bonzo_api_token?.trim();
     if (!token) return { attempted: false, ok: false, reason: 'no_token' };
@@ -18644,6 +19058,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       id: outcome.id,
       borrowerName: outcome.borrower_name,
       outcomeType: outcome.outcome_type,
+      loId: outcome.lo_id,
+      orgId: outcome.org_id,
       appointmentDatetime: outcome.appointment_datetime,
       followUpDate: outcome.follow_up_date,
       notes: outcome.notes,

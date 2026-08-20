@@ -31,6 +31,11 @@ test("workday count uses real CLR activity and excludes weekends", () => {
   assert.match(block, /lead_outcomes/);
   assert.match(block, /daily_call_logs/);
   assert.match(block, /callsync_activity_events/);
+  assert.match(block, /eod_reports/);
+  assert.match(block, /messages_sent > 0/);
+  assert.match(block, /appointments > 0/);
+  assert.match(block, /dialpad_daily_stats/);
+  assert.match(block, /calls > 0/);
   assert.match(block, /morning_checkins/);
   assert.match(block, /time_clock_entries/);
   assert.match(block, /strftime\('%w', d\) NOT IN \('0', '6'\)/);

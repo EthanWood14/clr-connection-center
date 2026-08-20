@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.92.0",
+    headline: "Managers can now understand EOD reporting patterns across the whole team in one place.",
+    items: [
+      { text: "EOD Analytics shows submission and on-time rates, CallTools activity, conversations, transfers, appointments, checklist patterns, and every report's notes in a manager-friendly view.", audience: "manager" },
+      { text: "Training workdays now recognize measurable work from EOD reports and Dialpad too, so calls, appointments, messages, and other real activity count even without a transfer.", audience: "manager" },
+      { text: "Chris Redoble transfers logged in C3 can be opened as LAP packages, linked to a package that was started earlier, or merged when the borrower was accidentally entered twice.", audience: "lap" },
+      { text: "LAP documents are optional: an LOA can start a borrower package before any file arrives and add any useful documents later.", audience: "lap" },
+      { text: "Transfers for a loan officer with an active LOA stay in the LAP workflow instead of also changing that borrower in Bonzo." },
+    ],
+  },
+  {
     version: "3.91.4",
     headline: "Every C3 workday now opens with the loan officers who need attention first.",
     items: [

@@ -200,6 +200,10 @@ const teamItems: NavItem[] = [
   { title: "Seating Map",           url: "/seating-map", icon: Armchair },
 ];
 
+const managerTeamItems: NavItem[] = [
+  { title: "EOD Analytics",         url: "/eod-analytics", icon: BarChart2 },
+];
+
 const toolItems: NavItem[] = [
   { title: "State Lookup",    url: "/state-lookup",   icon: MapPin },
   { title: "Call Hours",      url: "/call-hours",     icon: Clock },
@@ -501,7 +505,7 @@ export function AppSidebar() {
 
         {/* Compressed groups — headers stay visible, items fold away */}
         {renderCollapsibleGroup("personal", "Personal", personalItems)}
-        {renderCollapsibleGroup("team", "Team", teamItems)}
+        {renderCollapsibleGroup("team", "Team", isManagerOrAdmin ? [...teamItems, ...managerTeamItems] : teamItems)}
         {renderCollapsibleGroup("tools", "Tools", toolItems)}
 
         {/* ADVANCED SETTINGS — collapsible folder for admin/help/etc.

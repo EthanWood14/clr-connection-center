@@ -153,9 +153,25 @@ test("a signed-in session still wins over the shared device", () => {
   assert.match(shell, /!gate!\.configured \|\| staffLogin/);
 });
 
-test("a package can be created with a single document", () => {
-  assert.match(results, /Attach at least one document to create the package\./);
-  assert.ok(!/is required\.`\)/.test(results.slice(results.indexOf("const createMutation"), results.indexOf("const createMutation") + 900)),
-    "the all-three gate must be gone");
-  assert.ok(!/attach all three required files/i.test(results));
+test("a package can be created before any documents arrive", () => {
+  const create = results.slice(results.indexOf("const createMutation"), results.indexOf("const createMutation") + 2_000);
+  assert.ok(!/Attach at least one document/.test(create));
+  assert.ok(!/allCreateFilesSelected/.test(results));
+  assert.match(results, /Every document is optional/);
+  assert.match(results, />Optional<\/Badge>/);
+});
+
+test("C3 transfers can be linked exactly and duplicate LAP packages can be merged", () => {
+  assert.match(routes, /app\.post\("\/api\/lap\/transfer-audit\/:outcomeId\/package"/);
+  assert.match(routes, /linkLapTransferToPackage/);
+  assert.match(routes, /app\.post\("\/api\/lap\/results\/:id\/merge"/);
+  assert.match(results, /Merge package/);
+  assert.match(results, /sourcePackageId/);
+});
+
+test("an available LOA routes a transfer to LAP without a competing Bonzo update", () => {
+  const sync = routes.slice(routes.indexOf("async function syncTransferToBonzo"), routes.indexOf("app.post(\"/api/bonzo/test-transfer\""));
+  assert.match(sync, /hasAvailableLapAssistant/);
+  assert.match(sync, /routed to available LAP assistant/);
+  assert.match(sync, /Bonzo skipped/);
 });

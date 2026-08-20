@@ -21,20 +21,20 @@ function seedFixture() {
     VALUES (?, ?, ?, ?, 'active')
   `).run(2, "Other Organization", "other-org", "Other Organization");
   db.prepare(`
-    INSERT INTO users (id, name, email, role, is_active, org_id, super_admin)
+    INSERT OR IGNORE INTO users (id, name, email, role, is_active, org_id, super_admin)
     VALUES (?, ?, ?, ?, 1, ?, 0)
   `).run(101, "LAP Assistant", "lap-assistant@example.test", "assistant", 1);
   db.prepare(`
-    INSERT INTO users (id, name, email, role, is_active, org_id, super_admin)
+    INSERT OR IGNORE INTO users (id, name, email, role, is_active, org_id, super_admin)
     VALUES (?, ?, ?, ?, 1, ?, 0)
   `).run(102, "Other Assistant", "other-assistant@example.test", "assistant", 2);
   db.prepare(`
-    INSERT INTO loan_officers
+    INSERT OR IGNORE INTO loan_officers
       (id, full_name, nmls_id, licensed_states, internal_status, org_id)
     VALUES (?, ?, ?, '[]', 'active', ?)
   `).run(201, "Test Loan Officer", "LAP-TEST-201", 1);
   db.prepare(`
-    INSERT INTO loan_officers
+    INSERT OR IGNORE INTO loan_officers
       (id, full_name, nmls_id, licensed_states, internal_status, org_id)
     VALUES (?, ?, ?, '[]', 'active', ?)
   `).run(202, "Other Loan Officer", "LAP-TEST-202", 2);
@@ -188,4 +188,29 @@ test("LAP storage keeps packages org-scoped and current files versioned", () => 
     SELECT DISTINCT org_id FROM lap_result_events WHERE package_id = ?
   `).all(created.id) as any[];
   assert.deepEqual(eventOrgIds.map((row) => Number(row.org_id)), [1]);
+});
+
+test("LAP packages merge without losing files, versions, or C3 transfer links", () => {
+  seedFixture();
+  const pdf = Buffer.from("%PDF-1.7\ntarget-credit");
+  const sourcePdf = Buffer.from("%PDF-1.7\nsource-credit");
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+  const target = lap.createLapResultPackage({ orgId: 1, actorUserId: 101, borrowerName: "Merge Borrower", loanOfficerId: 201, resultDate: "2026-08-20" });
+  const source = lap.createLapResultPackage({ orgId: 1, actorUserId: 101, borrowerName: "Merge Borrower", loanOfficerId: 201, notes: "Started before C3 logged it", resultDate: "2026-08-19" });
+  const targetCredit = lap.replaceLapResultFile({ orgId: 1, packageId: target.id, actorUserId: 101, documentType: "credit_report", filename: "target.pdf", mime: "application/pdf", data: pdf });
+  lap.replaceLapResultFile({ orgId: 1, packageId: source.id, actorUserId: 101, documentType: "credit_report", filename: "source.pdf", mime: "application/pdf", data: sourcePdf });
+  const sourceAus = lap.replaceLapResultFile({ orgId: 1, packageId: source.id, actorUserId: 101, documentType: "aus", filename: "aus.png", mime: "image/png", data: png });
+  const now = new Date().toISOString();
+  const outcome = db.prepare(`INSERT INTO lead_outcomes (date, assistant_id, lo_id, borrower_name, outcome_type, org_id, created_at, updated_at) VALUES ('2026-08-20', 101, 201, 'Merge Borrower', 'transfer', 1, ?, ?)`).run(now, now);
+  lap.linkLapTransferToPackage({ orgId: 1, outcomeId: Number(outcome.lastInsertRowid), packageId: source.id, actorUserId: 101 });
+
+  const merged = lap.mergeLapResultPackages({ orgId: 1, targetPackageId: target.id, sourcePackageId: source.id, actorUserId: 101 });
+  assert.equal(merged.files.creditReport?.id, targetCredit.id, "the destination current file wins a same-slot conflict");
+  assert.equal(merged.files.aus?.id, sourceAus.id, "a missing destination slot inherits the source current file");
+  assert.match(merged.notes, /Started before C3 logged it/);
+  assert.equal(lap.getLapResultPackage(1, source.id), null, "the duplicate package is archived");
+  const link = db.prepare(`SELECT package_id FROM lap_result_transfer_links WHERE outcome_id=?`).get(Number(outcome.lastInsertRowid)) as any;
+  assert.equal(Number(link.package_id), target.id, "the C3 transfer follows the surviving package");
+  const histories = db.prepare(`SELECT COUNT(*) AS n FROM lap_result_file_versions WHERE package_id=? AND document_type='credit_report'`).get(target.id) as any;
+  assert.equal(Number(histories.n), 2, "both document histories survive the merge");
 });

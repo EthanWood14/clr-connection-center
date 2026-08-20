@@ -4,13 +4,16 @@
 // exists to answer one question at a glance: for every transfer that went to
 // Chris, did the three documents actually get submitted?
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileWarning, RefreshCw, XCircle } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { AlertTriangle, CheckCircle2, FilePlus2, FileWarning, Link2, RefreshCw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatLapDate, lapRequest } from "@/lib/lap-api";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 const WINDOWS = [
   { value: 3, label: "3 days" },
@@ -35,6 +38,7 @@ type AuditRow = {
   docs: Record<string, boolean>;
   submittedCount: number;
   complete: boolean;
+  matchType: "linked" | "suggested" | "none";
 };
 
 type AuditResponse = {
@@ -53,6 +57,8 @@ function Tick({ ok }: { ok: boolean }) {
 
 export default function LapTransferAuditPage() {
   const [window, setWindow] = useState(7);
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
   const query = useQuery<AuditResponse>({
     queryKey: ["/api/lap/transfer-audit", window],
     queryFn: () => lapRequest("GET", `/api/lap/transfer-audit?window=${window}`),
@@ -60,6 +66,20 @@ export default function LapTransferAuditPage() {
 
   const data = query.data;
   const rows = data?.rows ?? [];
+  const packageMutation = useMutation({
+    mutationFn: ({ outcomeId, packageId }: { outcomeId: number; packageId?: number }) =>
+      lapRequest<any>("POST", `/api/lap/transfer-audit/${outcomeId}/package`, packageId ? { packageId } : {}),
+    onSuccess: async (response) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/transfer-audit"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] }),
+      ]);
+      const id = Number(response?.result?.id);
+      toast({ title: "Transfer connected to LAP", description: "The borrower now has one package for notes and any optional documents." });
+      if (id) navigate(`/results/${id}`);
+    },
+    onError: (error: any) => toast({ title: "Could not connect transfer", description: error?.message, variant: "destructive" }),
+  });
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
@@ -70,7 +90,7 @@ export default function LapTransferAuditPage() {
             {data?.loanOfficer?.name ?? "Chris Redoble"} — Transfer Documents
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Every transfer C3 logged to {data?.loanOfficer?.name ?? "Chris"}, and whether all three documents came in.
+            Every transfer C3 logged to {data?.loanOfficer?.name ?? "Chris"}. Open one LAP package and add whichever documents are useful.
           </p>
         </div>
         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => query.refetch()} disabled={query.isFetching}>
@@ -115,7 +135,7 @@ export default function LapTransferAuditPage() {
               <CardTitle className="text-base">{data?.label ?? ""}</CardTitle>
               <CardDescription>
                 {data?.summary.transfers
-                  ? `${data.summary.completionPct}% of transfers have a complete document set.`
+                  ? `${data.summary.completionPct}% of transfers currently have all three optional document types attached.`
                   : "No transfers logged in this window."}
               </CardDescription>
             </CardHeader>
@@ -131,6 +151,7 @@ export default function LapTransferAuditPage() {
                         <th key={d.key} className="text-center font-semibold px-3 py-2 whitespace-nowrap">{d.label}</th>
                       ))}
                       <th className="text-left font-semibold px-3 py-2">Status</th>
+                      <th className="text-left font-semibold px-3 py-2">LAP package</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -157,10 +178,22 @@ export default function LapTransferAuditPage() {
                             </Badge>
                           )}
                         </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {r.packageId ? (
+                            <div className="flex items-center gap-1.5">
+                              {r.matchType === "suggested" && <Button size="sm" variant="outline" className="h-7 gap-1" disabled={packageMutation.isPending} onClick={() => packageMutation.mutate({ outcomeId: r.outcomeId, packageId: r.packageId! })}><Link2 className="h-3 w-3" /> Connect existing</Button>}
+                              <Button size="sm" variant={r.matchType === "linked" ? "default" : "ghost"} className="h-7" onClick={() => navigate(`/results/${r.packageId}`)}>Open</Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" className="h-7 gap-1" disabled={packageMutation.isPending} onClick={() => packageMutation.mutate({ outcomeId: r.outcomeId })}>
+                              {packageMutation.isPending && packageMutation.variables?.outcomeId === r.outcomeId ? <RefreshCw className="h-3 w-3 animate-spin" /> : <FilePlus2 className="h-3 w-3" />} Start package
+                            </Button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {!rows.length && (
-                      <tr><td colSpan={7} className="px-3 py-10 text-center text-muted-foreground">
+                      <tr><td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">
                         No transfers logged in this window.
                       </td></tr>
                     )}
@@ -171,8 +204,8 @@ export default function LapTransferAuditPage() {
           </Card>
 
           <p className="text-[11px] text-muted-foreground">
-            Transfers come from C3 automatically. Documents are matched to a transfer by the borrower's name, so a
-            package filed under a different spelling shows as missing here — fix the name on the package and it links up.
+            Transfers come from C3 automatically. A matching borrower name is shown as a suggestion; choose Connect existing
+            to make the link exact. If two packages were started, open either one and use Merge package.
           </p>
         </>
       )}

@@ -176,7 +176,7 @@ must never be printed in output.
 
 A second product served from the same Express app and the same React bundle, at
 `/#/lap`. Loan-officer assistants file **result packages** (borrower + three
-required documents: credit report, AUS, formal quote). Client code lives in
+optional document slots: credit report, AUS, formal quote). Client code lives in
 `client/src/pages/lap-*.tsx` + `client/src/components/lap/`; API is `/api/lap/*`;
 storage helpers are the `lap*` functions in `storage.ts`.
 

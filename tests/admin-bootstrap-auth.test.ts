@@ -54,7 +54,7 @@ test("raw SQL imports and diagnostics do not trust stale cookie payloads", () =>
 test("loan-officer bulk import uses the same fresh-user validation", () => {
   const loanOfficerImport = sourceBetween(
     'app.post("/api/loan-officers/import"',
-    'app.get("/api/loan-officers"',
+    'app.get("/api/loan-officers/snoozed"',
   );
 
   assert.match(loanOfficerImport, /hasValidBootstrapToken\(req\)/);

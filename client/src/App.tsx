@@ -46,6 +46,7 @@ import PrivacyPolicy from "@/pages/privacy-policy";
 import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
+import EodAnalytics from "@/pages/eod-analytics";
 import TimeOff from "@/pages/time-off";
 import CompRequests from "@/pages/comp-requests";
 import TimeClock from "@/pages/time-clock";
@@ -126,6 +127,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/chat":           "Team Chat",
   "/call-script":    "Call Script",
   "/eod-report":     "EOD Reporting",
+  "/eod-analytics":  "EOD Analytics",
   "/time-off":       "Time Off",
   "/comp-requests":  "Comp Requests",
   "/time-clock":     "Time Clock",
@@ -184,6 +186,7 @@ function AppRouter() {
       <Route path="/nmls-checks" component={NmlsChecks} />
       <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
+      <Route path="/eod-analytics" component={EodAnalytics} />
       <Route path="/time-off" component={TimeOff} />
       <Route path="/comp-requests" component={CompRequests} />
       <Route path="/time-clock" component={TimeClock} />

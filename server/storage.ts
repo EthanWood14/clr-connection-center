@@ -3182,6 +3182,21 @@ function runNewMigrations() {
       FOREIGN KEY (actor_user_id) REFERENCES users(id)
     );
 
+    -- A transfer and a package are linked explicitly once an LOA chooses or
+    -- creates the package. Several C3 transfers may legitimately belong to one
+    -- borrower package, while each transfer may point to only one package.
+    CREATE TABLE IF NOT EXISTS lap_result_transfer_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      outcome_id INTEGER NOT NULL UNIQUE,
+      package_id INTEGER NOT NULL,
+      linked_by INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (outcome_id) REFERENCES lead_outcomes(id) ON DELETE CASCADE,
+      FOREIGN KEY (package_id) REFERENCES lap_result_packages(id) ON DELETE CASCADE,
+      FOREIGN KEY (linked_by) REFERENCES users(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_lap_packages_org_date
       ON lap_result_packages(org_id, result_date DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_lap_packages_org_updated
@@ -3193,6 +3208,8 @@ function runNewMigrations() {
       WHERE is_current = 1 AND removed_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_lap_events_package
       ON lap_result_events(org_id, package_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_lap_transfer_links_package
+      ON lap_result_transfer_links(org_id, package_id, outcome_id);
   `);
 
   // Move LAP document bytes out of clr.db into the sidecar (see the ATTACH near
@@ -7382,6 +7399,136 @@ export function updateLapResultPackage(input: {
   return getLapResultPackage(orgId, packageId)!;
 }
 
+export function linkLapTransferToPackage(input: {
+  orgId: number;
+  outcomeId: number;
+  packageId: number;
+  actorUserId: number;
+}): LapResultPackage {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const outcomeId = lapPositiveId(input.outcomeId, "Transfer id");
+  const packageId = lapPositiveId(input.packageId, "Package id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const transfer = sqlite.prepare(`
+      SELECT id, lo_id FROM lead_outcomes
+      WHERE id=? AND org_id=? AND outcome_type='transfer'
+    `).get(outcomeId, orgId) as any;
+    if (!transfer) throw new LapResultStorageError(404, "C3 transfer was not found.");
+    const pkg = sqlite.prepare(`
+      SELECT id, loan_officer_id FROM lap_result_packages
+      WHERE id=? AND org_id=? AND archived_at IS NULL
+    `).get(packageId, orgId) as any;
+    if (!pkg) throw new LapResultStorageError(404, "LAP result was not found.");
+    if (pkg.loan_officer_id != null && transfer.lo_id != null
+        && Number(pkg.loan_officer_id) !== Number(transfer.lo_id)) {
+      throw new LapResultStorageError(400, "The package belongs to a different loan officer.");
+    }
+    const now = new Date().toISOString();
+    sqlite.prepare(`
+      INSERT INTO lap_result_transfer_links (org_id, outcome_id, package_id, linked_by, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(outcome_id) DO UPDATE SET
+        org_id=excluded.org_id, package_id=excluded.package_id,
+        linked_by=excluded.linked_by, created_at=excluded.created_at
+    `).run(orgId, outcomeId, packageId, actorUserId, now);
+    if (pkg.loan_officer_id == null && transfer.lo_id != null) {
+      sqlite.prepare(`UPDATE lap_result_packages SET loan_officer_id=?, updated_by=?, updated_at=? WHERE id=? AND org_id=?`)
+        .run(transfer.lo_id, actorUserId, now, packageId, orgId);
+    }
+    writeLapResultEvent({ orgId, packageId, actorUserId, action: "transfer_linked", createdAt: now });
+  });
+  tx.immediate();
+  return getLapResultPackage(orgId, packageId)!;
+}
+
+/**
+ * Fold one visible LAP package into another without copying document bytes.
+ * The destination's current document wins a same-slot conflict; every source
+ * version is retained underneath it, and a missing destination slot inherits
+ * the source's current file. Transfer links follow the surviving package.
+ */
+export function mergeLapResultPackages(input: {
+  orgId: number;
+  targetPackageId: number;
+  sourcePackageId: number;
+  actorUserId: number;
+}): LapResultPackage {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const targetPackageId = lapPositiveId(input.targetPackageId, "Destination package id");
+  const sourcePackageId = lapPositiveId(input.sourcePackageId, "Source package id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+  if (targetPackageId === sourcePackageId) {
+    throw new LapResultStorageError(400, "Choose two different packages to merge.");
+  }
+
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const target = sqlite.prepare(`SELECT * FROM lap_result_packages WHERE id=? AND org_id=? AND archived_at IS NULL`)
+      .get(targetPackageId, orgId) as any;
+    const source = sqlite.prepare(`SELECT * FROM lap_result_packages WHERE id=? AND org_id=? AND archived_at IS NULL`)
+      .get(sourcePackageId, orgId) as any;
+    if (!target || !source) throw new LapResultStorageError(404, "One of the LAP packages was not found.");
+    if (target.loan_officer_id != null && source.loan_officer_id != null
+        && Number(target.loan_officer_id) !== Number(source.loan_officer_id)) {
+      throw new LapResultStorageError(400, "Packages for different loan officers cannot be merged.");
+    }
+
+    for (const documentType of LAP_DOCUMENT_TYPES) {
+      const targetCurrent = sqlite.prepare(`
+        SELECT id FROM lap_result_file_versions
+        WHERE org_id=? AND package_id=? AND document_type=? AND is_current=1 AND removed_at IS NULL
+      `).get(orgId, targetPackageId, documentType) as any;
+      const sourceRows = sqlite.prepare(`
+        SELECT id, is_current, removed_at FROM lap_result_file_versions
+        WHERE org_id=? AND package_id=? AND document_type=? ORDER BY version, id
+      `).all(orgId, sourcePackageId, documentType) as any[];
+      if (!sourceRows.length) continue;
+      const sourceCurrentId = sourceRows.find((row) => row.is_current === 1 && row.removed_at == null)?.id ?? null;
+      const max = sqlite.prepare(`
+        SELECT COALESCE(MAX(version),0) AS n FROM lap_result_file_versions
+        WHERE org_id=? AND package_id=? AND document_type=?
+      `).get(orgId, targetPackageId, documentType) as any;
+      // Temporary negative versions avoid a UNIQUE collision while rows move.
+      for (const row of sourceRows) {
+        sqlite.prepare(`UPDATE lap_result_file_versions SET is_current=0, version=? WHERE id=? AND org_id=?`)
+          .run(-Number(row.id), Number(row.id), orgId);
+      }
+      sourceRows.forEach((row, index) => {
+        sqlite.prepare(`UPDATE lap_result_file_versions SET package_id=?, version=? WHERE id=? AND org_id=?`)
+          .run(targetPackageId, Number(max?.n ?? 0) + index + 1, Number(row.id), orgId);
+      });
+      if (!targetCurrent && sourceCurrentId) {
+        sqlite.prepare(`UPDATE lap_result_file_versions SET is_current=1 WHERE id=? AND org_id=? AND removed_at IS NULL`)
+          .run(sourceCurrentId, orgId);
+      }
+    }
+
+    const now = new Date().toISOString();
+    sqlite.prepare(`UPDATE lap_result_transfer_links SET package_id=? WHERE org_id=? AND package_id=?`)
+      .run(targetPackageId, orgId, sourcePackageId);
+    sqlite.prepare(`UPDATE lap_result_events SET package_id=? WHERE org_id=? AND package_id=?`)
+      .run(targetPackageId, orgId, sourcePackageId);
+    const notes = [String(target.notes ?? "").trim(), String(source.notes ?? "").trim()]
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .join("\n\n");
+    sqlite.prepare(`
+      UPDATE lap_result_packages SET
+        deal_reference=COALESCE(deal_reference, ?),
+        loan_officer_id=COALESCE(loan_officer_id, ?),
+        notes=?, updated_by=?, updated_at=?
+      WHERE id=? AND org_id=?
+    `).run(source.deal_reference ?? null, source.loan_officer_id ?? null, notes, actorUserId, now, targetPackageId, orgId);
+    sqlite.prepare(`UPDATE lap_result_packages SET archived_at=?, updated_by=?, updated_at=? WHERE id=? AND org_id=?`)
+      .run(now, actorUserId, now, sourcePackageId, orgId);
+    writeLapResultEvent({ orgId, packageId: targetPackageId, actorUserId, action: "package_merged", createdAt: now });
+  });
+  tx.immediate();
+  return getLapResultPackage(orgId, targetPackageId)!;
+}
+
 export function replaceLapResultFile(input: {
   orgId: number;
   packageId: number;
@@ -7494,6 +7641,19 @@ export function getPortalUserIdsForLoanOfficer(orgId: number, loanOfficerId: num
       `SELECT id FROM users WHERE org_id = ? AND loan_officer_id = ? AND is_active = 1`,
     ).all(Number(orgId), Number(loanOfficerId)) as any[]).map((r) => Number(r.id));
   } catch { return []; }
+}
+
+export function hasAvailableLapAssistant(orgId: number, loanOfficerId: number): boolean {
+  try {
+    return !!sqlite.prepare(`
+      SELECT 1
+        FROM loan_officer_assistants loa
+        JOIN loan_officers lo ON lo.id=loa.lo_id
+       WHERE lo.org_id=? AND loa.lo_id=? AND loa.active=1
+         AND lo.internal_status NOT IN ('archived','inactive')
+      LIMIT 1
+    `).get(Number(orgId), Number(loanOfficerId));
+  } catch { return false; }
 }
 
 /**
