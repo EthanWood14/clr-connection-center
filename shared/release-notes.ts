@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.94.2",
+    headline: "Transfer celebrations got a major visual upgrade.",
+    items: [
+      { text: "Your transfer win now fills the screen with layered confetti cannons, animated light rays, gold energy rings, a polished transfer banner, and a bigger cinematic centerpiece." },
+    ],
+  },
+  {
     version: "3.94.1",
     headline: "Transfer celebrations now appear for the right person.",
     items: [

@@ -24,9 +24,14 @@ test("the initiating CLR gets a full-screen animated and audible celebration", (
   assert.match(transfer, /<GoalCelebration/);
   assert.match(transfer, /playChime\(\)/);
   assert.match(transfer, /Keep it rolling/);
+  assert.match(transfer, /variant="transfer"/);
   assert.match(overlay, /<Confetti running=\{show\}/);
   assert.match(overlay, /position: "fixed"/);
   assert.match(overlay, /inset: 0/);
   assert.match(overlay, /radial-gradient/);
+  assert.match(overlay, /celebration-rays/);
+  assert.match(overlay, /celebration-orbit/);
+  assert.match(overlay, /celebration-shine/);
+  assert.match(overlay, /dramatic \? 8500 : 6000/);
   assert.match(overlay, /prefers-reduced-motion/);
 });

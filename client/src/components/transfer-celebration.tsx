@@ -56,6 +56,7 @@ export function TransferCelebration() {
       headline={current?.headline ?? "🎉 Transfer logged!"}
       subline={current?.message ?? "You landed a transfer. Keep the momentum going!"}
       buttonLabel="Keep it rolling"
+      variant="transfer"
     />
   );
 }

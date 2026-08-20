@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Trophy, X } from "lucide-react";
+import { Sparkles, Trophy, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // ─── Canvas confetti ─────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ function spawnBurst(
   }
 }
 
-function Confetti({ running }: { running: boolean }) {
+function Confetti({ running, dramatic = false }: { running: boolean; dramatic?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const particlesRef = useRef<Particle[]>([]);
@@ -82,16 +82,19 @@ function Confetti({ running }: { running: boolean }) {
     particlesRef.current = [];
     startRef.current = performance.now();
 
-    // Three bursts: bottom-left cannon, bottom-right cannon, top
-    const burstLeft = () => spawnBurst(particlesRef.current, 40, window.innerHeight - 40, 80, 20, 26);
-    const burstRight = () => spawnBurst(particlesRef.current, window.innerWidth - 40, window.innerHeight - 40, 80, 20, 26);
-    const burstCenter = () => spawnBurst(particlesRef.current, window.innerWidth / 2, window.innerHeight / 3, 60, 16, 18);
+    const multiplier = dramatic ? 2.1 : 1;
+    const burstLeft = () => spawnBurst(particlesRef.current, 40, window.innerHeight - 40, Math.round(80 * multiplier), 22, 29);
+    const burstRight = () => spawnBurst(particlesRef.current, window.innerWidth - 40, window.innerHeight - 40, Math.round(80 * multiplier), 22, 29);
+    const burstCenter = () => spawnBurst(particlesRef.current, window.innerWidth / 2, window.innerHeight / 3, Math.round(60 * multiplier), 18, 21);
 
     burstLeft();
     burstRight();
     const centerTimer = setTimeout(burstCenter, 350);
     const extraLeft = setTimeout(burstLeft, 900);
     const extraRight = setTimeout(burstRight, 900);
+    const finaleCenter = dramatic ? setTimeout(burstCenter, 1700) : undefined;
+    const finaleLeft = dramatic ? setTimeout(burstLeft, 2400) : undefined;
+    const finaleRight = dramatic ? setTimeout(burstRight, 2400) : undefined;
 
     const GRAVITY = 0.45;
     const FRICTION = 0.99;
@@ -144,9 +147,12 @@ function Confetti({ running }: { running: boolean }) {
       clearTimeout(centerTimer);
       clearTimeout(extraLeft);
       clearTimeout(extraRight);
+      if (finaleCenter) clearTimeout(finaleCenter);
+      if (finaleLeft) clearTimeout(finaleLeft);
+      if (finaleRight) clearTimeout(finaleRight);
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [running]);
+  }, [running, dramatic]);
 
   if (!running) return null;
   return (
@@ -170,14 +176,17 @@ export function GoalCelebration({
   headline = "Weekly goals crushed!",
   subline = "You hit every target this week. Keep the momentum going.",
   buttonLabel = "Keep going",
+  variant = "goal",
 }: {
   show: boolean;
   onClose: () => void;
   headline?: string;
   subline?: string;
   buttonLabel?: string;
+  variant?: "goal" | "transfer";
 }) {
   const [mounted, setMounted] = useState(false);
+  const dramatic = variant === "transfer";
 
   // Mount/unmount with a small delay to let confetti run even after overlay closes
   useEffect(() => {
@@ -187,15 +196,15 @@ export function GoalCelebration({
   // Auto-dismiss after 6s
   useEffect(() => {
     if (!show) return;
-    const t = setTimeout(onClose, 6000);
+    const t = setTimeout(onClose, dramatic ? 8500 : 6000);
     return () => clearTimeout(t);
-  }, [show, onClose]);
+  }, [show, onClose, dramatic]);
 
   if (!mounted) return null;
 
   const node = (
     <>
-      <Confetti running={show} />
+      <Confetti running={show} dramatic={dramatic} />
       <div
         role="dialog"
         aria-modal="true"
@@ -209,25 +218,35 @@ export function GoalCelebration({
           justifyContent: "center",
           pointerEvents: show ? "auto" : "none",
           background: show
-            ? "radial-gradient(circle at center, rgba(59,130,246,.28) 0%, rgba(15,24,45,.76) 48%, rgba(2,6,23,.9) 100%)"
+            ? dramatic
+              ? "radial-gradient(circle at 50% 42%, rgba(248,196,97,.26) 0%, rgba(79,70,229,.34) 25%, rgba(15,24,45,.91) 62%, rgba(2,6,23,.98) 100%)"
+              : "radial-gradient(circle at center, rgba(59,130,246,.28) 0%, rgba(15,24,45,.76) 48%, rgba(2,6,23,.9) 100%)"
             : "transparent",
           backdropFilter: show ? "blur(3px)" : undefined,
           animation: show ? "celebration-backdrop-in 300ms ease-out both" : undefined,
         }}
         onClick={onClose}
       >
+        {dramatic && <div className="celebration-rays" aria-hidden="true" />}
+        {dramatic && <div className="celebration-orbit celebration-orbit-one" aria-hidden="true" />}
+        {dramatic && <div className="celebration-orbit celebration-orbit-two" aria-hidden="true" />}
         <div
           onClick={(e) => e.stopPropagation()}
-          className="relative max-w-md w-[92%] rounded-2xl shadow-2xl"
+          className={`relative w-[92%] shadow-2xl ${dramatic ? "max-w-2xl rounded-[32px] celebration-transfer-card" : "max-w-md rounded-2xl"}`}
           style={{
-            background: "linear-gradient(135deg, #0F182D 0%, #1c2b4d 100%)",
+            background: dramatic
+              ? "linear-gradient(145deg, rgba(15,24,45,.96) 0%, rgba(31,42,77,.96) 48%, rgba(51,34,91,.96) 100%)"
+              : "linear-gradient(135deg, #0F182D 0%, #1c2b4d 100%)",
             color: "white",
-            padding: "40px 32px 32px",
+            padding: dramatic ? "58px 40px 44px" : "40px 32px 32px",
             textAlign: "center",
             animation: show ? "celebration-pop 480ms cubic-bezier(.2,.9,.3,1.25) both" : undefined,
-            boxShadow: "0 30px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(201,162,74,.4)",
+            boxShadow: dramatic
+              ? "0 40px 120px rgba(0,0,0,.72), 0 0 90px rgba(201,162,74,.28), 0 0 0 1px rgba(248,196,97,.65)"
+              : "0 30px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(201,162,74,.4)",
           }}
         >
+          {dramatic && <div className="celebration-shine" aria-hidden="true" />}
           <button
             onClick={onClose}
             aria-label="Dismiss celebration"
@@ -237,28 +256,29 @@ export function GoalCelebration({
             <X className="w-5 h-5" />
           </button>
 
+          {dramatic && <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-1.5 text-[11px] font-black uppercase tracking-[.28em] text-amber-200"><Zap className="h-3.5 w-3.5 fill-current" /> Transfer secured <Sparkles className="h-3.5 w-3.5" /></div>}
           <div
             className="mx-auto mb-4 flex items-center justify-center rounded-full"
             style={{
-              width: 72,
-              height: 72,
+              width: dramatic ? 106 : 72,
+              height: dramatic ? 106 : 72,
               background: "linear-gradient(135deg, #C9A24A 0%, #F8C461 100%)",
-              boxShadow: "0 10px 30px rgba(201,162,74,.5)",
+              boxShadow: dramatic ? "0 0 0 12px rgba(248,196,97,.08), 0 18px 55px rgba(248,196,97,.62)" : "0 10px 30px rgba(201,162,74,.5)",
               animation: show ? "celebration-trophy 1.6s ease-in-out infinite" : undefined,
             }}
           >
-            <Trophy className="w-9 h-9 text-[#0F182D]" />
+            <Trophy className={dramatic ? "h-14 w-14 text-[#0F182D]" : "h-9 w-9 text-[#0F182D]"} />
           </div>
 
           <h2
             id="celebration-headline"
-            className="text-2xl font-bold mb-2"
+            className={dramatic ? "mb-3 text-4xl font-black uppercase tracking-tight sm:text-6xl" : "mb-2 text-2xl font-bold"}
             style={{ color: "#F8C461", letterSpacing: "-.01em" }}
           >
             {headline}
           </h2>
-          <p className="text-sm text-white/80 mb-6">{subline}</p>
-          <Button onClick={onClose} className="bg-white/10 hover:bg-white/20 text-white border-0">
+          <p className={dramatic ? "mx-auto mb-8 max-w-lg text-base font-medium leading-relaxed text-white/85 sm:text-lg" : "mb-6 text-sm text-white/80"}>{subline}</p>
+          <Button onClick={onClose} className={dramatic ? "h-12 rounded-full border border-amber-200/30 bg-gradient-to-r from-amber-300 to-yellow-500 px-9 font-black text-slate-950 shadow-[0_12px_35px_rgba(248,196,97,.3)] hover:from-amber-200 hover:to-yellow-400" : "border-0 bg-white/10 text-white hover:bg-white/20"}>
             {buttonLabel}
           </Button>
         </div>
@@ -277,8 +297,19 @@ export function GoalCelebration({
           from { opacity: 0; }
           to { opacity: 1; }
         }
+        .celebration-rays { position:absolute; width:min(105vw,1100px); aspect-ratio:1; opacity:.3; background:repeating-conic-gradient(from 0deg, rgba(248,196,97,.42) 0deg 3deg, transparent 3deg 18deg); mask-image:radial-gradient(circle, #000 0 44%, transparent 72%); animation:celebration-rays-spin 22s linear infinite; }
+        .celebration-orbit { position:absolute; border:1px solid rgba(248,196,97,.28); border-radius:9999px; animation:celebration-orbit-pulse 2.2s ease-out infinite; }
+        .celebration-orbit-one { width:min(74vw,760px); aspect-ratio:1; }
+        .celebration-orbit-two { width:min(92vw,960px); aspect-ratio:1; animation-delay:.7s; }
+        .celebration-transfer-card { overflow:hidden; }
+        .celebration-transfer-card::before { content:""; position:absolute; inset:-2px; border-radius:inherit; padding:2px; background:linear-gradient(115deg,#f8c461,transparent 35%,#a78bfa 65%,#f8c461); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; pointer-events:none; }
+        .celebration-shine { position:absolute; inset:-80% -30%; background:linear-gradient(105deg,transparent 42%,rgba(255,255,255,.16) 49%,transparent 56%); transform:translateX(-55%); animation:celebration-shine 2.2s ease-in-out .45s both; pointer-events:none; }
+        @keyframes celebration-rays-spin { to { transform:rotate(360deg); } }
+        @keyframes celebration-orbit-pulse { 0% { transform:scale(.68); opacity:0; } 35% { opacity:.8; } 100% { transform:scale(1.12); opacity:0; } }
+        @keyframes celebration-shine { to { transform:translateX(55%); } }
         @media (prefers-reduced-motion: reduce) {
           [role="dialog"] > div { animation: none !important; }
+          .celebration-rays, .celebration-orbit, .celebration-shine { animation:none !important; }
         }
       `}</style>
     </>
