@@ -28,6 +28,7 @@ import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-det
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
+import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL } from "./business-day";
@@ -10474,6 +10475,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const excluded = storage.getExcludedClrIds();
     const aid = (o: any) => o.assistantId ?? o.assistant_id;
     const activeAssistants = users.filter(u => (u.role === "assistant" || u.role === "admin") && u.isActive && !u.excludeFromStats);
+    const trainingByUser = clrTrainingByUser(currentOrgId() ?? 1);
 
     const filterByClr = <T extends any>(arr: T[], field: string): T[] =>
       clrId === undefined ? arr : arr.filter((o: any) => (o[field] ?? o[field.replace(/([A-Z])/g, "_$1").toLowerCase()]) === clrId);
@@ -10596,6 +10598,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return {
         userId: u.id,
         name: u.name,
+        ...trainingForUser(trainingByUser, u.id),
         calls: uCalls,
         additionalCalls: uAdditionalCalls,
         callToolsCalls: uCallTools.calls,
@@ -10659,6 +10662,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assistantId = req.query.assistantId ? parseInt(req.query.assistantId as string) : undefined;
     const range = req.query.range as string | undefined;
     const users = storage.getUsers();
+    const trainingByUser = clrTrainingByUser(currentOrgId() ?? 1);
 
     // Helper: build a single bucket result from an array of outcomes
     function buildBucket(label: string, startDate: string, endDate: string, outcomes: any[]) {
@@ -10666,12 +10670,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const appointments = outcomes.filter((o: any) => o.outcomeType === "appointment" || o.outcome_type === "appointment").length;
       const total = outcomes.length;
       const convRate = total > 0 ? Math.round((transfers / total) * 100) : 0;
-      const tally: Record<number, { transfers: number; total: number; name: string }> = {};
+      const tally: Record<number, { userId: number; transfers: number; total: number; name: string; activeWorkdays: number; inTraining: boolean }> = {};
       for (const o of outcomes) {
         const aid = o.assistantId || o.assistant_id;
         if (!tally[aid]) {
           const u = users.find((u: any) => u.id === aid);
-          tally[aid] = { transfers: 0, total: 0, name: u?.name ?? `User ${aid}` };
+          tally[aid] = {
+            userId: aid,
+            transfers: 0,
+            total: 0,
+            name: u?.name ?? `User ${aid}`,
+            ...trainingForUser(trainingByUser, aid),
+          };
         }
         tally[aid].total++;
         if (o.outcomeType === "transfer" || o.outcome_type === "transfer") tally[aid].transfers++;
@@ -10796,6 +10806,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const startDate = (req.query.startDate as string) || period.startDate;
     const endDate = (req.query.endDate as string) || period.endDate;
     const leaderboard = storage.getLeaderboard(startDate, endDate);
+    const trainingByUser = clrTrainingByUser(currentOrgId() ?? 1);
 
     // Compute % of recommended LOs completed per CLR
     const assignments = storage.getAssignmentsByRange(startDate, endDate);
@@ -10825,6 +10836,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const cs = callStatsByUser[uid] ?? { contactsReached: 0, dncHits: 0 };
       return {
         ...entry,
+        ...trainingForUser(trainingByUser, uid),
         assignedCount: comp.assigned,
         completedCount: comp.completed,
         completionPct,
@@ -10877,6 +10889,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // out of scorecard metrics, leaderboard, and per-CLR aggregate cards.
     const excludedIds = storage.getExcludedClrIds();
     const countedClrs = allClrs.filter((u: any) => !excludedIds.has(u.id));
+    const trainingByUser = clrTrainingByUser(Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1);
     // SQL fragment appended to raw team COUNT/aggregate queries.
     const exClause = excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
     const exClauseO = excludedIds.size ? ` AND o.assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
@@ -10892,6 +10905,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return {
         userId: u.id,
         name: u.name,
+        ...trainingForUser(trainingByUser, u.id),
         email: u.email,
         submitted: !!r,
         submittedAt: r ? (r.createdAt || r.created_at || null) : null,
@@ -11066,6 +11080,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         userId: u.id,
         name: u.name,
         email: u.email,
+        ...trainingForUser(trainingByUser, u.id),
         transfers, appointments, fellThrough, callbacks, noAnswer, futureContact,
         calls,
         callToolsCalls: activity.calls,
@@ -11323,6 +11338,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           return {
             userId: u.id,
             name: u.name,
+            ...trainingForUser(trainingByUser, u.id),
             transfers: s.transfers,
             textTransfers,
             appointments: s.appointments,
@@ -11410,6 +11426,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           return {
             userId: u.id,
             name: u.name,
+            ...trainingForUser(trainingByUser, u.id),
             transfers:    b ? b.transfers    : new Array(clrTrendDates.length).fill(0),
             appointments: b ? b.appointments : new Array(clrTrendDates.length).fill(0),
             fellThrough:  b ? b.fellThrough  : new Array(clrTrendDates.length).fill(0),
@@ -11457,6 +11474,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         rows: countedClrs.map((u: any) => ({
           userId: u.id,
           name: u.name,
+          ...trainingForUser(trainingByUser, u.id),
           cells: hmDates.map(d => heatmapMap[`${u.id}|${d}`] ?? 0),
         })),
       };
@@ -11465,6 +11483,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         rows: countedClrs.map((u: any) => ({
           userId: u.id,
           name: u.name,
+          ...trainingForUser(trainingByUser, u.id),
           cells: hmDates.map(d => callsHmMap[`${u.id}|${d}`] ?? 0),
         })),
       };
@@ -16661,14 +16680,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS calls, MIN(log_date) AS first_day, MAX(log_date) AS last_day
          FROM daily_call_logs WHERE org_id=? GROUP BY assistant_id`,
     ).all(orgId) as any[];
-    // A day counts as active if it carries logged calls OR a logged outcome.
+    // A business workday counts when the CLR actually checked in, clocked in,
+    // logged an outcome, or placed calls through either C3 or CallTools. The
+    // UNION deduplicates a normal day that appears in several sources. Weekend
+    // activity remains visible in stats but does not advance the 20-workday
+    // training clock.
     const activeRows = sqlite.prepare(
       `SELECT assistant_id, COUNT(*) AS days FROM (
          SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
          UNION
          SELECT assistant_id, log_date AS d FROM daily_call_logs WHERE org_id=? AND calls_made > 0
-       ) GROUP BY assistant_id`,
-    ).all(orgId, orgId) as any[];
+         UNION
+         SELECT assistant_id, activity_date AS d FROM callsync_activity_events WHERE org_id=?
+         UNION
+         SELECT user_id AS assistant_id, date AS d FROM morning_checkins WHERE org_id=?
+         UNION
+         SELECT user_id AS assistant_id, date(clock_in) AS d FROM time_clock_entries WHERE org_id=?
+       )
+       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')
+       GROUP BY assistant_id`,
+    ).all(orgId, orgId, orgId, orgId, orgId) as any[];
 
     const byId = <T extends { assistant_id: any }>(rows: T[]) =>
       new Map<number, T>(rows.map((r) => [Number(r.assistant_id), r]));
@@ -16692,16 +16723,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     });
   }
 
+  function clrTrainingByUser(orgId: number): Map<number, ClrTrainingStatus> {
+    return new Map(
+      clrAllTimeTotals(orgId).map((row) => [row.userId, clrTrainingStatus(row.activeDays)]),
+    );
+  }
+
+  function trainingForUser(map: Map<number, ClrTrainingStatus>, userId: number): ClrTrainingStatus {
+    return map.get(Number(userId)) ?? clrTrainingStatus(0);
+  }
+
   app.get("/api/clr-profiles", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const period = (req.query.period as string) || "month";
     const { startDate, endDate } = resolveNamedPeriod(period, tzFromRequest(req, storageExtra.getRawSqlite()));
     try {
+      const trainingByUser = clrTrainingByUser(Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1);
       const rows = clrRoster().map((u) => {
         const m = clrMetrics(u.id, startDate, endDate);
         return {
           userId: u.id,
           name: u.name,
+          ...trainingForUser(trainingByUser, u.id),
           email: u.email,
           role: u.role,
           isManager: !!(u.isManager ?? u.is_manager),
@@ -16735,6 +16778,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const { startDate, endDate } = resolveNamedPeriod(period, tz);
     try {
       const db = storageExtra.getRawSqlite();
+      const trainingByUser = clrTrainingByUser(orgId);
       const metrics = clrMetrics(userId, startDate, endDate);
 
       // Per-day trend. Bucketed via maps (not a filter per day) and capped —
@@ -16813,6 +16857,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.json({
         clr: {
           userId: u.id, name: u.name, email: u.email, role: u.role,
+          ...trainingForUser(trainingByUser, u.id),
           isManager: !!(u.isManager ?? u.is_manager),
           excludeFromStats: !!(u.excludeFromStats ?? u.exclude_from_stats),
           startDate: u.startDate ?? u.start_date ?? null,
@@ -16842,6 +16887,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             peerCount: peers.filter((p) => p.activeDays > 0 && p.userId !== userId).length,
             thin: comparisonIsThin(mine),
             minDays: MIN_DAYS_FOR_COMPARISON,
+            trainingWorkdayThreshold: CLR_TRAINING_WORKDAY_THRESHOLD,
           };
         })(),
         // Whole weeks in the window — the client scales WEEKLY goals by this so

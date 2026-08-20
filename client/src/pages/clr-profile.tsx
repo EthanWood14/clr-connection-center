@@ -4,6 +4,7 @@ import { useRoute, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,6 +38,7 @@ type Resp = {
   };
   clr: {
     userId: number; name: string; email: string; role: string; isManager: boolean;
+    activeWorkdays: number; inTraining: boolean;
     excludeFromStats: boolean; startDate: string | null; createdAt: string | null;
     tenureDays: number | null; startDateIsEstimate: boolean;
   };
@@ -164,6 +166,7 @@ export default function ClrProfile() {
               <div>
                 <h1 className="text-2xl font-bold text-white flex items-center gap-2">
                   {data.clr.name}
+                  <ClrTrainingBadge inTraining={data.clr.inTraining} activeWorkdays={data.clr.activeWorkdays} className="border-sky-400/50 bg-sky-400/15 text-sky-100" />
                   {data.clr.isManager && <Badge className="bg-white/15 text-white border-0 text-[10px]">Manager</Badge>}
                   {data.clr.excludeFromStats && <Badge className="bg-white/15 text-white border-0 text-[10px]">Non-counted</Badge>}
                 </h1>

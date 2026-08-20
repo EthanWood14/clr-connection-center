@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.91.3",
+    headline: "New CLRs are clearly marked while they complete their first 20 business workdays.",
+    items: [
+      { text: "Every C3 stats view now labels CLRs with fewer than 20 completed business workdays as In training.", audience: "manager" },
+      { text: "In-training CLRs remain visible with their full results, but they are excluded from the manager dashboard's rolling team averages until day 20.", audience: "manager" },
+    ],
+  },
+  {
     version: "3.91.2",
     headline: "There is no longer a limit on who can be marked as needing transfers.",
     items: [

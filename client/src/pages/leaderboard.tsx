@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { TimeRangeToggle, TimeRange, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -38,7 +39,10 @@ function MedalCard({ entry, rank }: { entry: any; rank: number }) {
               {initials}
             </div>
             <div>
-              <p className="font-semibold text-sm">{entry.name}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="font-semibold text-sm">{entry.name}</p>
+                <ClrTrainingBadge inTraining={entry.inTraining} activeWorkdays={entry.activeWorkdays} />
+              </div>
               <p className="text-xs text-muted-foreground">Rank #{rank}</p>
             </div>
           </div>
@@ -83,7 +87,10 @@ function LeaderboardRow({ entry, rank }: { entry: any; rank: number }) {
       <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary flex-shrink-0">
         {initials}
       </div>
-      <p className="flex-1 text-sm font-medium">{entry.name}</p>
+      <div className="flex-1 flex items-center gap-1.5 min-w-0">
+        <p className="text-sm font-medium truncate">{entry.name}</p>
+        <ClrTrainingBadge inTraining={entry.inTraining} activeWorkdays={entry.activeWorkdays} />
+      </div>
       <div className="flex items-center gap-4 text-sm text-right">
         <div className="w-16">
           <p className="font-bold text-green-600 dark:text-green-400">{entry.transfers}</p>
@@ -148,7 +155,10 @@ function IndividualStats({ clr, periods, range, onRangeChange }: { clr: any; per
               {initials}
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-bold">{clr.name}</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold">{clr.name}</h2>
+                <ClrTrainingBadge inTraining={clr.inTraining} activeWorkdays={clr.activeWorkdays} />
+              </div>
               <p className="text-xs text-muted-foreground">{clr.role === "admin" ? "Admin / CLR" : "CLR Assistant"}</p>
             </div>
             <div className="grid grid-cols-3 gap-4 text-center">
@@ -296,6 +306,7 @@ export default function TeamStats() {
     : leaderboard.filter((e: any) => String(e.assistantId) === selectedClrId);
 
   const selectedClr = clrs.find((c: any) => String(c.id) === selectedClrId);
+  const selectedLeaderboardClr = leaderboard.find((c: any) => String(c.assistantId ?? c.userId) === selectedClrId);
 
   const top3 = filteredLeaderboard.slice(0, 3);
   const rest = filteredLeaderboard.slice(3);
@@ -307,14 +318,15 @@ export default function TeamStats() {
   const allCLRNames: string[] = [];
   for (const p of periods) {
     for (const c of p.clrStats ?? []) {
-      if (!allCLRNames.includes(c.name)) allCLRNames.push(c.name);
+      const statsName = c.inTraining ? `${c.name} · In training` : c.name;
+      if (!allCLRNames.includes(statsName)) allCLRNames.push(statsName);
     }
   }
   const trendData = periods.map((p: any) => {
     const row: any = { label: p.label };
-    for (const name of allCLRNames) {
-      const clr = (p.clrStats ?? []).find((c: any) => c.name === name);
-      row[name] = clr?.transfers ?? 0;
+    for (const statsName of allCLRNames) {
+      const clr = (p.clrStats ?? []).find((c: any) => (c.inTraining ? `${c.name} · In training` : c.name) === statsName);
+      row[statsName] = clr?.transfers ?? 0;
     }
     return row;
   });
@@ -368,7 +380,7 @@ export default function TeamStats() {
       {selectedClrId !== "all" && selectedClr ? (
         histLoading
           ? <div className="space-y-4">{[0,1,2].map(i => <Skeleton key={i} className="h-56" />)}</div>
-          : <IndividualStats clr={selectedClr} periods={periods} range={trendRange} onRangeChange={handleRangeChange} />
+          : <IndividualStats clr={{ ...selectedClr, ...selectedLeaderboardClr }} periods={periods} range={trendRange} onRangeChange={handleRangeChange} />
       ) : (
         <Tabs defaultValue="current">
           <TabsList className="mb-4">

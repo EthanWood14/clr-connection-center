@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { ArrowUpIcon, ArrowDownIcon, MinusIcon, ArrowUpDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
@@ -57,7 +58,7 @@ interface StatsResponse {
   previous: { calls: number; callToolsCalls: number; transfers: number; appointments: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number };
   daily: Array<{ date: string; calls: number; callToolsCalls: number; transfers: number; appointments: number; fellThrough: number; transferRate: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number }>;
   breakdown: Record<string, number>;
-  perClr: Array<{ userId: number; name: string; calls: number; additionalCalls?: number; callToolsCalls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
+  perClr: Array<{ userId: number; name: string; activeWorkdays: number; inTraining: boolean; calls: number; additionalCalls?: number; callToolsCalls: number; messages?: number; transfers: number; appointments: number; fellThrough: number; deferrals: number; transferRate: number; contactsReached?: number; dncHits?: number; callToolsContacts: number; callToolsConversations: number; callToolsActiveSeconds: number; transfersGoal?: number; callsGoal?: number; appointmentsGoal?: number; goalSource?: "individual" | "default" }>;
 }
 
 function formatDayLabel(iso: string) {
@@ -205,6 +206,11 @@ export default function TeamStats() {
   }
 
   const showClrComparison = isAdmin && effectiveClr === "all";
+  const trainingById = new Map(data.perClr.map((row) => [row.userId, row]));
+  const comparisonRows = data.perClr.map((row) => ({
+    ...row,
+    statsName: row.inTraining ? `${row.name} · In training` : row.name,
+  }));
 
   return (
     <div className="container mx-auto p-4 lg:p-6 space-y-6" data-testid="page-team-stats">
@@ -256,7 +262,9 @@ export default function TeamStats() {
               <SelectContent>
                 <SelectItem value="all">All CLRs</SelectItem>
                 {clrOptions.map(u => (
-                  <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                  <SelectItem key={u.id} value={String(u.id)}>
+                    {u.name}{trainingById.get(u.id)?.inTraining ? " · In training" : ""}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -391,11 +399,11 @@ export default function TeamStats() {
               <p className="text-sm text-muted-foreground py-12 text-center">No CLR data.</p>
             ) : (
               <ResponsiveContainer width="100%" height={Math.max(300, data.perClr.length * 50)}>
-                <BarChart data={data.perClr} layout="vertical" margin={{ top: 8, right: 16, left: 16, bottom: 0 }}>
+                <BarChart data={comparisonRows} layout="vertical" margin={{ top: 8, right: 16, left: 16, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis xAxisId="calls" type="number" orientation="top" tick={{ fontSize: 10 }} allowDecimals={false} stroke={COLORS.calls} />
                   <XAxis xAxisId="small" type="number" orientation="bottom" tick={{ fontSize: 10 }} allowDecimals={false} stroke={COLORS.transfers} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                  <YAxis type="category" dataKey="statsName" tick={{ fontSize: 11 }} width={150} />
                   <Tooltip contentStyle={{ backgroundColor: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar xAxisId="small" dataKey="transfers" name="Transfers" fill={COLORS.transfers} />
@@ -467,7 +475,12 @@ export default function TeamStats() {
                     onClick={() => isAdmin && setClrFilter(String(row.userId))}
                     data-testid={`row-clr-${row.userId}`}
                   >
-                    <td className="px-4 py-2.5 font-medium">{row.name}</td>
+                    <td className="px-4 py-2.5 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {row.name}
+                        <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
+                      </span>
+                    </td>
                     <td className="px-4 py-2.5">{row.calls}</td>
                     <td className="px-4 py-2.5 text-cyan-700 dark:text-cyan-300">{row.callToolsContacts ?? 0}</td>
                     <td className="px-4 py-2.5 text-amber-700 dark:text-amber-300">{row.callToolsConversations ?? 0}</td>

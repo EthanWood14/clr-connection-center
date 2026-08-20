@@ -464,7 +464,10 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
     queryFn: () => fetch(`/api/analytics/history?range=${trendRange}`).then(r => r.json()),
   });
   const periods = shiftWeekendBucketsToMonday(history?.periods ?? []);
-  const leaderboard = leaderboardData?.leaderboard ?? [];
+  const leaderboard = (leaderboardData?.leaderboard ?? []).map((row: any) => ({
+    ...row,
+    statsName: row.inTraining ? `${row.name} · In training` : row.name,
+  }));
   const pieData = stats?.outcomesByType
     ? Object.entries(stats.outcomesByType).map(([key, val]) => ({ name: OUTCOME_LABELS[key] || key, value: val as number }))
     : [];
@@ -513,7 +516,7 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={leaderboard.slice(0, 5)} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
                     <XAxis type="number" tick={{ fontSize: 11 }} />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={90} />
+                    <YAxis dataKey="statsName" type="category" tick={{ fontSize: 11 }} width={130} />
                     <Tooltip />
                     <Bar dataKey="transfers" fill="#01696f" radius={[0, 4, 4, 0]} name="Transfers" />
                   </BarChart>

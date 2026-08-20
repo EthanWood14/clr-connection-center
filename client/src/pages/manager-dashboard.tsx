@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -68,7 +69,7 @@ type RangeBlock = {
   fellThroughReasons: { label: string; count: number }[];
   topLos: { id: number; name: string; transfers: number }[];
   leaderboard: {
-    userId: number; name: string;
+    userId: number; name: string; activeWorkdays: number; inTraining: boolean;
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; conversionRate: number;
     callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
@@ -76,8 +77,8 @@ type RangeBlock = {
     callToTransferPct: number | null;
   }[];
   textTransfersTotal?: number;
-  heatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
-  callsHeatmap: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] };
+  heatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
+  callsHeatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
   topStates: { state: string; transfers: number }[];
   statesDiagnostics?: {
     phonesTotal: number;
@@ -90,6 +91,8 @@ type RangeBlock = {
     series: {
       userId: number;
       name: string;
+      activeWorkdays: number;
+      inTraining: boolean;
       transfers: number[];
       appointments: number[];
       fellThrough: number[];
@@ -120,7 +123,7 @@ type ManagerData = {
     totals: Record<string, number>;
     checklistGaps: { key: string; label: string; no: string[] }[];
     extraWork?: { key: string; label: string; yes: string[] }[];
-    rows: { userId: number; name: string; email: string; submitted: boolean; submittedAt: string | null;
+    rows: { userId: number; name: string; email: string; activeWorkdays: number; inTraining: boolean; submitted: boolean; submittedAt: string | null;
             late?: boolean; checklist?: Record<string, boolean | null> | null;
             calls?: number; messages?: number; conversations?: number; transfers?: number;
             appointments?: number; notes?: string | null; losCalled?: number }[];
@@ -259,7 +262,12 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
             {list.map((r, idx) => (
               <tr key={r.userId} className="border-t border-border">
                 <td className="px-3 py-2 text-muted-foreground tabular-nums">{idx + 1}</td>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{r.name}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1.5">
+                    {r.name}
+                    <ClrTrainingBadge inTraining={r.inTraining} activeWorkdays={r.activeWorkdays} />
+                  </span>
+                </td>
                 {cols.map((c, ci) => (
                   <td
                     key={c.key}
@@ -563,7 +571,7 @@ export default function ManagerDashboard() {
     });
   // Chart data — stacked %s, ordered same as compareRows. Recharts uses one row per CLR.
   const compareChartData = compareRows.map(r => ({
-    name: r.name,
+    name: r.inTraining ? `${r.name} · In training` : r.name,
     transferPct: r.transferPct,
     appointmentPct: r.appointmentPct,
     fellThroughPct: r.fellThroughPct,
@@ -583,6 +591,8 @@ export default function ManagerDashboard() {
     .map((s: any) => ({
       userId: s.userId,
       name: s.name,
+      activeWorkdays: s.activeWorkdays,
+      inTraining: s.inTraining,
       total: (s[clrTrendMetric] as number[] | undefined)?.reduce((a, b) => a + (b || 0), 0) ?? 0,
     }))
     .sort((a: any, b: any) => b.total - a.total);
@@ -607,8 +617,9 @@ export default function ManagerDashboard() {
     // folding that in drags the benchmark down until it measures attendance
     // instead of performance. A real zero (someone in the office who logged
     // calls but got no transfers) still counts.
-    let teamSum = 0, teamN = 0, teamAbsent = 0;
+    let teamSum = 0, teamN = 0, teamAbsent = 0, teamTrainingExcluded = 0;
     for (const s of clrTrendSeries) {
+      if (s.inTraining) { teamTrainingExcluded++; continue; }
       const calls = ((s as any).calls as number[] | undefined)?.[i] ?? 0;
       const transfers = ((s as any).transfers as number[] | undefined)?.[i] ?? 0;
       if (calls === 0 && transfers === 0) { teamAbsent++; continue; }
@@ -619,6 +630,7 @@ export default function ManagerDashboard() {
     row.__mean = teamN > 0 ? teamSum / teamN : 0; // avg metric per WORKING CLR
     row.__worked = teamN;
     row.__absent = teamAbsent;
+    row.__trainingExcluded = teamTrainingExcluded;
     return row;
   });
   // Overlay a trailing rolling average of the per-day mean (window in business days,
@@ -920,7 +932,10 @@ export default function ManagerDashboard() {
             <Card key={c.userId}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <div className="font-semibold truncate brand-text">{c.name}</div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="font-semibold truncate brand-text">{c.name}</div>
+                    <ClrTrainingBadge inTraining={c.inTraining} activeWorkdays={c.activeWorkdays} />
+                  </div>
                   {c.completionPct != null && (
                     <Badge variant="outline" className="tabular-nums" style={{
                       borderColor: c.completionPct >= 80 ? GREEN : c.completionPct >= 50 ? AMBER : RED,
@@ -1030,6 +1045,7 @@ export default function ManagerDashboard() {
                           {idx + 1}
                         </span>
                         <span className="font-medium">{row.name ?? "—"}</span>
+                        <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
                       </div>
                     </td>
                     <td className="text-right px-2 py-2 tabular-nums font-semibold" style={{ color: GREEN }}>{row.transfers ?? 0}</td>
@@ -1111,6 +1127,7 @@ export default function ManagerDashboard() {
                       >
                         {t.name}
                         {t.total > 0 ? <span className="ml-1 opacity-80">· {t.total}</span> : null}
+                        {t.inTraining ? <span className="ml-1 opacity-90">· In training</span> : null}
                       </button>
                     );
                   })}
@@ -1158,8 +1175,9 @@ export default function ManagerDashboard() {
                         const row = payload?.[0]?.payload;
                         const worked = row?.__worked;
                         const absent = row?.__absent ?? 0;
+                        const training = row?.__trainingExcluded ?? 0;
                         if (worked == null) return label;
-                        return `${label} · ${worked} working${absent ? `, ${absent} out` : ""}`;
+                        return `${label} · ${worked} averaged${absent ? `, ${absent} out` : ""}${training ? `, ${training} in training excluded` : ""}`;
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -1173,7 +1191,7 @@ export default function ManagerDashboard() {
                           stroke={colorForId(s.userId)}
                           strokeWidth={2}
                           dot={false}
-                          name={s.name}
+                          name={s.inTraining ? `${s.name} · In training` : s.name}
                         />
                       ))}
                     {clrTrendShowAvg && (
@@ -1184,7 +1202,7 @@ export default function ManagerDashboard() {
                         strokeWidth={2.5}
                         strokeDasharray="6 4"
                         dot={false}
-                        name={`Avg per working CLR · ${clrTrendWindow}d`}
+                        name={`Avg per non-training working CLR · ${clrTrendWindow}d`}
                       />
                     )}
                   </LineChart>
@@ -1193,7 +1211,7 @@ export default function ManagerDashboard() {
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
-              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per CLR across the whole team.` : ""}
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. In-training CLRs stay visible but are excluded from that average.` : ""}
             </p>
           </CardContent>
         </Card>
@@ -1291,7 +1309,12 @@ export default function ManagerDashboard() {
                       {compareRows.map((row, idx) => (
                         <tr key={row.userId} className="border-t hover:bg-muted/40">
                           <td className="px-3 py-2 tabular-nums text-muted-foreground">{idx + 1}</td>
-                          <td className="px-3 py-2 font-medium brand-text">{row.name ?? "—"}</td>
+                          <td className="px-3 py-2 font-medium brand-text">
+                            <span className="inline-flex items-center gap-1.5">
+                              {row.name ?? "—"}
+                              <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
+                            </span>
+                          </td>
                           <td className="text-right px-3 py-2 tabular-nums">
                             <span className="font-semibold" style={{ color: GREEN }}>{row.transferPct}%</span>
                             <span className="ml-1 text-xs text-muted-foreground">({row.transfers})</span>
@@ -1387,6 +1410,7 @@ export default function ManagerDashboard() {
                     <tr key={r.userId} className="border-b last:border-0 align-top hover:bg-muted/30">
                       <td className="px-2 py-1.5 font-medium whitespace-nowrap">
                         {r.name}
+                        <ClrTrainingBadge inTraining={r.inTraining} activeWorkdays={r.activeWorkdays} className="ml-1" />
                         {r.late && <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">late</span>}
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{r.calls ?? 0}</td>
@@ -1441,6 +1465,7 @@ export default function ManagerDashboard() {
                       <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: AMBER }} />
                     )}
                     <span className="text-sm truncate">{row.name}</span>
+                    <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
                   </div>
                   <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1.5">
                     {row.submitted && row.submittedAt
@@ -1722,7 +1747,7 @@ function HeatmapCard({
 }: {
   title: string;
   tone: "navy" | "green";
-  block: { dates: string[]; rows: { userId: number; name: string; cells: number[] }[] } | undefined;
+  block: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] } | undefined;
   isDark: boolean;
   valueLabel: string;
 }) {
@@ -1788,7 +1813,10 @@ function HeatmapCard({
             {block.rows.map(row => (
               <tr key={row.userId}>
                 <td className="pr-3 py-0.5 truncate max-w-[140px] sticky left-0 bg-card font-medium brand-text">
-                  {row.name}
+                  <span className="inline-flex items-center gap-1.5">
+                    {row.name}
+                    <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
+                  </span>
                 </td>
                 {row.cells.map((v, i) => {
                   const bucket = intensityBucket(v, max);

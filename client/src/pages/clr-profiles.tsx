@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight } from "lucide-react";
@@ -34,6 +35,7 @@ export function fmtTenure(days: number | null) {
 
 type Row = {
   userId: number; name: string; role: string; isManager: boolean; excludeFromStats: boolean;
+  activeWorkdays: number; inTraining: boolean;
   startDate: string | null; createdAt: string | null; tenureDays: number | null; startDateIsEstimate: boolean;
   metrics: { calls: number; transfers: number; appointments: number; transferRate: number };
 };
@@ -104,6 +106,7 @@ export default function ClrProfiles() {
                 <div className="min-w-0">
                   <p className="font-semibold truncate flex items-center gap-1.5">
                     {c.name}
+                    <ClrTrainingBadge inTraining={c.inTraining} activeWorkdays={c.activeWorkdays} />
                     {c.excludeFromStats && <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">Non-counted</Badge>}
                   </p>
                   <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">

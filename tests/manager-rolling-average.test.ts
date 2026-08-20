@@ -36,7 +36,8 @@ test("a day nobody worked does not drag the rolling window", () => {
 });
 
 test("the chart says what the average is over", () => {
-  assert.match(dash, /Avg per working CLR/, "the legend must not still claim it is per CLR");
+  assert.match(dash, /Avg per non-training working CLR/, "the legend must identify the eligible working group");
   assert.match(dash, /labelFormatter=/, "the tooltip must show how many were working");
-  assert.match(dash, /\$\{worked\} working/);
+  assert.match(dash, /\$\{worked\} averaged/);
+  assert.match(dash, /in training excluded/);
 });
