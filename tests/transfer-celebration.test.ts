@@ -14,6 +14,9 @@ const queryClient = readFileSync(join(root, "client/src/lib/queryClient.ts"), "u
 test("only the browser that successfully logs a transfer receives the celebration", () => {
   assert.match(app, /<TransferCelebration \/>/);
   assert.match(routes, /celebrateTransfer: true/);
+  assert.match(routes, /dailyTotal/);
+  assert.match(routes, /monthlyTotal/);
+  assert.match(routes, /isDailyLeader: dailyTotal > maxOther/);
   assert.match(queryClient, /window\.dispatchEvent\(new CustomEvent\("c3-transfer-logged"/);
   assert.match(transfer, /window\.addEventListener\(TRANSFER_CELEBRATION_EVENT/);
   assert.doesNotMatch(routes, /\/api\/transfer-celebrations/);
@@ -34,5 +37,10 @@ test("the initiating CLR gets a full-screen animated and audible celebration", (
   assert.match(overlay, /celebration-shine/);
   assert.match(overlay, /dramatic \? 8500 : 6000/);
   assert.match(overlay, /const multiplier = dramatic \? 8 : 1/);
+  assert.match(transfer, /dailyTotal=\{current\?\.dailyTotal\}/);
+  assert.match(transfer, /monthlyTotal=\{current\?\.monthlyTotal\}/);
+  assert.match(transfer, /showRaceCar=\{!!current\?\.isDailyLeader\}/);
+  assert.match(overlay, /celebration-car-race/);
+  assert.match(overlay, /DAILY LEADER/);
   assert.match(overlay, /prefers-reduced-motion/);
 });

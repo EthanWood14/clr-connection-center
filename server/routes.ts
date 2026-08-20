@@ -9916,11 +9916,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json(enriched);
   });
 
-  const transferCelebration = (loName: string | null, borrowerName: string | null) => ({
-    headline: "🎉 Transfer logged!",
-    message: [borrowerName, loName ? `→ ${loName}` : null, "Keep the momentum going!"]
-      .filter(Boolean).join(" — "),
-  });
+  const transferCelebration = (assistantId: number, date: string, loName: string | null, borrowerName: string | null) => {
+    const sqlite = storageExtra.getRawSqlite();
+    const orgRow = sqlite.prepare(`SELECT org_id FROM lead_outcomes WHERE assistant_id=? AND date=? AND outcome_type='transfer' ORDER BY id DESC LIMIT 1`).get(assistantId, date) as any;
+    const orgId = Number(orgRow?.org_id ?? 1) || 1;
+    const daily = sqlite.prepare(`SELECT COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND assistant_id=? AND date=? AND outcome_type='transfer'`).get(orgId, assistantId, date) as any;
+    const month = String(date).slice(0, 7);
+    const monthly = sqlite.prepare(`SELECT COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND assistant_id=? AND substr(date,1,7)=? AND outcome_type='transfer'`).get(orgId, assistantId, month) as any;
+    const leaders = sqlite.prepare(`SELECT assistant_id,COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND date=? AND outcome_type='transfer' GROUP BY assistant_id ORDER BY total DESC,assistant_id ASC`).all(orgId, date) as any[];
+    const dailyTotal = Number(daily?.total ?? 0);
+    const monthlyTotal = Number(monthly?.total ?? 0);
+    const dailyRank = Math.max(1, leaders.findIndex((row: any) => Number(row.assistant_id) === assistantId) + 1);
+    const maxOther = Math.max(0, ...leaders.filter((row: any) => Number(row.assistant_id) !== assistantId).map((row: any) => Number(row.total ?? 0)));
+    return {
+      headline: dailyTotal > maxOther ? "🏁 You took the lead!" : "🎉 Transfer logged!",
+      message: [borrowerName, loName ? `→ ${loName}` : null, "Keep the momentum going!"]
+        .filter(Boolean).join(" — "),
+      dailyTotal,
+      monthlyTotal,
+      dailyRank,
+      isDailyLeader: dailyTotal > maxOther,
+    };
+  };
 
   app.post("/api/outcomes", (req: any, res) => {
     try {
@@ -10029,7 +10046,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         setImmediate(() => syncTransferToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-transfer] sync failed:", e?.message ?? e)));
       }
       res.json(outcome.outcomeType === "transfer"
-        ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(lo?.fullName ?? null, outcome.borrowerName ?? null) }
+        ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(Number(outcome.assistantId), String(outcome.date), lo?.fullName ?? null, outcome.borrowerName ?? null) }
         : outcome);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -10084,7 +10101,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       audit({ userId, userName: reviverName, action: "resurrect", entityType: "outcome", entityId: id, entityLabel: existing.borrower_name ?? null, details: JSON.stringify({ from: existing.assistant_id, to: userId, transferType }) });
     } catch {}
 
-    res.json({ ...updated, celebrateTransfer: true, transferCelebration: transferCelebration(lo?.fullName ?? null, existing.borrower_name ?? null) });
+    res.json({ ...updated, celebrateTransfer: true, transferCelebration: transferCelebration(userId, String((updated as any).date), lo?.fullName ?? null, existing.borrower_name ?? null) });
   });
 
   app.patch("/api/outcomes/:id", requireAuth, (req: any, res) => {
@@ -10219,7 +10236,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const becameTransfer = !!outcome && body.outcomeType === "transfer" && existing.outcome_type !== "transfer";
     const celebrationLo = becameTransfer && outcome?.loId ? (storage.getLoanOfficerById(outcome.loId) as any) : null;
     res.json(becameTransfer
-      ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(celebrationLo?.fullName ?? null, outcome?.borrowerName ?? null) }
+      ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(Number(outcome?.assistantId), String(outcome?.date), celebrationLo?.fullName ?? null, outcome?.borrowerName ?? null) }
       : outcome);
   });
 

@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.96.0",
+    headline: "Transfer celebrations now show your totals—and race leaders across the screen.",
+    items: [
+      { text: "Every transfer celebration shows your updated daily and monthly transfer totals immediately after the transfer is saved." },
+      { text: "When your transfer puts you in first place for the day—or you extend your lead—a race car speeds across the screen with a Daily Leader banner." },
+    ],
+  },
+  {
     version: "3.95.1",
     headline: "Task assignments and overdue deadlines are much harder to miss.",
     items: [

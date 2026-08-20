@@ -179,6 +179,9 @@ export function GoalCelebration({
   subline = "You hit every target this week. Keep the momentum going.",
   buttonLabel = "Keep going",
   variant = "goal",
+  dailyTotal,
+  monthlyTotal,
+  showRaceCar = false,
 }: {
   show: boolean;
   onClose: () => void;
@@ -186,6 +189,9 @@ export function GoalCelebration({
   subline?: string;
   buttonLabel?: string;
   variant?: "goal" | "transfer";
+  dailyTotal?: number;
+  monthlyTotal?: number;
+  showRaceCar?: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
   const dramatic = variant === "transfer";
@@ -232,6 +238,7 @@ export function GoalCelebration({
         {dramatic && <div className="celebration-rays" aria-hidden="true" />}
         {dramatic && <div className="celebration-orbit celebration-orbit-one" aria-hidden="true" />}
         {dramatic && <div className="celebration-orbit celebration-orbit-two" aria-hidden="true" />}
+        {dramatic && showRaceCar && <div className="celebration-race" aria-hidden="true"><div className="celebration-speed-lines" /><div className="celebration-car"><span className="celebration-leader-flag">DAILY LEADER</span><span className="celebration-car-emoji">🏎️</span><span className="celebration-smoke">💨</span></div></div>}
         <div
           onClick={(e) => e.stopPropagation()}
           className={`relative w-[92%] shadow-2xl ${dramatic ? "max-w-2xl rounded-[32px] celebration-transfer-card" : "max-w-md rounded-2xl"}`}
@@ -280,6 +287,7 @@ export function GoalCelebration({
             {headline}
           </h2>
           <p className={dramatic ? "mx-auto mb-8 max-w-lg text-base font-medium leading-relaxed text-white/85 sm:text-lg" : "mb-6 text-sm text-white/80"}>{subline}</p>
+          {dramatic && dailyTotal != null && monthlyTotal != null && <div className="mx-auto mb-8 grid max-w-md grid-cols-2 gap-3"><div className="rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3"><div className="text-3xl font-black text-white sm:text-4xl">{dailyTotal}</div><div className="mt-1 text-[10px] font-bold uppercase tracking-[.2em] text-amber-200/75">Transfers today</div></div><div className="rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3"><div className="text-3xl font-black text-white sm:text-4xl">{monthlyTotal}</div><div className="mt-1 text-[10px] font-bold uppercase tracking-[.2em] text-violet-200/75">This month</div></div></div>}
           <Button onClick={onClose} className={dramatic ? "h-12 rounded-full border border-amber-200/30 bg-gradient-to-r from-amber-300 to-yellow-500 px-9 font-black text-slate-950 shadow-[0_12px_35px_rgba(248,196,97,.3)] hover:from-amber-200 hover:to-yellow-400" : "border-0 bg-white/10 text-white hover:bg-white/20"}>
             {buttonLabel}
           </Button>
@@ -306,12 +314,21 @@ export function GoalCelebration({
         .celebration-transfer-card { overflow:hidden; }
         .celebration-transfer-card::before { content:""; position:absolute; inset:-2px; border-radius:inherit; padding:2px; background:linear-gradient(115deg,#f8c461,transparent 35%,#a78bfa 65%,#f8c461); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; pointer-events:none; }
         .celebration-shine { position:absolute; inset:-80% -30%; background:linear-gradient(105deg,transparent 42%,rgba(255,255,255,.16) 49%,transparent 56%); transform:translateX(-55%); animation:celebration-shine 2.2s ease-in-out .45s both; pointer-events:none; }
+        .celebration-race { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:2; }
+        .celebration-speed-lines { position:absolute; left:0; right:0; bottom:15%; height:5px; background:linear-gradient(90deg,transparent,rgba(248,196,97,.8),transparent); box-shadow:0 18px 0 rgba(255,255,255,.14),0 -18px 0 rgba(167,139,250,.28); transform:scaleX(0); animation:celebration-track-flash 1.8s ease-out .55s both; }
+        .celebration-car { position:absolute; bottom:9%; left:-35vw; display:flex; align-items:center; filter:drop-shadow(0 12px 18px rgba(0,0,0,.55)); animation:celebration-car-race 2.4s cubic-bezier(.16,.8,.2,1) .65s both; }
+        .celebration-car-emoji { font-size:clamp(72px,12vw,150px); transform:scaleX(-1); }
+        .celebration-smoke { font-size:clamp(38px,7vw,82px); opacity:.72; animation:celebration-smoke-pulse .28s ease-in-out infinite alternate; }
+        .celebration-leader-flag { position:absolute; bottom:82%; left:22%; white-space:nowrap; border:2px solid #f8c461; border-radius:9999px; background:#0f182d; padding:7px 13px; color:#f8c461; font-size:11px; font-weight:900; letter-spacing:.18em; box-shadow:0 8px 28px rgba(0,0,0,.45); }
         @keyframes celebration-rays-spin { to { transform:rotate(360deg); } }
         @keyframes celebration-orbit-pulse { 0% { transform:scale(.68); opacity:0; } 35% { opacity:.8; } 100% { transform:scale(1.12); opacity:0; } }
         @keyframes celebration-shine { to { transform:translateX(55%); } }
+        @keyframes celebration-track-flash { 0% { transform:scaleX(0); opacity:0; } 25% { opacity:1; } 100% { transform:scaleX(1); opacity:0; } }
+        @keyframes celebration-car-race { 0% { transform:translateX(0) scale(.72); } 42% { transform:translateX(62vw) scale(1.06) rotate(-2deg); } 70% { transform:translateX(88vw) scale(1.12) rotate(1deg); } 100% { transform:translateX(155vw) scale(.86); } }
+        @keyframes celebration-smoke-pulse { to { transform:scale(1.25) translateX(-8px); opacity:.35; } }
         @media (prefers-reduced-motion: reduce) {
           [role="dialog"] > div { animation: none !important; }
-          .celebration-rays, .celebration-orbit, .celebration-shine { animation:none !important; }
+          .celebration-rays, .celebration-orbit, .celebration-shine, .celebration-race { animation:none !important; }
         }
       `}</style>
     </>

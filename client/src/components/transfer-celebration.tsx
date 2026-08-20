@@ -4,7 +4,7 @@ import { GoalCelebration } from "@/components/goal-celebration";
 
 export const TRANSFER_CELEBRATION_EVENT = "c3-transfer-logged";
 
-type TransferCelebrationDetail = { headline?: string; message?: string };
+type TransferCelebrationDetail = { headline?: string; message?: string; dailyTotal?: number; monthlyTotal?: number; dailyRank?: number; isDailyLeader?: boolean };
 let audioCtx: AudioContext | null = null;
 
 function playChime() {
@@ -57,6 +57,9 @@ export function TransferCelebration() {
       subline={current?.message ?? "You landed a transfer. Keep the momentum going!"}
       buttonLabel="Keep it rolling"
       variant="transfer"
+      dailyTotal={current?.dailyTotal}
+      monthlyTotal={current?.monthlyTotal}
+      showRaceCar={!!current?.isDailyLeader}
     />
   );
 }
