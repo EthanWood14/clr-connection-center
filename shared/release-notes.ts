@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.92.1",
+    headline: "Managers can reverse a time-off approval without deleting the request.",
+    items: [
+      { text: "An approved team time-off request now has a Deny approved time off action with confirmation, an optional note, requester notification, and a complete audit trail.", audience: "manager" },
+    ],
+  },
+  {
     version: "3.92.0",
     headline: "Managers can now understand EOD reporting patterns across the whole team in one place.",
     items: [

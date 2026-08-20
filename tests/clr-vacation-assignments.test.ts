@@ -67,3 +67,20 @@ test("vacation scheduling is wired into every daily assignment path", () => {
   assert.match(page, /Schedule CLR Vacation/);
   assert.match(page, /return automatically/);
 });
+
+test("managers can reverse approved time off without deleting its history", () => {
+  const routes = readFileSync(new URL("../server/routes.ts", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../client/src/pages/time-off.tsx", import.meta.url), "utf8");
+  const endpoint = routes.slice(
+    routes.indexOf('app.patch("/api/time-off/:id"'),
+    routes.indexOf('app.delete("/api/time-off/:id"'),
+  );
+
+  assert.match(endpoint, /previousStatus === "approved" && status === "denied"/);
+  assert.match(endpoint, /restoresDailyAssignmentEligibility: approvalReversed/);
+  assert.match(endpoint, /Time off approval reversed/);
+  assert.match(endpoint, /buildTimeOffDecisionEmail\(row,[\s\S]*status\)/);
+  assert.match(page, /button-deny-approved-timeoff-/);
+  assert.match(page, /Deny this approved time off\?/);
+  assert.match(page, /confirm-deny-approved-timeoff/);
+});

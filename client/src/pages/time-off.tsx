@@ -9,6 +9,16 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { CalendarOff, Check, X, Clock, Trash2, Plane, CalendarDays, Info } from "lucide-react";
@@ -125,6 +135,8 @@ export default function TimeOff() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
   const [forUserId, setForUserId] = useState("");
+  const [denyApprovedTarget, setDenyApprovedTarget] = useState<TimeOffRequest | null>(null);
+  const [denyApprovedNote, setDenyApprovedNote] = useState("");
 
   const { data: allUsers = [] } = useQuery<any[]>({
     queryKey: ["/api/users"],
@@ -171,7 +183,9 @@ export default function TimeOff() {
     mutationFn: (v: { id: number; status: "approved" | "denied"; reviewerNote: string }) =>
       apiRequest("PATCH", "/api/time-off/" + v.id, { status: v.status, reviewerNote: v.reviewerNote }),
     onSuccess: (_d, v) => {
-      toast({ title: "Request " + v.status });
+      toast({ title: v.status === "denied" ? "Time off denied" : "Request approved" });
+      setDenyApprovedTarget(null);
+      setDenyApprovedNote("");
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -402,6 +416,21 @@ export default function TimeOff() {
                         </div>
                       </div>
                     )}
+                    {r.status === "approved" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 gap-1"
+                        onClick={() => {
+                          setDenyApprovedTarget(r);
+                          setDenyApprovedNote("");
+                        }}
+                        disabled={decideMutation.isPending}
+                        data-testid={"button-deny-approved-timeoff-" + r.id}
+                      >
+                        <X className="w-3.5 h-3.5" /> Deny approved time off
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))
@@ -454,6 +483,57 @@ export default function TimeOff() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={!!denyApprovedTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDenyApprovedTarget(null);
+            setDenyApprovedNote("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deny this approved time off?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {denyApprovedTarget
+                ? `${denyApprovedTarget.userName}'s approved time off for ${fmtDate(denyApprovedTarget.startDate)} to ${fmtDate(denyApprovedTarget.endDate)} will be changed to denied. They will become eligible for daily assignments again and will be notified.`
+                : "This approved time off will be changed to denied."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Reason for reversing approval (optional)</label>
+            <Textarea
+              value={denyApprovedNote}
+              onChange={(event) => setDenyApprovedNote(event.target.value)}
+              maxLength={1000}
+              rows={3}
+              placeholder="Add a note for the requester"
+              data-testid="deny-approved-timeoff-note"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={decideMutation.isPending}>Keep approved</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={!denyApprovedTarget || decideMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!denyApprovedTarget) return;
+                decideMutation.mutate({
+                  id: denyApprovedTarget.id,
+                  status: "denied",
+                  reviewerNote: denyApprovedNote,
+                });
+              }}
+              data-testid="confirm-deny-approved-timeoff"
+            >
+              {decideMutation.isPending ? "Saving…" : "Deny time off"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

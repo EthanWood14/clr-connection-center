@@ -7464,6 +7464,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const db = storageExtra.getRawSqlite();
       const existing = db.prepare("SELECT * FROM time_off_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Request not found" });
+      const previousStatus = String(existing.status ?? "pending");
+      const approvalReversed = previousStatus === "approved" && status === "denied";
       db.prepare("UPDATE time_off_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
       const reassignedAssignments = status === "approved"
         ? rebalanceClrVacationAssignments(orgId, Number(existing.user_id), existing.start_date, existing.end_date)
@@ -7475,25 +7477,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
         entityType: "time_off", entityId: id,
         entityLabel: (nameById.get(existing.user_id) ?? "CLR") + " " + existing.start_date + "->" + existing.end_date,
-        details: JSON.stringify({ status, reviewerNote, reassignedAssignments }),
+        details: JSON.stringify({ previousStatus, status, reviewerNote, approvalReversed, reassignedAssignments, restoresDailyAssignmentEligibility: approvalReversed }),
       });
       try {
         (storage as any).createNotification?.({
           userId: existing.user_id,
           type: "time_off",
-          title: "Time off " + status,
-          message: "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : ".") + (reassignedAssignments ? ` ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned.` : ""),
+          title: approvalReversed ? "Time off approval reversed" : "Time off " + status,
+          message: approvalReversed
+            ? "Your previously approved time off for " + existing.start_date + " to " + existing.end_date + " is now denied" + (reviewerNote ? (": " + reviewerNote) : ".") + " You are eligible for daily assignments during those dates again."
+            : "Your time-off request for " + existing.start_date + " to " + existing.end_date + " was " + status + (reviewerNote ? (": " + reviewerNote) : ".") + (reassignedAssignments ? ` ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned.` : ""),
         });
       } catch {}
-      if (status === "approved") {
+      if (status === "approved" || approvalReversed) {
         try {
           const requester = storage.getUserById(existing.user_id) as any;
           const email = requester?.email && String(requester.email).includes("@") ? String(requester.email) : null;
           if (email) {
-            const { subject, html } = buildTimeOffDecisionEmail(row, nameById.get(existing.user_id) ?? "there", "approved");
+            const { subject, html } = buildTimeOffDecisionEmail(row, nameById.get(existing.user_id) ?? "there", status);
             await sendEmail({ to: email, subject, html });
           }
-        } catch (e: any) { console.error("[time-off] approval email failed:", e?.message ?? e); }
+        } catch (e: any) { console.error("[time-off] decision email failed:", e?.message ?? e); }
       }
       res.json(mapTimeOff(row, nameById));
     } catch (e: any) {
