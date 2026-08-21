@@ -24,8 +24,6 @@ export type ShotgunPayload = {
   leads: ShotgunLead[]; readyUsers: Array<{ id: number; name: string; heartbeat_at: string }>;
 };
 
-export const shotgunReadyKey = (userId: number) => `c3-shotgun-ready:${userId}`;
-
 function statusStyle(status: ShotgunLead["status"]) {
   return status === "done" ? "bg-emerald-600" : status === "claimed" ? "bg-blue-600" : status === "offered" ? "bg-amber-500" : "bg-slate-500";
 }
@@ -63,7 +61,7 @@ export default function Shotgun() {
   const payload = data ?? { canManage: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
   const readiness = useMutation({
     mutationFn: (ready: boolean) => apiRequest("POST", "/api/shotgun/readiness", { ready }),
-    onSuccess: (result: any) => { if (user) localStorage.setItem(shotgunReadyKey(user.id), result.isReady ? "1" : "0"); queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
+    onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
   });
   const publish = useMutation({
     mutationFn: () => apiRequest("POST", "/api/shotgun/publish", { leadName, phone, email, source, managerNotes }),

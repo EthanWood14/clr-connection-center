@@ -6,7 +6,6 @@ import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ShotgunPayload } from "@/pages/shotgun";
-import { shotgunReadyKey } from "@/pages/shotgun";
 
 export function ShotgunOfferAlert() {
   const { user } = useAuth();
@@ -21,13 +20,17 @@ export function ShotgunOfferAlert() {
   useEffect(() => { if (!offered) return; const timer = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(timer); }, [offered?.id]);
   useEffect(() => {
     // Shotgun is ON by default for every CLR: a CLR with C3 open is in the
-    // rotation without having to press anything, and only an explicit opt-out
-    // ("0") takes them out of it. The heartbeat still gates liveness, so a
-    // closed laptop stops receiving offers within SHOTGUN_READY_TTL_MS.
-    if (!eligible || !user || localStorage.getItem(shotgunReadyKey(user.id)) === "0") return;
+    // rotation without having to press anything. Whether they are actually in
+    // it is the SERVER's decision — this only reports that C3 is still open, so
+    // it must send `heartbeat`, never `ready`. Gating this on a localStorage
+    // opt-out could not work: the effect does not re-run when that value
+    // changes, so the interval kept beating `ready: true` and undid the opt-out
+    // within ten seconds — and localStorage is per-device, so opting out on a
+    // laptop left a phone quietly re-enrolling them.
+    if (!eligible || !user) return;
     // No invalidate on each beat — the poll above already refetches, and the
     // extra fetch per heartbeat doubled the request rate for no new data.
-    const beat = () => apiRequest("POST", "/api/shotgun/readiness", { ready: true }).catch(() => {});
+    const beat = () => apiRequest("POST", "/api/shotgun/readiness", { heartbeat: true }).catch(() => {});
     void beat(); const timer = setInterval(beat, 10_000); return () => clearInterval(timer);
   }, [eligible, user?.id]);
   const confirm = useMutation({ mutationFn: () => apiRequest("POST", `/api/shotgun/${offered!.id}/confirm`, {}), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });

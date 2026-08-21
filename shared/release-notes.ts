@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.98.2",
+    headline: "Leaving the Shotgun rotation now works, and stays that way.",
+    items: [
+      { text: "Turning off Shotgun was being undone about ten seconds later by the background check that keeps you marked online, so it was effectively impossible to leave the rotation. It now sticks." },
+      { text: "Your choice is saved to your account rather than to one browser, so opting out on your laptop no longer leaves your phone quietly putting you back in." },
+    ],
+  },
+  {
     version: "3.98.1",
     headline: "Shotgun paces itself, and a claimed lead is locked to the CLR who took it.",
     items: [

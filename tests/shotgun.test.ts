@@ -64,9 +64,10 @@ test("the urgent offer alert is global and readiness stays alive while C3 is ope
   assert.match(app, /path="\/shotgun" component=\{Shotgun\}/);
   assert.match(alert, /refetchInterval: 5_000/);
   assert.match(alert, /setInterval\(beat, 10_000\)/);
-  // Shotgun is on by default: only an explicit opt-out ("0") stops the
-  // heartbeat, so any CLR with C3 open is in the rotation already.
-  assert.match(alert, /shotgunReadyKey\(user\.id\)\) === "0"/);
+  // Shotgun is on by default, and the SERVER owns whether a CLR is in the
+  // rotation; the beat may only report that C3 is open.
+  assert.match(alert, /"\/api\/shotgun\/readiness", \{ heartbeat: true \}/);
+  assert.doesNotMatch(alert, /readiness", \{ ready:/, "a heartbeat must never assert readiness");
   assert.match(alert, /I RECEIVED THIS LEAD/);
 });
 
@@ -82,6 +83,11 @@ test("leads remain private to their current CLR and leaving Ready rotates an ope
   assert.match(status, /AND l\.current_assignee_id=\?/,
     "a CLR must not keep another CLR's lead just because it was offered earlier");
   const readiness = routes.slice(routes.indexOf('app.post("/api/shotgun/readiness"'), routes.indexOf('app.post("/api/shotgun/publish"'));
+  // A heartbeat must refresh liveness only. Letting it write is_ready meant
+  // the globally mounted beat re-enrolled a CLR ten seconds after they opted
+  // out, from every open tab, and readiness could not be left at all.
+  assert.match(readiness, /req\.body\?\.heartbeat === true/);
+  assert.match(readiness, /DO UPDATE SET heartbeat_at=excluded\.heartbeat_at,updated_at=excluded\.updated_at/);
   assert.match(readiness, /response='declined'/);
   assert.match(readiness, /advanceShotgun\(now\)/);
 });

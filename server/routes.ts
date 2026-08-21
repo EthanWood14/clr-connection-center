@@ -7244,8 +7244,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
     if (!shotgunUserIsClr(me)) return res.status(403).json({ error: "Only active CLRs can receive Shotgun leads." });
-    const ready = req.body?.ready === true;
     const now = new Date().toISOString();
+
+    // A heartbeat says "C3 is still open", NOT "put me in the rotation". It must
+    // never overwrite is_ready, or it silently undoes an opt-out: the browser
+    // beats every 10s from a globally mounted component, so pressing "no longer
+    // in the rotation" was reverted within ten seconds and could not stick at
+    // all. A CLR with no row yet is in the rotation by default.
+    if (req.body?.heartbeat === true) {
+      shotgunDb().prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,1,?,?)
+        ON CONFLICT(org_id,user_id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at,updated_at=excluded.updated_at`)
+        .run(orgId, userId, now, now);
+      const current = shotgunDb().prepare(`SELECT is_ready FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any;
+      advanceShotgun(now);
+      return res.json({ ok: true, isReady: !!current?.is_ready });
+    }
+
+    // An explicit toggle. This is the authority, and it lives on the server so
+    // it holds across every device the CLR is signed in on.
+    const ready = req.body?.ready === true;
     shotgunDb().prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,?,?,?)
       ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=excluded.is_ready,heartbeat_at=excluded.heartbeat_at,updated_at=excluded.updated_at`)
       .run(orgId, userId, ready ? 1 : 0, ready ? now : null, now);
