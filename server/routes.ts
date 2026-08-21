@@ -7084,6 +7084,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // instances cannot create two owners.
   const SHOTGUN_OFFER_MS = 20_000;
   const SHOTGUN_OFFER_SECONDS = Math.round(SHOTGUN_OFFER_MS / 1000);
+  // How long before the same CLR may be shown the same lead again. The rotation
+  // cycles indefinitely rather than going dormant after one lap, so without a
+  // cooldown an unclaimed lead re-offers every SHOTGUN_OFFER_MS forever: with
+  // three Ready CLRs that is 180 pushes an hour, and with only one Ready CLR the
+  // lead expires and re-offers to them inside the same tick, leaving the
+  // full-screen offer modal permanently open and the rest of C3 unusable.
+  const SHOTGUN_RELAP_COOLDOWN_MS = 5 * 60_000;
   const SHOTGUN_READY_TTL_MS = 35_000;
   const shotgunDb = () => storageExtra.getRawSqlite();
   const shotgunUserIsClr = (user: any) => !!user && !!(
@@ -7144,17 +7151,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // around the Ready pool with no takers there was no candidate left and
       // the lead sat queued forever with nobody looking at it. Ordering by the
       // oldest offer instead keeps the rotation cycling: CLRs who have never
-      // seen this lead come first, then whoever saw it longest ago.
+      // seen this lead come first, then whoever saw it longest ago — but not
+      // again inside SHOTGUN_RELAP_COOLDOWN_MS, so the lap paces itself instead
+      // of hammering the same people every 20 seconds until someone gives in.
+      const relapCutoff = new Date(new Date(nowIso).getTime() - SHOTGUN_RELAP_COOLDOWN_MS).toISOString();
       const candidate = db.prepare(`
         SELECT u.id, u.name FROM users u
         INNER JOIN shotgun_readiness r ON r.org_id=u.org_id AND r.user_id=u.id
         LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
         WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
           AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
-          AND (o.id IS NULL OR o.response<>'pending')
+          AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
         ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
                  CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
-      `).get(leadId, Number(lead.org_id), cutoff) as any;
+      `).get(leadId, Number(lead.org_id), cutoff, relapCutoff) as any;
       if (!candidate) return null;
       const expiresAt = new Date(new Date(nowIso).getTime() + SHOTGUN_OFFER_MS).toISOString();
       const changed = db.prepare(`UPDATE shotgun_leads SET status='offered',current_assignee_id=?,offer_expires_at=?,updated_at=?

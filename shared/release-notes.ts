@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.98.1",
+    headline: "Shotgun paces itself, and a claimed lead is locked to the CLR who took it.",
+    items: [
+      { text: "A Shotgun lead nobody picks up now waits five minutes before coming back to the same CLR. It still cycles round the team until someone takes it — it just stops re-offering every twenty seconds." },
+      { text: "Fixes a case where a lone CLR with C3 open could be left under the offer pop-up continuously, with the rest of C3 unreachable behind it." },
+      { text: "Once a lead is confirmed it belongs to that CLR alone: nobody else can claim it, it cannot be claimed twice, and the rotation will not hand it on." },
+    ],
+  },
+  {
     version: "3.98.0",
     headline: "Shotgun keeps going until someone grabs the lead — and C3 stops signing you out.",
     items: [
