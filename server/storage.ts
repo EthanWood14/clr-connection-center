@@ -718,6 +718,53 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '[]'`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_task_completions_task ON clr_task_completions(task_id, completed_at DESC)`); } catch {}
 
+  // Shotgun lead distribution. Readiness is a short-lived heartbeat rather than
+  // a permanent preference, so closing C3 cannot leave someone eligible all day.
+  // Offers are immutable history; the lead row stores only its current owner.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shotgun_readiness (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    is_ready INTEGER NOT NULL DEFAULT 0,
+    heartbeat_at TEXT,
+    last_assigned_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shotgun_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    lead_name TEXT NOT NULL,
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    manager_notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'queued',
+    created_by_user_id INTEGER NOT NULL,
+    current_assignee_id INTEGER,
+    offer_expires_at TEXT,
+    claimed_at TEXT,
+    called INTEGER NOT NULL DEFAULT 0,
+    texted INTEGER NOT NULL DEFAULT 0,
+    result_notes TEXT NOT NULL DEFAULT '',
+    done_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shotgun_offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL,
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    offered_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    response TEXT NOT NULL DEFAULT 'pending',
+    responded_at TEXT,
+    UNIQUE(lead_id, user_id)
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_leads_org_status ON shotgun_leads(org_id, status, created_at DESC)`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offers_lead ON shotgun_offers(lead_id, offered_at)`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_ready ON shotgun_readiness(org_id, is_ready, heartbeat_at)`); } catch {}
+
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
   // An appointment can be booked before anyone knows which LO will take it, so
   // "no LO yet" has to be representable. It is a real absence, not a sentinel

@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.97.0",
+    headline: "C3 introduces Shotgun—15-second live lead distribution for ready CLRs.",
+    items: [
+      { text: "Managers can publish a lead from the new Shotgun page; C3 offers it fairly to one ready CLR at a time." },
+      { text: "CLRs press Ready to enter the rotation, receive a full-screen offer, and have 15 seconds to confirm before the lead moves automatically." },
+      { text: "After claiming a lead, the CLR records whether they called and texted, writes result notes, saves progress, and marks the lead done." },
+      { text: "Managers can watch the live queue, see who is ready and who owns each lead, review completed results, and requeue active leads." },
+    ],
+  },
+  {
     version: "3.96.1",
     headline: "The 10:00 AM check-in email now explains excuses and reliably includes configured managers.",
     items: [

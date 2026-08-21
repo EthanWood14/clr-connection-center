@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo,
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -182,6 +182,7 @@ const mainItems: NavItem[] = [
   { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
   { title: "Tasks",                 url: "/tasks",        icon: ListTodo,        badge: "tasks" },
+  { title: "Shotgun",               url: "/shotgun",      icon: Zap },
 ];
 
 const personalItems: NavItem[] = [

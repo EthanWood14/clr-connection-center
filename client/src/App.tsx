@@ -19,6 +19,7 @@ import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
+import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
@@ -85,6 +86,7 @@ import SeatingChart from "@/pages/seating-chart";
 import ClrTraining from "@/pages/clr-training";
 import ClrTrainingTest from "@/pages/clr-training-test";
 import ClrTasks from "@/pages/clr-tasks";
+import Shotgun from "@/pages/shotgun";
 import { LapApp } from "@/components/lap/lap-shell";
 
 function ThemeToggle() {
@@ -117,6 +119,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/clr-training":     "CLR Training",
   "/clr-training/test": "Certification Test",
   "/tasks":            "CLR Task Center",
+  "/shotgun":          "Shotgun Leads",
   "/state-lookup": "State Lookup",
   "/call-hours":   "Call Hours by State",
   "/snooze":       "LO Vacation",
@@ -178,6 +181,7 @@ function AppRouter() {
       <Route path="/clr-training" component={ClrTraining} />
       <Route path="/clr-training/test" component={ClrTrainingTest} />
       <Route path="/tasks" component={ClrTasks} />
+      <Route path="/shotgun" component={Shotgun} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />
       <Route path="/chat" component={Chat} />
@@ -307,6 +311,7 @@ function AuthenticatedApp() {
       <PushNudge />
       <GoalNudge />
       <TransferCelebration />
+      <ShotgunOfferAlert />
       <UpdatePrompt />
       <DailyReportGate>
         {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
