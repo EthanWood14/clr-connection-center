@@ -72,3 +72,13 @@ test("leads remain private to their current CLR and leaving Ready rotates an ope
   assert.match(readiness, /response='declined'/);
   assert.match(readiness, /advanceShotgun\(now\)/);
 });
+
+test("a new lead alerts every CLR by email and push when only zero to two are ready", () => {
+  const helper = routes.slice(routes.indexOf("function notifyShotgunLowCoverage"), routes.indexOf("function assignShotgunLead"));
+  assert.match(helper, /const clrs = taskClrs\(orgId\)/);
+  assert.match(helper, /sendPushToUsers/);
+  assert.match(helper, /sendEmail\(\{ to: emails/);
+  assert.match(helper, /Open C3 and press Ready/);
+  const publish = routes.slice(routes.indexOf('app.post("/api/shotgun/publish"'), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
+  assert.match(publish, /if \(readyCount <= 2\) notifyShotgunLowCoverage/);
+});

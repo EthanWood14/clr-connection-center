@@ -7110,6 +7110,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   }
 
+  function notifyShotgunLowCoverage(orgId: number, leadName: string, source: string, readyCount: number, assignedUserId?: number) {
+    const clrs = taskClrs(orgId);
+    if (!clrs.length) return;
+    const title = "New Shotgun lead — more CLRs needed";
+    const body = `${leadName} just entered Shotgun with only ${readyCount} CLR${readyCount === 1 ? "" : "s"} Ready. Open C3 and press Ready now.`;
+    for (const clr of clrs) {
+      storage.createNotification({ userId: Number(clr.id), type: "shotgun_low_coverage", title, message: body, isRead: false } as any);
+    }
+    const pushIds = clrs.map((clr: any) => Number(clr.id)).filter((id: number) => id !== assignedUserId);
+    if (pushIds.length) sendPushToUsers(pushIds, { title, body, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    const emails = Array.from(new Set(clrs.map((clr: any) => String(clr.email ?? "").trim().toLowerCase()).filter((email: string) => email.includes("@"))));
+    if (emails.length) {
+      const safeLead = eodActivityEsc(leadName);
+      const safeSource = eodActivityEsc(source || "Not specified");
+      const subject = `New Shotgun lead: ${leadName}`;
+      void sendEmail({ to: emails, subject, html: buildEmail({ subject,
+        preheader: `Only ${readyCount} CLR${readyCount === 1 ? " is" : "s are"} Ready right now.`,
+        body: `<p>A new lead was just published while Shotgun coverage is low.</p><div style="padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fdba74"><p style="margin:0 0 6px"><strong>${safeLead}</strong></p><p style="margin:0;color:#9a3412">Source: ${safeSource}</p></div><p><strong>Only ${readyCount} CLR${readyCount === 1 ? " is" : "s are"} currently Ready.</strong> Open C3 and press Ready to join the rotation.</p><p><a href="https://www.westcapitallending.center/#/shotgun">Open Shotgun</a></p>` }) })
+        .catch((error: any) => console.error("[shotgun] low-coverage email failed:", error?.message ?? error));
+    }
+  }
+
   function assignShotgunLead(leadId: number, nowIso = new Date().toISOString()) {
     const db = shotgunDb();
     return db.transaction(() => {
@@ -7228,11 +7250,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (leadName.length < 2) return res.status(400).json({ error: "Enter the lead's name." });
     if (!phone && !email) return res.status(400).json({ error: "Enter a phone number or email address." });
     const now = new Date().toISOString();
+    const readyCutoff = new Date(new Date(now).getTime() - SHOTGUN_READY_TTL_MS).toISOString();
+    const readyCount = Number((shotgunDb().prepare(`SELECT COUNT(*) AS count FROM shotgun_readiness r
+      INNER JOIN users u ON u.id=r.user_id AND u.org_id=r.org_id
+      WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
+        AND (u.portal IS NULL OR u.portal='c3')`).get(orgId, readyCutoff) as any)?.count ?? 0);
     const info = shotgunDb().prepare(`INSERT INTO shotgun_leads
       (org_id,lead_name,phone,email,source,manager_notes,status,created_by_user_id,created_at,updated_at)
       VALUES (?,?,?,?,?,?,'queued',?,?,?)`).run(orgId, leadName, phone, email, source, managerNotes, userId, now, now);
     const assignment = assignShotgunLead(Number(info.lastInsertRowid), now);
     if (assignment) notifyShotgunOffer(assignment.orgId, assignment.userId, assignment.leadId, assignment.leadName);
+    if (readyCount <= 2) notifyShotgunLowCoverage(orgId, leadName, source, readyCount, assignment?.userId);
     audit({ userId, userName: me?.name ?? "Manager", action: "create", entityType: "shotgun_lead",
       entityId: Number(info.lastInsertRowid), entityLabel: leadName,
       details: JSON.stringify({ source, assignedImmediately: !!assignment }) });

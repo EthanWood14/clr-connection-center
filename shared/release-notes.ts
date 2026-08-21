@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.97.1",
+    headline: "Shotgun now rallies the team when too few CLRs are ready.",
+    items: [
+      { text: "When a lead is published with only zero, one, or two CLRs in the Ready queue, every active CLR receives an email, push alert, and C3 notification prompting them to join Shotgun." },
+      { text: "The CLR selected for the lead still receives the separate urgent 15-second confirmation alert." },
+    ],
+  },
+  {
     version: "3.97.0",
     headline: "C3 introduces Shotgun—15-second live lead distribution for ready CLRs.",
     items: [
