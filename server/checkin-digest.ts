@@ -23,6 +23,8 @@ export type DigestSubject = {
   scheduledOff: boolean;
   noSchedule: boolean;
   absenceExcused: boolean;
+  /** Manager-only note explaining an excused late or absence. */
+  excuseReason?: string | null;
   startPassed: boolean;
 };
 
@@ -85,8 +87,9 @@ export function buildCheckinDigestHtml(date: string, subjects: DigestSubject[]):
     const detail = late
       ? `${s.checkin?.minutes_late ?? 0} min late — in at ${clock(s.checkin?.checked_in_at)}`
       : "No check-in";
+    const reason = String(s.excuseReason ?? "").trim();
     const excused = late && s.checkin?.late_excused
-      ? ` <span style="color:#0d9488;font-weight:600">(excused)</span>` : "";
+      ? ` <span style="color:#0d9488;font-weight:600">(excused${reason ? ` — ${esc(reason)}` : ""})</span>` : "";
     const repeat = s.lateOverLimit
       ? ` <span style="display:inline-block;background:#fef2f2;color:#b91c1c;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9999px">${s.lateCount} lates / 90d</span>`
       : "";
@@ -106,7 +109,7 @@ export function buildCheckinDigestHtml(date: string, subjects: DigestSubject[]):
     ? `<p style="margin:18px 0 0;font-size:12px;color:#64748b;line-height:1.7"><strong style="color:#16a34a">On time:</strong> ${onTime.map((s) => `${esc(s.name)} (${clock(s.checkin?.checked_in_at)})`).join(" · ")}</p>`
     : "";
   const excusedNote = excusedList.length
-    ? `<p style="margin:8px 0 0;font-size:12px;color:#64748b"><strong style="color:#0d9488">Excused:</strong> ${named(excusedList)}</p>`
+    ? `<p style="margin:8px 0 0;font-size:12px;color:#64748b"><strong style="color:#0d9488">Excused:</strong> ${excusedList.map((s) => `${esc(s.name)}${String(s.excuseReason ?? "").trim() ? ` — ${esc(s.excuseReason)}` : ""}`).join(" · ")}</p>`
     : "";
   const noSchedNote = noSched.length
     ? `<p style="margin:8px 0 0;font-size:12px;color:#94a3b8"><strong>No schedule on file</strong> (cannot be judged late): ${named(noSched)}</p>`

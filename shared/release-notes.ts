@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.96.1",
+    headline: "The 10:00 AM check-in email now explains excuses and reliably includes configured managers.",
+    items: [
+      { text: "Excused late arrivals and absences now show their recorded reason in the private 10:00 AM manager email." },
+      { text: "Scott Petrie and every configured manager-email recipient are now included in the 10:00 AM digest and overdue-task manager emails without requiring extra C3 permissions." },
+    ],
+  },
+  {
     version: "3.96.0",
     headline: "Transfer celebrations now show your totals—and race leaders across the screen.",
     items: [

@@ -7050,7 +7050,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (managers.length) {
         sendPushToUsers(managers.map((manager: any) => Number(manager.id)), { title, body: message, url: "/#/tasks", portal: "c3" }).catch(() => {});
       }
-      const recipients = managers.map((manager: any) => String(manager.email ?? "").trim()).filter((email: string) => email.includes("@"));
+      const recipients = attendanceManagerEmails(Number(task.org_id));
       if (recipients.length) {
         const safeTitle = eodActivityEsc(String(task.title));
         const safeAssignee = eodActivityEsc(String(task.assigned_user_name ?? "A CLR"));
@@ -13201,11 +13201,39 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const { cfg, clrs, los, loas } = buildCheckinBoard(orgId, date);
     if (!cfg.enabled) return "skipped";
 
+    // Reasons are private manager context, so enrich the email here instead of
+    // adding them to buildCheckinBoard(), whose response is visible to the team.
+    const excuseReasons = new Map<string, string>();
+    const putReason = (subjectType: string, subjectId: unknown, reason: unknown) => {
+      const value = String(reason ?? "").trim();
+      if (value) excuseReasons.set(`${subjectType}:${Number(subjectId)}`, value);
+    };
+    const sqlite = storageExtra.getRawSqlite();
+    for (const row of sqlite.prepare(`SELECT user_id AS subject_id, excuse_reason
+      FROM morning_checkins WHERE org_id=? AND date=? AND late_excused=1`).all(orgId, date) as any[]) {
+      putReason("user", row.subject_id, row.excuse_reason);
+    }
+    for (const row of sqlite.prepare(`SELECT subject_type, subject_id, excuse_reason
+      FROM external_checkins WHERE org_id=? AND date=? AND late_excused=1`).all(orgId, date) as any[]) {
+      putReason(row.subject_type, row.subject_id, row.excuse_reason);
+    }
+    for (const row of storageExtra.getApprovedAbsenceExcusesForDate(orgId, date) as any[]) {
+      putReason(row.subject_type, row.subject_id, row.reason);
+    }
+    try {
+      for (const row of sqlite.prepare(`SELECT user_id AS subject_id, reason FROM time_off_requests
+        WHERE org_id=? AND status='approved' AND start_date<=? AND end_date>=?`).all(orgId, date, date) as any[]) {
+        putReason("user", row.subject_id, row.reason || "Approved time off");
+      }
+    } catch { /* legacy databases may not have the time-off table yet */ }
+
     const toSubject = (s: any): DigestSubject => ({
       name: s.name, sub: s.loName ?? null, expectedStart: s.expectedStart,
       checkin: s.checkin, lateCount: s.lateCount, lateOverLimit: s.lateOverLimit,
       scheduledOff: s.scheduledOff, noSchedule: s.noSchedule,
-      absenceExcused: s.absenceExcused, startPassed: s.startPassed,
+      absenceExcused: s.absenceExcused,
+      excuseReason: excuseReasons.get(s.userId ? `user:${Number(s.userId)}` : `${s.type}:${Number(s.id)}`) ?? null,
+      startPassed: s.startPassed,
     });
     // CLRs first, then the portal roster, in one list — managers care about who
     // was late, not which table the row came from.
@@ -13215,9 +13243,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // holidays quiet without hard-coding which days those are.
     if (!anyoneExpected(all)) return "skipped";
 
-    const managers = attendanceManagerUsers(orgId)
-      .map((m: any) => String(m.email ?? "").trim())
-      .filter((e: string) => e.includes("@"));
+    const managers = attendanceManagerEmails(orgId);
     if (!managers.length) return "skipped";
 
     const late = all.filter((s) => digestStatus(s) === "late").length;

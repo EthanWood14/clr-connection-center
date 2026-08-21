@@ -46,6 +46,8 @@ test("a missed recurring deadline alerts every manager exactly once", () => {
   assert.match(alert, /for \(const manager of managers\)/);
   assert.match(alert, /userId: Number\(task\.assigned_user_id\), type: "task_overdue"/);
   assert.match(alert, /assignee overdue email failed/);
+  assert.match(alert, /attendanceManagerEmails\(Number\(task\.org_id\)\)/,
+    "configured manager recipients such as Scott receive overdue-task email too");
   assert.match(alert, /sendPushToUsers/);
   assert.match(alert, /await sendEmail/);
 });

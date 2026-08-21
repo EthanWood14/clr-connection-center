@@ -97,10 +97,18 @@ test("repeat offenders are flagged against the 90-day allowance", () => {
 
 test("an excused late is still shown, but marked", () => {
   const html = buildCheckinDigestHtml("2026-08-05", [
-    subject({ name: "Excused Late", checkin: { on_time: 0, minutes_late: 9, late_excused: true } }),
+    subject({ name: "Excused Late", checkin: { on_time: 0, minutes_late: 9, late_excused: true }, excuseReason: "Doctor appointment" }),
   ]);
   assert.match(html, /Excused Late/);
-  assert.match(html, /\(excused\)/);
+  assert.match(html, /excused — Doctor appointment/);
+});
+
+test("an excused absence includes its escaped reason", () => {
+  const html = buildCheckinDigestHtml("2026-08-05", [
+    subject({ name: "Excused Absence", absenceExcused: true, excuseReason: "Family <emergency>" }),
+  ]);
+  assert.match(html, /Excused Absence — Family &lt;emergency&gt;/);
+  assert.ok(!html.includes("Family <emergency>"));
 });
 
 test("the digest runs at 10am Pacific, not UTC", () => {
@@ -119,18 +127,18 @@ test("the digest and the board screen read the same data", () => {
     "the digest must not re-implement the board query");
 });
 
-test("recipients are every active manager, resolved by role", () => {
+test("recipients include active managers and configured manager email recipients", () => {
   const send = routes.slice(
     routes.indexOf("async function sendCheckinDigest"),
     routes.indexOf(`cron.schedule("0 10 * * *"`),
   );
-  assert.match(send, /attendanceManagerUsers\(orgId\)/, "role-derived, so it tracks staffing changes");
-  assert.match(send, /includes\("@"\)/, "an account with no address must not become an empty recipient");
+  assert.match(send, /attendanceManagerEmails\(orgId\)/,
+    "configured recipients such as Scott must not depend on their C3 permission role");
   assert.match(send, /if \(!managers\.length\) return "skipped"/, "no managers means no send");
   assert.match(send, /if \(!cfg\.enabled\) return "skipped"/, "must respect the check-in feature switch");
-  // attendanceManagerUsers must actually return the address.
-  const fn = routes.slice(routes.indexOf("function attendanceManagerUsers"));
-  assert.match(fn.slice(0, 400), /SELECT id, name, email FROM users/);
+  const fn = routes.slice(routes.indexOf("function attendanceManagerEmails"));
+  assert.match(fn.slice(0, 1000), /manager_emails/,
+    "the shared helper must merge explicit manager recipients");
 });
 
 test("the manual trigger is manager-gated", () => {
