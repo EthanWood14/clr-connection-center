@@ -40,7 +40,13 @@ export async function apiRequest(method: string, path: string, body?: any) {
     if (res.status === 403 && errMsg === DEMO_READONLY_MSG) {
       showDemoToast();
     }
-    throw new Error(errMsg);
+    // Carry the status on the error. Without it every caller sees an
+    // indistinguishable Error, and the auth check was reading a 502 or a
+    // dropped connection as "signed out" — which is what turned a momentary
+    // backend hiccup into everyone being bounced to the login screen.
+    const failure = new Error(errMsg) as Error & { status?: number };
+    failure.status = res.status;
+    throw failure;
   }
   const data = await res.json();
   // Keep the celebration local to the browser that performed the successful

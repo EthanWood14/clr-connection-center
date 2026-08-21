@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.98.0",
+    headline: "Shotgun keeps going until someone grabs the lead — and C3 stops signing you out.",
+    items: [
+      { text: "C3 was bouncing people to the login screen at random. A request that timed out or failed was being treated as \"you are signed out\", even though your session was still perfectly valid. Now only the server actually saying so signs you out, and a request that fails is retried instead." },
+      { text: "Shotgun is ON by default for every CLR. Keep C3 open and you are in the rotation — there is nothing to press. You can still opt out from the Shotgun page whenever you need to." },
+      { text: "A Shotgun lead no longer gets stranded. It used to stop for good once it had been offered to each Ready CLR once, so a lead nobody picked up just sat in the queue. It now keeps cycling round the team until somebody confirms it." },
+      { text: "You get 20 seconds to confirm a Shotgun lead, up from 15." },
+    ],
+  },
+  {
     version: "3.97.1",
     headline: "Shotgun now rallies the team when too few CLRs are ready.",
     items: [

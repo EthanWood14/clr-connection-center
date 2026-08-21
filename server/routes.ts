@@ -7082,7 +7082,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Managers publish once; C3 offers the lead to one actively-ready CLR for 15
   // seconds. Expiry is advanced transactionally so concurrent pollers or app
   // instances cannot create two owners.
-  const SHOTGUN_OFFER_MS = 15_000;
+  const SHOTGUN_OFFER_MS = 20_000;
+  const SHOTGUN_OFFER_SECONDS = Math.round(SHOTGUN_OFFER_MS / 1000);
   const SHOTGUN_READY_TTL_MS = 35_000;
   const shotgunDb = () => storageExtra.getRawSqlite();
   const shotgunUserIsClr = (user: any) => !!user && !!(
@@ -7103,8 +7104,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function notifyShotgunOffer(orgId: number, userId: number, leadId: number, leadName: string) {
     try {
       storage.createNotification({ userId, type: "shotgun_lead", title: "Shotgun lead — respond now",
-        message: `${leadName} is yours for 15 seconds. Confirm receipt now.`, isRead: false } as any);
-      sendPushToUser(userId, { title: "New Shotgun lead", body: `${leadName} — confirm within 15 seconds`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+        message: `${leadName} is yours for ${SHOTGUN_OFFER_SECONDS} seconds. Confirm receipt now.`, isRead: false } as any);
+      sendPushToUser(userId, { title: "New Shotgun lead", body: `${leadName} — confirm within ${SHOTGUN_OFFER_SECONDS} seconds`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
     } catch (error: any) {
       console.error(`[shotgun] notification failed lead=${leadId} user=${userId}:`, error?.message ?? error);
     }
@@ -7114,7 +7115,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const clrs = taskClrs(orgId);
     if (!clrs.length) return;
     const title = "New Shotgun lead — more CLRs needed";
-    const body = `${leadName} just entered Shotgun with only ${readyCount} CLR${readyCount === 1 ? "" : "s"} Ready. Open C3 and press Ready now.`;
+    const body = `${leadName} just entered Shotgun with only ${readyCount} CLR${readyCount === 1 ? "" : "s"} online. Open C3 now to join the rotation.`;
     for (const clr of clrs) {
       storage.createNotification({ userId: Number(clr.id), type: "shotgun_low_coverage", title, message: body, isRead: false } as any);
     }
@@ -7127,7 +7128,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const subject = `New Shotgun lead: ${leadName}`;
       void sendEmail({ to: emails, subject, html: buildEmail({ subject,
         preheader: `Only ${readyCount} CLR${readyCount === 1 ? " is" : "s are"} Ready right now.`,
-        body: `<p>A new lead was just published while Shotgun coverage is low.</p><div style="padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fdba74"><p style="margin:0 0 6px"><strong>${safeLead}</strong></p><p style="margin:0;color:#9a3412">Source: ${safeSource}</p></div><p><strong>Only ${readyCount} CLR${readyCount === 1 ? " is" : "s are"} currently Ready.</strong> Open C3 and press Ready to join the rotation.</p><p><a href="https://www.westcapitallending.center/#/shotgun">Open Shotgun</a></p>` }) })
+        body: `<p>A new lead was just published while Shotgun coverage is low.</p><div style="padding:16px;border-radius:12px;background:#fff7ed;border:1px solid #fdba74"><p style="margin:0 0 6px"><strong>${safeLead}</strong></p><p style="margin:0;color:#9a3412">Source: ${safeSource}</p></div><p><strong>Only ${readyCount} CLR${readyCount === 1 ? " is" : "s are"} currently online.</strong> Every CLR with C3 open is in the rotation — open C3 to join.</p><p><a href="https://www.westcapitallending.center/#/shotgun">Open Shotgun</a></p>` }) })
         .catch((error: any) => console.error("[shotgun] low-coverage email failed:", error?.message ?? error));
     }
   }
@@ -7138,21 +7139,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const lead = db.prepare(`SELECT * FROM shotgun_leads WHERE id=?`).get(leadId) as any;
       if (!lead || lead.status !== "queued") return null;
       const cutoff = new Date(new Date(nowIso).getTime() - SHOTGUN_READY_TTL_MS).toISOString();
+      // Round-robin that never runs out of people. This used to exclude anyone
+      // who had EVER been offered this lead, so once the offer had gone once
+      // around the Ready pool with no takers there was no candidate left and
+      // the lead sat queued forever with nobody looking at it. Ordering by the
+      // oldest offer instead keeps the rotation cycling: CLRs who have never
+      // seen this lead come first, then whoever saw it longest ago.
       const candidate = db.prepare(`
         SELECT u.id, u.name FROM users u
         INNER JOIN shotgun_readiness r ON r.org_id=u.org_id AND r.user_id=u.id
+        LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
         WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
           AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
-          AND NOT EXISTS (SELECT 1 FROM shotgun_offers o WHERE o.lead_id=? AND o.user_id=u.id)
-        ORDER BY CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
-      `).get(Number(lead.org_id), cutoff, leadId) as any;
+          AND (o.id IS NULL OR o.response<>'pending')
+        ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
+                 CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
+      `).get(leadId, Number(lead.org_id), cutoff) as any;
       if (!candidate) return null;
       const expiresAt = new Date(new Date(nowIso).getTime() + SHOTGUN_OFFER_MS).toISOString();
       const changed = db.prepare(`UPDATE shotgun_leads SET status='offered',current_assignee_id=?,offer_expires_at=?,updated_at=?
         WHERE id=? AND status='queued'`).run(candidate.id, expiresAt, nowIso, leadId);
       if (!changed.changes) return null;
+      // shotgun_offers is UNIQUE(lead_id,user_id), so a second lap round the
+      // rotation has to refresh the existing row — a plain INSERT would throw
+      // and roll the whole assignment back.
       db.prepare(`INSERT INTO shotgun_offers (lead_id,org_id,user_id,offered_at,expires_at,response)
-        VALUES (?,?,?,?,?,'pending')`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
+        VALUES (?,?,?,?,?,'pending')
+        ON CONFLICT(lead_id,user_id) DO UPDATE SET
+          offered_at=excluded.offered_at, expires_at=excluded.expires_at,
+          response='pending', responded_at=NULL`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
       db.prepare(`UPDATE shotgun_readiness SET last_assigned_at=?,updated_at=? WHERE org_id=? AND user_id=?`)
         .run(nowIso, nowIso, lead.org_id, candidate.id);
       return { orgId: Number(lead.org_id), userId: Number(candidate.id), leadId, leadName: String(lead.lead_name) };
@@ -7210,7 +7225,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const readyUsers = canManage ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
       FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
       WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 ORDER BY u.name`).all(orgId, cutoff) : [];
-    res.json({ canManage, isClr, isReady, offerSeconds: 15, serverNow: new Date().toISOString(),
+    res.json({ canManage, isClr, isReady, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
       leads: rows.map(shotgunLeadJson), readyUsers });
   });
 

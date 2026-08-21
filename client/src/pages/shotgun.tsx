@@ -59,15 +59,15 @@ export default function Shotgun() {
   const { toast } = useToast();
   const [leadName, setLeadName] = useState(""); const [phone, setPhone] = useState("");
   const [email, setEmail] = useState(""); const [source, setSource] = useState(""); const [managerNotes, setManagerNotes] = useState("");
-  const { data, isLoading } = useQuery<ShotgunPayload>({ queryKey: ["/api/shotgun"], refetchInterval: 1_000, staleTime: 0 });
-  const payload = data ?? { canManage: false, isClr: false, isReady: false, offerSeconds: 15, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
+  const { data, isLoading } = useQuery<ShotgunPayload>({ queryKey: ["/api/shotgun"], refetchInterval: 5_000, staleTime: 0 });
+  const payload = data ?? { canManage: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
   const readiness = useMutation({
     mutationFn: (ready: boolean) => apiRequest("POST", "/api/shotgun/readiness", { ready }),
     onSuccess: (result: any) => { if (user) localStorage.setItem(shotgunReadyKey(user.id), result.isReady ? "1" : "0"); queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
   });
   const publish = useMutation({
     mutationFn: () => apiRequest("POST", "/api/shotgun/publish", { leadName, phone, email, source, managerNotes }),
-    onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); setLeadName(""); setPhone(""); setEmail(""); setSource(""); setManagerNotes(""); toast({ title: result.assigned ? "Lead fired into the rotation" : "Lead queued", description: result.assigned ? "A ready CLR has 15 seconds to confirm it." : "It will launch as soon as a CLR presses Ready." }); },
+    onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); setLeadName(""); setPhone(""); setEmail(""); setSource(""); setManagerNotes(""); toast({ title: result.assigned ? "Lead fired into the rotation" : "Lead queued", description: result.assigned ? `A ready CLR has ${payload.offerSeconds} seconds to confirm it.` : "It will launch as soon as a CLR is online." }); },
     onError: (error: any) => toast({ title: "Could not publish lead", description: error.message, variant: "destructive" }),
   });
   const requeue = useMutation({ mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/requeue`, {}), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });
@@ -77,7 +77,7 @@ export default function Shotgun() {
   return <div className="min-h-full bg-gradient-to-b from-orange-50/70 via-background to-rose-50/50 p-4 dark:from-orange-950/15 dark:to-rose-950/10 sm:p-6">
     <div className="mx-auto max-w-7xl space-y-5">
       <header className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-rose-950 to-orange-600 p-6 text-white shadow-xl sm:p-8">
-        <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><Badge className="mb-3 border-white/20 bg-white/10 text-white"><Zap className="mr-1 h-3 w-3" /> 15-second lead routing</Badge><h1 className="flex items-center gap-3 text-3xl font-black sm:text-4xl"><Radio className="h-9 w-9 text-orange-300" /> Shotgun</h1><p className="mt-2 max-w-2xl text-sm text-white/70">One lead. One ready CLR. Fifteen seconds to confirm—then C3 automatically moves it to the next person.</p></div>
+        <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><Badge className="mb-3 border-white/20 bg-white/10 text-white"><Zap className="mr-1 h-3 w-3" /> 20-second lead routing</Badge><h1 className="flex items-center gap-3 text-3xl font-black sm:text-4xl"><Radio className="h-9 w-9 text-orange-300" /> Shotgun</h1><p className="mt-2 max-w-2xl text-sm text-white/70">One lead. One ready CLR. Twenty seconds to confirm—then C3 automatically moves it to the next person.</p></div>
           {payload.isClr && <Button size="lg" disabled={readiness.isPending} onClick={() => readiness.mutate(!payload.isReady)} className={payload.isReady ? "gap-2 border border-emerald-300 bg-emerald-500 text-white hover:bg-emerald-600" : "gap-2 bg-white text-slate-950 hover:bg-orange-100"}>{payload.isReady ? <><ShieldCheck className="h-5 w-5" /> READY — receiving leads</> : <><Radio className="h-5 w-5" /> Press Ready</>}</Button>}
         </div>
       </header>
