@@ -1,6 +1,8 @@
+import { useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 
@@ -21,6 +23,7 @@ function formatDate(dateStr: string) {
 export function EodLockGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
   const [location, navigate] = useLocation();
+  const outerGateActive = useContext(DailyReportGateActive);
 
   const isClr = !!(user && (user.role === "assistant" || (user.role === "admin" && (user as any).isClr)));
 
@@ -32,6 +35,11 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
     retry: false,
   });
 
+  // Only one gate may hold the screen. This one renders inside DailyReportGate's
+  // children, which are pointer-events-none while that gate is up — so painting
+  // an overlay here would cover its dialog with a layer nobody can click. Wait
+  // our turn; the call log gets filed first, then this appears and works.
+  if (outerGateActive) return <>{children}</>;
   if (authLoading || isLoading || !user) return <>{children}</>;
   if (!isClr) return <>{children}</>;
   if (!data?.locked) return <>{children}</>;

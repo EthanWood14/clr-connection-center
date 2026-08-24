@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -52,6 +52,18 @@ function formatDate(dateStr: string) {
     return dateStr;
   }
 }
+
+/**
+ * True while this gate is holding the screen.
+ *
+ * Anything inside `children` that also wants to cover the app must stand down,
+ * because `children` is rendered under `pointer-events-none`. EodLockGate used
+ * to paint an opaque overlay at z-[60] — above this gate's z-50 dialog — from
+ * inside that dead zone, so a CLR missing both yesterday's call log and an EOD
+ * saw "App Access Locked" with buttons that did nothing, and the dialog that
+ * would have unblocked them was hidden underneath. C3 was simply frozen.
+ */
+export const DailyReportGateActive = createContext(false);
 
 export function DailyReportGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
@@ -129,7 +141,7 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
   const todayLabel = checkData ? formatDate(checkData.date) : "today";
 
   return (
-    <>
+    <DailyReportGateActive.Provider value={gated}>
       <div className={gated
         ? "pointer-events-none select-none blur-sm opacity-40 overflow-hidden h-screen"
         : "contents"}>
@@ -227,6 +239,6 @@ export function DailyReportGate({ children }: { children: React.ReactNode }) {
         </DialogContent>
       </Dialog>
       )}
-    </>
+    </DailyReportGateActive.Provider>
   );
 }

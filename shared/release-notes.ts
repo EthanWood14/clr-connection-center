@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.99.2",
+    headline: "Fixes C3 freezing on a locked screen you could not click.",
+    items: [
+      { text: "If you were missing both yesterday's call report and an EOD report, C3 showed the \"App Access Locked\" screen on top of the Daily Report box — but nothing on it responded, and the box that would have let you continue was hidden behind it. The app was simply stuck." },
+      { text: "The two now take turns: file the call report first, then the EOD prompt appears and works normally." },
+    ],
+  },
+  {
     version: "3.99.1",
     headline: "Transfers and appointments now reach the right loan officer in Bonzo.",
     items: [

@@ -1,0 +1,67 @@
+/**
+ * Only one blocking gate may hold the screen at a time.
+ *
+ * DailyReportGate renders the whole app inside `pointer-events-none` and puts
+ * its own dialog at z-50. EodLockGate lives inside those children and paints an
+ * opaque overlay at z-[60] — above that dialog, but inside the dead zone. A CLR
+ * missing both yesterday's call log and an EOD therefore saw "App Access
+ * Locked" with buttons that did nothing, and the dialog that would have
+ * unblocked them was hidden underneath it. Three CLRs were frozen out of C3
+ * this way on 2026-08-24.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (p: string) => readFileSync(join(root, p), "utf8");
+const app = read("client/src/App.tsx");
+const outer = read("client/src/components/daily-report-gate.tsx");
+const inner = read("client/src/components/eod-lock-gate.tsx");
+const dialog = read("client/src/components/ui/dialog.tsx");
+
+test("the EOD lock still renders inside the daily report gate", () => {
+  // If this ever stops being true the hazard is gone, but so is the reason for
+  // the guard below — revisit both together rather than deleting one.
+  const gateOpen = app.indexOf("<DailyReportGate>");
+  const lockOpen = app.indexOf("<EodLockGate>");
+  const gateClose = app.indexOf("</DailyReportGate>");
+  assert.ok(gateOpen !== -1 && lockOpen !== -1 && gateClose !== -1);
+  assert.ok(gateOpen < lockOpen && lockOpen < gateClose,
+    "EodLockGate is nested inside DailyReportGate, so it inherits pointer-events-none");
+});
+
+test("the daily report gate disables everything it renders beneath itself", () => {
+  assert.match(outer, /pointer-events-none select-none blur-sm/,
+    "this is what makes any nested overlay unclickable");
+  assert.match(outer, /export const DailyReportGateActive/,
+    "and why it must publish that it is holding the screen");
+  assert.match(outer, /<DailyReportGateActive\.Provider value=\{gated\}>/);
+});
+
+test("the EOD lock stands down while the daily report gate is up", () => {
+  assert.match(inner, /useContext\(DailyReportGateActive\)/);
+  const guard = inner.indexOf("if (outerGateActive) return");
+  const overlay = inner.indexOf("fixed inset-0 z-[60]");
+  assert.notEqual(guard, -1, "without this the overlay covers a dialog nobody can click");
+  assert.notEqual(overlay, -1);
+  assert.ok(guard < overlay, "the guard has to run before any overlay is returned");
+});
+
+test("the overlay really does sit above the dialog it would cover", () => {
+  // Documents the ordering the guard exists to defuse. If someone drops the
+  // lock overlay below z-50 this still passes on the guard alone, which is the
+  // belt-and-braces we want.
+  assert.match(inner, /z-\[60\]/);
+  assert.match(dialog, /fixed inset-0 z-50/, "DialogOverlay");
+});
+
+test("the EOD report page stays reachable so the lock can be cleared", () => {
+  // The lock links to /eod-report?date=…; wouter's useHashLocation puts the
+  // query in location.search and leaves the hash as "/eod-report", so this
+  // exact-match exemption is what lets a locked CLR reach the form.
+  assert.match(inner, /location === "\/eod-report"/);
+  assert.match(inner, /navigate\(`\/eod-report\?date=\$\{d\}`\)/);
+});
