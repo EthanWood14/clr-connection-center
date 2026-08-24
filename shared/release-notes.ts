@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.99.0",
+    headline: "EOD Analytics now gives managers a clearer, more complete review workspace.",
+    items: [
+      { text: "The new accountability queue names every CLR with missing or late EOD reports and shows the exact dates that need follow-up.", audience: "manager" },
+      { text: "Managers can review any historical 7-, 30-, or 90-day period, move directly between CLRs without resetting the page, and return to the whole-team view in one click.", audience: "manager" },
+      { text: "CLR patterns now have focused accountability filters and a mobile-friendly layout, while report details can be searched, filtered, sorted, and exported to CSV.", audience: "manager" },
+      { text: "Team trends now include conversation-to-transfer and conversation-to-appointment rates, plus an exact day-by-day breakdown behind the chart.", audience: "manager" },
+    ],
+  },
+  {
     version: "3.98.3",
     headline: "Your check-in schedule now makes the attendance commitment unmistakable.",
     items: [

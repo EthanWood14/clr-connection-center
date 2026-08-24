@@ -16503,7 +16503,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const trainingByUser = clrTrainingByUser(orgId);
       const clrs = filteredRoster.map((user) => {
         const reports = currentReports.filter((r) => Number(r.assistant_id) === Number(user.id));
-        const expected = currentDates.filter((date) => isExpected(user, date, true)).length;
+        const expectedDates = currentDates.filter((date) => isExpected(user, date, true));
+        const expected = expectedDates.length;
+        const submittedDates = new Set(reports.map((r) => String(r.report_date)));
         const submittedExpected = reports.filter((r) => isExpected(user, r.report_date, true)).length;
         const late = reports.filter((r) => num(r.submitted_late) === 1).length;
         const totals = totalsFor(reports);
@@ -16525,6 +16527,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           onTime: reports.length - late,
           late,
           onTimeRate: pct(reports.length - late, reports.length),
+          missingDates: expectedDates.filter((date) => !submittedDates.has(date)).reverse(),
+          lateDates: reports.filter((r) => num(r.submitted_late) === 1).map((r) => String(r.report_date)).sort().reverse(),
           totals,
           averages: averagesFor(totals, reports.length),
           checklist: checklistFor(reports),
@@ -16610,6 +16614,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
       res.json({
         window: { from, to, days, priorFrom, priorTo, dueLabel: EOD_DUE_LABEL },
+        roster: roster.map((user) => ({ userId: Number(user.id), name: String(user.name ?? "") })),
         team: {
           expected: expectedPairs.length,
           submitted: currentReports.length,
