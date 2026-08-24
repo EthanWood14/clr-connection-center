@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.98.3",
+    headline: "Your check-in schedule now makes the attendance commitment unmistakable.",
+    items: [
+      { text: "Check-In, Weekly Schedule, and the LO/LOA check-in portal now clearly explain that saved days and start times are the schedule you will be accountable for keeping." },
+      { text: "The notice reminds you to enter the least restrictive schedule permitted for your role and to commit only to hours you can reliably meet." },
+    ],
+  },
+  {
     version: "3.98.2",
     headline: "Leaving the Shotgun rotation now works, and stays that way.",
     items: [

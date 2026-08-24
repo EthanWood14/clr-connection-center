@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScheduleAccountabilityNotice } from "@/components/schedule-accountability-notice";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { CalendarDays, Clock, Users, CheckCircle2, Save } from "lucide-react";
@@ -233,6 +234,8 @@ export default function WeeklySchedule() {
           ) : null}
         </div>
       </div>
+
+      <ScheduleAccountabilityNotice />
 
       {saved?.status === "denied" && saved.reviewerNote && (
         <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-4 py-2.5 text-sm text-red-800 dark:text-red-300">
