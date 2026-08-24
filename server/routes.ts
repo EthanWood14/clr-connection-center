@@ -19165,8 +19165,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!o.phone_number) { console.log(`[bonzo-appt] outcome=${outcomeId}: no phone — skipped`); return; }
     const lo = o.lo_id ? (storage.getLoanOfficerById(o.lo_id) as any) : null;
     const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
-    const prospect = await findProspectByPhone(o.phone_number, lo?.fullName ?? null);
-    if (!prospect) { console.log(`[bonzo-appt] outcome=${outcomeId}: no Bonzo prospect for that phone — skipped (lookup never creates)`); return; }
+    const match = await findProspectByPhone(o.phone_number, {
+      loName: lo?.fullName ?? null,
+      bonzoUsername: lo?.bonzoUsername ?? lo?.bonzo_username ?? null,
+      email: lo?.email ?? null,
+    });
+    const prospect = match.prospect;
+    if (!prospect) {
+      if (match.reason === "ambiguous") {
+        // Several people share this phone and none of them are this LO. Writing
+        // to any of them would put a client's appointment in a stranger's CRM.
+        console.error(`[bonzo-appt] outcome=${outcomeId}: ${match.candidates.length} prospects share that phone and none belong to ${lo?.fullName ?? "the chosen LO"} — skipped. Candidates: ${match.candidates.map((c) => `${c.id}=${c.assignedUserName ?? "unassigned"}<${c.assignedUserEmail ?? "no email"}>`).join(", ")}`);
+      } else {
+        console.log(`[bonzo-appt] outcome=${outcomeId}: no Bonzo prospect for that phone — skipped (lookup never creates)`);
+      }
+      return;
+    }
     const when = o.appointment_datetime || o.follow_up_date;
     const dt = when ? wallClockToBonzo(String(when)) : null;
     const whenLabel = dt ? `${dt.date} at ${dt.time}` : (when || "unscheduled");
@@ -19349,9 +19363,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let prospectId: number | null = o.bonzo_prospect_id ?? null;
     if (!prospectId) {
       if (!o.phone_number) { console.log(`[bonzo-transfer] outcome=${outcomeId}: no phone — skipped`); return; }
-      const p = await findProspectByPhone(o.phone_number, lo?.fullName ?? null);
-      if (!p) { console.log(`[bonzo-transfer] outcome=${outcomeId}: no Bonzo prospect — skipped (lookup never creates)`); return; }
-      prospectId = p.id;
+      const match = await findProspectByPhone(o.phone_number, {
+        loName: lo?.fullName ?? null,
+        bonzoUsername: lo?.bonzoUsername ?? lo?.bonzo_username ?? null,
+        email: lo?.email ?? null,
+      });
+      if (!match.prospect) {
+        if (match.reason === "ambiguous") {
+          console.error(`[bonzo-transfer] outcome=${outcomeId}: ${match.candidates.length} prospects share that phone and none belong to ${lo?.fullName ?? "the chosen LO"} — skipped. Candidates: ${match.candidates.map((c) => `${c.id}=${c.assignedUserName ?? "unassigned"}<${c.assignedUserEmail ?? "no email"}>`).join(", ")}`);
+        } else {
+          console.log(`[bonzo-transfer] outcome=${outcomeId}: no Bonzo prospect — skipped (lookup never creates)`);
+        }
+        return;
+      }
+      prospectId = match.prospect.id;
     }
     let snap = await getProspectSnapshot(prospectId);
     if (!snap) { console.error(`[bonzo-transfer] outcome=${outcomeId}: prospect ${prospectId} unreadable`); return; }
@@ -19517,8 +19542,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const loaFirst = req.body?.loaName ? String(req.body.loaName).split(/\s+/)[0] : null;
     const suffix = loaFirst ? `(${loaFirst} I ${clrFirst})` : `(CLR ${clrFirst})`;
     const steps: any = { suffix };
-    const p = await findProspectByPhone(phone);
-    steps.prospect = p ? { id: p.id, name: p.name } : null;
+    const pMatch = await findProspectByPhone(phone);
+    const p = pMatch.prospect;
+    steps.prospect = p ? { id: p.id, name: p.name, matchedBy: p.matchedBy } : null;
+    steps.candidates = pMatch.candidates;
     if (!p) return res.json({ ok: false, steps, error: "No Bonzo prospect found for that phone." });
     const before = await getProspectSnapshot(p.id);
     if (!before) return res.json({ ok: false, steps, error: "Could not read prospect." });
@@ -19549,9 +19576,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const phone = String(req.body?.phone ?? "");
     const loName = req.body?.loName ? String(req.body.loName) : null;
     const steps: any = {};
-    const prospect = await findProspectByPhone(phone, loName);
-    steps.prospect = prospect ? { id: prospect.id, name: prospect.name, assignee: prospect.assignedUserName, loMatches: prospect.loMatches } : null;
-    if (!prospect) return res.json({ ok: false, steps, error: "No Bonzo prospect found for that phone (lookup never creates)." });
+    // The diagnostic deliberately reports every candidate: when a lead sits in
+    // several LOs' books, seeing the whole list is the point of the test.
+    const apptMatch = await findProspectByPhone(phone, {
+      loName,
+      bonzoUsername: req.body?.bonzoUsername ? String(req.body.bonzoUsername) : null,
+    });
+    const prospect = apptMatch.prospect;
+    steps.prospect = prospect
+      ? { id: prospect.id, name: prospect.name, assignee: prospect.assignedUserName, assigneeEmail: prospect.assignedUserEmail, loMatches: prospect.loMatches, matchedBy: prospect.matchedBy }
+      : null;
+    steps.candidates = apptMatch.candidates;
+    if (!prospect) {
+      return res.json({
+        ok: false, steps,
+        error: apptMatch.reason === "ambiguous"
+          ? `${apptMatch.candidates.length} prospects share that phone and none belong to ${loName || "the named LO"}. C3 will not guess — set the LO's Bonzo username so it can match on identity.`
+          : "No Bonzo prospect found for that phone (lookup never creates).",
+      });
+    }
     if (prospect.assignedTo) {
       const t = await createProspectTask({
         prospectId: prospect.id, assigneeId: prospect.assignedTo,

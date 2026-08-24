@@ -87,23 +87,67 @@ export type BonzoProspect = {
   phone: string | null;
   assignedTo: number | null;
   assignedUserName: string | null;
+  assignedUserEmail: string | null;
   loMatches: boolean;
+  /** How this prospect was chosen, for notes and logs. */
+  matchedBy: "email" | "name" | "only-candidate" | "newest";
 };
 
-// Look UP (never create) the prospect for a phone number. When several
-// prospects share the phone, prefer the one whose assigned Bonzo user matches
-// the LO from the C3 form; otherwise the newest.
-export async function findProspectByPhone(phone: string, preferLoName?: string | null): Promise<BonzoProspect | null> {
-  const digits = phoneDigits(phone);
-  if (!digits || digits.length < 10) return null;
-  const list = await req("GET", `/prospects?search=${encodeURIComponent(digits)}&per_page=10`);
-  if (!list.ok) return null;
-  const candidates = (Array.isArray(list.json?.data) ? list.json.data : [])
-    .filter((p: any) => phoneDigits(p.phone) === digits)
-    .slice(0, 3);
-  if (!candidates.length) return null;
+/**
+ * Who the C3 form says the lead is going to.
+ *
+ * Both identity fields are tried because neither is populated for everyone:
+ * of 22 active LOs, 9 have a bonzo_username and 9 more only have an email.
+ * bonzo_username wins where it exists — Chris Redoble's Bonzo seat is
+ * credoble+1@…, which is not his contact email.
+ */
+export type PreferredLo =
+  | { loName?: string | null; bonzoUsername?: string | null; email?: string | null }
+  | string | null | undefined;
 
-  const detailed: BonzoProspect[] = [];
+export type ProspectMatch = {
+  prospect: BonzoProspect | null;
+  /** Everyone sharing the phone, newest first — for logging an ambiguous miss. */
+  candidates: Array<{ id: number; name: string; assignedUserName: string | null; assignedUserEmail: string | null }>;
+  /** Why `prospect` is null: nothing on that phone, or nothing that is this LO's. */
+  reason: "none" | "ambiguous" | null;
+};
+
+// Look UP (never create) the prospect for a phone number.
+//
+// Several prospects routinely share a phone — the same borrower sits in more
+// than one loan officer's book. Picking the wrong one writes a client's
+// appointment into a stranger's CRM, so identity beats resemblance:
+//
+//   1. the assigned Bonzo user's EMAIL equals the LO's stored bonzo_username.
+//      This is exact. Display names are not: Bill Neessen's Bonzo account is
+//      literally called "Billy", which namesMatch could never match against
+//      "Bill Neessen" — so a real transfer fell through to whatever prospect
+//      Bonzo happened to return first and landed in another LO's account.
+//   2. failing that, the loose display-name match.
+//   3. failing that, DO NOT GUESS. When the CLR named an LO and none of the
+//      candidates belong to them, return ambiguous rather than writing to
+//      someone else's record. A single candidate is not a guess, so it still
+//      goes through (with loMatches false, which the caller warns about).
+export async function findProspectByPhone(phone: string, prefer?: PreferredLo): Promise<ProspectMatch> {
+  const empty: ProspectMatch = { prospect: null, candidates: [], reason: "none" };
+  const digits = phoneDigits(phone);
+  if (!digits || digits.length < 10) return empty;
+  const list = await req("GET", `/prospects?search=${encodeURIComponent(digits)}&per_page=10`);
+  if (!list.ok) return empty;
+  // No slice: the right record is not always in the first three. Bounded by
+  // per_page above, so this is at most ten detail reads.
+  const candidates = (Array.isArray(list.json?.data) ? list.json.data : [])
+    .filter((p: any) => phoneDigits(p.phone) === digits);
+  if (!candidates.length) return empty;
+
+  const wanted = typeof prefer === "string" ? { loName: prefer, bonzoUsername: null, email: null } : (prefer ?? {});
+  const wantEmails = [wanted.bonzoUsername, wanted.email]
+    .map((e) => String(e ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  const wantName = wanted.loName ?? null;
+
+  const detailed: Array<BonzoProspect & { createdAt: string }> = [];
   for (const c of candidates) {
     const det = await req("GET", `/prospects/${c.id}`);
     const d = det.json?.data ?? det.json;
@@ -114,11 +158,37 @@ export async function findProspectByPhone(phone: string, preferLoName?: string |
       phone: d.phone ?? null,
       assignedTo: d.assigned_to != null ? Number(d.assigned_to) : null,
       assignedUserName: d.assigned_user?.name ?? null,
-      loMatches: namesMatch(d.assigned_user?.name, preferLoName),
+      assignedUserEmail: d.assigned_user?.email ?? null,
+      loMatches: false,
+      matchedBy: "newest",
+      createdAt: String(d.created_at ?? ""),
     });
   }
-  if (!detailed.length) return null;
-  return detailed.find(p => p.loMatches) ?? detailed[0];
+  if (!detailed.length) return empty;
+  // The old comment promised "otherwise the newest" but nothing ever sorted, so
+  // the fallback was really "whatever Bonzo listed first".
+  detailed.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const summary = detailed.map((p) => ({
+    id: p.id, name: p.name, assignedUserName: p.assignedUserName, assignedUserEmail: p.assignedUserEmail,
+  }));
+  const pick = (p: typeof detailed[number], how: BonzoProspect["matchedBy"], matched: boolean): ProspectMatch => {
+    const { createdAt, ...rest } = p;
+    return { prospect: { ...rest, loMatches: matched, matchedBy: how }, candidates: summary, reason: null };
+  };
+
+  // bonzo_username first, then the LO's email — in that order, deliberately.
+  for (const want of wantEmails) {
+    const byEmail = detailed.find((p) => String(p.assignedUserEmail ?? "").trim().toLowerCase() === want);
+    if (byEmail) return pick(byEmail, "email", true);
+  }
+  if (wantName) {
+    const byName = detailed.find((p) => namesMatch(p.assignedUserName, wantName));
+    if (byName) return pick(byName, "name", true);
+  }
+  if (!wantEmails.length && !wantName) return pick(detailed[0], "newest", false);
+  if (detailed.length === 1) return pick(detailed[0], "only-candidate", false);
+  return { prospect: null, candidates: summary, reason: "ambiguous" };
 }
 
 // "YYYY-MM-DDTHH:MM[..]" wall clock → Bonzo's {date, time}. Bonzo validates

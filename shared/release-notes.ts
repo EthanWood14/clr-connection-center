@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.99.1",
+    headline: "Transfers and appointments now reach the right loan officer in Bonzo.",
+    items: [
+      { text: "When a borrower exists in more than one LO's Bonzo book, C3 now identifies the right record by the LO's Bonzo login rather than by their display name. A transfer to Bill Neessen was landing in another LO's account because his Bonzo account is named \"Billy\" and the names did not line up." },
+      { text: "If none of the matching records belong to the LO you picked, C3 no longer guesses. It skips the sync and logs every candidate it saw, instead of writing your client into a stranger's CRM." },
+      { text: "It also checks every record sharing the phone number, not just the first three." },
+      { text: "Managers: an LO with no Bonzo username set falls back to their email. Filling in Bonzo usernames on the LO directory makes this exact." },
+    ],
+  },
+  {
     version: "3.99.0",
     headline: "EOD Analytics now gives managers a clearer, more complete review workspace.",
     items: [
