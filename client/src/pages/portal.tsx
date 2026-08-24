@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { ScheduleAccountabilityNotice } from "@/components/schedule-accountability-notice";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertCircle, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
@@ -736,6 +737,7 @@ export default function Portal() {
                 </CardHeader>
                 {editingSchedule && (
                   <CardContent id="portal-weekly-schedule-editor" className="space-y-3">
+                    <ScheduleAccountabilityNotice />
                     <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2">
                       <p className="text-xs text-muted-foreground">Set your normal recurring hours.</p>
                       <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs gap-1" onClick={copyMondayToWeekdays}>
