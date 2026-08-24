@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.100.0",
+    headline: "The team dashboard is open to everyone, and the Transfer Scorecard opens on today.",
+    items: [
+      { text: "Team Dashboard is now in the sidebar for everyone, not just managers — the same view managers see, with team totals, the leaderboard, transfer trends and LO breakdowns. Your own dashboard is unchanged and still your home page." },
+      { text: "The Transfer Scorecard now opens on Today instead of the last 7 days, so you see where the team stands right now." },
+    ],
+  },
+  {
     version: "3.99.2",
     headline: "Fixes C3 freezing on a locked screen you could not click.",
     items: [

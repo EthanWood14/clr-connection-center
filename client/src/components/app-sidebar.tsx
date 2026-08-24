@@ -25,7 +25,10 @@ interface NavItem {
   icon: any;
   badge?: string;
   beta?: boolean;
-  help?: { summary: string; features: string[] };
+  // readonly: the `help` constants below are declared `as const`, so their
+  // arrays are readonly and never matched a mutable string[]. Every nav item
+  // carrying help has been a type error since; nothing reads it mutably.
+  help?: { readonly summary: string; readonly features: readonly string[] };
   external?: boolean; // opens in a new tab (e.g. the seating chart site)
 }
 
@@ -195,6 +198,9 @@ const personalItems: NavItem[] = [
 ];
 
 const teamItems: NavItem[] = [
+  // The same view managers get at Home, open to the whole team. Their personal
+  // dashboard stays where it is — this is in addition to it, not instead of it.
+  { title: "Team Dashboard",        url: "/team-dashboard", icon: LayoutDashboard, help: help.dashboard },
   { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
   // Embedded in C3 rather than opened off-site — the chart still lives in its

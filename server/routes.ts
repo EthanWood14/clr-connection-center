@@ -11391,8 +11391,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.get("/api/manager-dashboard", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
-    if (!me || (me.role !== "admin" && !me.superAdmin)) {
-      return res.status(403).json({ error: "Admin only" });
+    // Open to the whole internal team, not just admins — the payload is team
+    // performance (calls, transfers, appointments, EOD totals) and everyone is
+    // measured by it. LAP/LOP portal accounts stay out: they are external to
+    // the CLR team and have no business reading its numbers.
+    const internal = !me?.portal || me.portal === "c3";
+    if (!me || !internal) {
+      return res.status(403).json({ error: "Not available for this account." });
     }
 
     const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());

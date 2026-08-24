@@ -451,7 +451,9 @@ export default function ManagerDashboard() {
   const { toast } = useToast();
   const isDark = useIsDarkMode();
   const [showAllClrs, setShowAllClrs] = useState(false);
-  const [scorecardRange, setScorecardRange] = useState<ScorecardRange>("7d");
+  // Today first: the scorecard is read during the day to see where the team is
+  // right now, and a 7-day window buries that under last week's numbers.
+  const [scorecardRange, setScorecardRange] = useState<ScorecardRange>("today");
 
   // Per-section range state
   const [rangeTrend, setRangeTrend] = useState<RangeKey>("30d");
