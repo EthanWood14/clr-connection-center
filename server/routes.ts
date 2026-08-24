@@ -11388,7 +11388,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Returns team-wide stats, leaderboard, EOD report status grid, pipeline
   // (today's transfers / overdue appointments / overdue NMLS), and a 30-day trend
   // for the manager dashboard route. Replaces the regular CLR home for admins.
-  app.get("/api/manager-dashboard", requireAuth, (req: any, res) => {
+  app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
     // Open to the whole internal team, not just admins — the payload is team
@@ -11401,6 +11401,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
 
     const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    // Complete CallTools volume. C3's own callsync feed sees only a fraction
+    // (185 calls on 2026-08-24 against 8,729 dialed), so the dialer series comes
+    // from LeadVault, 5-minute cached, falling back per-day to the local table.
+    const leadvaultCallTools = await leadvaultCallToolsByDay(90);
     const week = resolveNamedPeriod("week");
     const month = resolveNamedPeriod("month");
     const last30 = resolveNamedPeriod("30days");
@@ -11749,8 +11753,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           const row = trendMap.get(d);
           trend.push({
             date: d,
-            calls: (callsByDate.get(d) ?? 0) + (callToolsByDate.get(d)?.calls ?? 0),
-            callToolsCalls: callToolsByDate.get(d)?.calls ?? 0,
+            calls: (callsByDate.get(d) ?? 0) + (leadvaultCallTools.get(d) ?? callToolsByDate.get(d)?.calls ?? 0),
+            callToolsCalls: leadvaultCallTools.get(d) ?? callToolsByDate.get(d)?.calls ?? 0,
             dialpadCalls: dialpadByDate.get(d) ?? 0,
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
@@ -11765,8 +11769,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           const row = trendMap.get(d);
           trend.push({
             date: d,
-            calls: (callsByDate.get(d) ?? 0) + (callToolsByDate.get(d)?.calls ?? 0),
-            callToolsCalls: callToolsByDate.get(d)?.calls ?? 0,
+            calls: (callsByDate.get(d) ?? 0) + (leadvaultCallTools.get(d) ?? callToolsByDate.get(d)?.calls ?? 0),
+            callToolsCalls: leadvaultCallTools.get(d) ?? callToolsByDate.get(d)?.calls ?? 0,
             dialpadCalls: dialpadByDate.get(d) ?? 0,
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
@@ -15280,6 +15284,57 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       if (s?.leadvault_reporting_token) return String(s.leadvault_reporting_token).trim();
     } catch {}
     return "";
+  }
+
+  /**
+   * CallTools dials per day, from LeadVault.
+   *
+   * C3's own callsync_activity_events only ever sees a sliver of the dialer:
+   * 185 calls on 2026-08-24 against the 8,729 actually placed. The complete
+   * count lives in LeadVault, which aggregates CallTools' own call_activity
+   * feed — so the manager dashboard's CallTools series reads from there and
+   * falls back to the local table when the feed is unreachable.
+   *
+   * Shares the 5-minute outbound-calls cache; a dashboard load must not add a
+   * live upstream round-trip.
+   */
+  async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    const token = leadvaultReportingToken();
+    if (!token) return out;
+    const window = [7, 30, 90].includes(days) ? days : 90;
+    try {
+      const cached = outboundCallsCache.get(window);
+      let payload = cached && Date.now() - cached.at < OUTBOUND_CALLS_CACHE_TTL_MS ? cached.data : null;
+      if (!payload) {
+        const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10_000);
+        try {
+          const upstream = await fetch(`${base}/api/clr/outbound-summary?days=${window}`, {
+            headers: { "x-api-token": token, Accept: "application/json" },
+            signal: ctrl.signal,
+          });
+          if (!upstream.ok) return out;
+          const json: any = await upstream.json().catch(() => null);
+          if (!json || !Array.isArray(json.agents)) return out;
+          payload = { configured: true, ...json, days: window };
+          outboundCallsCache.set(window, { at: Date.now(), data: payload });
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      for (const agent of payload.agents ?? []) {
+        if (!/^CallTools/i.test(String(agent?.agent ?? ""))) continue;
+        for (const d of agent.by_day ?? []) {
+          const date = String(d?.date ?? "").slice(0, 10);
+          if (date) out.set(date, (out.get(date) ?? 0) + (Number(d?.calls) || 0));
+        }
+      }
+    } catch (e: any) {
+      console.error(`[manager-dashboard] CallTools day rollup unavailable: ${e?.message ?? e}`);
+    }
+    return out;
   }
 
   app.get("/api/outbound-calls", requireAuth, async (req: any, res) => {

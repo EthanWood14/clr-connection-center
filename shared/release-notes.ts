@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.101.0",
+    headline: "The dashboard call chart now shows every CallTools dial, not a fraction of them.",
+    items: [
+      { text: "The team trend chart was counting only the calls C3 hears about directly — 185 on a day the team actually dialed 8,729. It now reads the complete CallTools figure, so the bars reflect real dialing volume." },
+      { text: "Manually logged calls and Dialpad are unchanged and still shown separately." },
+    ],
+  },
+  {
     version: "3.100.0",
     headline: "The team dashboard is open to everyone, and the Transfer Scorecard opens on today.",
     items: [
