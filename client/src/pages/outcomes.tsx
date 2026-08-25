@@ -201,8 +201,7 @@ const outcomeFormSchema = z.object({
   qualOwnHome: z.string().optional(),
   qualBankruptcy: z.string().optional(),
   qualInvestment: z.string().optional(),
-  qualCredit500: z.string().optional(),
-  qualCreditEst: z.string().optional(),
+
   infoAddress: z.string().optional(),
   infoGoal: z.string().optional(),
   infoTakeOut: z.string().optional(),
@@ -214,6 +213,8 @@ const outcomeFormSchema = z.object({
   infoEmployment: z.string().optional(),
   infoCreditScore: z.string().optional(),
   infoMilitary: z.string().optional(),
+  infoEmploymentNotes: z.string().optional(),
+  infoMilitaryNotes: z.string().optional(),
 }).superRefine((val, ctx) => {
   if (val.outcomeType === "transfer" && val.transferType !== "direct" && val.transferType !== "appointment") {
     ctx.addIssue({
@@ -393,8 +394,7 @@ function OutcomeFormDialog({
       qualOwnHome: "",
       qualBankruptcy: "",
       qualInvestment: "",
-      qualCredit500: "",
-      qualCreditEst: "",
+
       infoAddress: "",
       infoGoal: "",
       infoTakeOut: "",
@@ -406,6 +406,8 @@ function OutcomeFormDialog({
       infoEmployment: "",
       infoCreditScore: "",
       infoMilitary: "",
+      infoEmploymentNotes: "",
+      infoMilitaryNotes: "",
     },
   });
 
@@ -453,9 +455,10 @@ function OutcomeFormDialog({
     // confirmation — the escape hatch for a transfer logged in a hurry.
     {
       form.setValue("conversationNotes", "");
-      for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment", "qualCredit500", "qualCreditEst",
+      for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment",
         "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
-        "infoPayment", "infoIncome", "infoEmployment", "infoCreditScore", "infoMilitary"] as const) {
+        "infoPayment", "infoIncome", "infoEmployment", "infoEmploymentNotes",
+        "infoCreditScore", "infoMilitary", "infoMilitaryNotes"] as const) {
         form.setValue(k, "");
       }
       setConfirmBonzo(true);
@@ -775,20 +778,44 @@ function OutcomeFormDialog({
                   {INVESTMENT_ROUTING_HINT}
                 </p>
               )}
-              {form.watch("qualCredit500") === "yes" && (
-                <FormField control={form.control} name="qualCreditEst" render={({ field }) => (
-                  <FormItem>
-                    <FormControl><Input {...field} placeholder="Estimated credit score" data-testid="input-credit-est" /></FormControl>
-                  </FormItem>
-                )} />
-              )}
 
               <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
               {INFO_FIELDS.map(f => (
                 <FormField key={f.name} control={form.control} name={f.name as any} render={({ field }) => (
-                  <FormItem className="grid grid-cols-[9.5rem_1fr] items-center gap-2 space-y-0">
-                    <FormLabel className="mb-0 text-[12px] text-muted-foreground">{f.label}</FormLabel>
-                    <FormControl><Input {...field} className="h-8" data-testid={`input-${f.name}`} /></FormControl>
+                  <FormItem className="grid grid-cols-[9.5rem_1fr] items-start gap-2 space-y-0">
+                    <FormLabel className="mb-0 pt-1.5 text-[12px] text-muted-foreground">{f.label}</FormLabel>
+                    {f.options ? (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap gap-1.5">
+                          {f.options.map(opt => (
+                            <button
+                              key={opt}
+                              type="button"
+                              // Tapping the selected answer again clears it, so a
+                              // mistake does not need the whole form reset.
+                              onClick={() => field.onChange(field.value === opt ? "" : opt)}
+                              className={`text-xs px-3 py-1.5 rounded-md border font-medium ${
+                                field.value === opt
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "border-border hover:bg-muted"
+                              }`}
+                              data-testid={`input-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                            >{opt}</button>
+                          ))}
+                        </div>
+                        {f.notes && (
+                          <FormField control={form.control} name={f.notes as any} render={({ field: notesField }) => (
+                            <FormItem className="space-y-0">
+                              <FormControl>
+                                <Input {...notesField} className="h-8" placeholder={f.notesPlaceholder} data-testid={`input-${f.notes}`} />
+                              </FormControl>
+                            </FormItem>
+                          )} />
+                        )}
+                      </div>
+                    ) : (
+                      <FormControl><Input {...field} className="h-8" data-testid={`input-${f.name}`} /></FormControl>
+                    )}
                   </FormItem>
                 )} />
               ))}

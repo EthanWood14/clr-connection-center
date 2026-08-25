@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.102.0",
+    headline: "Input Results asks for credit once, and employment, credit and military are now buttons.",
+    items: [
+      { text: "Credit score was asked twice — a yes/no \"over 500?\" in Qualification plus a separate Credit score box in Info Gathering. It is one field now, with bands: 500-580, 580-620, 620-720, 720+." },
+      { text: "Employment is W2 / SE / Retired buttons, with a notes box beside it for anything that does not fit — a second job, 1099 work on the side." },
+      { text: "Military is Yes / No with its own notes box." },
+      { text: "Tapping the answer you already picked clears it, so a mistake does not mean starting the form over. The same buttons appear on the live-call Lead Card." },
+    ],
+  },
+  {
     version: "3.101.1",
     headline: "A denied attendance request no longer pings you.",
     items: [

@@ -72,10 +72,15 @@ test("the summary is replaced by the qualification checklist", () => {
   assert.match(lib, /should be No/);
   assert.match(lib, /Investment property \/ secondary residence\?/);
   assert.match(lib, /give this to LOA Justin, Mateo, or John/i);
-  assert.match(lib, /Credit score over 500\? \(est\)/);
+  // Credit is no longer a qualification question: it was asked there AND in
+  // Info Gathering, so it is one banded field now. Scoped to the array —
+  // a whole-file scan would match the comment explaining the removal.
+  const qualBlock = lib.slice(lib.indexOf("QUAL_QUESTIONS"), lib.indexOf("INVESTMENT_ROUTING_HINT"));
+  assert.doesNotMatch(qualBlock, /name: "qualCredit/, "no credit question in the checklist");
+  assert.match(lib, /CREDIT_SCORE_BANDS = \["500-580", "580-620", "620-720", "720\+"\]/);
   for (const label of ["Address", "Goal", "How much are you looking to take out?", "Value of home",
     "Balance on mortgage", "Rate on mortgage", "Monthly payment", "Monthly income",
-    "W2 / SE / Retired", "Credit score", "Military"]) {
+    "Employment", "Credit score", "Military"]) {
     assert.ok(lib.includes(label), `missing field: ${label}`);
   }
   assert.ok(page.includes("Other Notes"), "the Other Notes textarea stays on the page");

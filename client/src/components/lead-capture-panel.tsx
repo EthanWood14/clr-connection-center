@@ -87,15 +87,6 @@ export function LeadCapturePanel({
               {INVESTMENT_ROUTING_HINT}
             </p>
           )}
-          {capture.qualCredit500 === "yes" && (
-            <Input
-              value={capture.qualCreditEst}
-              onChange={e => set("qualCreditEst", e.target.value)}
-              placeholder="Estimated credit score"
-              className="h-8 text-xs mt-1.5"
-              data-testid="panel-credit-est"
-            />
-          )}
         </div>
 
         {/* Info gathering */}
@@ -103,14 +94,45 @@ export function LeadCapturePanel({
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Info gathering</p>
           <div className="space-y-1">
             {INFO_FIELDS.map(f => (
-              <div key={f.name} className="grid grid-cols-[7.5rem_1fr] items-center gap-1.5">
-                <span className="text-[11px] text-muted-foreground leading-tight">{f.label}</span>
-                <Input
-                  value={capture[f.name] as string}
-                  onChange={e => set(f.name, e.target.value)}
-                  className="h-7 text-xs"
-                  data-testid={`panel-${f.name}`}
-                />
+              <div key={f.name} className="grid grid-cols-[7.5rem_1fr] items-start gap-1.5">
+                <span className="text-[11px] text-muted-foreground leading-tight pt-1">{f.label}</span>
+                {f.options ? (
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap gap-1">
+                      {f.options.map(opt => (
+                        <button
+                          key={opt}
+                          type="button"
+                          // Tapping the chosen answer again clears it — a wrong
+                          // tap mid-call has to be undoable without a reset.
+                          onClick={() => set(f.name, capture[f.name] === opt ? "" : opt)}
+                          className={`text-[11px] px-2 py-1 rounded-md border font-medium ${
+                            capture[f.name] === opt
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "border-border hover:bg-muted"
+                          }`}
+                          data-testid={`panel-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                        >{opt}</button>
+                      ))}
+                    </div>
+                    {f.notes && (
+                      <Input
+                        value={capture[f.notes] as string}
+                        onChange={e => set(f.notes!, e.target.value)}
+                        placeholder={f.notesPlaceholder}
+                        className="h-7 text-xs"
+                        data-testid={`panel-${f.notes}`}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <Input
+                    value={capture[f.name] as string}
+                    onChange={e => set(f.name, e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid={`panel-${f.name}`}
+                  />
+                )}
               </div>
             ))}
           </div>
