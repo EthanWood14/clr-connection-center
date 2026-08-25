@@ -12913,26 +12913,27 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     userId: number,
     date: string,
     status: "approved" | "denied",
-    reviewerNote: string,
   ): void {
-    const approved = status === "approved";
-    const title = approved ? "Late excuse approved" : "Late excuse not approved";
-    const message = approved
-      ? `Your late on ${date} was excused and no longer counts toward your rolling total.`
-      : `Your late excuse request for ${date} was not approved.${reviewerNote ? ` ${reviewerNote}` : ""}`;
+    // Denials are silent, deliberately. An approval changes something the person
+    // needs to know — the late stops counting toward their rolling total — but a
+    // denial changes nothing, and pushing "not approved" to their phone turns a
+    // routine call into a public-feeling reprimand. The decision is still
+    // recorded on the request and in the audit trail, and it is visible on the
+    // Check-Ins page whenever they look. Managers deliver the "no" themselves.
+    if (status !== "approved") return;
+
+    const title = "Late excuse approved";
     try {
       (storage as any).createNotification?.({
         userId,
         type: "attendance_excuse",
         title,
-        message,
+        message: `Your late on ${date} was excused and no longer counts toward your rolling total.`,
       });
     } catch {}
     sendPushToUser(userId, {
       title,
-      body: approved
-        ? `Your late on ${date} was excused.`
-        : `Your request for ${date} was not approved.`,
+      body: `Your late on ${date} was excused.`,
       url: "/#/check-ins",
     }).catch(() => {});
   }
@@ -13206,7 +13207,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       details: JSON.stringify({ status, reviewerNote: reviewerNote || null }),
     });
     if (request.kind === "late" && request.subject_type === "user") {
-      notifyAttendanceUserDecision(Number(request.subject_id), String(request.attendance_date), status, reviewerNote);
+      notifyAttendanceUserDecision(Number(request.subject_id), String(request.attendance_date), status);
     }
     res.json({ ok: true, request: attendanceRequestForManager(orgId, request) });
   });

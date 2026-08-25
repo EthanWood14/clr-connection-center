@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
+const root = join(import.meta.dirname, "..");
 const testDir = mkdtempSync(join(tmpdir(), "c3-attendance-excuse-"));
 process.env.DATABASE_PATH = join(testDir, "attendance.db");
 
@@ -302,4 +303,33 @@ test("attendance excuses stay consistent across CLR, LO, and LOA workflows", () 
   });
   assert.equal(cancelled.changed, true);
   assert.equal(cancelled.request?.status, "cancelled");
+});
+
+test("a denied attendance request notifies nobody, but is still recorded", () => {
+  // A denial changes nothing for the person — the late still counts — so
+  // pushing "not approved" to their phone turns a routine call into a
+  // public-feeling reprimand. Managers deliver the no themselves. The decision
+  // must still be persisted and audited, and visible on Check-Ins.
+  const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+  const start = routes.indexOf("function notifyAttendanceUserDecision");
+  assert.notEqual(start, -1, "the decision notifier must still exist");
+  const fn = routes.slice(start, routes.indexOf("function attendanceExpectedStart", start));
+
+  const guard = fn.indexOf('if (status !== "approved") return;');
+  assert.notEqual(guard, -1, "denials must return before anything is sent");
+  assert.ok(guard < fn.indexOf("createNotification"), "guard runs before the in-app notification");
+  assert.ok(guard < fn.indexOf("sendPushToUser"), "guard runs before the push");
+  // The title is now a fixed string, not a ternary — there is no denial branch
+  // left to send. (A bare /not approved/ scan would match the comment above it.)
+  assert.match(fn, /const title = "Late excuse approved";/,
+    "no approved/denied ternary should remain");
+
+  // The decision itself is untouched: still written, still audited.
+  const route = routes.slice(
+    routes.indexOf("storageExtra.reviewAttendanceExcuseRequest({"),
+    routes.indexOf("notifyAttendanceUserDecision(Number(request.subject_id)"),
+  );
+  assert.match(route, /status,/);
+  assert.match(route, /reviewerNote,/, "the manager's note is still stored");
+  assert.match(route, /entityType: "attendance_excuse_request"/, "still audited");
 });

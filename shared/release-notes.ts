@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.101.1",
+    headline: "A denied attendance request no longer pings you.",
+    items: [
+      { text: "Attendance excuse requests that are not approved are now silent — no notification and no push. An approval still tells you, because it changes something: the late stops counting toward your rolling total." },
+      { text: "The decision and any manager note are still recorded, still audited, and still visible on the Check-Ins page." },
+    ],
+  },
+  {
     version: "3.101.0",
     headline: "The dashboard call chart now shows every CallTools dial, not a fraction of them.",
     items: [
