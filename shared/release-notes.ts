@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.103.0",
+    headline: "Shotgun offers now chime, can be passed, and a missed one takes you out of the rotation.",
+    items: [
+      { text: "A Shotgun offer now plays a pleasant two-note chime when it lands, and repeats softly while it is on screen — you will hear it even if you are looking at another window." },
+      { text: "New Pass button on the offer: not the right lead for you? Pass and it goes to the next CLR instantly instead of burning the rest of your 20 seconds. Passing keeps you in the rotation." },
+      { text: "Letting the timer run out is different: a missed offer now takes you out of the rotation and leaves you a notification. Press Ready on the Shotgun page to rejoin. Being Ready means answering in 20 seconds — if you step away, C3 stops offering you leads instead of wasting them." },
+    ],
+  },
+  {
     version: "3.102.0",
     headline: "Input Results asks for credit once, and employment, credit and military are now buttons.",
     items: [

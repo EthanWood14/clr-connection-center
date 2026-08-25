@@ -101,3 +101,33 @@ test("a new lead alerts every CLR by email and push when only zero to two are re
   const publish = routes.slice(routes.indexOf('app.post("/api/shotgun/publish"'), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
   assert.match(publish, /if \(readyCount <= 2\) notifyShotgunLowCoverage/);
 });
+
+test("a missed offer takes the CLR out of the rotation and tells them", () => {
+  const advance = routes.slice(routes.indexOf("function advanceShotgun"), routes.indexOf("const shotgunTimer"));
+  // Being Ready means answering in 20 seconds; a lapsed offer proves you are
+  // not at your desk, so the sweep flips is_ready off...
+  assert.match(advance, /DO UPDATE SET is_ready=0/);
+  // ...and says so, in-app and by push, with the way back in.
+  assert.match(advance, /shotgun_missed/);
+  assert.match(advance, /Press Ready on the Shotgun page to rejoin/);
+});
+
+test("denying an offer passes the lead on without punishing the CLR", () => {
+  const denyStart = routes.indexOf('app.post("/api/shotgun/:id/deny"');
+  assert.notEqual(denyStart, -1, "the deny route must exist");
+  const deny = routes.slice(denyStart, routes.indexOf('app.patch("/api/shotgun/:id/result"', denyStart));
+  assert.match(deny, /status='queued',current_assignee_id=NULL/);
+  assert.match(deny, /response='declined'/);
+  assert.match(deny, /advanceShotgun\(now\)/, "the lead moves to the next CLR immediately");
+  assert.doesNotMatch(deny, /is_ready=0/, "an explicit pass must NOT opt the CLR out — only a miss does");
+  // And the alert offers the button, with the trade-off spelled out.
+  assert.match(alert, /shotgun-deny/);
+  assert.match(alert, /Passing keeps you in the rotation/);
+});
+
+test("an offer is heard, not just seen", () => {
+  assert.match(alert, /playShotgunChime/);
+  assert.match(alert, /659\.25/, "E5");
+  assert.match(alert, /880/, "A5 — a pleasant two-note chime, not an alarm");
+  assert.match(alert, /setInterval\(\(\) => playShotgunChime\(audioRef\), 2_500\)/, "gentle repeat while the offer is up");
+});

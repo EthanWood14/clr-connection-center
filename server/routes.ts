@@ -7186,8 +7186,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   function advanceShotgun(nowIso = new Date().toISOString()) {
     const db = shotgunDb();
+    const missed: Array<{ leadId: number; userId: number; orgId: number; leadName: string }> = [];
     const expired = db.transaction(() => {
-      const rows = db.prepare(`SELECT id,current_assignee_id FROM shotgun_leads
+      const rows = db.prepare(`SELECT id,org_id,lead_name,current_assignee_id FROM shotgun_leads
         WHERE status='offered' AND offer_expires_at<=? ORDER BY id LIMIT 100`).all(nowIso) as any[];
       const leadIds: number[] = [];
       for (const row of rows) {
@@ -7197,10 +7198,26 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (!changed.changes) continue;
         db.prepare(`UPDATE shotgun_offers SET response='expired',responded_at=?
           WHERE lead_id=? AND user_id=? AND response='pending'`).run(nowIso, row.id, row.current_assignee_id);
+        // Missing an offer takes you out of the rotation. Being Ready means "I
+        // will answer in 20 seconds"; letting one lapse says you are not really
+        // at your desk, and leaving you Ready would keep burning 20 seconds of
+        // every hot lead's life on you. Explicitly DENYING an offer does not do
+        // this — a fast "pass" is exactly the behaviour Shotgun wants.
+        db.prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,0,NULL,?)
+          ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=0,updated_at=excluded.updated_at`)
+          .run(row.org_id, row.current_assignee_id, nowIso);
+        missed.push({ leadId: Number(row.id), userId: Number(row.current_assignee_id), orgId: Number(row.org_id), leadName: String(row.lead_name) });
         leadIds.push(Number(row.id));
       }
       return leadIds;
     })();
+    for (const m of missed) {
+      try {
+        storage.createNotification({ userId: m.userId, type: "shotgun_missed", title: "Missed Shotgun lead — you're out of the rotation",
+          message: `The offer for ${m.leadName} expired after ${SHOTGUN_OFFER_SECONDS} seconds and went to the next CLR. You won't be offered leads until you press Ready again on the Shotgun page.`, isRead: false } as any);
+      } catch {}
+      sendPushToUser(m.userId, { title: "Missed Shotgun lead", body: `${m.leadName} moved on. Press Ready on the Shotgun page to rejoin the rotation.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    }
     const queued = db.prepare(`SELECT id FROM shotgun_leads WHERE status='queued' ORDER BY created_at,id LIMIT 100`).all() as any[];
     const assignments: any[] = [];
     for (const row of queued) {
@@ -7324,6 +7341,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return true;
     })();
     if (!result) { advanceShotgun(now); return res.status(409).json({ error: "This offer expired or moved to another CLR." }); }
+    res.json({ ok: true });
+  });
+
+  // An explicit pass. Unlike letting the offer lapse, denying does NOT take the
+  // CLR out of the rotation — a fast "not this one" is exactly the behaviour
+  // Shotgun wants, and the lead moves to the next CLR immediately instead of
+  // burning the rest of the 20-second window.
+  app.post("/api/shotgun/:id/deny", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const leadId = Number(req.params.id);
+    const now = new Date().toISOString();
+    const result = shotgunDb().transaction(() => {
+      const changed = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+        WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=?`).run(now, leadId, orgId, userId);
+      if (!changed.changes) return false;
+      shotgunDb().prepare(`UPDATE shotgun_offers SET response='declined',responded_at=?
+        WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, userId);
+      return true;
+    })();
+    if (!result) return res.status(409).json({ error: "This offer already expired or moved on." });
+    advanceShotgun(now);
     res.json({ ok: true });
   });
 
