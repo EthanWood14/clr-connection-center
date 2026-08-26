@@ -691,8 +691,11 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     priority TEXT NOT NULL DEFAULT 'normal',
     recurrence TEXT NOT NULL DEFAULT 'none',
     schedule_days TEXT NOT NULL DEFAULT '[]',
+    recurrence_timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles',
     due_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    series_id INTEGER,
+    spawned_next_task_id INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`);
@@ -712,11 +715,24 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     org_id INTEGER NOT NULL,
     due_at TEXT NOT NULL,
     alerted_at TEXT NOT NULL,
+    email_attempts INTEGER NOT NULL DEFAULT 0,
+    last_email_sent_at TEXT,
+    next_email_at TEXT,
+    last_email_error TEXT,
     UNIQUE(task_id, due_at)
   )`);
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN series_id INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN spawned_next_task_id INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN recurrence_timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_tasks_org_assignee ON clr_tasks(org_id, assigned_user_id, status, due_at)`); } catch {}
   try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN schedule_days TEXT NOT NULL DEFAULT '[]'`); } catch {}
+  try { sqlite.exec(`UPDATE clr_tasks SET series_id=id WHERE series_id IS NULL`); } catch {}
+  try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_clr_tasks_series_due ON clr_tasks(series_id,due_at) WHERE series_id IS NOT NULL`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_task_completions_task ON clr_task_completions(task_id, completed_at DESC)`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN email_attempts INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN last_email_sent_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN next_email_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN last_email_error TEXT`); } catch {}
 
   // Shotgun lead distribution. Readiness is a short-lived heartbeat rather than
   // a permanent preference, so closing C3 cannot leave someone eligible all day.

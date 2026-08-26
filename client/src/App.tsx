@@ -21,6 +21,7 @@ import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
 import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
+import { TaskOverduePopup } from "@/components/task-overdue-popup";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
@@ -289,6 +290,7 @@ function DeferredAppPrompts({
               <UpdatePrompt onBlockingChange={trackUpdatePrompt} />
               {!updatePromptBlocking && (
                 <>
+                  {!isDemo && <TaskOverduePopup />}
                   {!isDemo && <PushNudge />}
                   {!isDemo && <GoalNudge />}
                   <TransferCelebration />

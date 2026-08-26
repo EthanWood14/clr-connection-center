@@ -6,7 +6,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
 import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
-import { isTaskPriority, isTaskRecurrence, nextTaskDueAt, normalizeTaskScheduleDays } from "@shared/clr-tasks";
+import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -36,6 +36,7 @@ import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysIn
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
+import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "./clr-task-scheduler";
 import {
   evaluateCheckinIp,
   normalizeAllowedIps,
@@ -497,6 +498,7 @@ const DEFAULT_FROM = "CLR Connection Center <reports@westcapitallending.center>"
 
 type EmailPayload = {
   to: string | string[];
+  bcc?: string | string[];
   subject: string;
   html: string;
   /** Display name on the From header. The address itself stays on the verified domain. */
@@ -643,7 +645,7 @@ async function sendEmail(payload: EmailPayload, meta?: { cancelKey?: string; imm
 
 // Low-level immediate send (the actual Resend call). Prefer sendEmail(); this is
 // what fires after the delay window, and directly for { immediate: true } sends.
-async function dispatchEmailNow({ to, subject, html, fromName, replyTo, attachments }: EmailPayload): Promise<string> {
+async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, attachments }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
   // Old installs sometimes have a non-empty but revoked key in the DB, which
@@ -679,6 +681,7 @@ async function dispatchEmailNow({ to, subject, html, fromName, replyTo, attachme
     const resend = new Resend(apiKey);
     result = await resend.emails.send({
       from, to: toArr, subject, html,
+      ...(bcc ? { bcc: Array.isArray(bcc) ? bcc : [bcc] } : {}),
       ...(replyTo && replyTo.includes("@") ? { replyTo } : {}),
       ...(attachments?.length ? { attachments } : {}),
     });
@@ -6849,9 +6852,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     createdByName: String(row.created_by_name ?? "Manager"),
     priority: String(row.priority ?? "normal"),
     recurrence: String(row.recurrence ?? "none"),
+    recurrenceTimezone: String(row.recurrence_timezone ?? BUSINESS_DAY_DEFAULT_TZ),
     scheduleDays: normalizeTaskScheduleDays((() => { try { return JSON.parse(String(row.schedule_days ?? "[]")); } catch { return []; } })()),
     dueAt: String(row.due_at),
     status: String(row.status ?? "active"),
+    seriesId: Number(row.series_id ?? row.id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     completionCount: Number(row.completion_count ?? 0),
@@ -6880,6 +6885,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
     const canManage = taskManager(me);
+    // Do not depend solely on the minute cron. A server restart or sleeping
+    // browser catches every recurring series up before the task list renders.
+    ensureRecurringTaskOccurrences(taskSqlite(), new Date().toISOString(), 500, orgId);
     const rows = taskSqlite().prepare(`
       SELECT t.*, assigned.name AS assigned_user_name, creator.name AS created_by_name,
         (SELECT COUNT(*) FROM clr_task_completions c WHERE c.task_id=t.id) AS completion_count,
@@ -6943,10 +6951,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
     const now = new Date().toISOString();
     const result = taskSqlite().prepare(`
-      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,due_at,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?, 'active',?,?)
-    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), due.toISOString(), now, now);
+      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?, 'active',?,?)
+    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ, due.toISOString(), now, now);
     const id = Number(result.lastInsertRowid);
+    taskSqlite().prepare(`UPDATE clr_tasks SET series_id=? WHERE id=?`).run(id, id);
     storage.createNotification({
       userId: assignedUserId, type: "task_assigned", title: `New task: ${title}`,
       message: `Due ${due.toLocaleString("en-US", { timeZone: assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}${recurrence === "none" ? "" : ` · repeats ${recurrence}`}.`,
@@ -6981,8 +6990,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
-    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
-      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), due.toISOString(), status, new Date().toISOString(), id, orgId);
+    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,recurrence_timezone=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
+      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), assignee.timezone ?? before.recurrence_timezone ?? BUSINESS_DAY_DEFAULT_TZ, due.toISOString(), status, new Date().toISOString(), id, orgId);
     if (assignedUserId !== Number(before.assigned_user_id)) {
       storage.createNotification({ userId: assignedUserId, type: "task_assigned", title: `Task assigned: ${title}`, message: `A manager assigned this task to you.`, isRead: false } as any);
       sendPushToUser(assignedUserId, { title: "C3 task assigned to you", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
@@ -7007,17 +7016,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (note.length > 2000) return res.status(400).json({ error: "Completion note must be 2,000 characters or fewer." });
     const completedAt = new Date().toISOString();
     const scheduleDays = (() => { try { return JSON.parse(String(task.schedule_days ?? "[]")); } catch { return []; } })();
-    const nextDue = nextTaskDueAt(String(task.due_at), String(task.recurrence) as any, new Date(completedAt), scheduleDays);
+    const nextDue = nextTaskOccurrenceForRow({ ...task, schedule_days: JSON.stringify(scheduleDays) });
     try {
       taskSqlite().transaction(() => {
         taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note) VALUES (?,?,?,?,?,?)`)
           .run(id, orgId, task.due_at, userId, completedAt, note);
-        taskSqlite().prepare(`UPDATE clr_tasks SET due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
-          .run(nextDue ?? task.due_at, nextDue ? "active" : "completed", completedAt, id, orgId);
+        taskSqlite().prepare(`UPDATE clr_tasks SET status='completed',updated_at=? WHERE id=? AND org_id=?`)
+          .run(completedAt, id, orgId);
       })();
     } catch (error: any) {
       if (String(error?.message ?? "").includes("UNIQUE")) return res.status(409).json({ error: "This task cycle was already completed." });
       throw error;
+    }
+    // The completed row remains the permanent record for this occurrence. Its
+    // successor is a separate active row, so finishing late cannot erase any
+    // deadlines that were missed in between.
+    try {
+      spawnNextTaskOccurrence(taskSqlite(), id);
+      ensureRecurringTaskOccurrences(taskSqlite(), completedAt);
+    } catch (error: any) {
+      // Completion is already durable; GET and the minute scheduler retry the
+      // successor independently instead of making the user complete it twice.
+      console.error(`[clr-tasks] successor generation failed task=${id}:`, error?.message ?? error);
     }
     const creator = storage.getUserById(Number(task.created_by_user_id)) as any;
     if (creator?.isActive ?? creator?.is_active) {
@@ -7031,51 +7051,70 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   async function alertOverdueClrTasks() {
     const now = new Date().toISOString();
+    ensureRecurringTaskOccurrences(taskSqlite(), now);
     const overdue = taskSqlite().prepare(`
-      SELECT t.*, u.name AS assigned_user_name FROM clr_tasks t
+      SELECT t.*, u.name AS assigned_user_name, a.id AS alert_id,
+        COALESCE(a.email_attempts,0) AS email_attempts
+      FROM clr_tasks t
       LEFT JOIN users u ON u.id=t.assigned_user_id
+      LEFT JOIN clr_task_alerts a ON a.task_id=t.id AND a.due_at=t.due_at
       WHERE t.status='active' AND t.due_at < ?
-        AND NOT EXISTS (SELECT 1 FROM clr_task_alerts a WHERE a.task_id=t.id AND a.due_at=t.due_at)
+        AND (a.id IS NULL OR a.next_email_at IS NULL OR a.next_email_at<=?)
       ORDER BY t.due_at ASC LIMIT 100
-    `).all(now) as any[];
+    `).all(now, now) as any[];
     for (const task of overdue) {
       const claimed = taskSqlite().prepare(`INSERT OR IGNORE INTO clr_task_alerts (task_id,org_id,due_at,alerted_at) VALUES (?,?,?,?)`)
         .run(task.id, task.org_id, task.due_at, now);
-      if (!claimed.changes) continue;
       const managers = taskManagers(Number(task.org_id));
       const title = `Overdue CLR task: ${String(task.title)}`;
       const message = `${String(task.assigned_user_name ?? "A CLR")} did not complete this task by ${new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ })}.`;
       const assignee = storage.getUserById(Number(task.assigned_user_id)) as any;
-      storage.createNotification({ userId: Number(task.assigned_user_id), type: "task_overdue", title: `Your task is overdue: ${String(task.title)}`,
-        message: `This was due ${new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}. Open Task Center to complete it.`, isRead: false } as any);
-      sendPushToUser(Number(task.assigned_user_id), { title: "Your C3 task is overdue", body: String(task.title), url: "/#/tasks", portal: "c3" }).catch(() => {});
-      for (const manager of managers) {
-        storage.createNotification({ userId: Number(manager.id), type: "task_overdue", title, message, isRead: false } as any);
+      if (claimed.changes) {
+        storage.createNotification({ userId: Number(task.assigned_user_id), type: "task_overdue", title: `Your task is overdue: ${String(task.title)}`,
+          message: `This was due ${new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}. Open Task Center to complete it.`, isRead: false } as any);
+        sendPushToUser(Number(task.assigned_user_id), { title: "Your C3 task is overdue", body: String(task.title), url: "/#/tasks", portal: "c3" }).catch(() => {});
+        for (const manager of managers) {
+          storage.createNotification({ userId: Number(manager.id), type: "task_overdue", title, message, isRead: false } as any);
+        }
+        if (managers.length) {
+          sendPushToUsers(managers.map((manager: any) => Number(manager.id)), { title, body: message, url: "/#/tasks", portal: "c3" }).catch(() => {});
+        }
       }
-      if (managers.length) {
-        sendPushToUsers(managers.map((manager: any) => Number(manager.id)), { title, body: message, url: "/#/tasks", portal: "c3" }).catch(() => {});
+
+      // Email has its own durable retry clock. The alert row is no longer proof
+      // that mail was sent: only a real Resend acceptance advances this to the
+      // next daily reminder. Failures retry after 5, 10, 20, 40, then 60 min.
+      const assigneeEmail = String(assignee?.email ?? "").trim().toLowerCase();
+      const recipients = Array.from(new Set([
+        ...(assigneeEmail.includes("@") ? [assigneeEmail] : []),
+        ...attendanceManagerEmails(Number(task.org_id)),
+      ]));
+      const attempts = Number(task.email_attempts ?? 0);
+      if (!recipients.length) {
+        taskSqlite().prepare(`UPDATE clr_task_alerts SET email_attempts=email_attempts+1,next_email_at=?,last_email_error=?
+          WHERE task_id=? AND due_at=?`).run(overdueEmailRetryAt(new Date(now), attempts), "No valid assignee or manager email recipient", task.id, task.due_at);
+        continue;
       }
-      const recipients = attendanceManagerEmails(Number(task.org_id));
-      if (recipients.length) {
-        const safeTitle = eodActivityEsc(String(task.title));
-        const safeAssignee = eodActivityEsc(String(task.assigned_user_name ?? "A CLR"));
-        const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ }));
+      const primary = assigneeEmail.includes("@") ? assigneeEmail : recipients[0];
+      const bcc = recipients.filter((email) => email !== primary);
+      const safeTitle = eodActivityEsc(String(task.title));
+      const safeAssignee = eodActivityEsc(String(task.assigned_user_name ?? "A CLR"));
+      const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
+      try {
         await sendEmail({
-          to: recipients, subject: title,
-          html: buildEmail({ subject: title, preheader: `${safeAssignee} missed a recurring task deadline.`, body:
-            `<p><strong>${safeAssignee}</strong> did not complete <strong>${safeTitle}</strong> by ${safeDue}.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open the C3 Task Center</a> to review it.</p>` }),
-        }).catch((error: any) => console.error("[clr-tasks] overdue email failed:", error?.message ?? error));
+          to: [primary], bcc: bcc.length ? bcc : undefined, subject: title,
+          html: buildEmail({ subject: title, preheader: `${safeAssignee} has an overdue C3 task.`, body:
+            `<p>The task assigned to <strong>${safeAssignee}</strong> is overdue.</p><div style="padding:16px;border-radius:12px;background:#fef2f2;border:1px solid #fca5a5"><p style="margin:0 0 8px"><strong>${safeTitle}</strong></p><p style="margin:0;color:#b91c1c"><strong>Due: ${safeDue}</strong></p></div><p>C3 will send one reminder each day until this occurrence is completed.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }),
+        }, { immediate: true });
+        taskSqlite().prepare(`UPDATE clr_task_alerts SET email_attempts=email_attempts+1,last_email_sent_at=?,next_email_at=?,last_email_error=NULL
+          WHERE task_id=? AND due_at=?`).run(now, nextOverdueReminderAt(new Date(now)), task.id, task.due_at);
+        console.log(`[clr-tasks] overdue email accepted task=${task.id} org=${task.org_id} recipients=${recipients.length}`);
+      } catch (error: any) {
+        const errorMessage = String(error?.message ?? error).slice(0, 1000);
+        taskSqlite().prepare(`UPDATE clr_task_alerts SET email_attempts=email_attempts+1,next_email_at=?,last_email_error=?
+          WHERE task_id=? AND due_at=?`).run(overdueEmailRetryAt(new Date(now), attempts), errorMessage, task.id, task.due_at);
+        console.error(`[clr-tasks] overdue email retry scheduled task=${task.id}:`, errorMessage);
       }
-      const assigneeEmail = String(assignee?.email ?? "").trim();
-      if (assigneeEmail.includes("@")) {
-        const assigneeSubject = `Your C3 task is overdue: ${String(task.title)}`;
-        const safeTitle = eodActivityEsc(String(task.title));
-        const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
-        await sendEmail({ to: [assigneeEmail], subject: assigneeSubject, html: buildEmail({ subject: assigneeSubject,
-          preheader: `This task was due ${safeDue}.`, body: `<p>Your task <strong>${safeTitle}</strong> is overdue.</p><p>It was due <strong>${safeDue}</strong>. Complete it now so your manager can see it is handled.</p><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }) })
-          .catch((error: any) => console.error("[clr-tasks] assignee overdue email failed:", error?.message ?? error));
-      }
-      console.log(`[clr-tasks] overdue alert task=${task.id} org=${task.org_id} managers=${managers.length}`);
     }
   }
 

@@ -104,7 +104,7 @@ function TaskEditor({ open, onClose, task, payload }: {
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{task ? "Edit task" : "Assign a CLR task"}</DialogTitle>
-          <DialogDescription>Give the task a clear owner and deadline. Recurring tasks create their next deadline as soon as the current one is completed.</DialogDescription>
+          <DialogDescription>Give the task a clear owner and deadline. Every recurring deadline becomes its own occurrence, even when an earlier one is still overdue.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="space-y-1.5"><Label htmlFor="task-title">What needs to get done?</Label><Input id="task-title" maxLength={140} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Example: Clean the unworked lead queue" /></div>
@@ -139,7 +139,7 @@ export default function ClrTasks() {
     mutationFn: () => apiRequest("POST", `/api/clr-tasks/${completing!.id}/complete`, { note: completionNote }),
     onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clr-tasks"] });
-      toast({ title: result?.recurring ? "Done — next deadline is ready" : "Task complete", description: result?.recurring ? "Your completion was saved and the recurring task rolled forward." : "Nice work. Your manager can see the completion." });
+      toast({ title: result?.recurring ? "Done — the next occurrence is ready" : "Task complete", description: result?.recurring ? "This occurrence is complete. Its next scheduled deadline remains separate." : "Nice work. Your manager can see the completion." });
       setCompleting(null); setCompletionNote("");
     },
     onError: (error: any) => toast({ title: "Could not complete task", description: error?.message, variant: "destructive" }),

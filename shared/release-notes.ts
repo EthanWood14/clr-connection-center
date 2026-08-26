@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.1.0",
+    headline: "Recurring tasks keep every deadline, and overdue work now follows up until it is done.",
+    items: [
+      { text: "Each recurring deadline is now its own task occurrence. If Monday is missed, it stays overdue when Tuesday's occurrence appears instead of blocking the schedule or disappearing when somebody completes it late. The saved local deadline also stays at the same clock time across daylight-saving changes." },
+      { text: "An overdue task now opens a red reminder anywhere in C3, with a 30-minute snooze and a direct path to Task Center. Mandatory report screens and urgent Shotgun offers still take priority." },
+      { text: "Overdue email is now accepted by Resend before C3 records it as sent. Failures retry automatically, and unresolved occurrences send one follow-up email per day to the assigned CLR and managers." },
+    ],
+  },
+  {
     version: "4.0.3",
     headline: "Cookie and update dialogs now wait for each other instead of locking the browser.",
     items: [

@@ -40,13 +40,21 @@ function addOneCycle(date: Date, recurrence: Exclude<TaskRecurrence, "none">, sc
   return next;
 }
 
+/** The next scheduled occurrence, even when that deadline is already past. */
+export function nextTaskOccurrenceDueAt(currentDueAt: string, recurrence: TaskRecurrence, scheduleDays: unknown = []): string | null {
+  if (recurrence === "none") return null;
+  const days = normalizeTaskScheduleDays(scheduleDays);
+  const current = new Date(currentDueAt);
+  if (!Number.isFinite(current.getTime())) throw new Error("invalid_task_due_at");
+  return addOneCycle(current, recurrence, days).toISOString();
+}
+
 /** Advance a completed recurring task to its first future deadline. */
 export function nextTaskDueAt(currentDueAt: string, recurrence: TaskRecurrence, now = new Date(), scheduleDays: unknown = []): string | null {
   if (recurrence === "none") return null;
-  const days = normalizeTaskScheduleDays(scheduleDays);
-  let next = new Date(currentDueAt);
-  if (!Number.isFinite(next.getTime())) throw new Error("invalid_task_due_at");
-  do next = addOneCycle(next, recurrence, days);
-  while (next.getTime() <= now.getTime());
-  return next.toISOString();
+  let next = nextTaskOccurrenceDueAt(currentDueAt, recurrence, scheduleDays);
+  while (next && new Date(next).getTime() <= now.getTime()) {
+    next = nextTaskOccurrenceDueAt(next, recurrence, scheduleDays);
+  }
+  return next;
 }
