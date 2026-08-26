@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.3.1",
+    headline: "The Bonzo extension now has a proper install window.",
+    items: [
+      { text: "On the Shotgun page, “Get the Chrome extension” opens a window with the download button and the four install steps — plus the key generator for browsers where the login cookie doesn't carry over.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.3.0",
     headline: "One-click Shotgun straight from Bonzo.",
     items: [

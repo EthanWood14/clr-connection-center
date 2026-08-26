@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Clock3, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, Users, Zap } from "lucide-react";
+import { ArrowRightLeft, Clock3, Download, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, Users, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -17,6 +17,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 export type ShotgunLead = {
   id: number;
@@ -184,27 +185,47 @@ export default function Shotgun() {
                 </div>
                 <div className="space-y-1.5"><Label>What should the CLR know?</Label><Textarea rows={3} value={managerNotes} onChange={(event) => setManagerNotes(event.target.value)} placeholder="Context, urgency, product, preferred callback…" /></div>
                 <Button size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700" disabled={publish.isPending || leadName.trim().length < 2 || (!phone.trim() && !email.trim()) || (!!phone.trim() && !stateCode)} onClick={() => publish.mutate()}><Zap className="h-5 w-5" /> Publish to Shotgun</Button>
-                <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground flex items-center gap-1"><Zap className="h-3.5 w-3.5 text-orange-600" /> One-click from Bonzo (Chrome extension)</span>
-                    <div className="flex gap-2">
-                      <Button asChild size="sm" variant="outline"><a href="/c3-shotgun-extension.zip" download>Download</a></Button>
-                      <Button size="sm" variant="outline" disabled={mintExtensionKey.isPending} onClick={() => mintExtensionKey.mutate()} data-testid="button-extension-key">
-                        {mintExtensionKey.isPending ? "Generating…" : "Get my key"}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-1.5">Unzip, then chrome://extensions → Developer mode → Load unpacked → pick the folder. Open any Bonzo prospect and click the orange ⚡ button. If it says you're not signed in, paste your key into the extension's popup.</p>
-                  {extensionKey && (
-                    <div className="mt-2 space-y-1">
-                      <p className="font-semibold text-amber-600">Copy this key now — it's shown only once. Generating again replaces the old one.</p>
-                      <div className="flex gap-2">
-                        <Input readOnly value={extensionKey} className="h-8 font-mono text-xs" data-testid="shotgun-extension-key" onFocus={(event) => event.currentTarget.select()} />
-                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(extensionKey); toast({ title: "Key copied" }); }}>Copy</Button>
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5 self-start" data-testid="button-extension-window">
+                      <Zap className="h-3.5 w-3.5 text-orange-600" /> Get the Chrome extension
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-orange-600" /> One-click Shotgun from Bonzo</DialogTitle>
+                      <DialogDescription>
+                        Install the Chrome extension once, and every prospect in Bonzo gets an orange ⚡ button that sends them straight into the Shotgun rotation.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <ol className="list-decimal space-y-2 pl-5 text-sm">
+                      <li><span className="font-semibold">Download</span> the extension below and <span className="font-semibold">unzip</span> it.</li>
+                      <li>Open <code className="rounded bg-muted px-1 py-0.5 text-xs">chrome://extensions</code> and turn on <span className="font-semibold">Developer mode</span> (top right).</li>
+                      <li>Click <span className="font-semibold">Load unpacked</span> and pick the unzipped folder.</li>
+                      <li>Open any prospect in Bonzo and click the orange ⚡ button — that's the whole workflow.</li>
+                    </ol>
+                    <Button asChild size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700">
+                      <a href="/c3-shotgun-extension.zip" download data-testid="link-extension-download"><Download className="h-5 w-5" /> Download the extension</a>
+                    </Button>
+                    <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                      <p><span className="font-semibold text-foreground">Not connecting?</span> Being logged in to C3 in this same Chrome is normally all it needs. If the extension's popup says you're not connected, generate a key and paste it there.</p>
+                      <div className="mt-2 flex gap-2">
+                        <Button size="sm" variant="outline" disabled={mintExtensionKey.isPending} onClick={() => mintExtensionKey.mutate()} data-testid="button-extension-key">
+                          {mintExtensionKey.isPending ? "Generating…" : "Get my key"}
+                        </Button>
                       </div>
+                      {extensionKey && (
+                        <div className="mt-2 space-y-1">
+                          <p className="font-semibold text-amber-600">Copy this key now — it's shown only once. Generating again replaces the old one.</p>
+                          <div className="flex gap-2">
+                            <Input readOnly value={extensionKey} className="h-8 font-mono text-xs" data-testid="shotgun-extension-key" onFocus={(event) => event.currentTarget.select()} />
+                            <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(extensionKey); toast({ title: "Key copied" }); }}>Copy</Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
             <Card><CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Ready right now <Badge variant="secondary">{payload.readyUsers.length}</Badge></CardTitle></CardHeader><CardContent>{payload.readyUsers.length ? <div className="space-y-2">{payload.readyUsers.map((person) => <div key={person.id} className="flex items-center gap-3 rounded-xl border bg-emerald-50/60 p-3 dark:bg-emerald-950/20"><span className="h-3 w-3 animate-pulse rounded-full bg-emerald-500" /><span className="font-semibold">{person.name}</span><span className="ml-auto text-xs text-emerald-700">Ready</span></div>)}</div> : <div className="py-10 text-center text-sm text-muted-foreground"><Users className="mx-auto mb-3 h-10 w-10 opacity-30" />No CLRs are ready. Published leads will wait safely in queue.</div>}</CardContent></Card>
