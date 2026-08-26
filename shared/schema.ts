@@ -58,6 +58,9 @@ export const users = sqliteTable("users", {
   hasSeenIntro: integer("has_seen_intro", { mode: "boolean" }).notNull().default(false),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
   isManager: integer("is_manager", { mode: "boolean" }).notNull().default(false),
+  // Grants Shotgun publishing (sending prospects into the rotation) without
+  // full manager rights. Managers/admins can always publish regardless.
+  canPublishShotgun: integer("can_publish_shotgun", { mode: "boolean" }).notNull().default(false),
   hasDismissedSample: integer("has_dismissed_sample", { mode: "boolean" }).notNull().default(false),
   // ISO timestamp of when the CLR last dismissed the pipeline-stages popup.
   // The popup re-appears 14 days after this; null/empty = never seen yet.

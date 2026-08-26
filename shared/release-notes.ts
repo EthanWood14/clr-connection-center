@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.2.3",
+    headline: "Admins can grant Shotgun publishing to specific people.",
+    items: [
+      { text: "Settings → user list now has an \"Allow Shotgun\" button on each non-manager. Granted users get the publish form on the Shotgun page and can send prospects into the rotation — without any other manager rights.", audience: "manager" },
+      { text: "Managers and admins can publish as always. Only an admin can grant or revoke the flag, and every change is recorded in the audit trail.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.2.2",
     headline: "Time Clock moved into Advanced Settings.",
     items: [

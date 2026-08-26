@@ -44,7 +44,7 @@ export type ShotgunLead = {
 };
 
 export type ShotgunPayload = {
-  canManage: boolean;
+  canManage: boolean; canPublish?: boolean;
   isClr: boolean;
   isReady: boolean;
   offerSeconds: number;
@@ -123,7 +123,7 @@ export default function Shotgun() {
   const [source, setSource] = useState("");
   const [managerNotes, setManagerNotes] = useState("");
   const { data, isLoading } = useQuery<ShotgunPayload>({ queryKey: ["/api/shotgun"], refetchInterval: 5_000, staleTime: 0 });
-  const payload = data ?? { canManage: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
+  const payload = data ?? { canManage: false, canPublish: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
   const readiness = useMutation({
     mutationFn: (ready: boolean) => apiRequest("POST", "/api/shotgun/readiness", { ready }),
     onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
@@ -161,7 +161,7 @@ export default function Shotgun() {
           </div>
         </header>
 
-        {payload.canManage && (
+        {(payload.canManage || payload.canPublish) && (
           <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
             <Card>
               <CardHeader><CardTitle className="flex items-center gap-2"><Send className="h-5 w-5 text-orange-600" /> Publish a lead</CardTitle></CardHeader>

@@ -5447,6 +5447,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // reactivate themselves via a self-edit (mass-assignment guard).
     const PRIVILEGED = [
       "role", "isManager", "is_manager", "isClr", "is_clr",
+      "canPublishShotgun", "can_publish_shotgun",
       "excludeFromStats", "exclude_from_stats", "inDailyAssignments", "in_daily_assignments",
       "isActive", "is_active", "orgId", "org_id", "mustChangePassword", "must_change_password",
       // Employment start date is an HR field — nobody sets their own.
@@ -5497,6 +5498,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const next = isManager ? [...filtered, user.email] : filtered;
       storageExtra.updateEmailSettings({ manager_emails: JSON.stringify(next) } as any);
     }
+    res.json(updated);
+  });
+
+  // Toggle Shotgun publish access (admin only). Grants sending prospects into
+  // the rotation without full manager rights; managers/admins always can.
+  app.patch("/api/users/:id/shotgun-publish", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid user id" });
+    const user = storage.getUserById(id) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const canPublishShotgun = !!req.body?.can_publish_shotgun;
+    const updated = storage.updateUser(id, { canPublishShotgun } as any);
+    audit({
+      userId: Number(req.session_user?.userId) || 0,
+      userName: (storage.getUserById(Number(req.session_user?.userId)) as any)?.name ?? "Admin",
+      action: "update", entityType: "user", entityId: id, entityLabel: user.name,
+      details: JSON.stringify({ canPublishShotgun }),
+    });
     res.json(updated);
   });
 
@@ -7297,6 +7317,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
     const canManage = taskManager(me);
+    const canPublish = canManage || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
     const isClr = shotgunUserIsClr(me);
     advanceShotgun();
     const ready = isClr ? shotgunDb().prepare(`SELECT is_ready,heartbeat_at FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any : null;
@@ -7311,10 +7332,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE l.org_id=? ${canManage ? "" : "AND l.current_assignee_id=?"}
       ORDER BY CASE l.status WHEN 'offered' THEN 0 WHEN 'claimed' THEN 1 WHEN 'queued' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,l.created_at DESC LIMIT 250`)
       .all(...(canManage ? [orgId] : [orgId, userId])) as any[];
-    const readyUsers = canManage ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
+    const readyUsers = canPublish ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
       FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
       WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 ORDER BY u.name`).all(orgId, cutoff) : [];
-    res.json({ canManage, isClr, isReady, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
+    res.json({ canManage, canPublish, isClr, isReady, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
       leads: rows.map(shotgunLeadJson), readyUsers });
   });
 
@@ -7385,7 +7406,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
-    if (!taskManager(me)) return res.status(403).json({ error: "Only managers can publish Shotgun leads." });
+    // Managers always can; other users only with the admin-granted flag.
+    const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
+    if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
     const leadName = String(req.body?.leadName ?? "").trim().slice(0, 140);
     const phone = String(req.body?.phone ?? "").trim().slice(0, 40);
     const email = String(req.body?.email ?? "").trim().slice(0, 200);

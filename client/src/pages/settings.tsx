@@ -2076,6 +2076,47 @@ function ManagerToggleButton({ user }: { user: any }) {
   );
 }
 
+// ── Shotgun publish toggle (admin-only, shown inline on each user row) ─────
+// Grants sending prospects into the Shotgun rotation without full manager
+// rights. Managers and admins can always publish; this is for everyone else.
+function ShotgunPublishToggleButton({ user }: { user: any }) {
+  const { toast } = useToast();
+  const canPublish = !!(user.canPublishShotgun ?? user.can_publish_shotgun);
+  const mut = useMutation({
+    mutationFn: (next: boolean) =>
+      apiRequest("PATCH", `/api/users/${user.id}/shotgun-publish`, { can_publish_shotgun: next }),
+    onSuccess: async (updated: any, next) => {
+      queryClient.setQueryData<any[]>(["/api/users"], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(u => u.id === user.id ? { ...u, ...(updated ?? {}), canPublishShotgun: next } : u);
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: next ? `${user.name} can now publish Shotgun leads` : `${user.name} can no longer publish Shotgun leads`,
+        description: next
+          ? "They can send prospects into the rotation from the Shotgun page."
+          : "The publish form is hidden for them again.",
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to update Shotgun access", description: err.message, variant: "destructive" }),
+  });
+  // Managers already publish by role — a per-user grant would be redundant.
+  if (user.role === "admin" || user.isManager || user.is_manager) return null;
+  return (
+    <Button
+      size="sm"
+      variant={canPublish ? "default" : "outline"}
+      className={`text-xs h-7 px-2 ${canPublish ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-500" : ""}`}
+      onClick={() => mut.mutate(!canPublish)}
+      disabled={mut.isPending}
+      data-testid={`button-shotgun-publish-${user.id}`}
+    >
+      {canPublish ? "⚡ Shotgun" : "Allow Shotgun"}
+    </Button>
+  );
+}
+
 // ── Per-CLR Weekly Goals button + modal (admin only) ───────────────────────
 type GoalModel = 'manual' | 'adjustable' | 'staircase';
 
@@ -3099,6 +3140,7 @@ export default function Settings() {
                   </Badge>
                   {(u.role === 'assistant' || u.role === 'admin') && <SetGoalsButton user={u} />}
                   <ManagerToggleButton user={u} />
+                  <ShotgunPublishToggleButton user={u} />
                 </div>
               </div>
             ))

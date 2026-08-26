@@ -118,7 +118,12 @@ test("the urgent offer alert is global and readiness stays alive while C3 is ope
 });
 
 test("managers publish while CLRs control readiness", () => {
-  assert.match(routes, /Only managers can publish Shotgun leads/);
+  // Publishing is managers by role OR the admin-granted per-user flag; the
+  // flag itself is admin-set and mass-assignment-guarded.
+  assert.match(routes, /taskManager\(me\) \|\| !!\(me\?\.canPublishShotgun/);
+  assert.match(routes, /You don't have Shotgun publish access/);
+  assert.match(routes, /"\/api\/users\/:id\/shotgun-publish"/);
+  assert.match(routes, /"canPublishShotgun", "can_publish_shotgun",/, "self-edit escalation must be blocked");
   assert.match(routes, /Only active CLRs can receive Shotgun leads/);
   assert.match(page, /Publish to Shotgun/);
   assert.match(page, /Press Ready/);
