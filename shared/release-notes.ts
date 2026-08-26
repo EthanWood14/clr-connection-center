@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.2.4",
+    headline: "Shotgun publishers now see the whole board for the last 10 minutes.",
+    items: [
+      { text: "If you have Shotgun publish access, the Shotgun page now shows every lead published in the last 10 minutes — not just the ones assigned to you — so you can watch a lead you fired land with a CLR. Older leads still show only if they're yours.", audience: "all" },
+      { text: "Publishers also see who published each lead. Requeue and cancel remain manager-only.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.2.3",
     headline: "Admins can grant Shotgun publishing to specific people.",
     items: [

@@ -133,6 +133,10 @@ test("leads remain private to their current CLR and leaving Ready rotates an ope
   const status = routes.slice(routes.indexOf('app.get("/api/shotgun"'), routes.indexOf('app.post("/api/shotgun/readiness"'));
   assert.match(status, /AND l\.current_assignee_id=\?/,
     "a CLR must not keep another CLR's lead just because it was offered earlier");
+  // Granted publishers additionally see the whole board for the trailing
+  // 10 minutes — they fire leads into the rotation and need to watch them land.
+  assert.match(status, /OR l\.created_at>=\?/);
+  assert.match(routes, /SHOTGUN_PUBLISHER_VIEW_MS = 10 \* 60_000/);
   const readiness = routes.slice(routes.indexOf('app.post("/api/shotgun/readiness"'), routes.indexOf('app.post("/api/shotgun/publish"'));
   // A heartbeat must refresh liveness only. Letting it write is_ready meant
   // the globally mounted beat re-enrolled a CLR ten seconds after they opted

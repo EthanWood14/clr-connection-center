@@ -7155,6 +7155,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // lead expires and re-offers to them inside the same tick, leaving the
   // full-screen offer modal permanently open and the rest of C3 unusable.
   const SHOTGUN_RELAP_COOLDOWN_MS = 5 * 60_000;
+  // How far back a granted (non-manager) publisher can see the whole board.
+  const SHOTGUN_PUBLISHER_VIEW_MS = 10 * 60_000;
   const SHOTGUN_READY_TTL_MS = 35_000;
   const SHOTGUN_STATE_CODES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" "));
   const shotgunDb = () => storageExtra.getRawSqlite();
@@ -7329,9 +7331,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       LEFT JOIN users assignee ON assignee.id=l.current_assignee_id
       LEFT JOIN lead_outcomes result_outcome ON result_outcome.id=l.transfer_outcome_id AND result_outcome.org_id=l.org_id
       LEFT JOIN loan_officers result_lo ON result_lo.id=result_outcome.lo_id AND result_lo.org_id=l.org_id
-      WHERE l.org_id=? ${canManage ? "" : "AND l.current_assignee_id=?"}
+      WHERE l.org_id=? ${
+        canManage ? ""
+        // Granted publishers see everything from the last 10 minutes — they
+        // fire leads into the rotation, so they need to watch where those
+        // leads went (and what else just went out) — plus their own leads.
+        : canPublish ? "AND (l.current_assignee_id=? OR l.created_at>=?)"
+        : "AND l.current_assignee_id=?"}
       ORDER BY CASE l.status WHEN 'offered' THEN 0 WHEN 'claimed' THEN 1 WHEN 'queued' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,l.created_at DESC LIMIT 250`)
-      .all(...(canManage ? [orgId] : [orgId, userId])) as any[];
+      .all(...(canManage ? [orgId]
+        : canPublish ? [orgId, userId, new Date(Date.now() - SHOTGUN_PUBLISHER_VIEW_MS).toISOString()]
+        : [orgId, userId])) as any[];
     const readyUsers = canPublish ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
       FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
       WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 ORDER BY u.name`).all(orgId, cutoff) : [];
