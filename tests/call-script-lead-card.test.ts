@@ -104,15 +104,14 @@ test("employment, credit and military are fixed choices, with notes beside them"
 test("the lead card covers a complete two-borrower and lien profile", () => {
   const names = INFO_FIELDS.map(f => f.name);
   for (const field of [
-    "infoBorrowerEmail", "infoBorrowerDob", "infoBorrowerSsnLast4", "infoCreditScoreExact",
-    "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerSsnLast4", "infoCoborrowerCreditScore",
+    "infoBorrowerEmail", "infoBorrowerDob", "infoCreditScoreExact",
+    "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerCreditScore",
     "infoHelocBalance", "infoHelocRate", "infoHelocPayment",
   ]) {
     assert.ok(names.includes(field as any), `${field} must be collected`);
   }
-  assert.equal(INFO_FIELDS.find(f => f.name === "infoBorrowerSsnLast4")!.maxLength, 4);
-  assert.equal(INFO_FIELDS.find(f => f.name === "infoCoborrowerSsnLast4")!.maxLength, 4);
-  assert.match(panel, /never enter a full SSN/i);
+  assert.ok(!names.some(field => /ssn/i.test(field)), "no SSN field may be collected");
+  assert.doesNotMatch(panel, /infoBorrowerSsn|infoCoborrowerSsn/);
 
   const out = composeLeadCaptureNotes({
     ...emptyLeadCapture(),

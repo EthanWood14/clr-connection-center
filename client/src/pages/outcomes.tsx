@@ -49,15 +49,6 @@ function NotesPolicyNote() {
   );
 }
 
-function StructuredLeadDataNotice() {
-  return (
-    <div className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-900 dark:text-blue-200" data-testid="notice-structured-lead-data">
-      <strong>Put loan facts in the labeled fields below.</strong>{" "}
-      Never enter a full Social Security number. C3 accepts the last four digits only; keep full SSNs out of Other Notes.
-    </div>
-  );
-}
-
 const OUTCOME_TYPES = [
   "transfer", "appointment", "deferral", "fell_through",
   "no_answer", "not_interested", "wrong_number", "other"
@@ -214,11 +205,9 @@ const outcomeFormSchema = z.object({
   infoAddress: z.string().optional(),
   infoBorrowerEmail: z.string().email("Enter a valid email").or(z.literal("")).optional(),
   infoBorrowerDob: z.string().optional(),
-  infoBorrowerSsnLast4: z.string().regex(/^\d{4}$/, "Enter exactly 4 digits").or(z.literal("")).optional(),
   infoCreditScoreExact: z.string().refine(v => !v || (/^\d{3}$/.test(v) && Number(v) >= 300 && Number(v) <= 850), "Enter a score from 300 to 850").optional(),
   infoCoborrowerName: z.string().optional(),
   infoCoborrowerDob: z.string().optional(),
-  infoCoborrowerSsnLast4: z.string().regex(/^\d{4}$/, "Enter exactly 4 digits").or(z.literal("")).optional(),
   infoCoborrowerCreditScore: z.string().refine(v => !v || (/^\d{3}$/.test(v) && Number(v) >= 300 && Number(v) <= 850), "Enter a score from 300 to 850").optional(),
   infoGoal: z.string().optional(),
   infoTakeOut: z.string().optional(),
@@ -418,11 +407,9 @@ function OutcomeFormDialog({
       infoAddress: "",
       infoBorrowerEmail: "",
       infoBorrowerDob: "",
-      infoBorrowerSsnLast4: "",
       infoCreditScoreExact: "",
       infoCoborrowerName: "",
       infoCoborrowerDob: "",
-      infoCoborrowerSsnLast4: "",
       infoCoborrowerCreditScore: "",
       infoGoal: "",
       infoTakeOut: "",
@@ -487,8 +474,8 @@ function OutcomeFormDialog({
     {
       form.setValue("conversationNotes", "");
       for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment",
-        "infoBorrowerEmail", "infoBorrowerDob", "infoBorrowerSsnLast4", "infoCreditScoreExact",
-        "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerSsnLast4", "infoCoborrowerCreditScore",
+        "infoBorrowerEmail", "infoBorrowerDob", "infoCreditScoreExact",
+        "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerCreditScore",
         "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
         "infoPayment", "infoHelocBalance", "infoHelocRate", "infoHelocPayment",
         "infoIncome", "infoEmployment", "infoEmploymentNotes",
@@ -813,7 +800,6 @@ function OutcomeFormDialog({
               )}
 
               <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
-              <StructuredLeadDataNotice />
               {INFO_FIELDS.map((f, index) => (
                 <div key={f.name} className="space-y-1.5">
                   {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
@@ -860,7 +846,6 @@ function OutcomeFormDialog({
                               inputMode={f.inputMode}
                               maxLength={f.maxLength}
                               placeholder={f.placeholder}
-                              autoComplete={f.name.includes("Ssn") ? "off" : undefined}
                               onChange={e => field.onChange(f.digitsOnly ? e.target.value.replace(/\D/g, "").slice(0, f.maxLength) : e.target.value)}
                               className="h-8"
                               data-testid={`input-${f.name}`}

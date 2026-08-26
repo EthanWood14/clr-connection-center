@@ -29,12 +29,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.2.1",
+    headline: "The expanded borrower profile now collects only the requested contact and loan details.",
+    items: [
+      { text: "Input Results and the live Lead Card no longer include Social Security number fields for either borrower." },
+    ],
+  },
+  {
     version: "4.2.0",
     headline: "Input Results now captures a complete, clearly organized borrower and loan profile.",
     items: [
       { text: "Transfers can now include borrower contact and date-of-birth details, an exact credit score, co-borrower details, and separate first-mortgage and HELOC terms." },
       { text: "The form is grouped into borrower, co-borrower, property, first mortgage, HELOC, and income sections so the handoff is faster to complete and easier to read." },
-      { text: "Social Security number fields accept only the last four digits, with a clear warning to keep full numbers out of notes." },
     ],
   },
   {

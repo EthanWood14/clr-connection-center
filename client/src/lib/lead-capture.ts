@@ -20,11 +20,9 @@ export type LeadCapture = {
   qualInvestment: QualAnswer;
   infoBorrowerEmail: string;
   infoBorrowerDob: string;
-  infoBorrowerSsnLast4: string;
   infoCreditScoreExact: string;
   infoCoborrowerName: string;
   infoCoborrowerDob: string;
-  infoCoborrowerSsnLast4: string;
   infoCoborrowerCreditScore: string;
   infoAddress: string;
   infoGoal: string;
@@ -85,13 +83,11 @@ export type InfoField = {
 export const INFO_FIELDS: InfoField[] = [
   { name: "infoBorrowerEmail", label: "Borrower email", section: "Borrower", type: "email", inputMode: "email" },
   { name: "infoBorrowerDob", label: "Borrower date of birth", section: "Borrower", type: "date" },
-  { name: "infoBorrowerSsnLast4", label: "Borrower SSN — last 4 only", section: "Borrower", inputMode: "numeric", maxLength: 4, digitsOnly: true, placeholder: "Last 4" },
   { name: "infoCreditScore", label: "Borrower credit band", section: "Borrower", options: CREDIT_SCORE_BANDS },
   { name: "infoCreditScoreExact", label: "Exact borrower credit score", section: "Borrower", inputMode: "numeric", maxLength: 3, digitsOnly: true, placeholder: "Optional" },
 
   { name: "infoCoborrowerName", label: "Co-borrower name", section: "Co-borrower" },
   { name: "infoCoborrowerDob", label: "Co-borrower date of birth", section: "Co-borrower", type: "date" },
-  { name: "infoCoborrowerSsnLast4", label: "Co-borrower SSN — last 4 only", section: "Co-borrower", inputMode: "numeric", maxLength: 4, digitsOnly: true, placeholder: "Last 4" },
   { name: "infoCoborrowerCreditScore", label: "Co-borrower credit score", section: "Co-borrower", inputMode: "numeric", maxLength: 3, digitsOnly: true, placeholder: "Optional" },
 
   { name: "infoAddress", label: "Property address", section: "Property & request" },
@@ -124,8 +120,8 @@ export function emptyLeadCapture(): LeadCapture {
   return {
     leadSource: "", leadSourceOther: "",
     qualOwnHome: "", qualBankruptcy: "", qualInvestment: "",
-    infoBorrowerEmail: "", infoBorrowerDob: "", infoBorrowerSsnLast4: "", infoCreditScoreExact: "",
-    infoCoborrowerName: "", infoCoborrowerDob: "", infoCoborrowerSsnLast4: "", infoCoborrowerCreditScore: "",
+    infoBorrowerEmail: "", infoBorrowerDob: "", infoCreditScoreExact: "",
+    infoCoborrowerName: "", infoCoborrowerDob: "", infoCoborrowerCreditScore: "",
     infoAddress: "", infoGoal: "", infoTakeOut: "", infoValue: "", infoBalance: "",
     infoRate: "", infoPayment: "", infoHelocBalance: "", infoHelocRate: "", infoHelocPayment: "", infoIncome: "",
     infoEmployment: "", infoEmploymentNotes: "",
@@ -166,10 +162,9 @@ export function composeLeadCaptureNotes(c: LeadCapture): string {
   };
   const info: Array<[string, string]> = [
     ["Borrower Email", c.infoBorrowerEmail], ["Borrower DOB", c.infoBorrowerDob],
-    ["Borrower SSN Last 4", c.infoBorrowerSsnLast4], ["Credit Score", c.infoCreditScore],
-    ["Exact Borrower Credit Score", c.infoCreditScoreExact],
+    ["Credit Score", c.infoCreditScore], ["Exact Borrower Credit Score", c.infoCreditScoreExact],
     ["Co-Borrower Name", c.infoCoborrowerName], ["Co-Borrower DOB", c.infoCoborrowerDob],
-    ["Co-Borrower SSN Last 4", c.infoCoborrowerSsnLast4], ["Co-Borrower Credit Score", c.infoCoborrowerCreditScore],
+    ["Co-Borrower Credit Score", c.infoCoborrowerCreditScore],
     ["Property Address", c.infoAddress], ["Goal / Debts to Pay Off", c.infoGoal], ["Cash Needed / Take Out", c.infoTakeOut],
     ["Estimated Home Value", c.infoValue], ["First Mortgage Balance", c.infoBalance], ["First Mortgage Rate", c.infoRate],
     ["Monthly PITI / Payment", c.infoPayment], ["HELOC Balance", c.infoHelocBalance],

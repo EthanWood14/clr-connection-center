@@ -93,9 +93,6 @@ export function LeadCapturePanel({
         <div>
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Info gathering</p>
           <div className="space-y-1">
-            <p className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1.5 text-[10px] leading-snug text-blue-900 dark:text-blue-200">
-              Use the labeled fields for loan facts. SSN fields accept last four digits only—never enter a full SSN.
-            </p>
             {INFO_FIELDS.map((f, index) => (
               <div key={f.name}>
                 {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
@@ -140,7 +137,6 @@ export function LeadCapturePanel({
                       inputMode={f.inputMode}
                       maxLength={f.maxLength}
                       placeholder={f.placeholder}
-                      autoComplete={f.name.includes("Ssn") ? "off" : undefined}
                       className="h-7 text-xs"
                       data-testid={`panel-${f.name}`}
                     />
