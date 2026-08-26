@@ -201,7 +201,7 @@ export default function Shotgun() {
                     <ol className="list-decimal space-y-2 pl-5 text-sm">
                       <li><span className="font-semibold">Download</span> the extension below and <span className="font-semibold">unzip</span> it.</li>
                       <li>Open <code className="rounded bg-muted px-1 py-0.5 text-xs">chrome://extensions</code> and turn on <span className="font-semibold">Developer mode</span> (top right).</li>
-                      <li>Click <span className="font-semibold">Load unpacked</span> and pick the unzipped folder.</li>
+                      <li>Click <span className="font-semibold">Load unpacked</span> and pick the unzipped folder — the one with <code className="rounded bg-muted px-1 py-0.5 text-xs">manifest.json</code> directly inside.</li>
                       <li>Open any prospect in Bonzo and click the orange ⚡ button — that's the whole workflow.</li>
                     </ol>
                     <Button asChild size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700">

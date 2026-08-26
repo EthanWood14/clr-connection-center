@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.3.2",
+    headline: "Fixed: the extension zip now unzips ready to load.",
+    items: [
+      { text: "If Chrome said “Manifest file is missing or unreadable”: re-download the extension from the Shotgun page — the zip no longer buries the files in a second folder, so the folder your unzip creates is the one Load unpacked wants.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.3.1",
     headline: "The Bonzo extension now has a proper install window.",
     items: [

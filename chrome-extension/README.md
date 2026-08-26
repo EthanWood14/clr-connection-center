@@ -11,7 +11,8 @@ duplicate guard, same CLR rotation and notifications.
 1. Download `c3-shotgun-extension.zip` from C3 → Shotgun page (or grab this
    folder) and **unzip it**.
 2. Open `chrome://extensions`, turn on **Developer mode** (top right).
-3. Click **Load unpacked** and pick the unzipped `c3-shotgun-extension` folder.
+3. Click **Load unpacked** and pick the folder that has `manifest.json`
+   directly inside it (the folder the unzip created).
 
 ## Connect it to C3
 

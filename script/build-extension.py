@@ -104,7 +104,11 @@ buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
     for rel in SHIPPED:
         # fixed timestamp → byte-identical zip for identical inputs (clean git diffs)
-        info = zipfile.ZipInfo("c3-shotgun-extension/" + rel, date_time=(2026, 1, 1, 0, 0, 0))
+        # Entries live at the zip ROOT: Windows "Extract All" already wraps the
+        # contents in a folder named after the zip, so a folder prefix here
+        # produced a folder-in-a-folder — and picking the outer one gave
+        # Chrome's "Manifest file is missing or unreadable".
+        info = zipfile.ZipInfo(rel, date_time=(2026, 1, 1, 0, 0, 0))
         info.external_attr = 0o644 << 16
         with open(os.path.join(EXT, rel), "rb") as f:
             z.writestr(info, f.read(), zipfile.ZIP_DEFLATED)
