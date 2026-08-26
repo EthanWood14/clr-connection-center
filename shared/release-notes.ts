@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.0.1",
+    headline: "C3 no longer freezes under several startup prompts at once.",
+    items: [
+      { text: "Required Daily Report and EOD screens now always go first. Today's prioritized loan officers, the pipeline refresher, and the cookie notice wait instead of covering one another." },
+      { text: "After required reporting is complete, C3 presents the daily loan-officer priorities and other startup notices in a clear sequence so every visible button remains usable." },
+    ],
+  },
+  {
     version: "4.0.0",
     headline: "Welcome to C3 v4: every claimed Shotgun lead now asks for a result and can become a real transfer.",
     items: [

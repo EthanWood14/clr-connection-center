@@ -9,12 +9,12 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { NotificationBell } from "@/components/notification-bell";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect } from "react";
+import { useContext, useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
 import { PipelineSopModal, PIPELINE_SOP_INTERVAL_DAYS } from "@/components/pipeline-sop-modal";
-import { DailyReportGate } from "@/components/daily-report-gate";
-import { EodLockGate } from "@/components/eod-lock-gate";
+import { DailyReportGate, DailyReportGateActive } from "@/components/daily-report-gate";
+import { EodLockGate, EodLockGateActive } from "@/components/eod-lock-gate";
 import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
@@ -230,6 +230,64 @@ function AppRouter() {
   );
 }
 
+type DeferredAppPromptsProps = {
+  showDailyPriorities: boolean;
+  showIntro: boolean;
+  showPipelineSop: boolean;
+  userId: number;
+  orgId: number;
+  timezone?: string;
+  onDailyPrioritiesDismiss: () => void;
+};
+
+/**
+ * Present startup prompts in a single, predictable queue.
+ *
+ * Mandatory daily/EOD reporting always goes first. Optional prompts are
+ * descendants of both gates so they can see when either gate is holding the
+ * screen and disappear instead of painting another clickable-looking layer on
+ * top. Once the gates clear, onboarding-style modals run one at a time; only
+ * then do the smaller notices and nudges mount.
+ */
+function DeferredAppPrompts({
+  showDailyPriorities,
+  showIntro,
+  showPipelineSop,
+  userId,
+  orgId,
+  timezone,
+  onDailyPrioritiesDismiss,
+}: DeferredAppPromptsProps) {
+  const dailyReportGateActive = useContext(DailyReportGateActive);
+  const eodLockGateActive = useContext(EodLockGateActive);
+
+  if (dailyReportGateActive || eodLockGateActive) return null;
+
+  return (
+    <>
+      {showDailyPriorities && (
+        <DailyLoPrioritiesModal
+          userId={userId}
+          orgId={orgId}
+          timezone={timezone}
+          onDismiss={onDailyPrioritiesDismiss}
+        />
+      )}
+      {!showDailyPriorities && showIntro && <IntroModal />}
+      {!showDailyPriorities && !showIntro && showPipelineSop && <PipelineSopModal />}
+      {!showDailyPriorities && !showIntro && !showPipelineSop && (
+        <>
+          <CookieNotice />
+          <PushNudge />
+          <GoalNudge />
+          <TransferCelebration />
+          <UpdatePrompt />
+        </>
+      )}
+    </>
+  );
+}
+
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
   const priorityBusinessDate = user ? businessTodayInTz(user.timezone) : "";
@@ -301,51 +359,45 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
-      {showDailyPriorities && (
-        <DailyLoPrioritiesModal
-          userId={user.id}
-          orgId={user.orgId ?? 1}
-          timezone={user.timezone}
-          onDismiss={() => setDismissedPriorityKey(priorityStorageKey)}
-        />
-      )}
-      {showIntro && <IntroModal />}
-      {showPipelineSop && <PipelineSopModal />}
-      <CookieNotice />
-      <PushNudge />
-      <GoalNudge />
-      <TransferCelebration />
-      <UpdatePrompt />
       <DailyReportGate>
-        {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
-        <div className="flex h-screen w-full overflow-hidden flex-col">
-          <ImpersonationBanner />
-          <div className="flex flex-1 min-h-0 overflow-hidden md:gap-3 p-0 md:p-3">
-            <AppSidebar />
-            <div className="flex flex-col flex-1 min-w-0 gap-2 md:gap-3">
-              {/* Floating glass header bar */}
-              <header className="glass-header sticky top-0 z-40 flex items-center justify-between h-12 px-3 flex-shrink-0">
-                <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
-                <div className="flex items-center gap-1">
-                  <NotificationBell />
-                  <ThemeToggle />
-                </div>
-              </header>
-              {/* Floating glass main panel */}
-              <main className="glass-panel flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
-                <div className="flex-1">
-                  <EodLockGate>
+        <EodLockGate>
+          <DeferredAppPrompts
+            showDailyPriorities={showDailyPriorities}
+            showIntro={showIntro}
+            showPipelineSop={showPipelineSop}
+            userId={user.id}
+            orgId={user.orgId ?? 1}
+            timezone={user.timezone}
+            onDailyPrioritiesDismiss={() => setDismissedPriorityKey(priorityStorageKey)}
+          />
+          {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
+          <div className="flex h-screen w-full overflow-hidden flex-col">
+            <ImpersonationBanner />
+            <div className="flex flex-1 min-h-0 overflow-hidden md:gap-3 p-0 md:p-3">
+              <AppSidebar />
+              <div className="flex flex-col flex-1 min-w-0 gap-2 md:gap-3">
+                {/* Floating glass header bar */}
+                <header className="glass-header sticky top-0 z-40 flex items-center justify-between h-12 px-3 flex-shrink-0">
+                  <SidebarTrigger data-testid="button-sidebar-toggle" className="-ml-1" />
+                  <div className="flex items-center gap-1">
+                    <NotificationBell />
+                    <ThemeToggle />
+                  </div>
+                </header>
+                {/* Floating glass main panel */}
+                <main className="glass-panel flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
+                  <div className="flex-1">
                     <ShotgunOfferAlert />
                     <ShotgunResultPrompt />
                     <AppRouter />
-                  </EodLockGate>
-                </div>
-                <AppFooter />
-              </main>
-              <MobileBottomNav />
+                  </div>
+                  <AppFooter />
+                </main>
+                <MobileBottomNav />
+              </div>
             </div>
           </div>
-        </div>
+        </EodLockGate>
       </DailyReportGate>
     </SidebarProvider>
   );
