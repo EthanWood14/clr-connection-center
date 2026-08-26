@@ -4821,6 +4821,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const user = storage.getUserById(userId) as any;
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    // Demo mode is read-only, so it must never demand a report that its own
+    // mutation guard will reject. Real organizations keep the full EOD lock.
+    const orgId = Number(req.session_user?.orgId ?? user.orgId ?? user.org_id ?? 0);
+    if (isDemoOrg(orgId)) return res.json({ locked: false, missingDates: [], exempt: true });
+
     const isClr = user.role === "assistant" || (user.role === "admin" && !!(user.isClr ?? user.is_clr));
     if (!isClr) return res.json({ locked: false, missingDates: [] });
 
@@ -14212,10 +14217,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
     const user = storage.getUserById(userId) as any;
-    const isClr = !!(user && (user.isClr ?? user.is_clr) && user.role !== "admin");
     const timezone = tzFromRequest(req, storageExtra.getRawSqlite());
     const reportDate = requiredEodWeekdaysInTz(timezone, new Date(), 1, 7)[0];
 
+    // Demo users cannot create call logs because every demo mutation is
+    // intentionally blocked. Exempt them before the CLR gate can trap the
+    // read-only walkthrough behind an impossible submission.
+    const orgId = Number(req.session_user?.orgId ?? user?.orgId ?? user?.org_id ?? 0);
+    if (isDemoOrg(orgId)) {
+      return res.json({ hasLog: true, date: reportDate, exempt: true, outcomes: emptyOutcomeBreakdown() });
+    }
+
+    const isClr = !!(user && (user.isClr ?? user.is_clr) && user.role !== "admin");
     if (!isClr) {
       return res.json({ hasLog: true, date: reportDate, exempt: true, outcomes: emptyOutcomeBreakdown() });
     }

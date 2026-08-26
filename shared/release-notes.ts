@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.0.2",
+    headline: "The read-only C3 demo no longer gets trapped behind reporting screens.",
+    items: [
+      { text: "Demo CLR can now open and explore C3 without an impossible Daily Report or EOD requirement. The demo stays read-only, while required reporting remains fully enforced for real CLR accounts." },
+    ],
+  },
+  {
     version: "4.0.1",
     headline: "C3 no longer freezes under several startup prompts at once.",
     items: [
