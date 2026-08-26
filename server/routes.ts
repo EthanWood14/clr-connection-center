@@ -14965,6 +14965,112 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  // ── Auto-flow: C3 transfers land in LAP by themselves ──────────────────────
+  // "All the transfers for Christopher Redoble in C3 should go in the LAP
+  // portal from now on" (2026-08-26). A minute-cadence reconciler turns every
+  // NEW eligible transfer into LAP work with exactly the manual route's
+  // building blocks: link the package an LOA already started for that borrower
+  // (the audit's suggestion logic — never duplicate their work), else create
+  // the optional-documents package. A timer catches every creation path — CLR
+  // logging, shotgun results, the CallSync webhook, appointment flips — without
+  // hooking six call sites, and NOT EXISTS on the durable link table makes
+  // every pass idempotent.
+  const LAP_AUTO_PACKAGE_EPOCH = "2026-08-26T00:00:00"; // transfers logged before the feature stay manual
+  function autoFlowLapTransfers(orgId: number): number {
+    const sqlite = storageExtra.getRawSqlite();
+    // Same eligibility as the manual transfer-audit route: Redoble by name, or
+    // any LO with an available LAP assistant.
+    const eligibleLos = (sqlite.prepare(
+      `SELECT id, full_name FROM loan_officers WHERE org_id=? AND internal_status='active'`,
+    ).all(orgId) as any[]).filter((lo) =>
+      /\bredoble\b/i.test(String(lo.full_name ?? "")) || storageExtra.hasAvailableLapAssistant(orgId, Number(lo.id)));
+    let created = 0;
+    for (const lo of eligibleLos) {
+      const transfers = (sqlite.prepare(
+        `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.name AS loa_name
+           FROM lead_outcomes o
+           LEFT JOIN users u ON u.id = o.assistant_id
+           LEFT JOIN users l ON l.id = o.loa_id
+          WHERE o.org_id=? AND o.lo_id=? AND o.outcome_type='transfer'
+            AND o.created_at >= ?
+            AND NOT EXISTS (SELECT 1 FROM lap_result_transfer_links t
+                             WHERE t.org_id=o.org_id AND t.outcome_id=o.id)
+          ORDER BY o.date ASC, o.id ASC`,
+      ).all(orgId, lo.id, LAP_AUTO_PACKAGE_EPOCH) as any[]).map((r): TransferRow => ({
+        outcomeId: Number(r.id), date: String(r.date), borrowerName: String(r.borrower_name ?? ""),
+        clrName: r.clr_name ?? null, loaName: r.loa_name ?? null,
+      }));
+      if (!transfers.length) continue;
+      // The same package universe the audit page matches against.
+      const packages = (sqlite.prepare(
+        `SELECT p.id, p.borrower_name, p.result_date,
+                (SELECT GROUP_CONCAT(t.outcome_id) FROM lap_result_transfer_links t
+                  WHERE t.org_id=p.org_id AND t.package_id=p.id) AS linked_outcome_ids
+           FROM lap_result_packages p
+          WHERE p.org_id=? AND p.archived_at IS NULL
+            AND (p.loan_officer_id = ? OR p.loan_officer_id IS NULL)`,
+      ).all(orgId, lo.id) as any[]).map((r): PackageRow => ({
+        packageId: Number(r.id), borrowerName: String(r.borrower_name ?? ""),
+        resultDate: String(r.result_date ?? ""), documentTypes: [],
+        linkedOutcomeIds: String(r.linked_outcome_ids ?? "").split(",").filter(Boolean).map(Number),
+      }));
+      const actorUserId = lapSharedUserId(orgId);
+      for (const row of buildAuditRows(transfers, packages)) {
+        try {
+          // Auto-link only a RECENT same-borrower package. The audit suggests
+          // the closest-in-time package with no bound, which is right for a
+          // human to confirm — but silently attaching a new transfer to a
+          // months-old repeat-borrower package would inherit old paperwork.
+          const suggested = packages.find((p) => p.packageId === row.packageId);
+          const gapDays = suggested && suggested.resultDate
+            ? Math.abs(Date.parse(`${suggested.resultDate}T12:00:00Z`) - Date.parse(`${row.date}T12:00:00Z`)) / 86_400_000
+            : Infinity;
+          if (row.matchType === "suggested" && row.packageId && gapDays <= 7) {
+            storageExtra.linkLapTransferToPackage({ orgId, outcomeId: row.outcomeId, packageId: row.packageId, actorUserId });
+          } else {
+            const pkg = storageExtra.createLapResultPackage({
+              orgId, actorUserId,
+              borrowerName: row.borrowerName || "Unnamed borrower",
+              dealReference: `C3 transfer #${row.outcomeId}`,
+              loanOfficerId: Number(lo.id),
+              notes: `Created automatically from ${row.clrName ?? "a CLR"}'s C3 transfer on ${row.date}. Documents are optional and may be added whenever available.`,
+              resultDate: row.date,
+            });
+            storageExtra.linkLapTransferToPackage({ orgId, outcomeId: row.outcomeId, packageId: pkg.id, actorUserId });
+            created += 1;
+            // Bell entry on the portal (the client already routes 'lap_result'
+            // to /results). The shared gate account is how every device polls;
+            // individually-linked portal users are included for when they exist.
+            const recipients = Array.from(new Set<number>([actorUserId, ...storageExtra.getPortalUserIdsForLoanOfficer(orgId, Number(lo.id))]));
+            for (const userId of recipients) {
+              storage.createNotification({
+                userId,
+                type: "lap_result",
+                title: "New transfer from C3",
+                message: `${row.borrowerName || "A borrower"} was transferred to ${lo.full_name}${row.clrName ? ` by ${row.clrName}` : ""} — the package is ready in Results.`,
+                portal: "lap",
+                isRead: false,
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`LAP auto-flow failed for outcome ${row.outcomeId}:`, error);
+        }
+      }
+    }
+    return created;
+  }
+  // LAP is WCL's single-org feature (same reasoning as the NMLS cron): run for
+  // org 1 only, which also keeps the demo org's read-only world untouched.
+  setInterval(() => {
+    try { runWithOrg({ orgId: 1, superAdmin: false }, () => autoFlowLapTransfers(1)); }
+    catch (error) { console.error("LAP transfer auto-flow error:", error); }
+  }, 60_000);
+  setTimeout(() => {
+    try { runWithOrg({ orgId: 1, superAdmin: false }, () => autoFlowLapTransfers(1)); }
+    catch (error) { console.error("LAP transfer auto-flow boot error:", error); }
+  }, 10_000);
+
   app.get("/api/lap/results", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;

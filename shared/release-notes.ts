@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.4.0",
+    headline: "C3 transfers now land in the LAP portal by themselves.",
+    items: [
+      { text: "Every new transfer to Christopher Redoble automatically becomes a package in LAP Results within a minute — named for the borrower, dated, linked to the C3 transfer, with a note saying which CLR sent it. No more creating packages by hand from the Transfer Documents page.", audience: "lap" },
+      { text: "If an LOA already started a package for that borrower in the last week, the transfer links to it instead of creating a duplicate. The portal bell announces each new package.", audience: "lap" },
+      { text: "Transfers logged before today stay as they were — only new ones auto-flow.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.3.2",
     headline: "Fixed: the extension zip now unzips ready to load.",
     items: [
