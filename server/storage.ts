@@ -735,7 +735,10 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     org_id INTEGER NOT NULL,
     lead_name TEXT NOT NULL,
     phone TEXT NOT NULL DEFAULT '',
+    phone_key TEXT,
     email TEXT NOT NULL DEFAULT '',
+    email_key TEXT,
+    state_code TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '',
     manager_notes TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'queued',
@@ -761,9 +764,73 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     responded_at TEXT,
     UNIQUE(lead_id, user_id)
   )`);
+  // Each pass through the rotation is retained here. `shotgun_offers` remains
+  // the compact per-CLR row used for cooldown ordering; this table is the
+  // append-only operational history and must never be deleted on requeue.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS shotgun_offer_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL,
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    offered_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    response TEXT NOT NULL DEFAULT 'pending',
+    responded_at TEXT
+  )`);
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN phone_key TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN email_key TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN state_code TEXT NOT NULL DEFAULT ''`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_leads_org_status ON shotgun_leads(org_id, status, created_at DESC)`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offers_lead ON shotgun_offers(lead_id, offered_at)`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offer_events_lead ON shotgun_offer_events(lead_id, offered_at)`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_ready ON shotgun_readiness(org_id, is_ready, heartbeat_at)`); } catch {}
+  // A CLR can hold at most one live offer. This is a database invariant in
+  // addition to the candidate-query guard, so a future second app instance or
+  // a concurrent publish cannot create an invisible second offer.
+  try {
+    const live = sqlite.prepare(`SELECT id,org_id,current_assignee_id,updated_at FROM shotgun_leads
+      WHERE status='offered' AND current_assignee_id IS NOT NULL ORDER BY org_id,current_assignee_id,updated_at,id`).all() as any[];
+    const seen = new Set<string>();
+    const duplicates = live.filter((lead) => {
+      const key = `${Number(lead.org_id)}:${Number(lead.current_assignee_id)}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    });
+    if (duplicates.length) {
+      const now = new Date().toISOString();
+      sqlite.transaction(() => {
+        for (const lead of duplicates) {
+          sqlite.prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+            WHERE id=? AND status='offered'`).run(now, lead.id);
+          sqlite.prepare(`UPDATE shotgun_offers SET response='requeued',responded_at=?
+            WHERE lead_id=? AND response='pending'`).run(now, lead.id);
+          sqlite.prepare(`UPDATE shotgun_offer_events SET response='requeued',responded_at=?
+            WHERE lead_id=? AND response='pending'`).run(now, lead.id);
+        }
+      })();
+      console.warn(`[shotgun] repaired ${duplicates.length} hidden duplicate live offer(s) before enforcing uniqueness`);
+    }
+  } catch (error: any) {
+    console.error("[shotgun] duplicate-live-offer repair failed:", error?.message ?? error);
+  }
+  try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_one_live_offer_per_clr
+    ON shotgun_leads(org_id, current_assignee_id)
+    WHERE status='offered' AND current_assignee_id IS NOT NULL`); } catch (error: any) {
+    console.error("[shotgun] could not enforce one-live-offer index:", error?.message ?? error);
+  }
+  // Keys are populated on every new publish. Partial indexes allow the same
+  // person to be published again after the prior lead is done or cancelled.
+  try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_active_phone
+    ON shotgun_leads(org_id, phone_key)
+    WHERE phone_key IS NOT NULL AND phone_key<>'' AND status IN ('queued','offered','claimed')`); } catch (error: any) {
+    console.error("[shotgun] could not enforce active-phone dedupe index:", error?.message ?? error);
+  }
+  try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_active_email
+    ON shotgun_leads(org_id, email_key)
+    WHERE email_key IS NOT NULL AND email_key<>'' AND status IN ('queued','offered','claimed')`); } catch (error: any) {
+    console.error("[shotgun] could not enforce active-email dedupe index:", error?.message ?? error);
+  }
 
   // ── lead_outcomes.lo_id becomes nullable ──────────────────────────────────
   // An appointment can be booked before anyone knows which LO will take it, so

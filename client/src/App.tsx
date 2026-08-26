@@ -314,7 +314,6 @@ function AuthenticatedApp() {
       <PushNudge />
       <GoalNudge />
       <TransferCelebration />
-      <ShotgunOfferAlert />
       <UpdatePrompt />
       <DailyReportGate>
         {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}
@@ -335,6 +334,7 @@ function AuthenticatedApp() {
               <main className="glass-panel flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
                 <div className="flex-1">
                   <EodLockGate>
+                    <ShotgunOfferAlert />
                     <AppRouter />
                   </EodLockGate>
                 </div>

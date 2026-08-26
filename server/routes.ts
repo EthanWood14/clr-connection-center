@@ -7092,13 +7092,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // full-screen offer modal permanently open and the rest of C3 unusable.
   const SHOTGUN_RELAP_COOLDOWN_MS = 5 * 60_000;
   const SHOTGUN_READY_TTL_MS = 35_000;
+  const SHOTGUN_STATE_CODES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" "));
   const shotgunDb = () => storageExtra.getRawSqlite();
+  const shotgunPhoneKey = (value: string) => value.replace(/\D/g, "");
+  const shotgunEmailKey = (value: string) => value.trim().toLowerCase();
   const shotgunUserIsClr = (user: any) => !!user && !!(
     user.isClr ?? user.is_clr ?? (user.role === "assistant")
   ) && (user.isActive ?? user.is_active) && (user.portal == null || user.portal === "c3");
   const shotgunLeadJson = (row: any) => ({
     id: Number(row.id), leadName: String(row.lead_name ?? ""), phone: String(row.phone ?? ""),
-    email: String(row.email ?? ""), source: String(row.source ?? ""), managerNotes: String(row.manager_notes ?? ""),
+    email: String(row.email ?? ""), stateCode: String(row.state_code ?? ""), source: String(row.source ?? ""), managerNotes: String(row.manager_notes ?? ""),
     status: String(row.status), createdByUserId: Number(row.created_by_user_id), createdByName: String(row.created_by_name ?? "Manager"),
     currentAssigneeId: row.current_assignee_id == null ? null : Number(row.current_assignee_id),
     currentAssigneeName: row.current_assignee_name ? String(row.current_assignee_name) : null,
@@ -7162,9 +7165,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
           AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
           AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
+          AND NOT EXISTS (
+            SELECT 1 FROM shotgun_leads live
+            WHERE live.org_id=u.org_id AND live.current_assignee_id=u.id
+              AND live.status='offered' AND live.id<>?
+          )
         ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
                  CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
-      `).get(leadId, Number(lead.org_id), cutoff, relapCutoff) as any;
+      `).get(leadId, Number(lead.org_id), cutoff, relapCutoff, leadId) as any;
       if (!candidate) return null;
       const expiresAt = new Date(new Date(nowIso).getTime() + SHOTGUN_OFFER_MS).toISOString();
       const changed = db.prepare(`UPDATE shotgun_leads SET status='offered',current_assignee_id=?,offer_expires_at=?,updated_at=?
@@ -7178,6 +7186,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         ON CONFLICT(lead_id,user_id) DO UPDATE SET
           offered_at=excluded.offered_at, expires_at=excluded.expires_at,
           response='pending', responded_at=NULL`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
+      db.prepare(`INSERT INTO shotgun_offer_events (lead_id,org_id,user_id,offered_at,expires_at,response)
+        VALUES (?,?,?,?,?,'pending')`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
       db.prepare(`UPDATE shotgun_readiness SET last_assigned_at=?,updated_at=? WHERE org_id=? AND user_id=?`)
         .run(nowIso, nowIso, lead.org_id, candidate.id);
       return { orgId: Number(lead.org_id), userId: Number(candidate.id), leadId, leadName: String(lead.lead_name) };
@@ -7197,6 +7207,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           .run(nowIso, row.id, row.current_assignee_id, nowIso);
         if (!changed.changes) continue;
         db.prepare(`UPDATE shotgun_offers SET response='expired',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(nowIso, row.id, row.current_assignee_id);
+        db.prepare(`UPDATE shotgun_offer_events SET response='expired',responded_at=?
           WHERE lead_id=? AND user_id=? AND response='pending'`).run(nowIso, row.id, row.current_assignee_id);
         // Missing an offer takes you out of the rotation. Being Ready means "I
         // will answer in 20 seconds"; letting one lapse says you are not really
@@ -7269,6 +7281,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // in the rotation" was reverted within ten seconds and could not stick at
     // all. A CLR with no row yet is in the rotation by default.
     if (req.body?.heartbeat === true) {
+      // A mandatory report gate means the CLR cannot see or answer an offer.
+      // Suspend liveness without changing their explicit Ready preference, and
+      // immediately put any open offer back into the visible rotation.
+      if (req.body?.blocked === true) {
+        shotgunDb().transaction(() => {
+          shotgunDb().prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,1,NULL,?)
+            ON CONFLICT(org_id,user_id) DO UPDATE SET heartbeat_at=NULL,updated_at=excluded.updated_at`)
+            .run(orgId, userId, now);
+          const offered = shotgunDb().prepare(`SELECT id FROM shotgun_leads WHERE org_id=? AND status='offered' AND current_assignee_id=?`).all(orgId, userId) as any[];
+          for (const lead of offered) {
+            shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+              WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=?`).run(now, lead.id, orgId, userId);
+            shotgunDb().prepare(`UPDATE shotgun_offers SET response='blocked',responded_at=?
+              WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, lead.id, userId);
+            shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='blocked',responded_at=?
+              WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, lead.id, userId);
+          }
+        })();
+        advanceShotgun(now);
+        const current = shotgunDb().prepare(`SELECT is_ready FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any;
+        return res.json({ ok: true, isReady: !!current?.is_ready, blocked: true });
+      }
       shotgunDb().prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,1,?,?)
         ON CONFLICT(org_id,user_id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at,updated_at=excluded.updated_at`)
         .run(orgId, userId, now, now);
@@ -7289,6 +7323,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         for (const lead of offered) {
           shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=? WHERE id=? AND status='offered' AND current_assignee_id=?`).run(now, lead.id, userId);
           shotgunDb().prepare(`UPDATE shotgun_offers SET response='declined',responded_at=? WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, lead.id, userId);
+          shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='declined',responded_at=? WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, lead.id, userId);
         }
       })();
     }
@@ -7304,25 +7339,46 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const leadName = String(req.body?.leadName ?? "").trim().slice(0, 140);
     const phone = String(req.body?.phone ?? "").trim().slice(0, 40);
     const email = String(req.body?.email ?? "").trim().slice(0, 200);
+    const phoneKey = shotgunPhoneKey(phone);
+    const emailKey = shotgunEmailKey(email);
+    const stateCode = String(req.body?.stateCode ?? "").trim().toUpperCase();
     const source = String(req.body?.source ?? "").trim().slice(0, 120);
     const managerNotes = String(req.body?.managerNotes ?? "").trim().slice(0, 3000);
     if (leadName.length < 2) return res.status(400).json({ error: "Enter the lead's name." });
     if (!phone && !email) return res.status(400).json({ error: "Enter a phone number or email address." });
+    if (phone && (phoneKey.length < 10 || phoneKey.length > 15)) return res.status(400).json({ error: "Enter a valid phone number with 10 to 15 digits." });
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailKey)) return res.status(400).json({ error: "Enter a valid email address." });
+    if (phone && !stateCode) return res.status(400).json({ error: "Select the lead's state so the CLR can check calling hours." });
+    if (stateCode && !SHOTGUN_STATE_CODES.has(stateCode)) return res.status(400).json({ error: "Select a valid U.S. state." });
     const now = new Date().toISOString();
     const readyCutoff = new Date(new Date(now).getTime() - SHOTGUN_READY_TTL_MS).toISOString();
     const readyCount = Number((shotgunDb().prepare(`SELECT COUNT(*) AS count FROM shotgun_readiness r
       INNER JOIN users u ON u.id=r.user_id AND u.org_id=r.org_id
       WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
         AND (u.portal IS NULL OR u.portal='c3')`).get(orgId, readyCutoff) as any)?.count ?? 0);
-    const info = shotgunDb().prepare(`INSERT INTO shotgun_leads
-      (org_id,lead_name,phone,email,source,manager_notes,status,created_by_user_id,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,'queued',?,?,?)`).run(orgId, leadName, phone, email, source, managerNotes, userId, now, now);
+    const active = shotgunDb().prepare(`SELECT id,lead_name,phone,email,phone_key,email_key FROM shotgun_leads
+      WHERE org_id=? AND status IN ('queued','offered','claimed')`).all(orgId) as any[];
+    const duplicate = active.find((lead) =>
+      (phoneKey && (String(lead.phone_key ?? "") || shotgunPhoneKey(String(lead.phone ?? ""))) === phoneKey)
+      || (emailKey && (String(lead.email_key ?? "") || shotgunEmailKey(String(lead.email ?? ""))) === emailKey));
+    if (duplicate) return res.status(409).json({ error: `${String(duplicate.lead_name)} is already active in Shotgun (lead #${Number(duplicate.id)}).` });
+    let info: any;
+    try {
+      info = shotgunDb().prepare(`INSERT INTO shotgun_leads
+        (org_id,lead_name,phone,phone_key,email,email_key,state_code,source,manager_notes,status,created_by_user_id,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'queued',?,?,?)`).run(orgId, leadName, phone, phoneKey || null, email, emailKey || null, stateCode, source, managerNotes, userId, now, now);
+    } catch (error: any) {
+      if (String(error?.code ?? "").includes("CONSTRAINT") || /unique/i.test(String(error?.message ?? ""))) {
+        return res.status(409).json({ error: "This phone number or email is already active in Shotgun." });
+      }
+      throw error;
+    }
     const assignment = assignShotgunLead(Number(info.lastInsertRowid), now);
     if (assignment) notifyShotgunOffer(assignment.orgId, assignment.userId, assignment.leadId, assignment.leadName);
     if (readyCount <= 2) notifyShotgunLowCoverage(orgId, leadName, source, readyCount, assignment?.userId);
     audit({ userId, userName: me?.name ?? "Manager", action: "create", entityType: "shotgun_lead",
       entityId: Number(info.lastInsertRowid), entityLabel: leadName,
-      details: JSON.stringify({ source, assignedImmediately: !!assignment }) });
+      details: JSON.stringify({ source, stateCode, assignedImmediately: !!assignment }) });
     res.json({ ok: true, leadId: Number(info.lastInsertRowid), assigned: !!assignment });
   });
 
@@ -7330,6 +7386,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
     const leadId = Number(req.params.id);
+    const me = storage.getUserById(userId) as any;
     const now = new Date().toISOString();
     const result = shotgunDb().transaction(() => {
       const lead = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
@@ -7338,9 +7395,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=? AND offer_expires_at>?`).run(now, now, leadId, orgId, userId, now);
       if (!changed.changes) return false;
       shotgunDb().prepare(`UPDATE shotgun_offers SET response='confirmed',responded_at=? WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, userId);
+      shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='confirmed',responded_at=? WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, userId);
       return true;
     })();
     if (!result) { advanceShotgun(now); return res.status(409).json({ error: "This offer expired or moved to another CLR." }); }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: "Shotgun lead claimed", details: JSON.stringify({ response: "confirmed" }) });
     res.json({ ok: true });
   });
 
@@ -7352,17 +7412,41 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
     const leadId = Number(req.params.id);
+    const me = storage.getUserById(userId) as any;
     const now = new Date().toISOString();
     const result = shotgunDb().transaction(() => {
       const changed = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
-        WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=?`).run(now, leadId, orgId, userId);
+        WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=? AND offer_expires_at>?`).run(now, leadId, orgId, userId, now);
       if (!changed.changes) return false;
       shotgunDb().prepare(`UPDATE shotgun_offers SET response='declined',responded_at=?
         WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, userId);
+      shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='declined',responded_at=?
+        WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, userId);
       return true;
     })();
-    if (!result) return res.status(409).json({ error: "This offer already expired or moved on." });
+    if (!result) { advanceShotgun(now); return res.status(409).json({ error: "This offer already expired or moved on." }); }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: "Shotgun lead passed", details: JSON.stringify({ response: "declined" }) });
     advanceShotgun(now);
+    res.json({ ok: true });
+  });
+
+  // Records the verified handoff to the device's phone app. This deliberately
+  // does not mark `called=1`: opening a dialer is not proof a call connected or
+  // was even placed. The CLR still records the real outcome below.
+  app.post("/api/shotgun/:id/open-phone", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const leadId = Number(req.params.id);
+    const me = storage.getUserById(userId) as any;
+    const lead = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+    if (!lead || lead.status !== "claimed" || Number(lead.current_assignee_id) !== userId) {
+      return res.status(403).json({ error: "You do not own this active lead." });
+    }
+    if (!String(lead.phone ?? "").trim()) return res.status(409).json({ error: "This lead has no phone number." });
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: String(lead.lead_name),
+      details: JSON.stringify({ action: "phone_opened", stateCode: String(lead.state_code ?? ""), complianceAcknowledged: true }) });
     res.json({ ok: true });
   });
 
@@ -7391,6 +7475,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         sendPushToUser(creatorId, { title: "Shotgun lead completed", body: `${lead.lead_name} — ${me?.name ?? "CLR"}`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
       }
     }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: String(lead.lead_name), details: JSON.stringify({ called, texted, done }) });
     res.json({ ok: true, done });
   });
 
@@ -7401,13 +7487,60 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!taskManager(me)) return res.status(403).json({ error: "Only managers can requeue leads." });
     const leadId = Number(req.params.id);
     const now = new Date().toISOString();
+    const previous = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
     const changed = shotgunDb().transaction(() => {
-      const result = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,claimed_at=NULL,updated_at=?
+      const result = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,claimed_at=NULL,
+          called=0,texted=0,result_notes='',done_at=NULL,updated_at=?
         WHERE id=? AND org_id=? AND status IN ('offered','claimed')`).run(now, leadId, orgId);
-      if (result.changes) shotgunDb().prepare(`DELETE FROM shotgun_offers WHERE lead_id=? AND org_id=?`).run(leadId, orgId);
+      if (result.changes) {
+        shotgunDb().prepare(`UPDATE shotgun_offers SET response='requeued',responded_at=?
+          WHERE lead_id=? AND org_id=? AND response='pending'`).run(now, leadId, orgId);
+        shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='requeued',responded_at=?
+          WHERE lead_id=? AND org_id=? AND response='pending'`).run(now, leadId, orgId);
+      }
       return result.changes;
     })();
     if (!changed) return res.status(409).json({ error: "Only an offered or claimed lead can be requeued." });
+    audit({ userId, userName: me?.name ?? "Manager", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: String(previous?.lead_name ?? "Shotgun lead"),
+      details: JSON.stringify({ action: "requeue", previousStatus: previous?.status ?? null,
+        previousAssigneeId: previous?.current_assignee_id ?? null, clearedProgress: true }) });
+    if (previous?.current_assignee_id) {
+      storage.createNotification({ userId: Number(previous.current_assignee_id), type: "shotgun_requeued", title: "Shotgun lead reassigned",
+        message: `${String(previous.lead_name)} was returned to the Shotgun rotation by ${me?.name ?? "a manager"}.`, isRead: false } as any);
+    }
+    advanceShotgun(now);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/shotgun/:id/cancel", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    if (!taskManager(me)) return res.status(403).json({ error: "Only managers can cancel leads." });
+    const leadId = Number(req.params.id);
+    const now = new Date().toISOString();
+    const previous = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+    const changed = shotgunDb().transaction(() => {
+      const result = shotgunDb().prepare(`UPDATE shotgun_leads SET status='cancelled',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+        WHERE id=? AND org_id=? AND status IN ('queued','offered','claimed')`).run(now, leadId, orgId);
+      if (result.changes) {
+        shotgunDb().prepare(`UPDATE shotgun_offers SET response='cancelled',responded_at=?
+          WHERE lead_id=? AND org_id=? AND response='pending'`).run(now, leadId, orgId);
+        shotgunDb().prepare(`UPDATE shotgun_offer_events SET response='cancelled',responded_at=?
+          WHERE lead_id=? AND org_id=? AND response='pending'`).run(now, leadId, orgId);
+      }
+      return result.changes;
+    })();
+    if (!changed) return res.status(409).json({ error: "Only an active Shotgun lead can be cancelled." });
+    audit({ userId, userName: me?.name ?? "Manager", action: "delete", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: String(previous?.lead_name ?? "Shotgun lead"),
+      details: JSON.stringify({ action: "cancel", previousStatus: previous?.status ?? null,
+        previousAssigneeId: previous?.current_assignee_id ?? null }) });
+    if (previous?.current_assignee_id) {
+      storage.createNotification({ userId: Number(previous.current_assignee_id), type: "shotgun_cancelled", title: "Shotgun lead cancelled",
+        message: `${String(previous.lead_name)} was cancelled by ${me?.name ?? "a manager"}.`, isRead: false } as any);
+    }
     advanceShotgun(now);
     res.json({ ok: true });
   });

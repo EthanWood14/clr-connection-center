@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.104.0",
+    headline: "Shotgun now routes one visible offer at a time and protects the full lead workflow.",
+    items: [
+      { text: "A CLR can hold only one live Shotgun offer, so simultaneous publishes can no longer create a second hidden countdown. Ready CLRs now see offers within about two seconds, with email, state, source, and manager context on the offer." },
+      { text: "Managers now get duplicate phone/email protection, validated contact details, a required state for phone leads, a confirmed Requeue action that clears prior work without erasing history, and a safe Cancel action.", audience: "manager" },
+      { text: "Opening the phone now checks the state's calling window and requires an explicit local-time, DNC, consent, and policy acknowledgement. C3 clearly says which compliance checks still require a person." },
+      { text: "Mandatory Daily Report and EOD locks now suspend Shotgun eligibility immediately, preserving the CLR's Ready preference while preventing an offer from appearing behind a blocking screen." },
+    ],
+  },
+  {
     version: "3.103.0",
     headline: "Shotgun offers now chime, can be passed, and a missed one takes you out of the rotation.",
     items: [

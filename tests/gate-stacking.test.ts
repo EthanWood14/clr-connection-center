@@ -43,11 +43,12 @@ test("the daily report gate disables everything it renders beneath itself", () =
 
 test("the EOD lock stands down while the daily report gate is up", () => {
   assert.match(inner, /useContext\(DailyReportGateActive\)/);
-  const guard = inner.indexOf("if (outerGateActive) return");
+  const guard = inner.indexOf("const lockActive = !outerGateActive");
   const overlay = inner.indexOf("fixed inset-0 z-[60]");
   assert.notEqual(guard, -1, "without this the overlay covers a dialog nobody can click");
   assert.notEqual(overlay, -1);
-  assert.ok(guard < overlay, "the guard has to run before any overlay is returned");
+  assert.ok(guard < overlay, "the outer-gate guard has to control the overlay");
+  assert.match(inner, /showOverlay = lockActive && location !== "\/eod-report"/);
 });
 
 test("the overlay really does sit above the dialog it would cover", () => {
@@ -62,6 +63,16 @@ test("the EOD report page stays reachable so the lock can be cleared", () => {
   // The lock links to /eod-report?date=…; wouter's useHashLocation puts the
   // query in location.search and leaves the hash as "/eod-report", so this
   // exact-match exemption is what lets a locked CLR reach the form.
-  assert.match(inner, /location === "\/eod-report"/);
+  assert.match(inner, /location !== "\/eod-report"/);
   assert.match(inner, /navigate\(`\/eod-report\?date=\$\{d\}`\)/);
+});
+
+test("the EOD lock publishes its state while keeping Shotgun mounted", () => {
+  assert.match(inner, /export const EodLockGateActive = createContext\(false\)/);
+  assert.match(inner, /<EodLockGateActive\.Provider value=\{lockActive\}>/);
+  const alert = app.indexOf("<ShotgunOfferAlert />");
+  const lockOpen = app.indexOf("<EodLockGate>");
+  const lockClose = app.indexOf("</EodLockGate>");
+  assert.ok(lockOpen < alert && alert < lockClose,
+    "the alert must remain mounted inside both gate contexts so it can suspend routing immediately");
 });

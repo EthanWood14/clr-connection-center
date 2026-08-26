@@ -12,8 +12,11 @@ const alert = readFileSync(join(root, "client/src/components/shotgun-offer-alert
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
 
 test("shotgun state is durable and keeps one offer row per CLR per lead", () => {
-  for (const table of ["shotgun_readiness", "shotgun_leads", "shotgun_offers"]) assert.match(storage, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  for (const table of ["shotgun_readiness", "shotgun_leads", "shotgun_offers", "shotgun_offer_events"]) assert.match(storage, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   assert.match(storage, /UNIQUE\(lead_id, user_id\)/);
+  assert.match(storage, /idx_shotgun_one_live_offer_per_clr/);
+  assert.match(storage, /idx_shotgun_active_phone/);
+  assert.match(storage, /idx_shotgun_active_email/);
 });
 
 test("only live-ready CLRs enter the fair assignment rotation", () => {
@@ -29,6 +32,8 @@ test("only live-ready CLRs enter the fair assignment rotation", () => {
     "a one-shot exclusion strands the lead after a single pass");
   assert.match(assign, /LEFT JOIN shotgun_offers o ON o\.lead_id=\? AND o\.user_id=u\.id/);
   assert.match(assign, /o\.response<>'pending'/, "someone holding a live offer must be skipped");
+  assert.match(assign, /NOT EXISTS \(\s*SELECT 1 FROM shotgun_leads live/,
+    "someone holding any live offer must be skipped for every other lead");
   assert.match(assign, /CASE WHEN o\.offered_at IS NULL THEN 0 ELSE 1 END, o\.offered_at ASC/);
   assert.match(assign, /ON CONFLICT\(lead_id,user_id\) DO UPDATE SET/,
     "UNIQUE(lead_id,user_id) means a second lap has to refresh the row, not insert");
@@ -62,13 +67,16 @@ test("a CLR records call, text, notes, then explicitly marks the lead done", () 
 test("the urgent offer alert is global and readiness stays alive while C3 is open", () => {
   assert.match(app, /<ShotgunOfferAlert \/>/);
   assert.match(app, /path="\/shotgun" component=\{Shotgun\}/);
-  assert.match(alert, /refetchInterval: 5_000/);
+  assert.match(alert, /\? 2_000 : 15_000/);
+  assert.match(alert, /refetchOnWindowFocus: true/);
   assert.match(alert, /setInterval\(beat, 10_000\)/);
   // Shotgun is on by default, and the SERVER owns whether a CLR is in the
   // rotation; the beat may only report that C3 is open.
   assert.match(alert, /"\/api\/shotgun\/readiness", \{ heartbeat: true \}/);
   assert.doesNotMatch(alert, /readiness", \{ ready:/, "a heartbeat must never assert readiness");
   assert.match(alert, /I RECEIVED THIS LEAD/);
+  assert.match(alert, /managerNotes/);
+  assert.match(alert, /stateCode/);
 });
 
 test("managers publish while CLRs control readiness", () => {
@@ -117,12 +125,63 @@ test("denying an offer passes the lead on without punishing the CLR", () => {
   assert.notEqual(denyStart, -1, "the deny route must exist");
   const deny = routes.slice(denyStart, routes.indexOf('app.patch("/api/shotgun/:id/result"', denyStart));
   assert.match(deny, /status='queued',current_assignee_id=NULL/);
+  assert.match(deny, /offer_expires_at>\?/, "an expired offer cannot be passed during the expiry sweep window");
   assert.match(deny, /response='declined'/);
   assert.match(deny, /advanceShotgun\(now\)/, "the lead moves to the next CLR immediately");
   assert.doesNotMatch(deny, /is_ready=0/, "an explicit pass must NOT opt the CLR out — only a miss does");
   // And the alert offers the button, with the trade-off spelled out.
   assert.match(alert, /shotgun-deny/);
   assert.match(alert, /Passing keeps you in the rotation/);
+});
+
+test("publishing validates contact data, state, and active duplicates", () => {
+  const publish = routes.slice(routes.indexOf('app.post("/api/shotgun/publish"'), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
+  assert.match(publish, /phoneKey\.length < 10/);
+  assert.match(publish, /Select the lead's state/);
+  assert.match(publish, /already active in Shotgun/);
+  assert.match(publish, /phone_key,email,email_key,state_code/);
+  assert.match(page, /shotgun-state/);
+});
+
+test("requeue is explicit, preserves history, and clears the prior CLR's progress", () => {
+  const start = routes.indexOf('app.post("/api/shotgun/:id/requeue"');
+  const requeue = routes.slice(start, routes.indexOf('app.post("/api/shotgun/:id/cancel"', start));
+  assert.match(requeue, /called=0,texted=0,result_notes='',done_at=NULL/);
+  assert.match(requeue, /response='requeued'/);
+  assert.doesNotMatch(requeue, /DELETE FROM shotgun_offers/);
+  assert.match(page, /Requeue .*\?/);
+  assert.match(page, /Could not requeue lead/);
+});
+
+test("managers can cancel an active lead without deleting its history", () => {
+  const cancel = routes.slice(routes.indexOf('app.post("/api/shotgun/:id/cancel"'), routes.indexOf('app.get("/api/loan-officers/transfer-counts"'));
+  assert.match(cancel, /status='cancelled'/);
+  assert.match(cancel, /response='cancelled'/);
+  assert.match(cancel, /Only managers can cancel leads/);
+  assert.match(page, /Cancel lead/);
+});
+
+test("call launch requires compliance acknowledgement and state-hours protection", () => {
+  assert.match(page, /stateCallStatus/);
+  assert.match(page, /Outside calling hours/);
+  assert.match(page, /Do Not Call requirements/);
+  assert.match(page, /C3 cannot perform those checks automatically/);
+  assert.match(page, /Verified — open phone/);
+  assert.match(page, /\/open-phone/);
+  const launch = routes.slice(routes.indexOf('app.post("/api/shotgun/:id/open-phone"'), routes.indexOf('app.patch("/api/shotgun/:id/result"'));
+  assert.match(launch, /lead.status !== "claimed"/);
+  assert.match(launch, /action: "phone_opened"/);
+  assert.doesNotMatch(launch, /called=1/, "opening the phone is not proof that a call was placed");
+});
+
+test("mandatory report gates suspend Shotgun without changing the Ready preference", () => {
+  const readiness = routes.slice(routes.indexOf('app.post("/api/shotgun/readiness"'), routes.indexOf('app.post("/api/shotgun/publish"'));
+  assert.match(alert, /useContext\(DailyReportGateActive\)/);
+  assert.match(alert, /useContext\(EodLockGateActive\)/);
+  assert.match(alert, /heartbeat: true, blocked: true/);
+  assert.match(readiness, /heartbeat_at=NULL/);
+  assert.match(readiness, /response='blocked'/);
+  assert.doesNotMatch(readiness.slice(readiness.indexOf('req.body?.blocked === true'), readiness.indexOf('const current =', readiness.indexOf('req.body?.blocked === true'))), /is_ready=0/);
 });
 
 test("an offer is heard, not just seen", () => {

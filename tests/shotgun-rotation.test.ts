@@ -48,6 +48,15 @@ function tableDdl(name: string): string {
   throw new Error(`unbalanced parentheses in ${name}`);
 }
 
+function storageSqlContaining(fragment: string): string {
+  const middle = storage.indexOf(fragment);
+  assert.notEqual(middle, -1, `${fragment} must still exist in storage.ts`);
+  const start = storage.lastIndexOf("`", middle);
+  const end = storage.indexOf("`", middle);
+  assert.ok(start !== -1 && end !== -1 && end > start);
+  return storage.slice(start + 1, end);
+}
+
 /** Slice a statement out of routes.ts, from `head` to the end of its template literal. */
 function sqlFrom(head: string, searchFrom = 0): string {
   const start = routes.indexOf(head, searchFrom);
@@ -101,11 +110,11 @@ function beat(db: DatabaseSync, online: number[], nowSeconds: number) {
 }
 
 /** The candidate half of assignShotgunLead, with its real heartbeat and cooldown windows. */
-function nextCandidate(db: DatabaseSync, nowSeconds: number, online: number[] = CLRS): number | null {
+function nextCandidate(db: DatabaseSync, nowSeconds: number, online: number[] = CLRS, leadId = 1): number | null {
   beat(db, online, nowSeconds);
   const heartbeatCutoff = new Date(T0 + nowSeconds * 1000 - 35_000).toISOString();
   const relapCutoff = new Date(T0 + nowSeconds * 1000 - COOLDOWN_MS).toISOString();
-  const row = db.prepare(candidateSql()).get(1, 1, heartbeatCutoff, relapCutoff) as any;
+  const row = db.prepare(candidateSql()).get(leadId, 1, heartbeatCutoff, relapCutoff, leadId) as any;
   return row ? Number(row.id) : null;
 }
 
@@ -178,6 +187,40 @@ test("a CLR holding a live offer is not offered the same lead again", () => {
   const first = nextCandidate(db, 0)!;
   db.prepare(offerSql()).run(1, 1, first, at(0), at(20));
   assert.notEqual(nextCandidate(db, 1), first, "the pending offer holder must be skipped");
+});
+
+test("a CLR holding one live offer cannot receive a second lead", () => {
+  const db = seed();
+  db.prepare(`INSERT INTO shotgun_leads (id,org_id,lead_name,status,created_by_user_id,created_at,updated_at)
+    VALUES (2,1,'Second Lead','queued',1,?,?)`).run(at(0), at(0));
+  offerTo(db, 101, 0);
+  assert.equal(nextCandidate(db, 1, CLRS, 2), 102,
+    "the next queued lead must skip the CLR whose first offer is still live");
+});
+
+test("the database rejects a second live offer even if assignment code regresses", () => {
+  const db = seed();
+  db.exec(storageSqlContaining("idx_shotgun_one_live_offer_per_clr"));
+  offerTo(db, 101, 0);
+  db.prepare(`INSERT INTO shotgun_leads (id,org_id,lead_name,status,created_by_user_id,created_at,updated_at)
+    VALUES (2,1,'Second Lead','queued',1,?,?)`).run(at(0), at(0));
+  assert.throws(() => db.prepare(`UPDATE shotgun_leads SET status='offered',current_assignee_id=101 WHERE id=2`).run(),
+    /unique/i, "the partial unique index is the final concurrency guard");
+});
+
+test("active duplicate contact keys are rejected but a completed lead does not block a future one", () => {
+  const db = seed();
+  db.exec(storageSqlContaining("idx_shotgun_active_phone"));
+  db.exec(storageSqlContaining("idx_shotgun_active_email"));
+  db.prepare(`UPDATE shotgun_leads SET phone_key='15555550100',email_key='lead@example.com' WHERE id=1`).run();
+  assert.throws(() => db.prepare(`INSERT INTO shotgun_leads
+    (id,org_id,lead_name,phone_key,status,created_by_user_id,created_at,updated_at)
+    VALUES (2,1,'Duplicate','15555550100','queued',1,?,?)`).run(at(0), at(0)), /unique/i);
+  db.prepare(`UPDATE shotgun_leads SET status='done' WHERE id=1`).run();
+  db.prepare(`INSERT INTO shotgun_leads
+    (id,org_id,lead_name,phone_key,email_key,status,created_by_user_id,created_at,updated_at)
+    VALUES (2,1,'Future Lead','15555550100','lead@example.com','queued',1,?,?)`).run(at(0), at(0));
+  assert.equal(Number((db.prepare(`SELECT COUNT(*) count FROM shotgun_leads`).get() as any).count), 2);
 });
 
 // ── Once a lead is confirmed it belongs to exactly one CLR ──────────────────

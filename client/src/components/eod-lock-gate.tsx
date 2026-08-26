@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
@@ -10,6 +10,11 @@ interface LockStatus {
   locked: boolean;
   missingDates: string[];
 }
+
+// Shotgun uses this to suspend offers while a CLR is completing a mandatory
+// report. Keeping the children mounted lets the alert immediately release an
+// already-open offer instead of waiting for its heartbeat to go stale.
+export const EodLockGateActive = createContext(false);
 
 function formatDate(dateStr: string) {
   try {
@@ -35,22 +40,18 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
     retry: false,
   });
 
-  // Only one gate may hold the screen. This one renders inside DailyReportGate's
-  // children, which are pointer-events-none while that gate is up — so painting
-  // an overlay here would cover its dialog with a layer nobody can click. Wait
-  // our turn; the call log gets filed first, then this appears and works.
-  if (outerGateActive) return <>{children}</>;
-  if (authLoading || isLoading || !user) return <>{children}</>;
-  if (!isClr) return <>{children}</>;
-  if (!data?.locked) return <>{children}</>;
-
-  // Always allow the EOD Report tab through so the user can unlock themselves.
-  if (location === "/eod-report") return <>{children}</>;
-
-  const oldestMissing = data.missingDates[0];
+  // Only one visible gate may hold the screen. While the daily report gate is
+  // up, this one stands down; that outer gate already suspends Shotgun.
+  const lockActive = !outerGateActive && !authLoading && !isLoading && !!user && isClr && !!data?.locked;
+  // Always allow the EOD Report tab through so the user can unlock themselves,
+  // but keep Shotgun suspended until the missing report is actually complete.
+  const showOverlay = lockActive && location !== "/eod-report";
+  const oldestMissing = data?.missingDates?.[0] ?? "";
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/95 backdrop-blur-sm">
+    <EodLockGateActive.Provider value={lockActive}>
+      <div className={showOverlay ? "pointer-events-none select-none blur-sm opacity-40 overflow-hidden h-screen" : "contents"}>{children}</div>
+      {showOverlay && <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/95 backdrop-blur-sm">
       <div className="max-w-md w-full rounded-xl border-2 border-amber-500/60 bg-card shadow-2xl">
         <div className="p-6 space-y-4">
           <div className="flex items-center gap-3">
@@ -61,11 +62,11 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
           </div>
 
           <p className="text-sm text-muted-foreground">
-            You haven&apos;t submitted your EOD report for the following day{data.missingDates.length === 1 ? "" : "s"}:
+            You haven&apos;t submitted your EOD report for the following day{data!.missingDates.length === 1 ? "" : "s"}:
           </p>
 
           <ul className="rounded-lg border bg-muted/40 divide-y overflow-hidden">
-            {data.missingDates.map((d) => (
+            {data!.missingDates.map((d) => (
               <li key={d}>
                 <button
                   type="button"
@@ -80,7 +81,7 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
           </ul>
 
           <p className="text-sm text-muted-foreground">
-            {data.missingDates.length === 1
+            {data!.missingDates.length === 1
               ? "Click the date above to fill out that day's report."
               : "Click any date above to jump to that day. Start with the oldest."}
           </p>
@@ -90,11 +91,12 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
             className="w-full gap-2"
             size="lg"
           >
-            Go to {data.missingDates.length === 1 ? "EOD Report" : "Oldest Missing Report"}
+            Go to {data!.missingDates.length === 1 ? "EOD Report" : "Oldest Missing Report"}
             <ArrowRight className="w-4 h-4" />
           </Button>
         </div>
       </div>
-    </div>
+      </div>}
+    </EodLockGateActive.Provider>
   );
 }
