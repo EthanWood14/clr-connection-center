@@ -43,3 +43,19 @@ test("the demo remains read-only while real organizations keep both gates", () =
   );
   assert.match(dailyEndpoint, /const hasLog = !!logForUser/);
 });
+
+test("the client knows demo mode and does not ask it to save preferences", () => {
+  const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
+  const auth = readFileSync(join(root, "client/src/lib/auth.tsx"), "utf8");
+  const authEndpoint = routes.slice(
+    routes.indexOf('app.get("/api/auth/me"'),
+    routes.indexOf('// EOD lock status'),
+  );
+
+  assert.match(authEndpoint, /isDemo: isDemoOrg\(orgId\)/);
+  assert.match(auth, /isDemo\?: boolean/);
+  assert.match(app, /user\.isDemo \|\| !user\.isClr/,
+    "the read-only demo must not receive a pipeline acknowledgement it cannot save");
+  assert.match(app, /\{!isDemo && <PushNudge \/>\}/);
+  assert.match(app, /\{!isDemo && <GoalNudge \/>\}/);
+});

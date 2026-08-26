@@ -21,12 +21,14 @@ import { RefreshCw, Sparkles } from "lucide-react";
 
 type UpdatePromptProps = {
   portal?: "c3" | "lap";
+  onBlockingChange?: (blocking: boolean) => void;
 };
 
-export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
+export function UpdatePrompt({ portal = "c3", onBlockingChange }: UpdatePromptProps) {
   const [latest, setLatest] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [serverSections, setServerSections] = useState<ReleaseNote[]>([]);
+  const [hasChecked, setHasChecked] = useState(false);
   const productName = portal === "lap" ? "LAP" : "C3";
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
           setServerSections(Array.isArray(data?.sections) ? data.sections : []);
         }
       } catch { /* offline / transient — try again next tick */ }
+      finally { if (active) setHasChecked(true); }
     };
     check();
     const id = setInterval(check, 90 * 1000); // poll every 90s
@@ -61,6 +64,10 @@ export function UpdatePrompt({ portal = "c3" }: UpdatePromptProps) {
   }, []);
 
   const updateAvailable = !!latest && latest !== APP_VERSION && latest !== dismissed;
+
+  useEffect(() => {
+    onBlockingChange?.(!hasChecked || updateAvailable);
+  }, [hasChecked, onBlockingChange, updateAvailable]);
 
   // Everything missed since the build this tab is running — someone who skipped
   // three deploys should see all three, not just the newest. Prefer the

@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.0.3",
+    headline: "Cookie and update dialogs now wait for each other instead of locking the browser.",
+    items: [
+      { text: "C3 now finishes the cookie notice before showing an available-update dialog, and smaller nudges wait until both are resolved. Every visible prompt stays clickable." },
+      { text: "The read-only demo no longer repeats reminders that require saving changes, such as pipeline acknowledgements, goals, or push setup." },
+    ],
+  },
+  {
     version: "4.0.2",
     headline: "The read-only C3 demo no longer gets trapped behind reporting screens.",
     items: [

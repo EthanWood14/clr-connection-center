@@ -9,7 +9,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { NotificationBell } from "@/components/notification-bell";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useContext, useState, useEffect } from "react";
+import { useCallback, useContext, useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { IntroModal } from "@/components/intro-modal";
 import { PipelineSopModal, PIPELINE_SOP_INTERVAL_DAYS } from "@/components/pipeline-sop-modal";
@@ -237,6 +237,7 @@ type DeferredAppPromptsProps = {
   userId: number;
   orgId: number;
   timezone?: string;
+  isDemo?: boolean;
   onDailyPrioritiesDismiss: () => void;
 };
 
@@ -256,10 +257,15 @@ function DeferredAppPrompts({
   userId,
   orgId,
   timezone,
+  isDemo,
   onDailyPrioritiesDismiss,
 }: DeferredAppPromptsProps) {
   const dailyReportGateActive = useContext(DailyReportGateActive);
   const eodLockGateActive = useContext(EodLockGateActive);
+  const [cookieNoticeResolved, setCookieNoticeResolved] = useState(false);
+  const [updatePromptBlocking, setUpdatePromptBlocking] = useState(true);
+  const resolveCookieNotice = useCallback(() => setCookieNoticeResolved(true), []);
+  const trackUpdatePrompt = useCallback((blocking: boolean) => setUpdatePromptBlocking(blocking), []);
 
   if (dailyReportGateActive || eodLockGateActive) return null;
 
@@ -277,11 +283,19 @@ function DeferredAppPrompts({
       {!showDailyPriorities && !showIntro && showPipelineSop && <PipelineSopModal />}
       {!showDailyPriorities && !showIntro && !showPipelineSop && (
         <>
-          <CookieNotice />
-          <PushNudge />
-          <GoalNudge />
-          <TransferCelebration />
-          <UpdatePrompt />
+          <CookieNotice onResolved={resolveCookieNotice} />
+          {cookieNoticeResolved && (
+            <>
+              <UpdatePrompt onBlockingChange={trackUpdatePrompt} />
+              {!updatePromptBlocking && (
+                <>
+                  {!isDemo && <PushNudge />}
+                  {!isDemo && <GoalNudge />}
+                  <TransferCelebration />
+                </>
+              )}
+            </>
+          )}
         </>
       )}
     </>
@@ -308,7 +322,7 @@ function AuthenticatedApp() {
   // Pipeline-stages refresher: shown to CLRs every 14 days. Suppressed while the
   // intro/welcome flow or the change-password gate is active so they don't stack.
   const showPipelineSop = (() => {
-    if (!user || !user.isClr || user.mustChangePassword || showIntro || showDailyPriorities) return false;
+    if (!user || user.isDemo || !user.isClr || user.mustChangePassword || showIntro || showDailyPriorities) return false;
     const last = user.lastSeenPipelineSop ? new Date(user.lastSeenPipelineSop).getTime() : 0;
     if (!last) return true; // never seen → show on first eligible load
     const daysSince = (Date.now() - last) / (1000 * 60 * 60 * 24);
@@ -368,6 +382,7 @@ function AuthenticatedApp() {
             userId={user.id}
             orgId={user.orgId ?? 1}
             timezone={user.timezone}
+            isDemo={user.isDemo}
             onDailyPrioritiesDismiss={() => setDismissedPriorityKey(priorityStorageKey)}
           />
           {/* Antigravity shell: ambient gradient already on <body>; floating panels above. */}

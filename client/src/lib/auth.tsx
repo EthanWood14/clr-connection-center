@@ -46,6 +46,7 @@ export interface AuthUser {
   scriptLoOverride?: string | null;
   superAdmin?: boolean;
   orgId?: number;
+  isDemo?: boolean;
   /** 'lap' = LO Assistant Portal account; null/'c3' = internal staff. */
   portal?: string | null;
   isImpersonating?: boolean;

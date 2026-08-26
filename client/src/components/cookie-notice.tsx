@@ -23,7 +23,7 @@ import { Link } from "wouter";
 
 const STORAGE_KEY = "clr_cookie_notice_v1";
 
-export function CookieNotice() {
+export function CookieNotice({ onResolved }: { onResolved?: () => void } = {}) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -33,14 +33,17 @@ export function CookieNotice() {
         const t = setTimeout(() => setVisible(true), 800);
         return () => clearTimeout(t);
       }
+      onResolved?.();
     } catch {
       // localStorage blocked (private mode etc) — skip silently
+      onResolved?.();
     }
-  }, []);
+  }, [onResolved]);
 
   function dismiss() {
     try { localStorage.setItem(STORAGE_KEY, "1"); } catch {}
     setVisible(false);
+    onResolved?.();
   }
 
   if (!visible) return null;

@@ -100,4 +100,11 @@ test("full-screen startup prompts and notices are serialized", () => {
   assert.ok(prompts.indexOf("<DailyLoPrioritiesModal") < prompts.indexOf("<IntroModal"));
   assert.ok(prompts.indexOf("<IntroModal") < prompts.indexOf("<PipelineSopModal"));
   assert.ok(prompts.indexOf("<PipelineSopModal") < prompts.indexOf("<CookieNotice"));
+  assert.match(prompts, /<CookieNotice onResolved=\{resolveCookieNotice\}/);
+  assert.match(prompts, /cookieNoticeResolved &&/);
+  assert.ok(prompts.indexOf("cookieNoticeResolved &&") < prompts.indexOf("<UpdatePrompt"),
+    "the update dialog must wait until the cookie notice is resolved");
+  assert.match(prompts, /<UpdatePrompt onBlockingChange=\{trackUpdatePrompt\}/);
+  assert.match(prompts, /!updatePromptBlocking &&/,
+    "smaller nudges must wait while the update dialog owns the prompt layer");
 });
