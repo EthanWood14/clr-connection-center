@@ -49,6 +49,15 @@ function NotesPolicyNote() {
   );
 }
 
+function StructuredLeadDataNotice() {
+  return (
+    <div className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-900 dark:text-blue-200" data-testid="notice-structured-lead-data">
+      <strong>Put loan facts in the labeled fields below.</strong>{" "}
+      Never enter a full Social Security number. C3 accepts the last four digits only; keep full SSNs out of Other Notes.
+    </div>
+  );
+}
+
 const OUTCOME_TYPES = [
   "transfer", "appointment", "deferral", "fell_through",
   "no_answer", "not_interested", "wrong_number", "other"
@@ -203,12 +212,23 @@ const outcomeFormSchema = z.object({
   qualInvestment: z.string().optional(),
 
   infoAddress: z.string().optional(),
+  infoBorrowerEmail: z.string().email("Enter a valid email").or(z.literal("")).optional(),
+  infoBorrowerDob: z.string().optional(),
+  infoBorrowerSsnLast4: z.string().regex(/^\d{4}$/, "Enter exactly 4 digits").or(z.literal("")).optional(),
+  infoCreditScoreExact: z.string().refine(v => !v || (/^\d{3}$/.test(v) && Number(v) >= 300 && Number(v) <= 850), "Enter a score from 300 to 850").optional(),
+  infoCoborrowerName: z.string().optional(),
+  infoCoborrowerDob: z.string().optional(),
+  infoCoborrowerSsnLast4: z.string().regex(/^\d{4}$/, "Enter exactly 4 digits").or(z.literal("")).optional(),
+  infoCoborrowerCreditScore: z.string().refine(v => !v || (/^\d{3}$/.test(v) && Number(v) >= 300 && Number(v) <= 850), "Enter a score from 300 to 850").optional(),
   infoGoal: z.string().optional(),
   infoTakeOut: z.string().optional(),
   infoValue: z.string().optional(),
   infoBalance: z.string().optional(),
   infoRate: z.string().optional(),
   infoPayment: z.string().optional(),
+  infoHelocBalance: z.string().optional(),
+  infoHelocRate: z.string().optional(),
+  infoHelocPayment: z.string().optional(),
   infoIncome: z.string().optional(),
   infoEmployment: z.string().optional(),
   infoCreditScore: z.string().optional(),
@@ -396,12 +416,23 @@ function OutcomeFormDialog({
       qualInvestment: "",
 
       infoAddress: "",
+      infoBorrowerEmail: "",
+      infoBorrowerDob: "",
+      infoBorrowerSsnLast4: "",
+      infoCreditScoreExact: "",
+      infoCoborrowerName: "",
+      infoCoborrowerDob: "",
+      infoCoborrowerSsnLast4: "",
+      infoCoborrowerCreditScore: "",
       infoGoal: "",
       infoTakeOut: "",
       infoValue: "",
       infoBalance: "",
       infoRate: "",
       infoPayment: "",
+      infoHelocBalance: "",
+      infoHelocRate: "",
+      infoHelocPayment: "",
       infoIncome: "",
       infoEmployment: "",
       infoCreditScore: "",
@@ -456,8 +487,11 @@ function OutcomeFormDialog({
     {
       form.setValue("conversationNotes", "");
       for (const k of ["qualOwnHome", "qualBankruptcy", "qualInvestment",
+        "infoBorrowerEmail", "infoBorrowerDob", "infoBorrowerSsnLast4", "infoCreditScoreExact",
+        "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerSsnLast4", "infoCoborrowerCreditScore",
         "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
-        "infoPayment", "infoIncome", "infoEmployment", "infoEmploymentNotes",
+        "infoPayment", "infoHelocBalance", "infoHelocRate", "infoHelocPayment",
+        "infoIncome", "infoEmployment", "infoEmploymentNotes",
         "infoCreditScore", "infoMilitary", "infoMilitaryNotes"] as const) {
         form.setValue(k, "");
       }
@@ -749,7 +783,6 @@ function OutcomeFormDialog({
           {!confirmBonzo && isTransfer && (
             <>
               <p className="text-sm font-semibold text-foreground">Qualification</p>
-              <NotesPolicyNote />
               {QUAL_QUESTIONS.map(q => (
                 <FormField key={q.name} control={form.control} name={q.name as any} render={({ field }) => (
                   <FormItem>
@@ -780,44 +813,65 @@ function OutcomeFormDialog({
               )}
 
               <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
-              {INFO_FIELDS.map(f => (
-                <FormField key={f.name} control={form.control} name={f.name as any} render={({ field }) => (
-                  <FormItem className="grid grid-cols-[9.5rem_1fr] items-start gap-2 space-y-0">
-                    <FormLabel className="mb-0 pt-1.5 text-[12px] text-muted-foreground">{f.label}</FormLabel>
-                    {f.options ? (
-                      <div className="space-y-1.5">
-                        <div className="flex flex-wrap gap-1.5">
-                          {f.options.map(opt => (
-                            <button
-                              key={opt}
-                              type="button"
-                              // Tapping the selected answer again clears it, so a
-                              // mistake does not need the whole form reset.
-                              onClick={() => field.onChange(field.value === opt ? "" : opt)}
-                              className={`text-xs px-3 py-1.5 rounded-md border font-medium ${
-                                field.value === opt
-                                  ? "bg-primary text-primary-foreground border-primary"
-                                  : "border-border hover:bg-muted"
-                              }`}
-                              data-testid={`input-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-                            >{opt}</button>
-                          ))}
+              <StructuredLeadDataNotice />
+              {INFO_FIELDS.map((f, index) => (
+                <div key={f.name} className="space-y-1.5">
+                  {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
+                    <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
+                  )}
+                  <FormField control={form.control} name={f.name as any} render={({ field }) => (
+                    <FormItem className="grid grid-cols-[9.5rem_1fr] items-start gap-2 space-y-0">
+                      <FormLabel className="mb-0 pt-1.5 text-[12px] text-muted-foreground">{f.label}</FormLabel>
+                      {f.options ? (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            {f.options.map(opt => (
+                              <button
+                                key={opt}
+                                type="button"
+                                // Tapping the selected answer again clears it, so a
+                                // mistake does not need the whole form reset.
+                                onClick={() => field.onChange(field.value === opt ? "" : opt)}
+                                className={`text-xs px-3 py-1.5 rounded-md border font-medium ${
+                                  field.value === opt
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "border-border hover:bg-muted"
+                                }`}
+                                data-testid={`input-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                              >{opt}</button>
+                            ))}
+                          </div>
+                          {f.notes && (
+                            <FormField control={form.control} name={f.notes as any} render={({ field: notesField }) => (
+                              <FormItem className="space-y-0">
+                                <FormControl>
+                                  <Input {...notesField} className="h-8" placeholder={f.notesPlaceholder} data-testid={`input-${f.notes}`} />
+                                </FormControl>
+                              </FormItem>
+                            )} />
+                          )}
                         </div>
-                        {f.notes && (
-                          <FormField control={form.control} name={f.notes as any} render={({ field: notesField }) => (
-                            <FormItem className="space-y-0">
-                              <FormControl>
-                                <Input {...notesField} className="h-8" placeholder={f.notesPlaceholder} data-testid={`input-${f.notes}`} />
-                              </FormControl>
-                            </FormItem>
-                          )} />
-                        )}
-                      </div>
-                    ) : (
-                      <FormControl><Input {...field} className="h-8" data-testid={`input-${f.name}`} /></FormControl>
-                    )}
-                  </FormItem>
-                )} />
+                      ) : (
+                        <div>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type={f.type || "text"}
+                              inputMode={f.inputMode}
+                              maxLength={f.maxLength}
+                              placeholder={f.placeholder}
+                              autoComplete={f.name.includes("Ssn") ? "off" : undefined}
+                              onChange={e => field.onChange(f.digitsOnly ? e.target.value.replace(/\D/g, "").slice(0, f.maxLength) : e.target.value)}
+                              className="h-8"
+                              data-testid={`input-${f.name}`}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </div>
+                      )}
+                    </FormItem>
+                  )} />
+                </div>
               ))}
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
@@ -825,6 +879,7 @@ function OutcomeFormDialog({
                     <FormLabel>Other Notes</FormLabel>
                     <CopyNotesButton text={field.value || ""} />
                   </div>
+                  <NotesPolicyNote />
                   <FormControl><Textarea {...field} rows={2} placeholder="Anything else worth passing along…" data-testid="textarea-other-notes" /></FormControl>
                 </FormItem>
               )} />

@@ -28,9 +28,9 @@ test("the composed block reads the way LOs already expect", () => {
   assert.match(out, /^Lead Source: CallTools/);
   assert.match(out, /Owns Home: Yes/);
   assert.match(out, /Bankruptcy Last 6 Months: No/);
-  assert.match(out, /Credit Score: 620-720/, "one banded credit field, no separate estimate");
-  assert.match(out, /Goal: Debt consolidation/);
-  assert.match(out, /Home Value: \$450,000/);
+  assert.match(out, /Credit Score: 620-720/);
+  assert.match(out, /Goal \/ Debts to Pay Off: Debt consolidation/);
+  assert.match(out, /Estimated Home Value: \$450,000/);
   // Untouched fields are omitted, not rendered as blank labels.
   assert.ok(!out.includes("Address:"));
   assert.ok(!out.includes("Military:"));
@@ -84,20 +84,47 @@ test("employment, credit and military are fixed choices, with notes beside them"
   // could not be counted. Credit was asked twice — a yes/no "over 500?" plus a
   // separate "Credit score" box — and the two disagreed in practice.
   const withChoices = INFO_FIELDS.filter(f => f.options);
-  assert.deepEqual(withChoices.map(f => f.name), ["infoEmployment", "infoCreditScore", "infoMilitary"]);
+  assert.deepEqual(withChoices.map(f => f.name), ["infoCreditScore", "infoEmployment", "infoMilitary"]);
   assert.deepEqual(
     INFO_FIELDS.find(f => f.name === "infoCreditScore")!.options,
     ["500-580", "580-620", "620-720", "720+"],
   );
   assert.deepEqual(INFO_FIELDS.find(f => f.name === "infoEmployment")!.options, ["W2", "SE", "Retired"]);
   assert.deepEqual(INFO_FIELDS.find(f => f.name === "infoMilitary")!.options, ["Yes", "No"]);
-  // Employment and military carry a notes box; a credit band needs no prose.
+  // Employment and military carry a notes box. Credit has its own exact-score
+  // field beside the band, so the band itself still needs no prose box.
   assert.equal(INFO_FIELDS.find(f => f.name === "infoEmployment")!.notes, "infoEmploymentNotes");
   assert.equal(INFO_FIELDS.find(f => f.name === "infoMilitary")!.notes, "infoMilitaryNotes");
   assert.equal(INFO_FIELDS.find(f => f.name === "infoCreditScore")!.notes, undefined);
 
   // Credit is asked once now — the qualification list no longer duplicates it.
   assert.ok(!QUAL_QUESTIONS.some(q => /credit/i.test(q.label)), "no second credit question");
+});
+
+test("the lead card covers a complete two-borrower and lien profile", () => {
+  const names = INFO_FIELDS.map(f => f.name);
+  for (const field of [
+    "infoBorrowerEmail", "infoBorrowerDob", "infoBorrowerSsnLast4", "infoCreditScoreExact",
+    "infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerSsnLast4", "infoCoborrowerCreditScore",
+    "infoHelocBalance", "infoHelocRate", "infoHelocPayment",
+  ]) {
+    assert.ok(names.includes(field as any), `${field} must be collected`);
+  }
+  assert.equal(INFO_FIELDS.find(f => f.name === "infoBorrowerSsnLast4")!.maxLength, 4);
+  assert.equal(INFO_FIELDS.find(f => f.name === "infoCoborrowerSsnLast4")!.maxLength, 4);
+  assert.match(panel, /never enter a full SSN/i);
+
+  const out = composeLeadCaptureNotes({
+    ...emptyLeadCapture(),
+    infoBorrowerEmail: "borrower@example.test",
+    infoCoborrowerName: "Co Borrower",
+    infoBalance: "$200,000",
+    infoHelocBalance: "$40,000",
+  });
+  assert.match(out, /Borrower Email: borrower@example\.test/);
+  assert.match(out, /Co-Borrower Name: Co Borrower/);
+  assert.match(out, /First Mortgage Balance: \$200,000/);
+  assert.match(out, /HELOC Balance: \$40,000/);
 });
 
 test("a choice and its notes compose onto one line", () => {

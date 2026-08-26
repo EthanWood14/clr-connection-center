@@ -78,12 +78,20 @@ test("the summary is replaced by the qualification checklist", () => {
   const qualBlock = lib.slice(lib.indexOf("QUAL_QUESTIONS"), lib.indexOf("INVESTMENT_ROUTING_HINT"));
   assert.doesNotMatch(qualBlock, /name: "qualCredit/, "no credit question in the checklist");
   assert.match(lib, /CREDIT_SCORE_BANDS = \["500-580", "580-620", "620-720", "720\+"\]/);
-  for (const label of ["Address", "Goal", "How much are you looking to take out?", "Value of home",
-    "Balance on mortgage", "Rate on mortgage", "Monthly payment", "Monthly income",
-    "Employment", "Credit score", "Military"]) {
+  for (const label of ["Borrower email", "Borrower date of birth", "Borrower SSN — last 4 only",
+    "Exact borrower credit score", "Co-borrower name", "Co-borrower date of birth",
+    "Co-borrower SSN — last 4 only", "Co-borrower credit score", "Property address",
+    "Goal / debts to pay off", "Cash needed / amount to take out", "Estimated home value",
+    "First mortgage balance", "First mortgage rate", "Monthly PITI / payment",
+    "HELOC balance", "HELOC rate", "HELOC monthly payment", "Monthly income",
+    "Employment", "Borrower credit band", "Military"]) {
     assert.ok(lib.includes(label), `missing field: ${label}`);
   }
   assert.ok(page.includes("Other Notes"), "the Other Notes textarea stays on the page");
+  assert.match(page, /Never enter a full Social Security number/);
+  assert.match(page, /keep full SSNs out of Other Notes/);
+  assert.match(page, /replace\(\/\\D\/g, ""\)\.slice\(0, f\.maxLength\)/,
+    "digit-only protected inputs must be constrained before form state sees them");
 });
 
 test("the checklist serializes into conversationNotes so downstream is unchanged", () => {

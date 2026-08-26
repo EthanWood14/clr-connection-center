@@ -93,46 +93,59 @@ export function LeadCapturePanel({
         <div>
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Info gathering</p>
           <div className="space-y-1">
-            {INFO_FIELDS.map(f => (
-              <div key={f.name} className="grid grid-cols-[7.5rem_1fr] items-start gap-1.5">
-                <span className="text-[11px] text-muted-foreground leading-tight pt-1">{f.label}</span>
-                {f.options ? (
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap gap-1">
-                      {f.options.map(opt => (
-                        <button
-                          key={opt}
-                          type="button"
-                          // Tapping the chosen answer again clears it — a wrong
-                          // tap mid-call has to be undoable without a reset.
-                          onClick={() => set(f.name, capture[f.name] === opt ? "" : opt)}
-                          className={`text-[11px] px-2 py-1 rounded-md border font-medium ${
-                            capture[f.name] === opt
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "border-border hover:bg-muted"
-                          }`}
-                          data-testid={`panel-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-                        >{opt}</button>
-                      ))}
-                    </div>
-                    {f.notes && (
-                      <Input
-                        value={capture[f.notes] as string}
-                        onChange={e => set(f.notes!, e.target.value)}
-                        placeholder={f.notesPlaceholder}
-                        className="h-7 text-xs"
-                        data-testid={`panel-${f.notes}`}
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <Input
-                    value={capture[f.name] as string}
-                    onChange={e => set(f.name, e.target.value)}
-                    className="h-7 text-xs"
-                    data-testid={`panel-${f.name}`}
-                  />
+            <p className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1.5 text-[10px] leading-snug text-blue-900 dark:text-blue-200">
+              Use the labeled fields for loan facts. SSN fields accept last four digits only—never enter a full SSN.
+            </p>
+            {INFO_FIELDS.map((f, index) => (
+              <div key={f.name}>
+                {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
+                  <p className="pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
                 )}
+                <div className="grid grid-cols-[7.5rem_1fr] items-start gap-1.5">
+                  <span className="text-[11px] text-muted-foreground leading-tight pt-1">{f.label}</span>
+                  {f.options ? (
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap gap-1">
+                        {f.options.map(opt => (
+                          <button
+                            key={opt}
+                            type="button"
+                            // Tapping the chosen answer again clears it — a wrong
+                            // tap mid-call has to be undoable without a reset.
+                            onClick={() => set(f.name, capture[f.name] === opt ? "" : opt)}
+                            className={`text-[11px] px-2 py-1 rounded-md border font-medium ${
+                              capture[f.name] === opt
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "border-border hover:bg-muted"
+                            }`}
+                            data-testid={`panel-${f.name}-${opt.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                          >{opt}</button>
+                        ))}
+                      </div>
+                      {f.notes && (
+                        <Input
+                          value={capture[f.notes] as string}
+                          onChange={e => set(f.notes!, e.target.value)}
+                          placeholder={f.notesPlaceholder}
+                          className="h-7 text-xs"
+                          data-testid={`panel-${f.notes}`}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <Input
+                      value={capture[f.name] as string}
+                      onChange={e => set(f.name, f.digitsOnly ? e.target.value.replace(/\D/g, "").slice(0, f.maxLength) : e.target.value)}
+                      type={f.type || "text"}
+                      inputMode={f.inputMode}
+                      maxLength={f.maxLength}
+                      placeholder={f.placeholder}
+                      autoComplete={f.name.includes("Ssn") ? "off" : undefined}
+                      className="h-7 text-xs"
+                      data-testid={`panel-${f.name}`}
+                    />
+                  )}
+                </div>
               </div>
             ))}
           </div>
