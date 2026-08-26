@@ -191,10 +191,15 @@ const mainItems: NavItem[] = [
 const personalItems: NavItem[] = [
   { title: "My Report",       url: "/my-report",     icon: BarChart2,       help: help.myReport },
   { title: "Check-In",        url: "/check-ins",     icon: UserCheck },
-  { title: "Time Clock",      url: "/time-clock",    icon: Timer },
   { title: "Time Off",        url: "/time-off",      icon: Plane },
   { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
   { title: "Comp Requests",   url: "/comp-requests", icon: Wallet },
+];
+
+// Occasional-use personal pages, folded into Advanced Settings (owner 8/25) so
+// the everyday Personal group stays short. The page itself is unchanged.
+const advancedPersonalItems: NavItem[] = [
+  { title: "Time Clock",      url: "/time-clock",    icon: Timer },
 ];
 
 const teamItems: NavItem[] = [
@@ -543,6 +548,16 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {showAdvanced && <>
+        {/* PERSONAL (occasional) — pages everyone has but rarely opens */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Personal
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(advancedPersonalItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {/* REFERENCE — forum, training, and (for managers) CLR profiles */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">

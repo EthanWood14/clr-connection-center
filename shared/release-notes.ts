@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.2.2",
+    headline: "Time Clock moved into Advanced Settings.",
+    items: [
+      { text: "Time Clock now lives under Advanced Settings in the sidebar, in a Personal group. The page itself is unchanged — just its spot in the menu." },
+    ],
+  },
+  {
     version: "4.2.1",
     headline: "The expanded borrower profile now collects only the requested contact and loan details.",
     items: [
