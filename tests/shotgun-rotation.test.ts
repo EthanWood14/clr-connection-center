@@ -88,6 +88,9 @@ function seed(readyIds: number[] = CLRS) {
   db.exec(`CREATE TABLE users (
     id INTEGER PRIMARY KEY, name TEXT, org_id INTEGER, is_active INTEGER,
     is_clr INTEGER, role TEXT, portal TEXT)`);
+  // Production creates lead_outcomes before Shotgun. Keep that ordering here
+  // now that completed Shotgun transfers retain their outcome id.
+  db.exec(`CREATE TABLE lead_outcomes (id INTEGER PRIMARY KEY)`);
   db.exec(tableDdl("shotgun_readiness"));
   db.exec(tableDdl("shotgun_leads"));
   db.exec(tableDdl("shotgun_offers"));

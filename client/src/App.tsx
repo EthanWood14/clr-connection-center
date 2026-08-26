@@ -20,6 +20,7 @@ import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
+import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
@@ -335,6 +336,7 @@ function AuthenticatedApp() {
                 <div className="flex-1">
                   <EodLockGate>
                     <ShotgunOfferAlert />
+                    <ShotgunResultPrompt />
                     <AppRouter />
                   </EodLockGate>
                 </div>

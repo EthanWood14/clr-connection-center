@@ -7108,6 +7108,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     offerExpiresAt: row.offer_expires_at ? String(row.offer_expires_at) : null,
     claimedAt: row.claimed_at ? String(row.claimed_at) : null,
     called: !!row.called, texted: !!row.texted, resultNotes: String(row.result_notes ?? ""),
+    transferOutcomeId: row.transfer_outcome_id == null ? null : Number(row.transfer_outcome_id),
+    transferType: row.result_transfer_type ? String(row.result_transfer_type) : null,
+    transferLoName: row.result_lo_name ? String(row.result_lo_name) : null,
     doneAt: row.done_at ? String(row.done_at) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at),
   });
 
@@ -7255,9 +7258,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const ready = isClr ? shotgunDb().prepare(`SELECT is_ready,heartbeat_at FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any : null;
     const cutoff = new Date(Date.now() - SHOTGUN_READY_TTL_MS).toISOString();
     const isReady = !!ready?.is_ready && String(ready.heartbeat_at ?? "") >= cutoff;
-    const rows = shotgunDb().prepare(`SELECT l.*, creator.name AS created_by_name, assignee.name AS current_assignee_name
+    const rows = shotgunDb().prepare(`SELECT l.*, creator.name AS created_by_name, assignee.name AS current_assignee_name,
+        result_outcome.transfer_type AS result_transfer_type, result_lo.full_name AS result_lo_name
       FROM shotgun_leads l LEFT JOIN users creator ON creator.id=l.created_by_user_id
       LEFT JOIN users assignee ON assignee.id=l.current_assignee_id
+      LEFT JOIN lead_outcomes result_outcome ON result_outcome.id=l.transfer_outcome_id AND result_outcome.org_id=l.org_id
+      LEFT JOIN loan_officers result_lo ON result_lo.id=result_outcome.lo_id AND result_lo.org_id=l.org_id
       WHERE l.org_id=? ${canManage ? "" : "AND l.current_assignee_id=?"}
       ORDER BY CASE l.status WHEN 'offered' THEN 0 WHEN 'claimed' THEN 1 WHEN 'queued' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,l.created_at DESC LIMIT 250`)
       .all(...(canManage ? [orgId] : [orgId, userId])) as any[];
@@ -7455,18 +7461,64 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
     const leadId = Number(req.params.id);
-    const lead = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+    const db = shotgunDb();
+    const lead = db.prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
     if (!lead || Number(lead.current_assignee_id) !== userId || lead.status !== "claimed") return res.status(403).json({ error: "You do not own this active lead." });
     const called = req.body?.called === true;
     const texted = req.body?.texted === true;
     const notes = String(req.body?.notes ?? "").trim().slice(0, 5000);
     const done = req.body?.done === true;
+    const transfer = req.body?.transfer === true;
+    const loId = Number(req.body?.loId);
+    const transferType = String(req.body?.transferType ?? "");
+    const triState = (value: any) => value === true || value === 1 || value === "1" ? 1 : value === false || value === 0 || value === "0" ? 0 : null;
+    const bulkTexter = transfer ? triState(req.body?.bulkTexter) : null;
+    const helperAssisted = transfer ? triState(req.body?.helperAssisted) : null;
     if (done && !called && !texted) return res.status(400).json({ error: "Select called or sent a text before marking this lead done." });
     if (done && notes.length < 2) return res.status(400).json({ error: "Add notes explaining what happened before marking this lead done." });
+    if (transfer && !done) return res.status(400).json({ error: "A transfer can only be logged when the Shotgun lead is completed." });
+    if (transfer && !called) return res.status(400).json({ error: "Mark the lead as called before logging a transfer." });
+    if (transfer && (!Number.isInteger(loId) || loId <= 0)) return res.status(400).json({ error: "Select the loan officer who received the transfer." });
+    if (transfer && transferType !== "direct" && transferType !== "appointment") return res.status(400).json({ error: "Select Direct or Appointment transfer." });
+    const transferLo = transfer ? storage.getLoanOfficerById(loId) : null;
+    if (transfer && !transferLo) return res.status(400).json({ error: "Select a loan officer in your organization." });
     const now = new Date().toISOString();
-    shotgunDb().prepare(`UPDATE shotgun_leads SET called=?,texted=?,result_notes=?,status=?,done_at=?,updated_at=?
-      WHERE id=? AND org_id=? AND current_assignee_id=? AND status='claimed'`)
-      .run(called ? 1 : 0, texted ? 1 : 0, notes, done ? "done" : "claimed", done ? now : null, now, leadId, orgId, userId);
+    let outcome: any = null;
+    let changed = false;
+    try {
+      changed = db.transaction(() => {
+        // Re-check ownership inside the write transaction. This makes a double
+        // click or competing request unable to create two transfer outcomes.
+        const current = db.prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+        if (!current || Number(current.current_assignee_id) !== userId || current.status !== "claimed") return false;
+        if (transfer) {
+          let outcomeDate = businessTodayForRequest(req, db);
+          outcomeDate = rolloverIfEodSubmitted(db, userId, outcomeDate);
+          outcome = storage.createLeadOutcome({
+            date: outcomeDate,
+            assistantId: userId,
+            loId,
+            borrowerName: String(current.lead_name ?? ""),
+            outcomeType: "transfer",
+            transferType,
+            bulkTexter,
+            helperAssisted,
+            phoneNumber: String(current.phone ?? "").trim() || null,
+            notes,
+            conversationNotes: notes,
+            leadSource: String(current.source ?? "").trim() || "Shotgun",
+          } as any);
+        }
+        const update = db.prepare(`UPDATE shotgun_leads SET called=?,texted=?,result_notes=?,transfer_outcome_id=?,status=?,done_at=?,updated_at=?
+          WHERE id=? AND org_id=? AND current_assignee_id=? AND status='claimed'`)
+          .run(called ? 1 : 0, texted ? 1 : 0, notes, outcome?.id ?? null, done ? "done" : "claimed", done ? now : null, now, leadId, orgId, userId);
+        if (!update.changes) throw new Error("This lead was changed before the result could be saved.");
+        return true;
+      })();
+    } catch (error: any) {
+      return res.status(400).json({ error: error?.message ?? "The Shotgun result could not be saved." });
+    }
+    if (!changed) return res.status(409).json({ error: "This lead is no longer assigned to you." });
     if (done) {
       const creatorId = Number(lead.created_by_user_id);
       if (creatorId && creatorId !== userId) {
@@ -7475,9 +7527,41 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         sendPushToUser(creatorId, { title: "Shotgun lead completed", body: `${lead.lead_name} — ${me?.name ?? "CLR"}`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
       }
     }
+    if (outcome) {
+      audit({ userId, userName: me?.name ?? "CLR", action: "create", entityType: "outcome", entityId: outcome.id,
+        entityLabel: outcome.borrowerName ?? transferLo?.fullName ?? null,
+        details: JSON.stringify({ outcomeType: "transfer", transferType, assistantId: userId, source: "shotgun", shotgunLeadId: leadId }) });
+      try {
+        storageExtra.updateUnifiedContactFromOutcome({
+          borrowerName: outcome.borrowerName,
+          outcomeType: outcome.outcomeType,
+          date: outcome.date,
+          loId: outcome.loId,
+          assistantId: outcome.assistantId,
+        });
+      } catch (error) { console.error("shotgun unified_contact update failed:", error); }
+      try {
+        const pusher = (globalThis as any).__pushOutcomeToBonzo;
+        if (typeof pusher === "function") {
+          pusher({ id: outcome.id, borrowerName: outcome.borrowerName, outcomeType: outcome.outcomeType,
+            loId: outcome.loId, appointmentDatetime: null, followUpDate: null, notes: outcome.notes })
+            .catch((error: any) => console.error("shotgun Bonzo push failed:", error?.message));
+        }
+      } catch {}
+      try {
+        const zapier = (globalThis as any).__triggerZapier;
+        if (typeof zapier === "function") {
+          zapier("outcome.logged", { outcomeId: outcome.id, outcomeType: "transfer", borrowerName: outcome.borrowerName, loId: outcome.loId }).catch(() => {});
+        }
+      } catch {}
+      setImmediate(() => syncTransferToBonzo(outcome.id).catch((error: any) => console.error("[shotgun-bonzo-transfer] sync failed:", error?.message ?? error)));
+    }
     audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
-      entityId: leadId, entityLabel: String(lead.lead_name), details: JSON.stringify({ called, texted, done }) });
-    res.json({ ok: true, done });
+      entityId: leadId, entityLabel: String(lead.lead_name), details: JSON.stringify({ called, texted, done, transfer, transferOutcomeId: outcome?.id ?? null }) });
+    res.json(outcome
+      ? { ok: true, done, transferOutcomeId: outcome.id, celebrateTransfer: true,
+          transferCelebration: transferCelebration(userId, String(outcome.date), transferLo?.fullName ?? null, outcome.borrowerName ?? null) }
+      : { ok: true, done, transferOutcomeId: null });
   });
 
   app.post("/api/shotgun/:id/requeue", requireAuth, (req: any, res) => {
@@ -7490,7 +7574,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const previous = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
     const changed = shotgunDb().transaction(() => {
       const result = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,claimed_at=NULL,
-          called=0,texted=0,result_notes='',done_at=NULL,updated_at=?
+          called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL,updated_at=?
         WHERE id=? AND org_id=? AND status IN ('offered','claimed')`).run(now, leadId, orgId);
       if (result.changes) {
         shotgunDb().prepare(`UPDATE shotgun_offers SET response='requeued',responded_at=?

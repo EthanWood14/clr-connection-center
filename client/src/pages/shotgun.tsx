@@ -1,15 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Clock3, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, Users, Zap } from "lucide-react";
+import { ArrowRightLeft, Clock3, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, Users, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { stateCallStatus } from "@/lib/state-call-window";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { STATE_CALL_RULES } from "@/data/state-call-hours";
+import { ShotgunResultCard } from "@/components/shotgun-result-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -36,6 +35,9 @@ export type ShotgunLead = {
   called: boolean;
   texted: boolean;
   resultNotes: string;
+  transferOutcomeId: number | null;
+  transferType: "direct" | "appointment" | null;
+  transferLoName: string | null;
   doneAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -57,82 +59,6 @@ function statusStyle(status: ShotgunLead["status"]) {
   if (status === "offered") return "bg-amber-500";
   if (status === "cancelled") return "bg-red-700";
   return "bg-slate-500";
-}
-
-function CallLeadButton({ lead }: { lead: ShotgunLead }) {
-  const { toast } = useToast();
-  const callStatus = stateCallStatus(lead.stateCode);
-  const prohibited = callStatus.status === "prohibited";
-  const openPhone = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/shotgun/${lead.id}/open-phone`, {}),
-    onSuccess: () => { window.location.href = `tel:${lead.phone}`; },
-    onError: (error: any) => toast({ title: "Could not open phone", description: error.message, variant: "destructive" }),
-  });
-  if (!lead.phone) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button size="sm" variant={prohibited ? "destructive" : "outline"} disabled={prohibited} className="gap-1.5" data-testid={`shotgun-call-${lead.id}`}>
-            <Phone className="h-4 w-4" />
-            {prohibited ? "Outside calling hours" : callStatus.status === "allowed" ? "Verify & open phone" : "Verify before calling"}
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Verify before contacting {lead.leadName}</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <span className="block font-medium text-foreground">
-                {lead.stateCode || "State unknown"} · {callStatus.localTime} · {callStatus.reason}
-                {callStatus.approximate ? " (primary state timezone; verify the borrower's exact location)" : ""}
-              </span>
-              <span className="block">
-                Continuing confirms you checked the borrower&apos;s actual local time, internal and federal/state Do Not Call requirements, consent, and West Capital policy. C3 cannot perform those checks automatically.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Go back</AlertDialogCancel>
-            <AlertDialogAction disabled={openPhone.isPending} onClick={() => openPhone.mutate()}>{openPhone.isPending ? "Opening…" : "Verified — open phone"}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <span className={prohibited ? "text-xs font-semibold text-red-600" : "text-xs text-muted-foreground"}>
-        {callStatus.localTime}{callStatus.approximate ? " approx." : ""}
-      </span>
-      <a className="text-xs text-blue-600 hover:underline" href="#/call-hours">Call-hours details</a>
-    </div>
-  );
-}
-
-function ResultEditor({ lead }: { lead: ShotgunLead }) {
-  const { toast } = useToast();
-  const [called, setCalled] = useState(lead.called);
-  const [texted, setTexted] = useState(lead.texted);
-  const [notes, setNotes] = useState(lead.resultNotes);
-  const save = useMutation({
-    mutationFn: (done: boolean) => apiRequest("PATCH", `/api/shotgun/${lead.id}/result`, { called, texted, notes, done }),
-    onSuccess: (result: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] });
-      toast({ title: result.done ? "Lead completed" : "Progress saved", description: result.done ? "Your manager can see the final result." : "You can return and finish this lead later." });
-    },
-    onError: (error: any) => toast({ title: "Could not save", description: error.message, variant: "destructive" }),
-  });
-  return (
-    <div className="mt-5 rounded-2xl border bg-muted/25 p-4">
-      <p className="mb-3 text-sm font-bold">What happened?</p>
-      <CallLeadButton lead={lead} />
-      <div className="mt-4 flex flex-wrap gap-5">
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Checkbox checked={called} onCheckedChange={(value) => setCalled(value === true)} /> Called this lead</label>
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Checkbox checked={texted} onCheckedChange={(value) => setTexted(value === true)} /> Sent a text</label>
-      </div>
-      <Textarea className="mt-3" rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Write clear notes about the conversation, voicemail, text, next step, or outcome…" />
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button variant="outline" disabled={save.isPending} onClick={() => save.mutate(false)}>Save progress</Button>
-        <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700" disabled={save.isPending || (!called && !texted) || notes.trim().length < 2} onClick={() => save.mutate(true)}><CheckCircle2 className="h-4 w-4" /> Mark lead done</Button>
-      </div>
-    </div>
-  );
 }
 
 function ManagerLeadActions({ lead, requeue, cancel }: { lead: ShotgunLead; requeue: (id: number) => void; cancel: (id: number) => void }) {
@@ -258,12 +184,12 @@ export default function Shotgun() {
           </div>
         )}
 
-        {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} /><ResultEditor lead={lead} /></CardContent></Card>)}</section>}
+        {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} /><ShotgunResultCard lead={lead} /></CardContent></Card>)}</section>}
 
         <section className="space-y-3">
           <div className="flex items-center justify-between"><h2 className="text-xl font-black">{payload.canManage ? "Live board" : "Your Shotgun history"}</h2><span className="flex items-center gap-1 text-xs text-muted-foreground"><RefreshCw className="h-3 w-3" /> Live</span></div>
           {payload.leads.length === 0 ? <Card className="border-dashed"><CardContent className="py-14 text-center text-muted-foreground"><Zap className="mx-auto mb-3 h-12 w-12 opacity-20" />No Shotgun leads yet.</CardContent></Card> : payload.leads.map((lead) => (
-            <Card key={lead.id}><CardContent className="p-5"><LeadHeader lead={lead} />{payload.canManage && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Published by {lead.createdByName}</span><ManagerLeadActions lead={lead} requeue={(id) => requeue.mutate(id)} cancel={(id) => cancel.mutate(id)} /></div>}{lead.status === "done" && lead.resultNotes && <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm dark:bg-emerald-950/20"><strong>Result:</strong> {lead.called ? "Called · " : ""}{lead.texted ? "Texted · " : ""}{lead.resultNotes}</div>}</CardContent></Card>
+            <Card key={lead.id}><CardContent className="p-5"><LeadHeader lead={lead} />{payload.canManage && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Published by {lead.createdByName}</span><ManagerLeadActions lead={lead} requeue={(id) => requeue.mutate(id)} cancel={(id) => cancel.mutate(id)} /></div>}{lead.status === "done" && lead.resultNotes && <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm dark:bg-emerald-950/20">{lead.transferOutcomeId && <p className="mb-1 flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200"><ArrowRightLeft className="h-4 w-4" /> Transfer logged · {lead.transferLoName ?? "Loan officer"} · {lead.transferType === "appointment" ? "Appointment" : "Direct"}</p>}<strong>Result:</strong> {lead.called ? "Called · " : ""}{lead.texted ? "Texted · " : ""}{lead.resultNotes}</div>}</CardContent></Card>
           ))}
         </section>
       </div>

@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "3.105.0",
+    headline: "Every claimed Shotgun lead now asks for a result and can become a real C3 transfer.",
+    items: [
+      { text: "After a CLR accepts a Shotgun lead, a result prompt follows them across C3 until they finish the lead. They can keep working and ask for a 10-minute reminder without losing the assignment." },
+      { text: "Shotgun results now include a Log as a transfer option with the receiving loan officer and Direct or Appointment transfer type. Logging it creates the same transfer record used by C3 analytics, reporting, credit, celebrations, and CRM sync." },
+      { text: "Managers can see directly on the Shotgun board when a completed lead was logged as a transfer, who received it, and which transfer type was used.", audience: "manager" },
+    ],
+  },
+  {
     version: "3.104.0",
     headline: "Shotgun now routes one visible offer at a time and protects the full lead workflow.",
     items: [

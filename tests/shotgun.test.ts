@@ -9,6 +9,8 @@ const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const page = readFileSync(join(root, "client/src/pages/shotgun.tsx"), "utf8");
 const alert = readFileSync(join(root, "client/src/components/shotgun-offer-alert.tsx"), "utf8");
+const resultCard = readFileSync(join(root, "client/src/components/shotgun-result-card.tsx"), "utf8");
+const resultPrompt = readFileSync(join(root, "client/src/components/shotgun-result-prompt.tsx"), "utf8");
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
 
 test("shotgun state is durable and keeps one offer row per CLR per lead", () => {
@@ -17,6 +19,8 @@ test("shotgun state is durable and keeps one offer row per CLR per lead", () => 
   assert.match(storage, /idx_shotgun_one_live_offer_per_clr/);
   assert.match(storage, /idx_shotgun_active_phone/);
   assert.match(storage, /idx_shotgun_active_email/);
+  assert.match(storage, /transfer_outcome_id INTEGER REFERENCES lead_outcomes\(id\)/);
+  assert.match(storage, /idx_shotgun_transfer_outcome/);
 });
 
 test("only live-ready CLRs enter the fair assignment rotation", () => {
@@ -59,9 +63,43 @@ test("a CLR records call, text, notes, then explicitly marks the lead done", () 
   const result = routes.slice(routes.indexOf('app.patch("/api/shotgun/:id/result"'), routes.indexOf('app.post("/api/shotgun/:id/requeue"'));
   assert.match(result, /Select called or sent a text/);
   assert.match(result, /Add notes explaining what happened/);
-  assert.match(page, /Called this lead/);
-  assert.match(page, /Sent a text/);
-  assert.match(page, /Mark lead done/);
+  assert.match(resultCard, /Called this lead/);
+  assert.match(resultCard, /Sent a text/);
+  assert.match(resultCard, /Complete without transfer/);
+});
+
+test("a claimed lead prompts its CLR globally until a result is logged", () => {
+  assert.match(app, /<ShotgunResultPrompt \/>/);
+  assert.match(resultPrompt, /lead\.status === "claimed"/);
+  assert.match(resultPrompt, /lead\.currentAssigneeId === user\?\.id/);
+  assert.match(resultPrompt, /Log your Shotgun result/);
+  assert.match(resultPrompt, /remind me in 10 minutes/i);
+  assert.match(resultPrompt, /useContext\(DailyReportGateActive\)/);
+  assert.match(resultPrompt, /useContext\(EodLockGateActive\)/);
+  assert.match(resultPrompt, /hasLiveOffer/, "an urgent incoming offer must win over a result reminder");
+});
+
+test("Shotgun transfer completion creates one real C3 transfer outcome atomically", () => {
+  const result = routes.slice(routes.indexOf('app.patch("/api/shotgun/:id/result"'), routes.indexOf('app.post("/api/shotgun/:id/requeue"'));
+  assert.match(resultCard, /Log as a transfer/);
+  assert.match(resultCard, /shotgun-transfer-lo/);
+  assert.match(resultCard, /Direct/);
+  assert.match(resultCard, /Appointment/);
+  assert.match(resultCard, /\/api\/settings\/bulk-texter/);
+  assert.match(resultCard, /\/api\/settings\/helper/);
+  assert.match(result, /Mark the lead as called before logging a transfer/);
+  assert.match(result, /Select the loan officer who received the transfer/);
+  assert.match(result, /storage\.getLoanOfficerById\(loId\)/, "the selected LO must be scoped to the signed-in organization");
+  assert.match(result, /db\.transaction/);
+  assert.match(result, /storage\.createLeadOutcome/);
+  assert.match(result, /outcomeType: "transfer"/);
+  assert.match(result, /bulkTexter,/);
+  assert.match(result, /helperAssisted,/);
+  assert.match(result, /transfer_outcome_id=\?/);
+  assert.match(result, /syncTransferToBonzo/);
+  assert.match(result, /"outcome\.logged"/);
+  assert.match(result, /transferCelebration/);
+  assert.match(page, /Transfer logged/);
 });
 
 test("the urgent offer alert is global and readiness stays alive while C3 is open", () => {
@@ -146,7 +184,7 @@ test("publishing validates contact data, state, and active duplicates", () => {
 test("requeue is explicit, preserves history, and clears the prior CLR's progress", () => {
   const start = routes.indexOf('app.post("/api/shotgun/:id/requeue"');
   const requeue = routes.slice(start, routes.indexOf('app.post("/api/shotgun/:id/cancel"', start));
-  assert.match(requeue, /called=0,texted=0,result_notes='',done_at=NULL/);
+  assert.match(requeue, /called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL/);
   assert.match(requeue, /response='requeued'/);
   assert.doesNotMatch(requeue, /DELETE FROM shotgun_offers/);
   assert.match(page, /Requeue .*\?/);
@@ -162,12 +200,12 @@ test("managers can cancel an active lead without deleting its history", () => {
 });
 
 test("call launch requires compliance acknowledgement and state-hours protection", () => {
-  assert.match(page, /stateCallStatus/);
-  assert.match(page, /Outside calling hours/);
-  assert.match(page, /Do Not Call requirements/);
-  assert.match(page, /C3 cannot perform those checks automatically/);
-  assert.match(page, /Verified — open phone/);
-  assert.match(page, /\/open-phone/);
+  assert.match(resultCard, /stateCallStatus/);
+  assert.match(resultCard, /Outside calling hours/);
+  assert.match(resultCard, /Do Not Call requirements/);
+  assert.match(resultCard, /C3 cannot perform those checks automatically/);
+  assert.match(resultCard, /Verified — open phone/);
+  assert.match(resultCard, /\/open-phone/);
   const launch = routes.slice(routes.indexOf('app.post("/api/shotgun/:id/open-phone"'), routes.indexOf('app.patch("/api/shotgun/:id/result"'));
   assert.match(launch, /lead.status !== "claimed"/);
   assert.match(launch, /action: "phone_opened"/);
