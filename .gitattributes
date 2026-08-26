@@ -1,0 +1,6 @@
+# The extension hash guard (tests/shotgun-extension.test.ts) compares raw
+# bytes of chrome-extension/* against hashes.json, so line endings must be
+# identical on every checkout. Everything else keeps the repo default.
+chrome-extension/** text eol=lf
+script/build-extension.py text eol=lf
+client/public/c3-shotgun-extension.zip binary
