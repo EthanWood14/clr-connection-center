@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "C3 Shotgun for Bonzo",
+  "version": "1.0.0",
+  "description": "One click: send the Bonzo prospect you're viewing into C3's Shotgun rotation.",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "C3 Shotgun" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.westcapitallending.center/*",
+    "https://westcapitallending.center/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://app.getbonzo.com/*"],
+      "js": ["page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://app.getbonzo.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

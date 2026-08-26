@@ -129,6 +129,12 @@ export default function Shotgun() {
     onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
     onError: (error: any) => toast({ title: "Could not change readiness", description: error.message, variant: "destructive" }),
   });
+  const [extensionKey, setExtensionKey] = useState("");
+  const mintExtensionKey = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/shotgun/extension-key", {}),
+    onSuccess: (result: any) => setExtensionKey(String(result?.key ?? "")),
+    onError: (error: any) => toast({ title: "Could not generate a key", description: error.message, variant: "destructive" }),
+  });
   const publish = useMutation({
     mutationFn: () => apiRequest("POST", "/api/shotgun/publish", { leadName, phone, email, stateCode, source, managerNotes }),
     onSuccess: (result: any) => {
@@ -178,6 +184,27 @@ export default function Shotgun() {
                 </div>
                 <div className="space-y-1.5"><Label>What should the CLR know?</Label><Textarea rows={3} value={managerNotes} onChange={(event) => setManagerNotes(event.target.value)} placeholder="Context, urgency, product, preferred callback…" /></div>
                 <Button size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700" disabled={publish.isPending || leadName.trim().length < 2 || (!phone.trim() && !email.trim()) || (!!phone.trim() && !stateCode)} onClick={() => publish.mutate()}><Zap className="h-5 w-5" /> Publish to Shotgun</Button>
+                <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground flex items-center gap-1"><Zap className="h-3.5 w-3.5 text-orange-600" /> One-click from Bonzo (Chrome extension)</span>
+                    <div className="flex gap-2">
+                      <Button asChild size="sm" variant="outline"><a href="/c3-shotgun-extension.zip" download>Download</a></Button>
+                      <Button size="sm" variant="outline" disabled={mintExtensionKey.isPending} onClick={() => mintExtensionKey.mutate()} data-testid="button-extension-key">
+                        {mintExtensionKey.isPending ? "Generating…" : "Get my key"}
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-1.5">Unzip, then chrome://extensions → Developer mode → Load unpacked → pick the folder. Open any Bonzo prospect and click the orange ⚡ button. If it says you're not signed in, paste your key into the extension's popup.</p>
+                  {extensionKey && (
+                    <div className="mt-2 space-y-1">
+                      <p className="font-semibold text-amber-600">Copy this key now — it's shown only once. Generating again replaces the old one.</p>
+                      <div className="flex gap-2">
+                        <Input readOnly value={extensionKey} className="h-8 font-mono text-xs" data-testid="shotgun-extension-key" onFocus={(event) => event.currentTarget.select()} />
+                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(extensionKey); toast({ title: "Key copied" }); }}>Copy</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
             <Card><CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Ready right now <Badge variant="secondary">{payload.readyUsers.length}</Badge></CardTitle></CardHeader><CardContent>{payload.readyUsers.length ? <div className="space-y-2">{payload.readyUsers.map((person) => <div key={person.id} className="flex items-center gap-3 rounded-xl border bg-emerald-50/60 p-3 dark:bg-emerald-950/20"><span className="h-3 w-3 animate-pulse rounded-full bg-emerald-500" /><span className="font-semibold">{person.name}</span><span className="ml-auto text-xs text-emerald-700">Ready</span></div>)}</div> : <div className="py-10 text-center text-sm text-muted-foreground"><Users className="mx-auto mb-3 h-10 w-10 opacity-30" />No CLRs are ready. Published leads will wait safely in queue.</div>}</CardContent></Card>

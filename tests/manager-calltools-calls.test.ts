@@ -17,7 +17,7 @@ test("CallTools call identity de-duplicates paired call and disposition events",
 test("manager history adds CallTools calls to every calls surface", () => {
   assert.match(storage, /ALTER TABLE callsync_activity_events ADD COLUMN call_id TEXT/);
   assert.match(routes, /COUNT\(DISTINCT COALESCE\(NULLIF\(call_id,''\), external_event_id\)\) AS calls/);
-  assert.match(routes, /calls: \(callsByDate\.get\(d\) \?\? 0\) \+ \(callToolsByDate\.get\(d\)\?\.calls \?\? 0\)/);
+  assert.match(routes, /calls: \(callsByDate\.get\(d\) \?\? 0\) \+ \(leadvaultCallTools\.get\(d\) \?\? callToolsByDate\.get\(d\)\?\.calls \?\? 0\)/);
   assert.match(routes, /bucket\.calls\[idx\] \+= Number\(r\.calls\) \|\| 0/);
   assert.match(routes, /callsHmMap\[key\] = \(callsHmMap\[key\] \?\? 0\) \+ \(Number\(r\.calls\) \|\| 0\)/);
 });

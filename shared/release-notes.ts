@@ -29,10 +29,19 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.3.0",
+    headline: "One-click Shotgun straight from Bonzo.",
+    items: [
+      { text: "New Chrome extension: open any prospect in Bonzo and an orange ⚡ Shotgun button appears — one click sends that lead into the rotation. C3 pulls the prospect's name, phone, email, state, and source from the Bonzo API itself, so nothing is retyped and the usual duplicate and calling-hours checks still apply.", audience: "everyone" },
+      { text: "Get it on the Shotgun page: Download the extension, load it via chrome://extensions → Developer mode → Load unpacked. Being logged in to C3 in the same browser is normally all it needs; if not, \"Get my key\" mints a one-time key to paste into the extension popup.", audience: "everyone" },
+      { text: "Leads sent this way carry the Bonzo pipeline, stage, assigned user, and a link back to the prospect in the notes, and the audit trail marks them as one-click publishes.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.2.4",
     headline: "Shotgun publishers now see the whole board for the last 10 minutes.",
     items: [
-      { text: "If you have Shotgun publish access, the Shotgun page now shows every lead published in the last 10 minutes — not just the ones assigned to you — so you can watch a lead you fired land with a CLR. Older leads still show only if they're yours.", audience: "all" },
+      { text: "If you have Shotgun publish access, the Shotgun page now shows every lead published in the last 10 minutes — not just the ones assigned to you — so you can watch a lead you fired land with a CLR. Older leads still show only if they're yours.", audience: "everyone" },
       { text: "Publishers also see who published each lead. Requeue and cancel remain manager-only.", audience: "manager" },
     ],
   },

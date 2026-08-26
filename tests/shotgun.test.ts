@@ -153,7 +153,7 @@ test("a new lead alerts every CLR by email and push when only zero to two are re
   assert.match(helper, /sendPushToUsers/);
   assert.match(helper, /sendEmail\(\{ to: emails/);
   assert.match(helper, /open C3 to join/);
-  const publish = routes.slice(routes.indexOf('app.post("/api/shotgun/publish"'), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
+  const publish = routes.slice(routes.indexOf("function createShotgunLeadFromFields"), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
   assert.match(publish, /if \(readyCount <= 2\) notifyShotgunLowCoverage/);
 });
 
@@ -182,7 +182,7 @@ test("denying an offer passes the lead on without punishing the CLR", () => {
 });
 
 test("publishing validates contact data, state, and active duplicates", () => {
-  const publish = routes.slice(routes.indexOf('app.post("/api/shotgun/publish"'), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
+  const publish = routes.slice(routes.indexOf("function createShotgunLeadFromFields"), routes.indexOf('app.post("/api/shotgun/:id/confirm"'));
   assert.match(publish, /phoneKey\.length < 10/);
   assert.match(publish, /Select the lead's state/);
   assert.match(publish, /already active in Shotgun/);

@@ -40,14 +40,14 @@ function orgToken(): string {
   return token();
 }
 
-async function req(method: string, path: string, body?: any): Promise<{ status: number; ok: boolean; json: any }> {
+async function req(method: string, path: string, body?: any, tok?: string): Promise<{ status: number; ok: boolean; json: any }> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 25_000);
   try {
     const res = await fetch(BASE + path, {
       method,
       headers: {
-        Authorization: `Bearer ${token()}`,
+        Authorization: `Bearer ${tok || token()}`,
         Accept: "application/json",
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
@@ -280,6 +280,41 @@ export async function getProspectSnapshot(prospectId: number): Promise<{
     assignedTo: d.assigned_to != null ? Number(d.assigned_to) : null,
     assignedUserName: d.assigned_user?.name != null ? String(d.assigned_user.name) : null,
     assignedUserEmail: d.assigned_user?.email != null ? String(d.assigned_user.email) : null,
+  };
+}
+
+// Everything the one-click Shotgun endpoint needs from a prospect. A per-seat
+// token 401/403s on another team's prospects (measured at scale on the
+// BrokerBot side), so those retry once under the org token when one is stored.
+// 404 means the prospect was deleted — Bonzo never 404s for access.
+export async function getProspectDetail(prospectId: number): Promise<
+  | { ok: true; detail: import("./shotgun-bonzo").BonzoProspectDetail }
+  | { ok: false; status: number }
+> {
+  let r = await req("GET", `/prospects/${prospectId}`);
+  if ((r.status === 401 || r.status === 403) && orgToken() !== token()) {
+    r = await req("GET", `/prospects/${prospectId}`, undefined, orgToken());
+  }
+  const d = r.json?.data ?? r.json;
+  if (!r.ok || !d?.id) return { ok: false, status: r.status };
+  const firstName = String(d.first_name ?? "").trim();
+  const lastName = String(d.last_name ?? "").trim();
+  return {
+    ok: true,
+    detail: {
+      id: Number(d.id),
+      firstName,
+      lastName,
+      fullName: String(d.full_name ?? "").trim() || [firstName, lastName].filter(Boolean).join(" "),
+      phone: String(d.phone ?? "").trim(),
+      email: String(d.email ?? "").trim(),
+      state: String(d.state ?? "").trim(),
+      city: String(d.city ?? "").trim(),
+      source: String(d.custom_source ?? d.source ?? "").trim(),
+      assignedUserName: String(d.assigned_user?.name ?? "").trim(),
+      pipelineName: String(d.pipeline?.name ?? "").trim(),
+      stageName: String(d.pipeline_stage?.name ?? "").trim(),
+    },
   };
 }
 

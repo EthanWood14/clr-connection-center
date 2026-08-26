@@ -34,7 +34,8 @@ import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowSt
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL } from "./business-day";
 import { createBackup, listBackups } from "./backup";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
+import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBonzoSource } from "./shotgun-bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "./clr-task-scheduler";
 import {
@@ -5229,6 +5230,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // LO/LOA self-service portal — no C3 login; each request resolves an
     // organization-scoped shared code before touching roster data.
     if (req.path.startsWith("/portal/")) return next();
+    // The Shotgun Chrome-extension endpoints authenticate themselves via
+    // shotgunExtensionAuth (session cookie OR hashed per-user key). The key
+    // exists precisely for requests the strict same-site cookie cannot ride —
+    // which requireAuth here would 401 before the route ever ran.
+    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo") return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -5448,6 +5454,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const PRIVILEGED = [
       "role", "isManager", "is_manager", "isClr", "is_clr",
       "canPublishShotgun", "can_publish_shotgun",
+      // The Chrome-extension credential — minted only by its own endpoint.
+      "extensionKeyHash", "extension_key_hash",
       "excludeFromStats", "exclude_from_stats", "inDailyAssignments", "in_daily_assignments",
       "isActive", "is_active", "orgId", "org_id", "mustChangePassword", "must_change_password",
       // Employment start date is an HR field — nobody sets their own.
@@ -7412,27 +7420,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true, isReady: ready });
   });
 
-  app.post("/api/shotgun/publish", requireAuth, (req: any, res) => {
-    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
-    const userId = Number(req.session_user?.userId) || 0;
-    const me = storage.getUserById(userId) as any;
-    // Managers always can; other users only with the admin-granted flag.
-    const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
-    if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
-    const leadName = String(req.body?.leadName ?? "").trim().slice(0, 140);
-    const phone = String(req.body?.phone ?? "").trim().slice(0, 40);
-    const email = String(req.body?.email ?? "").trim().slice(0, 200);
+  // Shared by the composer publish route and the one-click Bonzo endpoint:
+  // identical validation, dedupe, insert, rotation kick and notifications.
+  function createShotgunLeadFromFields(orgId: number, userId: number, me: any, raw: any, via?: string): { status: number; body: any } {
+    const leadName = String(raw?.leadName ?? "").trim().slice(0, 140);
+    const phone = String(raw?.phone ?? "").trim().slice(0, 40);
+    const email = String(raw?.email ?? "").trim().slice(0, 200);
     const phoneKey = shotgunPhoneKey(phone);
     const emailKey = shotgunEmailKey(email);
-    const stateCode = String(req.body?.stateCode ?? "").trim().toUpperCase();
-    const source = String(req.body?.source ?? "").trim().slice(0, 120);
-    const managerNotes = String(req.body?.managerNotes ?? "").trim().slice(0, 3000);
-    if (leadName.length < 2) return res.status(400).json({ error: "Enter the lead's name." });
-    if (!phone && !email) return res.status(400).json({ error: "Enter a phone number or email address." });
-    if (phone && (phoneKey.length < 10 || phoneKey.length > 15)) return res.status(400).json({ error: "Enter a valid phone number with 10 to 15 digits." });
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailKey)) return res.status(400).json({ error: "Enter a valid email address." });
-    if (phone && !stateCode) return res.status(400).json({ error: "Select the lead's state so the CLR can check calling hours." });
-    if (stateCode && !SHOTGUN_STATE_CODES.has(stateCode)) return res.status(400).json({ error: "Select a valid U.S. state." });
+    const stateCode = String(raw?.stateCode ?? "").trim().toUpperCase();
+    const source = String(raw?.source ?? "").trim().slice(0, 120);
+    const managerNotes = String(raw?.managerNotes ?? "").trim().slice(0, 3000);
+    if (leadName.length < 2) return { status: 400, body: { error: "Enter the lead's name." } };
+    if (!phone && !email) return { status: 400, body: { error: "Enter a phone number or email address." } };
+    if (phone && (phoneKey.length < 10 || phoneKey.length > 15)) return { status: 400, body: { error: "Enter a valid phone number with 10 to 15 digits." } };
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailKey)) return { status: 400, body: { error: "Enter a valid email address." } };
+    if (phone && !stateCode) return { status: 400, body: { error: "Select the lead's state so the CLR can check calling hours." } };
+    if (stateCode && !SHOTGUN_STATE_CODES.has(stateCode)) return { status: 400, body: { error: "Select a valid U.S. state." } };
     const now = new Date().toISOString();
     const readyCutoff = new Date(new Date(now).getTime() - SHOTGUN_READY_TTL_MS).toISOString();
     const readyCount = Number((shotgunDb().prepare(`SELECT COUNT(*) AS count FROM shotgun_readiness r
@@ -7444,7 +7448,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const duplicate = active.find((lead) =>
       (phoneKey && (String(lead.phone_key ?? "") || shotgunPhoneKey(String(lead.phone ?? ""))) === phoneKey)
       || (emailKey && (String(lead.email_key ?? "") || shotgunEmailKey(String(lead.email ?? ""))) === emailKey));
-    if (duplicate) return res.status(409).json({ error: `${String(duplicate.lead_name)} is already active in Shotgun (lead #${Number(duplicate.id)}).` });
+    if (duplicate) return { status: 409, body: { error: `${String(duplicate.lead_name)} is already active in Shotgun (lead #${Number(duplicate.id)}).` } };
     let info: any;
     try {
       info = shotgunDb().prepare(`INSERT INTO shotgun_leads
@@ -7452,7 +7456,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         VALUES (?,?,?,?,?,?,?,?,?,'queued',?,?,?)`).run(orgId, leadName, phone, phoneKey || null, email, emailKey || null, stateCode, source, managerNotes, userId, now, now);
     } catch (error: any) {
       if (String(error?.code ?? "").includes("CONSTRAINT") || /unique/i.test(String(error?.message ?? ""))) {
-        return res.status(409).json({ error: "This phone number or email is already active in Shotgun." });
+        return { status: 409, body: { error: "This phone number or email is already active in Shotgun." } };
       }
       throw error;
     }
@@ -7461,8 +7465,119 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (readyCount <= 2) notifyShotgunLowCoverage(orgId, leadName, source, readyCount, assignment?.userId);
     audit({ userId, userName: me?.name ?? "Manager", action: "create", entityType: "shotgun_lead",
       entityId: Number(info.lastInsertRowid), entityLabel: leadName,
-      details: JSON.stringify({ source, stateCode, assignedImmediately: !!assignment }) });
-    res.json({ ok: true, leadId: Number(info.lastInsertRowid), assigned: !!assignment });
+      details: JSON.stringify({ source, stateCode, assignedImmediately: !!assignment, ...(via ? { via } : {}) }) });
+    return { status: 200, body: { ok: true, leadId: Number(info.lastInsertRowid), assigned: !!assignment, leadName } };
+  }
+
+  app.post("/api/shotgun/publish", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    // Managers always can; other users only with the admin-granted flag.
+    const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
+    if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
+    const result = createShotgunLeadFromFields(orgId, userId, me, req.body);
+    res.status(result.status).json(result.body);
+  });
+
+  // The Chrome extension can't always ride the strict same-site session cookie
+  // (SameSite=strict never travels cross-site), so its endpoints also accept a
+  // per-user key. The key only identifies the user; publish rights are still
+  // re-checked from the DB on every request, exactly like the cookie path.
+  function shotgunExtensionAuth(req: any, res: any, next: any) {
+    if (req.session_user) return next();
+    const session = freshSessionFromSignedCookie(req);
+    if (session) { req.session_user = session; return next(); }
+    const key = String(req.headers["x-c3-extension-key"] ?? "").trim();
+    if (key) {
+      const hash = crypto.createHash("sha256").update(key).digest("hex");
+      const user = shotgunDb().prepare(`SELECT id, org_id, portal FROM users WHERE extension_key_hash=? AND is_active=1`).get(hash) as any;
+      // The key stands in for the cookie, so it must honor every boundary the
+      // cookie path re-derives from the DB: portal-confined accounts (LAP/LOP)
+      // have no C3 access even if they kept an old key, and demo orgs stay
+      // read-only. The global guards can't do this — they ran before the key
+      // was resolved.
+      if (user && !CONFINED_PORTALS.has(String(user.portal ?? "").toLowerCase())) {
+        const orgId = Number(user.org_id ?? 1) || 1;
+        if (req.method !== "GET" && isDemoOrg(orgId)) {
+          return res.status(403).json({ error: "Demo mode is read-only. Sign up for full access." });
+        }
+        req.session_user = { userId: Number(user.id), orgId, portal: (user.portal ?? null) as string | null };
+        // Audit rows and notification fan-outs read the request's org context,
+        // which the org middleware resolved from the (absent) cookie as org 1 —
+        // re-enter it as this user's real org.
+        return runWithOrg({ orgId, superAdmin: false }, () => next());
+      }
+    }
+    return res.status(401).json({ error: "Not signed in to C3. Open C3 and log in, or paste your extension key into the extension." });
+  }
+
+  // What the extension popup shows: who the cookie/key resolves to and whether
+  // they can publish. Doubles as the connectivity probe.
+  app.get("/api/shotgun/extension-status", shotgunExtensionAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user?.userId) || 0) as any;
+    const canPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
+    res.json({ ok: true, name: String(me?.name ?? ""), canPublish });
+  });
+
+  // Mint (or replace) the caller's extension key. Only the SHA-256 lands in
+  // the DB, so the plaintext appears exactly once — and regenerating revokes
+  // the previous key.
+  app.post("/api/shotgun/extension-key", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
+    if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
+    const key = `c3sk_${crypto.randomBytes(24).toString("hex")}`;
+    const hash = crypto.createHash("sha256").update(key).digest("hex");
+    shotgunDb().prepare(`UPDATE users SET extension_key_hash=? WHERE id=?`).run(hash, userId);
+    audit({ userId, userName: me?.name ?? "User", action: "update", entityType: "shotgun_extension_key",
+      entityId: userId, entityLabel: me?.name ?? String(userId), details: JSON.stringify({ regenerated: true }) });
+    res.json({ ok: true, key });
+  });
+
+  // One-click publish from the Bonzo Chrome extension. The client sends only a
+  // prospect id (captured from Bonzo's own API traffic) or the page URL; the
+  // prospect is re-fetched server-side from the Bonzo API so the lead carries
+  // authoritative data, then goes through the exact same publish pipeline as
+  // the composer.
+  app.post("/api/shotgun/from-bonzo", shotgunExtensionAuth, async (req: any, res) => {
+    try {
+      const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+      const userId = Number(req.session_user?.userId) || 0;
+      const me = storage.getUserById(userId) as any;
+      const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
+      if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
+      if (!bonzoConfigured()) return res.status(503).json({ error: "The Bonzo API token isn't configured in C3 (Settings → Integrations)." });
+      const prospectId = extractProspectId(req.body?.prospectId ?? req.body?.url);
+      if (!prospectId) return res.status(400).json({ error: "No Bonzo prospect id — open a prospect in Bonzo and try again." });
+      const fetched = await getProspectDetail(prospectId);
+      if (!fetched.ok) {
+        if (fetched.status === 404) return res.status(404).json({ error: "This prospect no longer exists in Bonzo." });
+        if (fetched.status === 401 || fetched.status === 403) return res.status(502).json({ error: "C3's Bonzo token can't see this prospect (another team). An org-level token in Integrations fixes this." });
+        return res.status(502).json({ error: `Bonzo API error (HTTP ${fetched.status}).` });
+      }
+      const detail = fetched.detail;
+      if (detail.fullName.length < 2) return res.status(400).json({ error: "This prospect has no name in Bonzo." });
+      const stateCode = normalizeStateCode(detail.state);
+      if (detail.phone && !stateCode) return res.status(400).json({ error: `No U.S. state on this prospect in Bonzo${detail.state ? ` ("${detail.state}")` : ""} — set the State field, then click again.` });
+      const pageUrl = typeof req.body?.url === "string" ? req.body.url.slice(0, 300) : null;
+      // CRM-filler emails ("none", "n/a") must not block a lead that has a
+      // perfectly good phone — drop the junk email instead of 400ing on it.
+      const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(detail.email.trim().toLowerCase());
+      const phoneDigits = detail.phone.replace(/\D+/g, "").length;
+      const result = createShotgunLeadFromFields(orgId, userId, me, {
+        leadName: detail.fullName,
+        phone: detail.phone,
+        email: emailLooksValid || !(phoneDigits >= 10 && phoneDigits <= 15) ? detail.email : "",
+        stateCode,
+        source: cleanBonzoSource(detail.source),
+        managerNotes: buildBonzoManagerNotes(detail, String(me?.name ?? "a publisher"), pageUrl),
+      }, "bonzo-extension");
+      res.status(result.status).json(result.body);
+    } catch (error: any) {
+      res.status(500).json({ error: `Shotgun publish failed: ${String(error?.message ?? error)}` });
+    }
   });
 
   app.post("/api/shotgun/:id/confirm", requireAuth, (req: any, res) => {
