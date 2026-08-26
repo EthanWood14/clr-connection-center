@@ -7366,6 +7366,7 @@ export function listLapResultPackages(input: {
   search?: string;
   documentType?: LapDocumentType;
   status?: "complete" | "incomplete";
+  loaId?: number;
   from?: string;
   to?: string;
   limit?: number;
@@ -7410,6 +7411,21 @@ export function listLapResultPackages(input: {
       )
     `);
     params.documentType = input.documentType;
+  }
+
+  if (input.loaId) {
+    // "Connected LOA": the package's linked C3 transfer carries loa_id →
+    // loan_officer_assistants. created_by is useless here — auto-created
+    // packages all belong to the shared portal account.
+    where.push(`
+      EXISTS (
+        SELECT 1 FROM lap_result_transfer_links t
+        JOIN lead_outcomes o ON o.id = t.outcome_id
+        WHERE t.org_id = p.org_id AND t.package_id = p.id
+          AND o.loa_id = @loaId
+      )
+    `);
+    params.loaId = input.loaId;
   }
 
   const completeSql = `(

@@ -606,6 +606,7 @@ export default function LapResults() {
   const isAdmin = user?.role === "admin" || !!user?.superAdmin;
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [loaId, setLoaId] = useState("all");
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -619,7 +620,13 @@ export default function LapResults() {
 
   useEffect(() => {
     setPage(0);
-  }, [deferredSearch, status]);
+  }, [deferredSearch, status, loaId]);
+
+  const loasQuery = useQuery({
+    queryKey: ["/api/lap/loas"],
+    queryFn: () => lapRequest<{ loas: { id: number; name: string; active: number }[] }>("GET", "/api/lap/loas"),
+  });
+  const loaOptions = loasQuery.data?.loas ?? [];
 
   const resultQueryString = useMemo(() => {
     const query = new URLSearchParams({
@@ -628,8 +635,9 @@ export default function LapResults() {
     });
     if (deferredSearch) query.set("q", deferredSearch);
     if (status !== "all") query.set("status", status);
+    if (loaId !== "all") query.set("loaId", loaId);
     return query.toString();
-  }, [deferredSearch, page, status]);
+  }, [deferredSearch, page, status, loaId]);
 
   const resultsQuery = useQuery({
     queryKey: ["/api/lap/results", "workspace", resultQueryString],
@@ -810,6 +818,17 @@ export default function LapResults() {
                 <SelectItem value="all">All packages</SelectItem>
                 <SelectItem value="incomplete">Fewer than 3 attached</SelectItem>
                 <SelectItem value="complete">All 3 attached</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={loaId} onValueChange={setLoaId}>
+              <SelectTrigger data-testid="lap-results-loa"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All LOAs</SelectItem>
+                {loaOptions.map((loa) => (
+                  <SelectItem key={loa.id} value={String(loa.id)}>
+                    {loa.name}{loa.active ? "" : " (inactive)"}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </CardHeader>

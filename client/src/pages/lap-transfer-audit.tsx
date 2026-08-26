@@ -10,6 +10,7 @@ import { AlertTriangle, CheckCircle2, FilePlus2, FileWarning, Link2, RefreshCw, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatLapDate, lapRequest } from "@/lib/lap-api";
 import { queryClient } from "@/lib/queryClient";
@@ -66,6 +67,13 @@ export default function LapTransferAuditPage() {
 
   const data = query.data;
   const rows = data?.rows ?? [];
+  // Client-side "connected LOA" filter — every row already carries loaName
+  // from the C3 transfer, so no extra request is needed.
+  const [loaFilter, setLoaFilter] = useState("all");
+  const loaNames = Array.from(new Set(rows.map((r) => r.loaName).filter(Boolean))).sort() as string[];
+  const visibleRows = loaFilter === "all" ? rows
+    : loaFilter === "none" ? rows.filter((r) => !r.loaName)
+    : rows.filter((r) => r.loaName === loaFilter);
   const packageMutation = useMutation({
     mutationFn: ({ outcomeId, packageId }: { outcomeId: number; packageId?: number }) =>
       lapRequest<any>("POST", `/api/lap/transfer-audit/${outcomeId}/package`, packageId ? { packageId } : {}),
@@ -140,6 +148,20 @@ export default function LapTransferAuditPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
+              <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Connected LOA</span>
+                <Select value={loaFilter} onValueChange={setLoaFilter}>
+                  <SelectTrigger className="h-8 w-56" data-testid="audit-loa-filter"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All LOAs</SelectItem>
+                    {loaNames.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                    <SelectItem value="none">No LOA on the transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+                {loaFilter !== "all" && (
+                  <span className="text-xs text-muted-foreground">{visibleRows.length} of {rows.length} transfers</span>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm" data-testid="audit-table">
                   <thead>
@@ -147,6 +169,7 @@ export default function LapTransferAuditPage() {
                       <th className="text-left font-semibold px-3 py-2">Date</th>
                       <th className="text-left font-semibold px-3 py-2">Borrower</th>
                       <th className="text-left font-semibold px-3 py-2">CLR</th>
+                      <th className="text-left font-semibold px-3 py-2">LOA</th>
                       {DOCS.map((d) => (
                         <th key={d.key} className="text-center font-semibold px-3 py-2 whitespace-nowrap">{d.label}</th>
                       ))}
@@ -155,11 +178,12 @@ export default function LapTransferAuditPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {visibleRows.map((r) => (
                       <tr key={r.outcomeId} className="border-b last:border-0 hover:bg-muted/30">
                         <td className="px-3 py-2 whitespace-nowrap tabular-nums text-muted-foreground">{formatLapDate(r.date)}</td>
                         <td className="px-3 py-2 font-medium">{r.borrowerName || "—"}</td>
                         <td className="px-3 py-2 text-muted-foreground">{r.clrName ?? "—"}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{r.loaName ?? "—"}</td>
                         {DOCS.map((d) => (
                           <td key={d.key} className="px-3 py-2"><Tick ok={!!r.docs?.[d.key]} /></td>
                         ))}

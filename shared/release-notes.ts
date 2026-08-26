@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.5.0",
+    headline: "Find your leads by LOA in the portal.",
+    items: [
+      { text: "Results now has a “Connected LOA” dropdown — pick a name and see just the packages for leads that CLR connected to that LOA. Transfer Documents got the same dropdown, and each transfer now shows which LOA it was connected to.", audience: "lap" },
+      { text: "Fixed: LOA names on transfer lists were joined against the wrong table and could show the wrong person — they now come from the LOA directory itself.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.4.0",
     headline: "C3 transfers now land in the LAP portal by themselves.",
     items: [

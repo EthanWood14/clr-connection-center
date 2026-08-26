@@ -14868,10 +14868,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (from) { dateSql = " AND o.date >= ?"; params.push(from); }
 
     const transfers = (sqlite.prepare(
-      `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.name AS loa_name
+      `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.full_name AS loa_name
          FROM lead_outcomes o
          LEFT JOIN users u ON u.id = o.assistant_id
-         LEFT JOIN users l ON l.id = o.loa_id
+         LEFT JOIN loan_officer_assistants l ON l.id = o.loa_id
         WHERE o.org_id=? AND o.lo_id=? AND o.outcome_type='transfer'${dateSql}
         ORDER BY o.date DESC, o.id DESC`,
     ).all(...params) as any[]).map((r): TransferRow => ({
@@ -14987,10 +14987,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let created = 0;
     for (const lo of eligibleLos) {
       const transfers = (sqlite.prepare(
-        `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.name AS loa_name
+        `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.full_name AS loa_name
            FROM lead_outcomes o
            LEFT JOIN users u ON u.id = o.assistant_id
-           LEFT JOIN users l ON l.id = o.loa_id
+           LEFT JOIN loan_officer_assistants l ON l.id = o.loa_id
           WHERE o.org_id=? AND o.lo_id=? AND o.outcome_type='transfer'
             AND o.created_at >= ?
             AND NOT EXISTS (SELECT 1 FROM lap_result_transfer_links t
@@ -15071,6 +15071,21 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     catch (error) { console.error("LAP transfer auto-flow boot error:", error); }
   }, 10_000);
 
+  // LOA names for the portal's "connected leads" dropdown. LOAs are name rows
+  // in loan_officer_assistants — not portal accounts — and the connection to a
+  // package runs through its linked C3 transfer's loa_id.
+  app.get("/api/lap/loas", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const loas = storageExtra.getRawSqlite().prepare(
+      `SELECT a.id, a.full_name AS name, a.active
+         FROM loan_officer_assistants a
+         JOIN loan_officers lo ON lo.id = a.lo_id AND lo.org_id = ?
+        ORDER BY a.active DESC, a.full_name`,
+    ).all(ctx.orgId);
+    res.json({ loas });
+  });
+
   app.get("/api/lap/results", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
@@ -15079,6 +15094,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const documentType = req.query.type == null ? undefined : String(req.query.type);
     const from = req.query.from == null ? undefined : String(req.query.from);
     const to = req.query.to == null ? undefined : String(req.query.to);
+    const loaId = req.query.loaId == null ? undefined : lapPositiveRouteId(req.query.loaId);
+    if (req.query.loaId != null && !loaId) {
+      return res.status(400).json({ error: "Invalid LOA id." });
+    }
     if (status !== undefined && status !== "complete" && status !== "incomplete") {
       return res.status(400).json({ error: "Status must be complete or incomplete." });
     }
@@ -15098,6 +15117,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         search: search || undefined,
         status: status as "complete" | "incomplete" | undefined,
         documentType: documentType as storageExtra.LapDocumentType | undefined,
+        loaId: loaId ?? undefined,
         from,
         to,
         limit: Number(req.query.limit),
