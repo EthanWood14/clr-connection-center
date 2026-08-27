@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.8.1",
+    headline: "Past EOD reports re-checked against the new rule.",
+    items: [
+      { text: "Reports filed before today were still marked late under the old same-day rule. Each one has been re-checked using when it was actually filed and the filer's own timezone, so the EOD history now matches the current rule instead of showing almost everyone late.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.8.0",
     headline: "Filing yesterday's EOD in the morning is no longer late.",
     items: [

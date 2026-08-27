@@ -7,6 +7,7 @@ import { eodIsOverdue, previousBusinessDay } from "../server/business-day";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 const TZ = "America/Los_Angeles";
 // Noon PT on the given day, so the 4pm deadline has not passed.
 const noonPt = (iso: string) => new Date(`${iso}T19:00:00Z`);
@@ -49,4 +50,24 @@ test("an EOD report emails the CLR who filed it and nobody else", () => {
   assert.ok(!block.includes("manager_emails"), "managers must not be looked up here any more");
   assert.ok(!routes.includes("isLateSubmission"), "the backdated-CC concept must be gone");
   assert.ok(!block.includes("managerRecipients"));
+});
+
+test("historical lateness is re-stamped once, faithfully", () => {
+  const m = storage.slice(
+    storage.indexOf("Re-stamp historical EOD lateness"),
+    storage.indexOf("EOD late re-stamp failed"),
+  );
+  assert.ok(m.length > 0, "the re-stamp migration must exist");
+  // Guarded: rewriting accountability history must never repeat on each boot.
+  assert.match(m, /migrations_applied WHERE name = 'eod_late_restamp_v1'/);
+  assert.ok(m.indexOf("if (!done)") < m.indexOf("UPDATE eod_reports SET submitted_late"),
+    "the rewrite must sit inside the run-once guard");
+  // Recomputed per row from the CLR's own timezone and actual filing time —
+  // not a blanket clear of the flag.
+  assert.match(m, /eodIsOverdue\(String\(row\.report_date\), String\(row\.tz\), filedAt\)/);
+  assert.match(m, /COALESCE\(NULLIF\(u\.timezone, ''\), 'America\/Los_Angeles'\)/);
+  // submitted_at is SQLite UTC without a zone marker; parsing must say so.
+  assert.match(m, /replace\(" ", "T"\)\}Z/);
+  // A row with no filing time is skipped, never guessed at.
+  assert.match(m, /skipped \+= 1; continue;/);
 });

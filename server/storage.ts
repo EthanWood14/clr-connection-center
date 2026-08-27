@@ -2535,6 +2535,44 @@ function runNewMigrations() {
     }
   } catch (e) { console.error("dead manager email repair failed:", e); }
 
+  // Re-stamp historical EOD lateness under the one-business-day grace.
+  //
+  // The rule changed on 2026-08-27: filing yesterday's report the next morning
+  // is the norm here (nine of twelve CLRs did it on 2026-08-26), so it no
+  // longer counts as late. Rows stamped under the old rule would otherwise
+  // keep reporting almost everyone late every day. Each row is recomputed with
+  // the CLR's own timezone and the moment they actually filed, so this is a
+  // faithful restatement rather than a blanket clear.
+  try {
+    const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'eod_late_restamp_v1'`).get();
+    if (!done) {
+      const { eodIsOverdue } = require("./business-day") as typeof import("./business-day");
+      const rows = sqlite.prepare(`
+        SELECT e.id, e.report_date, e.submitted_at, e.submitted_late,
+               COALESCE(NULLIF(u.timezone, ''), 'America/Los_Angeles') AS tz
+          FROM eod_reports e LEFT JOIN users u ON u.id = e.assistant_id
+      `).all() as any[];
+      const update = sqlite.prepare(`UPDATE eod_reports SET submitted_late=? WHERE id=?`);
+      let changed = 0;
+      let skipped = 0;
+      sqlite.transaction(() => {
+        for (const row of rows) {
+          // submitted_at is SQLite datetime('now') — UTC, "YYYY-MM-DD HH:MM:SS"
+          // with no zone marker. Parsing that directly is locale-dependent, so
+          // spell the UTC out.
+          const raw = String(row.submitted_at ?? "").trim();
+          const filedAt = raw ? new Date(`${raw.replace(" ", "T")}Z`) : null;
+          if (!filedAt || Number.isNaN(filedAt.getTime())) { skipped += 1; continue; }
+          const late = eodIsOverdue(String(row.report_date), String(row.tz), filedAt) ? 1 : 0;
+          if (late !== Number(row.submitted_late ?? 0)) { update.run(late, row.id); changed += 1; }
+        }
+      })();
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("eod_late_restamp_v1", new Date().toISOString());
+      console.log(`[migration] eod_late_restamp_v1: ${changed} of ${rows.length} EOD reports re-stamped${skipped ? `, ${skipped} skipped (no filing time)` : ""}`);
+    }
+  } catch (e) { console.error("EOD late re-stamp failed:", e); }
+
   // One-time: adopt credoble@ as Chris's account email (he uses the short form).
   // Guarded so it runs ONCE — afterward his email is freely editable and won't
   // revert on restart. (Removing the rewrite above is what makes it stick.)
