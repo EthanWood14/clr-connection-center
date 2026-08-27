@@ -424,6 +424,126 @@ function DocumentSlot({
   );
 }
 
+// Pre-fill for the LOA composer. Drawn from the CLR Info Sheet fields that
+// already travel with every transfer — swap the wording the moment the LOAs
+// share Chris's actual email template.
+const LOA_NOTE_TEMPLATE = [
+  "Borrower: ",
+  "Goal / Loan type: ",
+  "Credit score: ",
+  "Income (W2 / SE / Retired): ",
+  "Home value / 1st mortgage balance & rate: ",
+  "Monthly payment (PITI): ",
+  "Notes for Chris: ",
+  "Next steps: ",
+].join("\n");
+
+type PackageNote = { id: number; kind: "loa" | "lo"; authorName: string; body: string; createdAt: string };
+
+function PackageNotesThread({ result, isLoSide }: { result: LapResult; isLoSide: boolean }) {
+  const { toast } = useToast();
+  const [loaId, setLoaId] = useState("");
+  const [noteBody, setNoteBody] = useState(LOA_NOTE_TEMPLATE);
+  const [remarks, setRemarks] = useState("");
+  const [loNotes, setLoNotes] = useState("");
+  const [opportunities, setOpportunities] = useState("");
+
+  const notesQuery = useQuery({
+    queryKey: ["/api/lap/results", "notes", result.id],
+    queryFn: () => lapRequest<{ notes: PackageNote[] }>("GET", `/api/lap/results/${result.id}/notes`),
+  });
+  const loasQuery = useQuery({
+    queryKey: ["/api/lap/loas"],
+    queryFn: () => lapRequest<{ loas: { id: number; name: string; active: number }[] }>("GET", "/api/lap/loas"),
+  });
+  const notes = notesQuery.data?.notes ?? [];
+  const loaOptions = loasQuery.data?.loas ?? [];
+
+  const postNote = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      lapRequest("POST", `/api/lap/results/${result.id}/notes`, payload),
+    onSuccess: async () => {
+      toast({ title: "Note posted" });
+      setNoteBody(LOA_NOTE_TEMPLATE);
+      setRemarks(""); setLoNotes(""); setOpportunities("");
+      await queryClient.invalidateQueries({ queryKey: ["/api/lap/results", "notes", result.id] });
+    },
+    onError: (error: any) => toast({ title: "Could not post the note", description: error.message, variant: "destructive" }),
+  });
+
+  return (
+    <div data-testid="lap-package-notes">
+      <div className="mb-3">
+        <h3 className="font-semibold">Lead notes & LO remarks</h3>
+        <p className="text-xs text-muted-foreground">
+          LOA notes and {result.loanOfficerName || "the loan officer"}'s replies stay with this package.
+        </p>
+      </div>
+      <div className="space-y-2">
+        {notes.map((note) => (
+          <div
+            key={note.id}
+            className={note.kind === "lo"
+              ? "rounded-lg border border-amber-300 bg-amber-50/70 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/20"
+              : "rounded-lg border bg-muted/20 px-4 py-3"}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {note.kind === "lo" ? `${note.authorName} — LO remarks` : `LOA note — ${note.authorName}`}
+              <span className="ml-2 normal-case tracking-normal">{formatLapDate(note.createdAt)}</span>
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">{note.body}</p>
+          </div>
+        ))}
+        {!notes.length && !notesQuery.isLoading && (
+          <p className="text-sm text-muted-foreground">No notes yet — the thread starts below.</p>
+        )}
+      </div>
+
+      <div className="mt-3 space-y-2 rounded-lg border border-dashed p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-xs font-semibold">Add LOA note as</Label>
+          <Select value={loaId} onValueChange={setLoaId}>
+            <SelectTrigger className="h-8 w-52" data-testid="lap-note-loa"><SelectValue placeholder="Pick your name" /></SelectTrigger>
+            <SelectContent>
+              {loaOptions.map((loa) => (
+                <SelectItem key={loa.id} value={String(loa.id)}>{loa.name}{loa.active ? "" : " (inactive)"}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Textarea rows={8} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} className="font-mono text-xs" data-testid="lap-note-body" />
+        <Button
+          size="sm"
+          disabled={postNote.isPending || !loaId || !noteBody.trim()}
+          onClick={() => postNote.mutate({ kind: "loa", loaId: Number(loaId), body: noteBody })}
+        >
+          Post note{result.loanOfficerName ? ` & email ${result.loanOfficerName.split(" ")[0]}` : ""}
+        </Button>
+      </div>
+
+      {isLoSide && (
+        <div className="mt-3 space-y-2 rounded-lg border border-amber-300 p-3 dark:border-amber-700" data-testid="lap-lo-remarks">
+          <p className="text-xs font-semibold">LO reply — any section is optional</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="space-y-1"><Label className="text-xs">Remarks</Label><Textarea rows={3} value={remarks} onChange={(event) => setRemarks(event.target.value)} /></div>
+            <div className="space-y-1"><Label className="text-xs">Notes</Label><Textarea rows={3} value={loNotes} onChange={(event) => setLoNotes(event.target.value)} /></div>
+            <div className="space-y-1"><Label className="text-xs">Opportunities</Label><Textarea rows={3} value={opportunities} onChange={(event) => setOpportunities(event.target.value)} /></div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-amber-400"
+            disabled={postNote.isPending || !(remarks.trim() || loNotes.trim() || opportunities.trim())}
+            onClick={() => postNote.mutate({ kind: "lo", remarks, notes: loNotes, opportunities })}
+          >
+            Post reply
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultEditor({
   result,
   isAdmin,
@@ -575,6 +695,8 @@ function ResultEditor({
           ))}
         </div>
       </div>
+
+      <PackageNotesThread result={result} isLoSide={isAdmin} />
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-[11px] text-muted-foreground">
         <span>Created by {result.createdByName || "Unknown"} · {formatLapDate(result.createdAt, true)}</span>

@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.6.0",
+    headline: "Lead notes and LO replies now live on each package.",
+    items: [
+      { text: "Every package in Results has a notes thread: pick your name, fill in the pre-set lead-notes format, and post — Chris gets the note by email automatically, and it stays on the package for everyone.", audience: "lap" },
+      { text: "Chris (or any admin) can reply on the same thread with Remarks, Notes, and Opportunities — the reply shows highlighted so it's easy to spot, and the portal bell announces it.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.5.0",
     headline: "Find your leads by LOA in the portal.",
     items: [

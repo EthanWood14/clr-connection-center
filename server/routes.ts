@@ -27,7 +27,7 @@ import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-sta
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
-import { notesToBonzoHtml, transferNoteMarker, notePlainText } from "./bonzo-notes";
+import { notesToBonzoHtml, transferNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
@@ -15139,6 +15139,104 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       res.json({ result });
     } catch (error) {
       sendLapError(res, error, "Unable to load the LAP result package.");
+    }
+  });
+
+  // ── Package notes thread ────────────────────────────────────────────────────
+  // LOAs post structured lead notes (the composer pre-fills their template);
+  // the loan officer answers with Remarks / Notes / Opportunities. Both live on
+  // the package so the whole story stays with the lead.
+  function notifyLapPackageNote(orgId: number, packageId: number, kind: "loa" | "lo", authorName: string, noteBody: string) {
+    const pkg = storageExtra.getLapResultPackage(orgId, packageId) as any;
+    const borrower = String(pkg?.borrowerName ?? "a borrower");
+    const recipients = new Set<number>([lapSharedUserId(orgId)]);
+    if (pkg?.loanOfficerId) for (const id of storageExtra.getPortalUserIdsForLoanOfficer(orgId, Number(pkg.loanOfficerId))) recipients.add(id);
+    for (const userId of Array.from(recipients)) {
+      storage.createNotification({
+        userId,
+        type: "lap_result",
+        title: kind === "lo" ? "LO remarks added" : "LOA notes added",
+        message: kind === "lo"
+          ? `${authorName} added remarks on ${borrower} — open the package in Results.`
+          : `${authorName} added lead notes on ${borrower}.`,
+        portal: "lap",
+        isRead: false,
+      });
+    }
+    // Email the loan officer their LOA's notes (never their own remarks back).
+    // Debounced per package so a quick edit-and-repost collapses to one email.
+    if (kind !== "loa" || !pkg?.loanOfficerId) return;
+    const lo = storage.getLoanOfficerById(Number(pkg.loanOfficerId)) as any;
+    const to = String(lo?.email ?? "").trim();
+    if (!to.includes("@")) return;
+    const identity = portalEmailIdentity("lap");
+    const cancelKey = `lap-notes:${orgId}:${packageId}`;
+    cancelPendingEmails(cancelKey);
+    const subject = `LOA notes — ${borrower}`;
+    void sendEmail({
+      to,
+      fromName: identity.fromName,
+      replyTo: identity.replyTo,
+      subject,
+      html: buildEmail({
+        subject,
+        preheader: `${authorName} added lead notes`,
+        body: `<p><strong>${escapeHtml(authorName)}</strong> added notes on <strong>${escapeHtml(borrower)}</strong>:</p><p>${escapeHtml(noteBody).replace(/\n/g, "<br/>")}</p>`,
+        portal: "lap",
+      }),
+    }, { cancelKey });
+  }
+
+  app.get("/api/lap/results/:id/notes", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
+    if (!lapPackageVisible(ctx, packageId)) return res.status(404).json({ error: "LAP result package was not found." });
+    try {
+      res.json({ notes: storageExtra.listLapPackageNotes(ctx.orgId, packageId) });
+    } catch (error) {
+      sendLapError(res, error, "Unable to load package notes.");
+    }
+  });
+
+  app.post("/api/lap/results/:id/notes", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    if (!packageId) return res.status(400).json({ error: "Invalid result package id." });
+    if (!lapPackageVisible(ctx, packageId)) return res.status(404).json({ error: "LAP result package was not found." });
+    try {
+      const portal = String(ctx.user?.portal ?? "").toLowerCase();
+      const kind = req.body?.kind === "lo" ? "lo" as const : "loa" as const;
+      let authorName = "";
+      let body = "";
+      if (kind === "lo") {
+        // Only the loan officer's side may speak as the LO: an LOP login, or an
+        // internal admin (Chris posts from his own account today).
+        if (!(ctx.isAdmin || portal === "lop")) {
+          return res.status(403).json({ error: "Only the loan officer (or an admin) can post remarks." });
+        }
+        const sections: Array<[string, string]> = [
+          ["Remarks", String(req.body?.remarks ?? "").trim()],
+          ["Notes", String(req.body?.notes ?? "").trim()],
+          ["Opportunities", String(req.body?.opportunities ?? "").trim()],
+        ];
+        body = sections.filter(([, value]) => value).map(([label, value]) => `${label}:\n${value}`).join("\n\n");
+        authorName = String(ctx.user?.name ?? "Loan officer");
+      } else {
+        body = String(req.body?.body ?? "").trim();
+        // The shared gate signs every device in as one account, so the composer
+        // names the LOA from the directory; staff fall back to their own name.
+        const loaId = req.body?.loaId == null ? null : lapPositiveRouteId(req.body.loaId);
+        const loa = loaId ? storageExtra.getLoanOfficerAssistant(loaId) as any : null;
+        authorName = loa ? String(loa.fullName ?? "") : String(ctx.user?.name ?? "");
+      }
+      const note = storageExtra.addLapPackageNote({ orgId: ctx.orgId, packageId, kind, actorUserId: ctx.userId, authorName, body });
+      notifyLapPackageNote(ctx.orgId, packageId, kind, note.authorName, note.body);
+      res.status(201).json({ note });
+    } catch (error) {
+      sendLapError(res, error, "Unable to post the note.");
     }
   });
 

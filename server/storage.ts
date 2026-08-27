@@ -3385,6 +3385,21 @@ function runNewMigrations() {
       ON lap_result_events(org_id, package_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_lap_transfer_links_package
       ON lap_result_transfer_links(org_id, package_id, outcome_id);
+
+    CREATE TABLE IF NOT EXISTS lap_package_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      package_id INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'loa',
+      author_user_id INTEGER NOT NULL,
+      author_name TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (package_id) REFERENCES lap_result_packages(id) ON DELETE CASCADE,
+      FOREIGN KEY (author_user_id) REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lap_package_notes_package
+      ON lap_package_notes(org_id, package_id, created_at);
   `);
 
   // Move LAP document bytes out of clr.db into the sidecar (see the ATTACH near
@@ -7590,6 +7605,64 @@ export function updateLapResultPackage(input: {
   return getLapResultPackage(orgId, packageId)!;
 }
 
+export type LapPackageNote = {
+  id: number;
+  kind: "loa" | "lo";
+  authorName: string;
+  body: string;
+  createdAt: string;
+};
+
+export function listLapPackageNotes(orgId: number, packageId: number): LapPackageNote[] {
+  const org = lapPositiveId(orgId, "Organization id");
+  const pkg = lapPositiveId(packageId, "Package id");
+  return (sqlite.prepare(`
+    SELECT id, kind, author_name, body, created_at FROM lap_package_notes
+    WHERE org_id=? AND package_id=? ORDER BY created_at ASC, id ASC
+  `).all(org, pkg) as any[]).map((r) => ({
+    id: Number(r.id),
+    kind: r.kind === "lo" ? "lo" as const : "loa" as const,
+    authorName: String(r.author_name ?? ""),
+    body: String(r.body ?? ""),
+    createdAt: String(r.created_at ?? ""),
+  }));
+}
+
+export function addLapPackageNote(input: {
+  orgId: number;
+  packageId: number;
+  kind: "loa" | "lo";
+  actorUserId: number;
+  authorName: string;
+  body: string;
+}): LapPackageNote {
+  const orgId = lapPositiveId(input.orgId, "Organization id");
+  const packageId = lapPositiveId(input.packageId, "Package id");
+  const actorUserId = lapPositiveId(input.actorUserId, "User id");
+  const kind = input.kind === "lo" ? "lo" as const : "loa" as const;
+  const body = String(input.body ?? "").trim().slice(0, 6000);
+  const authorName = String(input.authorName ?? "").trim().slice(0, 120);
+  if (!body) throw new LapResultStorageError(400, "Write the note before posting.");
+  if (!authorName) throw new LapResultStorageError(400, "Pick who is posting the note.");
+  let created: LapPackageNote | null = null;
+  const tx = sqlite.transaction(() => {
+    assertLapActorInOrg(orgId, actorUserId);
+    const pkg = sqlite.prepare(
+      `SELECT id FROM lap_result_packages WHERE id=? AND org_id=? AND archived_at IS NULL`,
+    ).get(packageId, orgId) as any;
+    if (!pkg) throw new LapResultStorageError(404, "LAP result package was not found.");
+    const now = new Date().toISOString();
+    const info = sqlite.prepare(`
+      INSERT INTO lap_package_notes (org_id, package_id, kind, author_user_id, author_name, body, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(orgId, packageId, kind, actorUserId, authorName, body, now);
+    writeLapResultEvent({ orgId, packageId, actorUserId, action: kind === "lo" ? "lo_remarks_added" : "loa_note_added", createdAt: now });
+    created = { id: Number(info.lastInsertRowid), kind, authorName, body, createdAt: now };
+  });
+  tx.immediate();
+  return created!;
+}
+
 export function linkLapTransferToPackage(input: {
   orgId: number;
   outcomeId: number;
@@ -7701,6 +7774,8 @@ export function mergeLapResultPackages(input: {
     sqlite.prepare(`UPDATE lap_result_transfer_links SET package_id=? WHERE org_id=? AND package_id=?`)
       .run(targetPackageId, orgId, sourcePackageId);
     sqlite.prepare(`UPDATE lap_result_events SET package_id=? WHERE org_id=? AND package_id=?`)
+      .run(targetPackageId, orgId, sourcePackageId);
+    sqlite.prepare(`UPDATE lap_package_notes SET package_id=? WHERE org_id=? AND package_id=?`)
       .run(targetPackageId, orgId, sourcePackageId);
     const notes = [String(target.notes ?? "").trim(), String(source.notes ?? "").trim()]
       .filter((value, index, all) => value && all.indexOf(value) === index)
