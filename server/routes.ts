@@ -18227,7 +18227,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           })()}
           ${submittedLate ? `
             <p style="margin:12px 0 0;padding:8px 12px;border-radius:6px;background:#fffbeb;border:1px solid #fde68a;font-size:12px;color:#92400e">
-              ⏰ Filed after the ${EOD_DUE_LABEL} deadline.
+              ⏰ Filed after the deadline (${EOD_DUE_LABEL}).
             </p>` : ""}
           ${safeNotes ? `
           <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:20px">

@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.9.0",
+    headline: "EOD reports are due at 4:00 PM the next business day.",
+    items: [
+      { text: "One deadline now decides lateness: 4:00 PM on the next working day. Filing the same evening or the next morning is on time, and Friday's report is due Monday at 4:00 PM. The old mix of a same-day 4:00 PM cutoff and a next-day allowance marked people late for filing at 4:31 PM while someone filing the following afternoon counted as on time — filing sooner can no longer score worse.", audience: "everyone" },
+      { text: "You are still asked for a missing report as soon as you next open C3, before anything else — that prompt is unchanged and comes well before the deadline.", audience: "everyone" },
+      { text: "Past reports were re-checked against the new deadline, so the EOD history reflects the current rule.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.8.1",
     headline: "Past EOD reports re-checked against the new rule.",
     items: [

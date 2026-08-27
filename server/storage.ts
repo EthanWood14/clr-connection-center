@@ -2535,16 +2535,15 @@ function runNewMigrations() {
     }
   } catch (e) { console.error("dead manager email repair failed:", e); }
 
-  // Re-stamp historical EOD lateness under the one-business-day grace.
+  // Re-stamp historical EOD lateness whenever the rule changes.
   //
-  // The rule changed on 2026-08-27: filing yesterday's report the next morning
-  // is the norm here (nine of twelve CLRs did it on 2026-08-26), so it no
-  // longer counts as late. Rows stamped under the old rule would otherwise
-  // keep reporting almost everyone late every day. Each row is recomputed with
-  // the CLR's own timezone and the moment they actually filed, so this is a
-  // faithful restatement rather than a blanket clear.
+  // Each row is recomputed with the CLR's own timezone and the moment they
+  // actually filed, so this is a faithful restatement rather than a blanket
+  // clear. BUMP THE VERSION KEY to re-run after any change to eodIsOverdue --
+  // v1 applied the one-business-day grace (2026-08-27), v2 the 4pm-next-day
+  // deadline that replaced it the same day.
   try {
-    const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'eod_late_restamp_v1'`).get();
+    const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'eod_late_restamp_v2'`).get();
     if (!done) {
       const { eodIsOverdue } = require("./business-day") as typeof import("./business-day");
       const rows = sqlite.prepare(`
@@ -2568,8 +2567,8 @@ function runNewMigrations() {
         }
       })();
       sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
-        .run("eod_late_restamp_v1", new Date().toISOString());
-      console.log(`[migration] eod_late_restamp_v1: ${changed} of ${rows.length} EOD reports re-stamped${skipped ? `, ${skipped} skipped (no filing time)` : ""}`);
+        .run("eod_late_restamp_v2", new Date().toISOString());
+      console.log(`[migration] eod_late_restamp_v2: ${changed} of ${rows.length} EOD reports re-stamped${skipped ? `, ${skipped} skipped (no filing time)` : ""}`);
     }
   } catch (e) { console.error("EOD late re-stamp failed:", e); }
 

@@ -20,34 +20,44 @@ const ROLLOVER_HOUR = 19; // 7pm - first hour counted as the *next* business day
  * a deadline — it decides whether a submission is on time.
  */
 export const EOD_DUE_HOUR = 16; // 4pm
-export const EOD_DUE_LABEL = "4:00 PM";
+export const EOD_DUE_LABEL = "4:00 PM the next business day";
 
-/** The most recent weekday strictly before `date`. Weekends are not filing days. */
-export function previousBusinessDay(date: string): string {
-  let d = addIsoDays(date, -1);
-  while ([0, 6].includes(new Date(`${d}T12:00:00Z`).getUTCDay())) d = addIsoDays(d, -1);
+/** The next weekday strictly after `date`. Weekends are not filing days. */
+export function nextBusinessDay(date: string): string {
+  let d = addIsoDays(date, 1);
+  while ([0, 6].includes(new Date(`${d}T12:00:00Z`).getUTCDay())) d = addIsoDays(d, 1);
   return d;
 }
 
 /**
- * True once `businessDate`'s report is genuinely overdue.
+ * True once `businessDate`'s report has missed its deadline.
  *
- * Filing yesterday's report the next morning is the NORM here, not an
- * exception — on 2026-08-26, nine of twelve CLRs did exactly that — so the
- * owner ruled on 2026-08-27 that those are not late. A report is therefore
- * owed through the end of the following business day (which also covers the
- * weekend: Friday's report is on time when filed Monday). Only once that grace
- * day has passed does it count as late.
+ * The deadline is EOD_DUE_HOUR on the NEXT business day, as a single absolute
+ * instant. Filing yesterday's report the next morning is the norm here — nine
+ * of twelve CLRs did it on 2026-08-26 — so the owner moved the deadline there
+ * on 2026-08-27.
+ *
+ * It is expressed as one instant on purpose. An earlier attempt combined a
+ * same-day 4pm cutoff with a next-day grace, which was not monotonic: filing at
+ * 4:31pm on the day itself counted as late while filing the NEXT afternoon
+ * counted as on time, so it punished the people who filed sooner. One deadline
+ * cannot do that.
+ *
+ * Note this is only about LATENESS. The EOD lock gate (which demands a missing
+ * report before anything else) keys off requiredEodWeekdaysInTz instead, so
+ * people are still prompted the moment the business day rolls over — well
+ * before they are ever late.
  */
 export function eodIsOverdue(
   businessDate: string,
   tz: string | null | undefined,
   now: Date = new Date(),
 ): boolean {
-  const today = businessTodayInTz(tz, now);
-  if (businessDate > today) return false;             // not yet owed
-  if (businessDate === today) return hourInTz(now, tz || DEFAULT_TZ) >= EOD_DUE_HOUR;
-  return businessDate < previousBusinessDay(today);   // the grace day has passed
+  const zone = tz || DEFAULT_TZ;
+  const dueDay = nextBusinessDay(businessDate);
+  const dueAt = parseWallClockInTz(`${dueDay} ${String(EOD_DUE_HOUR).padStart(2, "0")}:00`, zone);
+  if (Number.isNaN(dueAt)) return false;
+  return now.getTime() >= dueAt;
 }
 const DEFAULT_TZ = "America/Los_Angeles";
 

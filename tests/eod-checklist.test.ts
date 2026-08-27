@@ -20,19 +20,21 @@ test("the 4pm deadline is separate from the 7pm business-day rollover", () => {
   // Moving the rollover would redefine "today" for assignments, check-ins and
   // every report window. The deadline only decides whether a report is late.
   assert.equal(EOD_DUE_HOUR, 16);
-  assert.equal(EOD_DUE_LABEL, "4:00 PM");
+  // The hour stayed 4pm; what moved (2026-08-27) is WHICH day it falls on.
+  assert.equal(EOD_DUE_LABEL, "4:00 PM the next business day");
   assert.match(bd, /const ROLLOVER_HOUR = 19/, "the rollover must stay at 7pm");
 });
 
-test("today's report is on time until 4pm and late after", () => {
-  // 2026-08-18 15:59 PT — still on time.
+test("a report is due at 4pm the NEXT business day", () => {
+  // Owner ruled 2026-08-27: filing the next morning is routine, not late, and
+  // the deadline must be one instant so filing sooner never scores worse.
+  // Today's own report is never late — 4:00pm and 4:01pm PT both pass.
   assert.equal(eodIsOverdue("2026-08-18", PT, at("2026-08-18T22:59:00Z")), false);
-  // 16:00 PT — late.
-  assert.equal(eodIsOverdue("2026-08-18", PT, at("2026-08-18T23:00:00Z")), true);
-  // Yesterday's report filed today is ON TIME — filing the next morning is
-  // routine, so the owner ruled on 2026-08-27 that it is not late. The grace
-  // is exactly one business day: two days back is still late.
+  assert.equal(eodIsOverdue("2026-08-18", PT, at("2026-08-18T23:00:00Z")), false);
+  // Yesterday's report: on time through the next morning, late at 4pm PT.
   assert.equal(eodIsOverdue("2026-08-17", PT, at("2026-08-18T15:00:00Z")), false);
+  assert.equal(eodIsOverdue("2026-08-17", PT, at("2026-08-18T23:00:00Z")), true);
+  // Older than that is late regardless.
   assert.equal(eodIsOverdue("2026-08-14", PT, at("2026-08-18T15:00:00Z")), true);
   // A future day is not owed yet.
   assert.equal(eodIsOverdue("2026-08-19", PT, at("2026-08-18T23:30:00Z")), false);
@@ -69,7 +71,7 @@ test("lateness is stamped at submit, not derived later", () => {
 test("managers see the answers, not just that a report exists", () => {
   // In the per-report email…
   assert.match(routes, /Daily checklist/);
-  assert.match(routes, /Filed after the \$\{EOD_DUE_LABEL\} deadline/);
+  assert.match(routes, /Filed after the deadline \(\$\{EOD_DUE_LABEL\}\)/);
   // …and on the dashboard, as work they can chase: which task, and by whom.
   assert.match(routes, /eodChecklistGaps/);
   assert.match(routes, /no: eodStatus\.filter\(\(e: any\) => e\.checklist\?\.\[k\] === false\)\.map\(\(e: any\) => e\.name\)/);
