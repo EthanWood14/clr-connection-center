@@ -541,7 +541,7 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN bonzo_synced_at TEXT`); 
 try { sqlite.exec(`ALTER TABLE daily_assignments ADD COLUMN manually_configured INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 try {
-  sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com', 'credoble@westcapitallending.com')`).run();
+  sqlite.prepare(`UPDATE users SET is_manager = 1 WHERE LOWER(email) IN ('spetrie@westcapitallending.com', 'credoble@westcapitallending.com', 'scott.petrie@westcapitallending.com', 'chris.redoble@westcapitallending.com')`).run();
 } catch {}
 
 // ── Backfill: parse "Scheduled: <date>" out of notes into appointment_datetime ──
@@ -1028,7 +1028,7 @@ try {
   sqlite.prepare(`
     INSERT OR IGNORE INTO organizations (id, name, slug, company_name, resend_api_key, from_email, manager_emails, plan)
     VALUES (1, 'West Capital Lending', 'west-capital', 'West Capital Lending', ?, 'reports@westcapitallending.center', ?, 'active')
-  `).run(process.env.RESEND_API_KEY || "", JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"]));
+  `).run(process.env.RESEND_API_KEY || "", JSON.stringify(["spetrie@westcapitallending.com","credoble@westcapitallending.com"]));
 } catch {}
 
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -2398,10 +2398,17 @@ function runNewMigrations() {
     // Force-update port to 465 if still on old value
     sqlite.exec(`UPDATE email_settings SET smtp_host='smtp.gmail.com', smtp_port=465 WHERE id=1`);
   }
+  // West Capital addresses are first-initial + last name. The dotted
+  // firstname.lastname forms were never real mailboxes: they hard-bounced the
+  // first time C3 mailed them (2026-04-19) and Resend suppressed them
+  // permanently. Because Resend discards the WHOLE message when any one
+  // recipient is suppressed, those two addresses silently destroyed every
+  // multi-recipient manager email — scorecards, check-in digests, EOD reports
+  // — for four months. They must never be seeded again.
+  const MANAGER_EMAIL_DEFAULTS = ["spetrie@westcapitallending.com", "credoble@westcapitallending.com"];
   // Seed default manager emails if none set
   if (!emailKeyRow?.manager_emails || emailKeyRow.manager_emails === '[]' || emailKeyRow.manager_emails === '') {
-    const defaultManagers = JSON.stringify(["scott.petrie@westcapitallending.com", "chris.redoble@westcapitallending.com"]);
-    sqlite.exec(`UPDATE email_settings SET manager_emails='${defaultManagers}' WHERE id=1`);
+    sqlite.exec(`UPDATE email_settings SET manager_emails='${JSON.stringify(MANAGER_EMAIL_DEFAULTS)}' WHERE id=1`);
   }
   // Migrate stale from_address_resend values to the current default
   try { sqlite.exec(`UPDATE email_settings SET from_address_resend = 'reports@westcapitallending.center' WHERE from_address_resend = 'info@wlc.it.com'`); } catch {}
@@ -2411,7 +2418,7 @@ function runNewMigrations() {
   // Migrate organizations.from_email from old wlc.it.com domain to westcapitallending.center
   try { sqlite.exec(`UPDATE organizations SET from_email = 'reports@westcapitallending.center' WHERE from_email = 'reports@wlc.it.com' OR from_email = 'info@wlc.it.com'`); } catch {}
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
-  try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(["scott.petrie@westcapitallending.com","chris.redoble@westcapitallending.com"])}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
+  try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(MANAGER_EMAIL_DEFAULTS)}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
   // report_schedule_settings — per-type recipient overrides for daily/weekly/monthly scheduled reports
   sqlite.exec(`CREATE TABLE IF NOT EXISTS report_schedule_settings (
@@ -2420,7 +2427,7 @@ function runNewMigrations() {
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
   try {
-    const defaults = JSON.stringify(["scott.petrie@westcapitallending.com", "chris.redoble@westcapitallending.com"]);
+    const defaults = JSON.stringify(MANAGER_EMAIL_DEFAULTS);
     const insertDefault = sqlite.prepare(`INSERT OR IGNORE INTO report_schedule_settings (report_type, recipients) VALUES (?, ?)`);
     insertDefault.run("daily", defaults);
     insertDefault.run("weekly", defaults);
@@ -2452,62 +2459,61 @@ function runNewMigrations() {
     }
   } catch (e) { console.error("report_schedule_settings dedupe cleanup failed:", e); }
 
-  // One-time alias cleanup: remove legacy short-form emails (spetrie@, credoble@,
-  // and the "spetries@" typo variant) from recipient lists. The full-name
-  // versions (scott.petrie@ / chris.redoble@) are the canonical addresses.
+  // Repair the dead manager addresses ONCE — never on every boot.
+  //
+  // What used to live here did the opposite: it treated scott.petrie@ and
+  // chris.redoble@ as canonical, stripped the real spetrie@ out of every
+  // recipient list, and rewrote users.email back to the broken form on every
+  // start. An administrator corrected the manager list on 2026-08-24; the next
+  // deploy stripped it, the empty list tripped the seeder above, and the two
+  // dead addresses came straight back. Thirteen deploys in one day meant
+  // thirteen reversions. Boot code must not fight an administrator's edits, so
+  // this repair is guarded and everything stays freely editable afterwards.
   try {
-    const ALIASES = new Set([
-      "spetrie@westcapitallending.com",
-      "spetries@westcapitallending.com",
-      // credoble@ intentionally NOT stripped — it's Chris's chosen address.
-    ]);
-    const rows = sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[];
-    const updateStmt = sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`);
-    for (const row of rows) {
-      let parsed: unknown = [];
-      try { parsed = JSON.parse(row.recipients || "[]"); } catch { parsed = []; }
-      const list = Array.isArray(parsed) ? parsed : [];
-      const filtered = list.filter(e => typeof e === "string" && !ALIASES.has(e.trim().toLowerCase()));
-      const nextJson = JSON.stringify(filtered);
-      if (nextJson !== row.recipients) {
-        updateStmt.run(nextJson, row.report_type);
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    const done = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name = 'dead_manager_emails_v1'`).get();
+    if (!done) {
+      const REPLACEMENTS: Record<string, string> = {
+        "scott.petrie@westcapitallending.com": "spetrie@westcapitallending.com",
+        "spetries@westcapitallending.com": "spetrie@westcapitallending.com",
+        "chris.redoble@westcapitallending.com": "credoble@westcapitallending.com",
+      };
+      sqlite.prepare(
+        `UPDATE users SET email = 'spetrie@westcapitallending.com'
+         WHERE LOWER(email) IN ('scott.petrie@westcapitallending.com','spetries@westcapitallending.com')`
+      ).run();
+      // Rewrite stored recipient lists in place, de-duplicated. An empty list
+      // becomes the defaults rather than staying empty — the old strip left
+      // the scheduled reports with no recipients at all.
+      const repairList = (raw: string | null | undefined): string => {
+        let parsed: unknown = [];
+        try { parsed = JSON.parse(raw || "[]"); } catch { parsed = []; }
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const entry of Array.isArray(parsed) ? parsed : []) {
+          if (typeof entry !== "string") continue;
+          const value = entry.trim();
+          if (!value) continue;
+          const fixed = REPLACEMENTS[value.toLowerCase()] ?? value;
+          if (seen.has(fixed.toLowerCase())) continue;
+          seen.add(fixed.toLowerCase());
+          out.push(fixed);
+        }
+        return JSON.stringify(out.length ? out : MANAGER_EMAIL_DEFAULTS);
+      };
+      for (const row of sqlite.prepare(`SELECT id, manager_emails FROM email_settings`).all() as any[]) {
+        sqlite.prepare(`UPDATE email_settings SET manager_emails = ? WHERE id = ?`)
+          .run(repairList(row.manager_emails), row.id);
       }
-    }
-  } catch (e) { console.error("report_schedule_settings alias cleanup failed:", e); }
-
-  // Same alias cleanup for email_settings.manager_emails.
-  try {
-    const ALIASES = new Set([
-      "spetrie@westcapitallending.com",
-      "spetries@westcapitallending.com",
-      // credoble@ intentionally NOT stripped — it's Chris's chosen address.
-    ]);
-    const rows = sqlite.prepare(`SELECT id, manager_emails FROM email_settings`).all() as any[];
-    const updateStmt = sqlite.prepare(`UPDATE email_settings SET manager_emails = ? WHERE id = ?`);
-    for (const row of rows) {
-      let parsed: unknown = [];
-      try { parsed = JSON.parse(row.manager_emails || "[]"); } catch { parsed = []; }
-      const list = Array.isArray(parsed) ? parsed : [];
-      const filtered = list.filter(e => typeof e === "string" && !ALIASES.has(e.trim().toLowerCase()));
-      const nextJson = JSON.stringify(filtered);
-      if (nextJson !== (row.manager_emails || "[]")) {
-        updateStmt.run(nextJson, row.id);
+      for (const row of sqlite.prepare(`SELECT report_type, recipients FROM report_schedule_settings`).all() as any[]) {
+        sqlite.prepare(`UPDATE report_schedule_settings SET recipients = ?, updated_at = CURRENT_TIMESTAMP WHERE report_type = ?`)
+          .run(repairList(row.recipients), row.report_type);
       }
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`)
+        .run("dead_manager_emails_v1", new Date().toISOString());
+      console.log("[migration] dead_manager_emails_v1: manager addresses repaired");
     }
-  } catch (e) { console.error("email_settings alias cleanup failed:", e); }
-
-  // If any user rows still have the legacy alias email, promote them to the
-  // full-name version (preserving the is_manager flag from line ~195).
-  try {
-    // scott.petrie@ is still canonicalized from the legacy short forms. Chris's
-    // address is intentionally NOT rewritten anymore — credoble@ is the one he
-    // chose, so the old credoble@ → chris.redoble@ rewrite was removed (it ran on
-    // every boot and kept reverting his email). See the one-time adopt below.
-    sqlite.prepare(
-      `UPDATE users SET email = 'scott.petrie@westcapitallending.com'
-       WHERE LOWER(email) IN ('spetrie@westcapitallending.com','spetries@westcapitallending.com')`
-    ).run();
-  } catch (e) { console.error("users alias cleanup failed:", e); }
+  } catch (e) { console.error("dead manager email repair failed:", e); }
 
   // One-time: adopt credoble@ as Chris's account email (he uses the short form).
   // Guarded so it runs ONCE — afterward his email is freely editable and won't

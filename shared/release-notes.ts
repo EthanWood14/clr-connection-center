@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.6.1",
+    headline: "Manager emails are reaching managers again.",
+    items: [
+      { text: "Two manager addresses on file were never real mailboxes. They bounced back in April and our mail provider blocked them — and because it drops the entire message when one address is blocked, every manager email since then was thrown away: Transfer Scorecards, check-in digests, late-excuse requests and EOD reports. The correct addresses are now in place and the mail flows again.", audience: "manager" },
+      { text: "Corrections used to be undone: a start-up step kept rewriting the fixed addresses back to the broken ones after every release. That step is gone, so an address you change in Settings now stays changed.", audience: "manager" },
+      { text: "Scheduled daily, weekly and monthly reports had also been left with no recipients at all, and now have them back.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.6.0",
     headline: "Lead notes and LO replies now live on each package.",
     items: [
