@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.10.0",
+    headline: "Paste a screenshot straight onto a comp request.",
+    items: [
+      { text: "Take a screenshot of a receipt and press Ctrl+V (Cmd+V on a Mac) anywhere on the Comp Requests page — it attaches to the request you are filling in, with a thumbnail so you can see what you grabbed. Pasting text still works normally everywhere. You can also paste onto the “Attach or paste receipt” link on a request you already filed.", audience: "everyone" },
+      { text: "Receipts that fail to upload now say so. Until today a rejected receipt was thrown away silently while the confirmation still counted it, so a request could reach the approver with no receipt at all and nobody would know.", audience: "everyone" },
+      { text: "Oversized files are now refused up front with the actual size and limit, instead of failing with an unreadable error mid-submit.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.9.0",
     headline: "EOD reports are due at 4:00 PM the next business day.",
     items: [

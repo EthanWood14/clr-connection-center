@@ -137,6 +137,44 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+// Base64 inflates a file by ~4/3 and the whole thing rides inside a JSON body
+// that body-parser caps at 10 MB, so the real ceiling sits below the server's
+// nominal 8 MB. Checking here turns an unreadable 413 into a clear message.
+const COMP_ATTACH_MAX_BYTES = 7 * 1024 * 1024;
+
+function attachmentProblem(file: File): string | null {
+  if (file.size > COMP_ATTACH_MAX_BYTES) {
+    return `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is 7 MB.`;
+  }
+  return null;
+}
+
+// A screenshot off the clipboard arrives unnamed (or as a generic "image.png"),
+// but the attachments API stores whatever filename it is given — so give it one
+// a person can recognise in the receipts list later.
+function nameClipboardImage(blob: File): File {
+  if (blob.name && blob.name.toLowerCase() !== "image.png") return blob;
+  const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}`;
+  return new File([blob], `screenshot ${stamp}.${ext}`, { type: blob.type || "image/png" });
+}
+
+/**
+ * Image files on a clipboard event. Returns [] for an ordinary text paste, so
+ * the keystroke falls through to whatever field the person is typing in.
+ */
+function imagesFromClipboard(data: DataTransfer | null | undefined): File[] {
+  const out: File[] = [];
+  for (const item of Array.from(data?.items ?? [])) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) out.push(nameClipboardImage(file));
+  }
+  return out;
+}
+
 function Attachments({ compId, count, canEdit }: { compId: number; count: number; canEdit: boolean }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -174,9 +212,18 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
     onError: (e: any) => toast({ title: "Could not remove", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
+  async function ingest(files: File[]) {
+    for (const f of files) {
+      const problem = attachmentProblem(f);
+      if (problem) { toast({ title: "That file is too big", description: problem, variant: "destructive" }); continue; }
+      // uploadMut surfaces its own failure toast; catch only stops the rejection
+      // from escaping the loop so later files still get their turn.
+      await uploadMut.mutateAsync(f).catch(() => {});
+    }
+  }
+
   async function onPick(e: any) {
-    const files = Array.from((e.target.files ?? []) as FileList) as File[];
-    for (const f of files) { await uploadMut.mutateAsync(f).catch(() => {}); }
+    await ingest(Array.from((e.target.files ?? []) as FileList) as File[]);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -204,8 +251,21 @@ function Attachments({ compId, count, canEdit }: { compId: number; count: number
       {canEdit && (
         <>
           <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={onPick} data-testid={"attach-input-" + compId} />
-          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploadMut.isPending} className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline" data-testid={"attach-btn-" + compId}>
-            <Paperclip className="w-3 h-3" /> {uploadMut.isPending ? "Uploading…" : "Attach receipt"}
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            onPaste={(e) => {
+              const images = imagesFromClipboard(e.clipboardData);
+              if (!images.length) return;
+              e.preventDefault();
+              void ingest(images);
+            }}
+            disabled={uploadMut.isPending}
+            title="Click to choose a file, or focus this and press Ctrl+V to paste a screenshot"
+            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+            data-testid={"attach-btn-" + compId}
+          >
+            <Paperclip className="w-3 h-3" /> {uploadMut.isPending ? "Uploading…" : "Attach or paste receipt"}
           </button>
         </>
       )}
@@ -899,6 +959,47 @@ export default function CompRequests() {
   const [compForUserId, setCompForUserId] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const newFileRef = useRef<HTMLInputElement | null>(null);
+
+  function addPendingFiles(files: File[]) {
+    const good: File[] = [];
+    for (const f of files) {
+      const problem = attachmentProblem(f);
+      if (problem) { toast({ title: "That file is too big", description: problem, variant: "destructive" }); continue; }
+      good.push(f);
+    }
+    if (good.length) setPendingFiles(prev => [...prev, ...good]);
+    return good.length;
+  }
+
+  // Paste a screenshot anywhere on this page and it attaches to the request
+  // being composed. A document-level listener is what makes Ctrl+V work without
+  // first clicking into a particular field, which is how people actually paste.
+  // Only IMAGE pastes are intercepted, so pasting text into any input — a note,
+  // a reviewer comment — behaves exactly as before.
+  useEffect(() => {
+    function onDocPaste(event: ClipboardEvent) {
+      const images = imagesFromClipboard(event.clipboardData);
+      if (!images.length) return;
+      event.preventDefault();
+      const added = addPendingFiles(images);
+      if (added) {
+        toast({
+          title: added === 1 ? "Screenshot attached" : `${added} screenshots attached`,
+          description: "It uploads when you submit the request.",
+        });
+      }
+    }
+    document.addEventListener("paste", onDocPaste);
+    return () => document.removeEventListener("paste", onDocPaste);
+  }, []);
+
+  // Object URLs for the thumbnails, revoked whenever the list changes so a long
+  // composing session cannot leak them.
+  const pendingPreviews = useMemo(
+    () => pendingFiles.map(f => (f.type.startsWith("image/") ? URL.createObjectURL(f) : "")),
+    [pendingFiles],
+  );
+  useEffect(() => () => { pendingPreviews.forEach(url => url && URL.revokeObjectURL(url)); }, [pendingPreviews]);
   const { data: allUsers = [] } = useQuery<any[]>({ queryKey: ["/api/users"], enabled: isManager });
   const clrOptions = (allUsers ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
 
@@ -938,24 +1039,39 @@ export default function CompRequests() {
         // The server prices these shifts itself; the amount above is just a preview.
         ...(category === "time" && hoursMeta ? { hoursEntryIds: hoursMeta.entryIds, hoursPeriod: hoursMeta.hoursPeriod, hoursDetail: hoursMeta.hoursDetail } : {}),
       });
-      // Upload any receipts attached on the form to the new item.
+      // Upload any receipts attached on the form to the new item. Failures used
+      // to be swallowed while the success toast still counted them, so a
+      // rejected receipt vanished silently — the request is already filed and
+      // emailed by this point, so the only honest thing is to name what did not
+      // make it.
       const newId = created?.id;
+      const failed: string[] = [];
       if (newId && pendingFiles.length) {
         for (const f of pendingFiles) {
           try {
             const dataBase64 = await fileToDataUrl(f);
             await apiRequest("POST", "/api/comp/" + newId + "/attachments", { filename: f.name, mime: f.type, dataBase64 });
-          } catch {}
+          } catch {
+            failed.push(f.name);
+          }
         }
       }
-      return created;
+      return { ...created, attachedCount: pendingFiles.length - failed.length, failedNames: failed };
     },
     onSuccess: (d: any) => {
       const who = compForUserId ? (clrOptions.find((u: any) => String(u.id) === compForUserId)?.name ?? "the CLR") : null;
-      toast({
+      const attached = Number(d?.attachedCount ?? 0);
+      const failed: string[] = Array.isArray(d?.failedNames) ? d.failedNames : [];
+      // Only one toast shows at a time, so a partial failure has to be THE
+      // message — it is the half the person needs to act on.
+      toast(failed.length ? {
+        title: "Filed, but " + failed.length + " receipt(s) did not upload",
+        description: failed.join(", ") + " — open the request below and attach again.",
+        variant: "destructive",
+      } : {
         title: "Submitted for approval",
         description: (who ? "Filed for " + who : "Your comp request is in")
-          + (pendingFiles.length ? " with " + pendingFiles.length + " receipt(s)" : "")
+          + (attached ? " with " + attached + " receipt(s)" : "")
           + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
       });
       setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false); setHoursMeta(null); setCategory("transfers"); setRecurringMonthly(false);
@@ -1322,8 +1438,7 @@ export default function CompRequests() {
               multiple
               className="hidden"
               onChange={e => {
-                const fs = Array.from(e.target.files ?? []) as File[];
-                if (fs.length) setPendingFiles(prev => [...prev, ...fs]);
+                addPendingFiles(Array.from(e.target.files ?? []) as File[]);
                 if (newFileRef.current) newFileRef.current.value = "";
               }}
               data-testid="input-comp-new-files"
@@ -1338,8 +1453,10 @@ export default function CompRequests() {
                 <Paperclip className="w-3.5 h-3.5" /> Attach receipt
               </button>
               {pendingFiles.map((f, i) => (
-                <span key={i} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 pl-2 pr-1 py-0.5 text-[11px]">
-                  <Paperclip className="w-3 h-3 shrink-0" />
+                <span key={i} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 pl-1.5 pr-1 py-0.5 text-[11px]" data-testid="chip-pending-file">
+                  {pendingPreviews[i]
+                    ? <img src={pendingPreviews[i]} alt="" className="h-7 w-7 rounded object-cover border shrink-0" />
+                    : <Paperclip className="w-3 h-3 shrink-0" />}
                   <span className="max-w-[160px] truncate">{f.name}</span>
                   <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))} className="rounded hover:bg-destructive/20 p-0.5 text-muted-foreground hover:text-destructive" aria-label="Remove file">
                     <X className="w-3 h-3" />
@@ -1347,7 +1464,9 @@ export default function CompRequests() {
                 </span>
               ))}
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Images or PDF, up to 8 MB each. Kept for ~1 year.</p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Take a screenshot and press <kbd className="rounded border px-1 font-sans">Ctrl</kbd>+<kbd className="rounded border px-1 font-sans">V</kbd> anywhere on this page to attach it — or use the button. Images or PDF, up to 7 MB each. Kept for ~1 year.
+            </p>
           </div>
           <div className="flex justify-end">
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5" data-testid="button-save-expense">
