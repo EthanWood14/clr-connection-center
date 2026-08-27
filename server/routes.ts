@@ -17811,30 +17811,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       console.error('[eod] goal-hit check failed:', e?.message ?? e);
     }
 
-    // ── Send EOD summary email to managers + CLR themselves ─────────────────
+    // ── Send the EOD summary email to the CLR who filed it ──────────────────
     try {
-      const settings = storageExtra.getEmailSettings() as any;
-      const managers: string[] = (() => {
-        try { return JSON.parse(settings.manager_emails || "[]"); } catch { return []; }
-      })();
-
       const clrUser = storage.getUserById(userId) as any;
       const clrName = clrUser?.name ?? `User #${userId}`;
       const clrEmail = clrUser?.email ?? null;
 
-      // Immediate email goes to the CLR themselves.
-      // For late (backdated) submissions the 6:30 PM manager digest already
-      // fired without this data, so also CC managers on late reports.
-      const todayInPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
-      const isLateSubmission = reportDate < todayInPT;
-      const managerRecipients: string[] = isLateSubmission
-        ? managers.filter((m: string) => String(m).includes("@"))
-        : [];
-
-      const allRecipients = [
-        ...(clrEmail ? [clrEmail] : []),
-        ...managerRecipients.filter((m: string) => m !== clrEmail),
-      ];
+      // The EOD report email goes to the CLR who filed it, and to nobody else.
+      //
+      // Backdated filings used to CC every manager, on the theory that the
+      // evening digest had already gone out without that CLR's numbers. In
+      // practice filing the next morning is routine, so that rule generated one
+      // manager email per CLR per day — it only became visible on 2026-08-27,
+      // when a suppressed-address bug that had been swallowing all manager mail
+      // was fixed and the backlog landed at once. Managers already get these
+      // numbers in the daily digest and the Transfer Scorecard, so the CC is
+      // gone (owner 2026-08-27).
+      const allRecipients = clrEmail ? [clrEmail] : [];
 
       // EMPTY REPORTS ARE NOT NEWS (owner 2026-08-14, "why am I getting so many emails"): a report with no
       // calls, transfers, appointments, fell-throughs, messages or notes carries nothing anyone acts on —

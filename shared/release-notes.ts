@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.8.0",
+    headline: "Filing yesterday's EOD in the morning is no longer late.",
+    items: [
+      { text: "You now have until the end of the next working day to file an EOD report, so filing yesterday's first thing in the morning counts as on time. Friday's report is on time when filed Monday. Anything older than that still counts as late.", audience: "everyone" },
+      { text: "EOD reports no longer copy managers. The report goes to the person who filed it; managers see the same numbers in the daily digest and the Transfer Scorecard.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.7.0",
     headline: "C3 now notices when an email reaches nobody.",
     items: [

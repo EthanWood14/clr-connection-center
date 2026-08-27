@@ -29,8 +29,11 @@ test("today's report is on time until 4pm and late after", () => {
   assert.equal(eodIsOverdue("2026-08-18", PT, at("2026-08-18T22:59:00Z")), false);
   // 16:00 PT — late.
   assert.equal(eodIsOverdue("2026-08-18", PT, at("2026-08-18T23:00:00Z")), true);
-  // An earlier day is late regardless of the clock.
-  assert.equal(eodIsOverdue("2026-08-17", PT, at("2026-08-18T15:00:00Z")), true);
+  // Yesterday's report filed today is ON TIME — filing the next morning is
+  // routine, so the owner ruled on 2026-08-27 that it is not late. The grace
+  // is exactly one business day: two days back is still late.
+  assert.equal(eodIsOverdue("2026-08-17", PT, at("2026-08-18T15:00:00Z")), false);
+  assert.equal(eodIsOverdue("2026-08-14", PT, at("2026-08-18T15:00:00Z")), true);
   // A future day is not owed yet.
   assert.equal(eodIsOverdue("2026-08-19", PT, at("2026-08-18T23:30:00Z")), false);
 });
