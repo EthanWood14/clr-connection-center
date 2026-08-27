@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.7.0",
+    headline: "C3 now notices when an email reaches nobody.",
+    items: [
+      { text: "Every message C3 sends is now checked against the mail provider afterwards. If one is blocked or bounces — which quietly destroyed four months of manager mail — admins get an alert naming the message and the addresses, instead of silence.", audience: "manager" },
+      { text: "The activity log used to record a message as “delivered” the moment the provider accepted it, which is what made the outage invisible. It now records it as accepted, and the true outcome is filled in once known.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.6.1",
     headline: "Manager emails are reaching managers again.",
     items: [

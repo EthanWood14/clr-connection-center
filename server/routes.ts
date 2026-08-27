@@ -646,20 +646,28 @@ async function sendEmail(payload: EmailPayload, meta?: { cancelKey?: string; imm
 
 // Low-level immediate send (the actual Resend call). Prefer sendEmail(); this is
 // what fires after the delay window, and directly for { immediate: true } sends.
+// Prefer a valid-looking DB key; otherwise fall back to the known-good default.
+// Old installs sometimes have a non-empty but revoked key in the DB, which made
+// a plain `||` fallback skip the working default and hard-fail the send.
+// A Resend API key looks like "re_" + ~32 chars of [A-Za-z0-9_]; anything
+// shorter/obviously-placeholder is treated as unset.
+// The RESEND_API_KEY env var wins over any DB-stored key. This makes key
+// rotation a single env change and ensures a stale/revoked key left in the DB
+// can never be used (it was the root cause of the 2026-06-30 key-abuse incident).
+function resolveResendKey(): string {
+  try {
+    const s = storageExtra.getEmailSettings() as any;
+    const dbKey = String(s?.resend_api_key || "").trim();
+    const looksLikeRealKey = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey);
+    return DEFAULT_RESEND_KEY || (looksLikeRealKey ? dbKey : "");
+  } catch {
+    return DEFAULT_RESEND_KEY || "";
+  }
+}
+
 async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, attachments }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
-  // Prefer a valid-looking DB key; otherwise fall back to the known-good default.
-  // Old installs sometimes have a non-empty but revoked key in the DB, which
-  // made the plain `||` fallback skip the working default and hard-fail the send.
-  const dbKey = String(s.resend_api_key || "").trim();
-  // A Resend API key looks like "re_" + ~32 chars of [A-Za-z0-9_]. Anything
-  // shorter/obviously-placeholder is treated as unset so we fall back to the
-  // known-good default instead of hard-failing with "API key is invalid".
-  const looksLikeRealKey = /^re_[A-Za-z0-9_]{28,}$/.test(dbKey);
-  // The RESEND_API_KEY env var wins over any DB-stored key. This makes key
-  // rotation a single env change and ensures a stale/revoked key left in the DB
-  // can never be used (it was the root cause of the 2026-06-30 key-abuse incident).
-  const apiKey = DEFAULT_RESEND_KEY || (looksLikeRealKey ? dbKey : "");
+  const apiKey = resolveResendKey();
   if (!apiKey) {
     // Fail closed rather than send with an empty/invalid key. Configure
     // RESEND_API_KEY (env) or a valid per-org key in email settings.
@@ -700,9 +708,64 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
     console.error(`[sendEmail] no id in response:`, result);
     throw new Error("Resend returned no email id — delivery status unknown");
   }
-  console.log(`[sendEmail] delivered id=${id}`);
+  // ACCEPTED, not delivered. Resend can still suppress or bounce this — and it
+  // drops the entire message when any one recipient is blocked. The real
+  // outcome arrives via reconcileEmailStatuses() below.
+  console.log(`[sendEmail] accepted id=${id}`);
+  storageExtra.recordEmailSend({ resendId: id, recipients: toArr, subject });
   return id;
 }
+
+// Ask Resend what actually happened to recent sends, and shout when a message
+// reached nobody. Alerts are in-app rather than email on purpose: the failure
+// being detected is email itself, so mailing the alert could vanish the same way.
+const EMAIL_DEAD_EVENTS = new Set(["suppressed", "bounced", "complained", "failed"]);
+async function reconcileEmailStatuses(): Promise<void> {
+  const apiKey = resolveResendKey();
+  if (!apiKey) return;
+  const since = new Date(Date.now() - 48 * 60 * 60_000).toISOString();
+  const open = storageExtra.listOpenEmailSends(40, since);
+  for (const row of open) {
+    try {
+      const res = await fetch(`https://api.resend.com/emails/${row.resend_id}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) continue;
+      const body: any = await res.json();
+      const event = String(body?.last_event ?? "").trim();
+      if (!event) continue;
+      storageExtra.updateEmailSendStatus(Number(row.id), event);
+      if (!EMAIL_DEAD_EVENTS.has(event) || row.alerted) continue;
+      let recipients: string[] = [];
+      try { recipients = JSON.parse(String(row.recipients || "[]")); } catch {}
+      console.error(`[email-health] ${event} id=${row.resend_id} subject=${JSON.stringify(row.subject)} to=${JSON.stringify(recipients)}`);
+      const admins = storageExtra.getRawSqlite().prepare(
+        `SELECT id FROM users WHERE org_id=1 AND is_active=1 AND role='admin' AND (portal IS NULL OR portal='c3')`,
+      ).all() as any[];
+      for (const admin of admins) {
+        storage.createNotification({
+          userId: Number(admin.id),
+          type: "email_blocked",
+          title: `Email ${event} — nobody received it`,
+          message: `"${row.subject}" was ${event} by the mail provider. Recipients: ${recipients.join(", ")}. One blocked address stops the whole message, so check those addresses in Settings.`,
+          portal: "c3",
+          isRead: false,
+        });
+      }
+      storageExtra.markEmailSendAlerted(Number(row.id));
+    } catch (e: any) {
+      console.error(`[email-health] status check failed for ${row.resend_id}:`, e?.message ?? e);
+    }
+  }
+}
+cron.schedule("*/10 * * * *", () => {
+  runWithOrg({ orgId: 1, superAdmin: false }, () => { void reconcileEmailStatuses(); });
+});
+// Catch-up shortly after boot so a restart never leaves a blackout unnoticed.
+setTimeout(() => {
+  try { runWithOrg({ orgId: 1, superAdmin: false }, () => { void reconcileEmailStatuses(); }); }
+  catch (e) { console.error("[email-health] boot check failed:", e); }
+}, 90_000);
 
 type ReportOptions = {
   customRange?: { startDate: string; endDate: string };

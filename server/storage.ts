@@ -2420,6 +2420,26 @@ function runNewMigrations() {
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
   try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(MANAGER_EMAIL_DEFAULTS)}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
+  // Every message handed to Resend, and what actually became of it.
+  //
+  // Resend returning an id means ACCEPTED, not delivered — and it discards the
+  // whole message when any single recipient is suppressed. Without this ledger
+  // that distinction is invisible: four months of manager mail was thrown away
+  // while every log line said "sent". reconcileEmailStatuses() fills last_event
+  // in from Resend and alerts on anything that reached nobody.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS email_sends (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    resend_id TEXT NOT NULL UNIQUE,
+    recipients TEXT NOT NULL DEFAULT '[]',
+    subject TEXT NOT NULL DEFAULT '',
+    accepted_at TEXT NOT NULL,
+    last_event TEXT,
+    checked_at TEXT,
+    alerted INTEGER NOT NULL DEFAULT 0
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_email_sends_open ON email_sends(last_event, accepted_at)`);
+
   // report_schedule_settings — per-type recipient overrides for daily/weekly/monthly scheduled reports
   sqlite.exec(`CREATE TABLE IF NOT EXISTS report_schedule_settings (
     report_type TEXT PRIMARY KEY,
@@ -5563,6 +5583,48 @@ export function getLoanOfficerAssistants(loId?: number) {
     ORDER BY a.full_name COLLATE NOCASE
   `).all(orgId) as any[]).map(normalizeLoa);
 }
+// ── Email send ledger ────────────────────────────────────────────────────────
+// A send is "open" until Resend reports a terminal event for it.
+export const EMAIL_TERMINAL_EVENTS = ["delivered", "bounced", "complained", "suppressed", "canceled", "failed"];
+
+export function recordEmailSend(input: { orgId?: number; resendId: string; recipients: string[]; subject: string }): void {
+  try {
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO email_sends (org_id, resend_id, recipients, subject, accepted_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      Number(input.orgId ?? 1) || 1,
+      String(input.resendId),
+      JSON.stringify(input.recipients ?? []),
+      String(input.subject ?? "").slice(0, 300),
+      new Date().toISOString(),
+    );
+  } catch (e) {
+    // Never let bookkeeping break an actual send.
+    console.error("recordEmailSend failed:", e);
+  }
+}
+
+/** Sends still awaiting a terminal status. Oldest first, recent window only. */
+export function listOpenEmailSends(limit: number, sinceIso: string): any[] {
+  const placeholders = EMAIL_TERMINAL_EVENTS.map(() => "?").join(",");
+  return sqlite.prepare(
+    `SELECT id, resend_id, recipients, subject, alerted FROM email_sends
+      WHERE accepted_at >= ?
+        AND (last_event IS NULL OR last_event NOT IN (${placeholders}))
+      ORDER BY accepted_at ASC LIMIT ?`,
+  ).all(sinceIso, ...EMAIL_TERMINAL_EVENTS, Math.max(1, Math.min(200, limit)));
+}
+
+export function updateEmailSendStatus(id: number, lastEvent: string): void {
+  sqlite.prepare(`UPDATE email_sends SET last_event=?, checked_at=? WHERE id=?`)
+    .run(String(lastEvent), new Date().toISOString(), id);
+}
+
+export function markEmailSendAlerted(id: number): void {
+  sqlite.prepare(`UPDATE email_sends SET alerted=1 WHERE id=?`).run(id);
+}
+
 export function getLoanOfficerAssistant(id: number) {
   const orgId = currentOrgId() ?? 1;
   return normalizeLoa(sqlite.prepare(`
