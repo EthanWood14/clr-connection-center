@@ -7240,7 +7240,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   const SHOTGUN_READY_TTL_MS = 35_000;
   const SHOTGUN_STATE_CODES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" "));
   const shotgunDb = () => storageExtra.getRawSqlite();
-  const shotgunPhoneKey = (value: string) => value.replace(/\D/g, "");
+  const shotgunPhoneKey = (value: string) => {
+    const d = value.replace(/\D/g, "");
+    // A US number reaches us as both "+1..." (Bonzo) and bare 10 digits (typed).
+    // Without this the dedupe index treats them as two different people.
+    return d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+  };
   const shotgunEmailKey = (value: string) => value.trim().toLowerCase();
   const shotgunUserIsClr = (user: any) => !!user && !!(
     user.isClr ?? user.is_clr ?? (user.role === "assistant")

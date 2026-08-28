@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.15.0",
+    headline: "The Bonzo one-click Shotgun button works again.",
+    items: [
+      { text: "Bonzo moved its app to a new web address, so the ⚡ Shotgun button silently stopped appearing on prospects — with no error anywhere, because the extension could not tell it was on a Bonzo page at all. It now recognises the new address. Reload the extension and reopen your Bonzo tabs.", audience: "manager" },
+      { text: "The link back to the prospect in a published lead’s notes was quietly falling back to just a prospect number for the same reason. Real links again.", audience: "manager" },
+      { text: "Publishing the same person twice is properly blocked now. Bonzo stores a phone as +1 followed by the number while a typed one has no +1, and Shotgun treated those as two different people — so one person could be sent to two CLRs at once.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.14.0",
     headline: "CLR Profiles now show real phone activity, and take manager notes.",
     items: [

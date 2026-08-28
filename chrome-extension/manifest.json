@@ -13,13 +13,13 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://app.getbonzo.com/*"],
+      "matches": ["https://platform.getbonzo.com/*", "https://app.getbonzo.com/*"],
       "js": ["page-hook.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://app.getbonzo.com/*"],
+      "matches": ["https://platform.getbonzo.com/*", "https://app.getbonzo.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

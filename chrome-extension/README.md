@@ -27,7 +27,7 @@ duplicate guard, same CLR rotation and notifications.
 
 ## Use
 
-Open any prospect in Bonzo (app.getbonzo.com). An orange **⚡ Shotgun** button
+Open any prospect in Bonzo (platform.getbonzo.com). An orange **⚡ Shotgun** button
 appears bottom-right — it names the prospect once Bonzo has loaded them. Click
 it once:
 

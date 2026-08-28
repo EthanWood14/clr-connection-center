@@ -86,6 +86,6 @@ export function buildBonzoManagerNotes(
   if (stage) lines.push(`Bonzo pipeline: ${stage}`);
   if (detail.assignedUserName) lines.push(`Assigned in Bonzo: ${detail.assignedUserName}`);
   if (detail.city || detail.state) lines.push(`Location: ${[detail.city, detail.state].filter(Boolean).join(", ")}`);
-  lines.push(pageUrl && /^https:\/\/app\.getbonzo\.com\//.test(pageUrl) ? pageUrl : `Bonzo prospect #${detail.id}`);
+  lines.push(pageUrl && /^https:\/\/(?:platform|app)\.getbonzo\.com\//.test(pageUrl) ? pageUrl : `Bonzo prospect #${detail.id}`);
   return lines.join("\n").slice(0, 3000);
 }
