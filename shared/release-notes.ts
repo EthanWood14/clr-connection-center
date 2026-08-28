@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.12.0",
+    headline: "Late excuses answer themselves, and off-site check-ins prove they are here.",
+    items: [
+      { text: "Clear-cut late reasons are now decided straight away instead of waiting on a manager: already had permission, or forgot to clock in, is excused; traffic or a bare “personal matter” is not. Anything less clear-cut still goes to a manager exactly as before, and if a decision looks wrong you can ask a manager to take another look.", audience: "everyone" },
+      { text: "Managers are no longer asked to approve the obvious ones — only the genuinely debatable ones, and anything an employee escalates.", audience: "manager" },
+      { text: "New optional rule for checking in away from the office: if you are not on the office network, C3 asks your device for location and needs you within 200m of the office. It stays off until an admin sets the office location in Settings, and it never applies on the office network or to the LO Assistant Portal.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.11.0",
     headline: "C3 now reviews itself and suggests improvements.",
     items: [

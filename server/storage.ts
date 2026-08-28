@@ -223,6 +223,14 @@ try { sqlite.exec(`ALTER TABLE external_schedules ADD COLUMN org_id INTEGER NOT 
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_date ON external_checkins(org_id, date)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_checkins_org_subject_date ON external_checkins(org_id, subject_type, subject_id, date DESC)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_schedules_org_subject ON external_schedules(org_id, subject_type, subject_id)`); } catch {}
+// Automatic first-pass review of late excuses. An automatic decision is never
+// final: the employee can ask for a human, which reopens the request.
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_decision TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_rationale TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_model TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_decided_at TEXT`); } catch {}
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN human_review_requested INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN human_review_requested_at TEXT`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_attendance_excuse_queue ON attendance_excuse_requests(org_id, status, kind, requested_at DESC)`); } catch {}
 try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_attendance_excuse_subject ON attendance_excuse_requests(org_id, subject_type, subject_id, attendance_date DESC)`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN loa_id INTEGER`); } catch {}
@@ -2793,7 +2801,15 @@ function runNewMigrations() {
   // How late (minutes past the expected start itself — grace only decides on-time
   // vs late) and what start time was expected, kept per row so the late history
   // stays accurate even if the person's schedule changes later.
-  try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`); } catch {}
+  // Check-in geofence. Someone on the office network is presumed to be at the
+// office; someone who is not must prove proximity instead. Opt-in: it does
+// nothing until an admin sets the office location and turns it on, so adding
+// the columns cannot start refusing anyone's check-in.
+try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_geo_mode TEXT NOT NULL DEFAULT 'off'`); } catch {}
+try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_office_lat REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_office_lng REAL`); } catch {}
+try { sqlite.exec(`ALTER TABLE email_settings ADD COLUMN checkin_geo_radius_m INTEGER NOT NULL DEFAULT 200`); } catch {}
+try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`); } catch {}
   try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN expected_start TEXT`); } catch {}
   // Marks the late that triggered the "limit reached" manager email, so it fires
   // once per rolling window instead of once per exact-count coincidence.
@@ -6763,6 +6779,12 @@ export function submitLateExcuseRequest(
       SET checkin_id = ?, expected_start = ?, reason = ?, status = 'pending',
           requested_via = ?, requested_by_user_id = ?, requested_at = ?,
           reviewed_by = NULL, reviewed_at = NULL, reviewer_note = NULL,
+          -- A resubmission is a new request. Carrying the previous round's
+          -- automatic verdict forward would leave a fresh machine decision with
+          -- its escalation already spent, and no way to reach a human.
+          auto_decision = NULL, auto_rationale = NULL, auto_model = NULL,
+          auto_decided_at = NULL, human_review_requested = 0,
+          human_review_requested_at = NULL,
           updated_at = ?
       WHERE id = ? AND org_id = ?
     `).run(

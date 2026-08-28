@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { TimeRangeToggle, TimeRange, TIME_RANGE_LABELS, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { checkinPosition } from "@/lib/checkin-location";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -982,7 +983,7 @@ function MorningCheckInCard() {
 
   function doCheckin() {
     checkinMut.reset();
-    checkinMut.mutate({});
+    void checkinPosition().then((position) => checkinMut.mutate(position));
   }
 
   if (mine) {
@@ -1025,7 +1026,7 @@ function MorningCheckInCard() {
       </Button>
       {data.networkMode !== "off" && (
         <span className="basis-full text-[11px] text-amber-800 dark:text-amber-300">
-          C3 checks the connection IP automatically. No location permission is requested.
+          C3 checks the connection IP automatically. Off the office network it also asks your device for location, to confirm you are at the office.
         </span>
       )}
     </div>

@@ -16,6 +16,8 @@ import cron from "node-cron";
 
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
+import { adjudicateLateExcuse, lateExcuseConfigured } from "./late-excuse";
+import { evaluateGeofence, isValidLatLng, DEFAULT_CHECKIN_RADIUS_M } from "./geo";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
@@ -45,6 +47,9 @@ import {
   evaluateCheckinIp,
   normalizeAllowedIps,
   normalizeIpAddress,
+  parseAllowEntry,
+  ipMatchesEntry,
+  type AllowEntry,
   type CheckinIpMode,
 } from "./checkin-ip";
 import {
@@ -13262,6 +13267,65 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       graceMin: Number(s?.checkin_grace_min ?? 5) || 0,
       networkMode,
       allowedIps: normalizeAllowedIps(s?.checkin_allowed_ips),
+      // Geofence: only ever consulted for someone who is NOT on an approved
+      // office IP, and only when an admin has both set the office location and
+      // switched it on.
+      geoMode: s?.checkin_geo_mode === "enforce" ? "enforce" as const : "off" as const,
+      officeLat: Number.isFinite(Number(s?.checkin_office_lat)) ? Number(s.checkin_office_lat) : null,
+      officeLng: Number.isFinite(Number(s?.checkin_office_lng)) ? Number(s.checkin_office_lng) : null,
+      geoRadiusM: Number(s?.checkin_geo_radius_m) > 0 ? Number(s.checkin_geo_radius_m) : DEFAULT_CHECKIN_RADIUS_M,
+    };
+  }
+
+  /**
+   * Whether this request is coming from an approved office network.
+   *
+   * Deliberately independent of checkin_ip_mode: the geofence asks "is this
+   * person at the office?", and an admin having set the IP gate to record-only
+   * (or off) does not change the answer. With no allowlist configured at all
+   * there is nothing to be off, so everyone counts as on-network and the fence
+   * stays shut — the same fail-open stance evaluateCheckinIp already takes.
+   */
+  function isOfficeNetwork(req: Request, cfg: ReturnType<typeof checkinConfig>): boolean {
+    if (!cfg.allowedIps.length) return true;
+    const ip = requestIp(req);
+    if (!ip) return false;
+    const entries = cfg.allowedIps.map(parseAllowEntry).filter((e): e is AllowEntry => !!e);
+    return entries.some((e) => ipMatchesEntry(ip, e));
+  }
+
+  /**
+   * The 200m rule. Returns null when the fence does not apply — off, not
+   * configured, or the person is already on the office network.
+   */
+  function checkinGeofence(req: Request, cfg: ReturnType<typeof checkinConfig>, body: any):
+    { blocked: { status: number; code: string; error: string } | null; lat: number | null; lng: number | null; accuracyM: number | null; distanceM: number | null; inArea: number | null } {
+    const lat = isValidLatLng(body?.lat, body?.lng) ? Number(body.lat) : null;
+    const lng = lat === null ? null : Number(body.lng);
+    const accuracyM = Number.isFinite(Number(body?.accuracyM)) ? Number(body.accuracyM) : null;
+
+    const armed = cfg.geoMode === "enforce" && cfg.officeLat !== null && cfg.officeLng !== null;
+    if (!armed || isOfficeNetwork(req, cfg)) {
+      // Not gated. Still record whatever the browser offered, so the office
+      // location can be sanity-checked from real data before enforcing.
+      let distanceM: number | null = null;
+      if (lat !== null && cfg.officeLat !== null && cfg.officeLng !== null) {
+        const probe = evaluateGeofence({ officeLat: cfg.officeLat, officeLng: cfg.officeLng, radiusM: cfg.geoRadiusM, lat, lng, accuracyM });
+        distanceM = probe.distanceM;
+      }
+      return { blocked: null, lat, lng, accuracyM, distanceM, inArea: null };
+    }
+
+    const verdict = evaluateGeofence({
+      officeLat: cfg.officeLat as number, officeLng: cfg.officeLng as number,
+      radiusM: cfg.geoRadiusM, lat, lng, accuracyM,
+    });
+    if (verdict.ok) {
+      return { blocked: null, lat, lng, accuracyM, distanceM: verdict.distanceM, inArea: 1 };
+    }
+    return {
+      blocked: { status: verdict.code === "NO_LOCATION" ? 428 : 403, code: verdict.code, error: verdict.error },
+      lat, lng, accuracyM, distanceM: verdict.distanceM, inArea: verdict.inArea,
     };
   }
 
@@ -13375,14 +13439,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           excused: !!r.late_excused,
           excusedBy: r.excused_by ? (nameById.get(Number(r.excused_by)) ?? null) : null,
           excuseReason: r.excuse_reason ?? null,
-          request: request ? {
-            id: request.id,
-            status: request.status,
-            reason: request.reason,
-            requestedAt: request.requested_at,
-            reviewedAt: request.reviewed_at ?? null,
-            reviewerNote: request.reviewer_note ?? "",
-          } : null,
+          // Use the shared projection: this is what the Check-Ins page actually
+          // renders from, and a hand-rolled subset here silently hid the
+          // automatic-decision fields, leaving the "ask a human" escalation
+          // unreachable while the button existed in the markup.
+          request: attendanceSelfRequest(request ?? null),
         };
       }),
     };
@@ -13398,6 +13459,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       requestedAt: row.requested_at,
       reviewedAt: row.reviewed_at ?? null,
       reviewerNote: row.reviewer_note ?? "",
+      // An automatic decision is shown as such, and stays challengeable until
+      // the employee has actually asked for a human.
+      autoDecision: row.auto_decision ?? null,
+      autoRationale: row.auto_rationale ?? "",
+      humanReviewRequested: Number(row.human_review_requested ?? 0) === 1,
+      canRequestHumanReview:
+        (row.auto_decision === "approved" || row.auto_decision === "denied")
+        && Number(row.human_review_requested ?? 0) !== 1,
     } : null;
   }
 
@@ -13532,6 +13601,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         code: network.code,
       });
     }
+    // Off the office network? Then be within the fence (200m by default).
+    // Staff only — the LO/LOA portal check-in above is for people who are not
+    // at the office at all, so an office fence would be nonsense there.
+    const geo = checkinGeofence(req, cfg, req.body);
+    if (geo.blocked) {
+      return res.status(geo.blocked.status).json({
+        error: geo.blocked.error,
+        code: geo.blocked.code,
+        // The client uses this to know it should ask for location and retry.
+        needsLocation: geo.blocked.code === "NO_LOCATION",
+      });
+    }
     const me = me0;
     const tz = tz0;
     // Lateness is measured against THIS person's scheduled start for today (the
@@ -13553,7 +13634,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     const checkin = storageExtra.saveCheckin({
       orgId, userId, date, checkedInAt: new Date().toISOString(),
-      lat: null, lng: null, accuracyM: null, distanceM: null, inArea: null,
+      lat: geo.lat, lng: geo.lng, accuracyM: geo.accuracyM, distanceM: geo.distanceM, inArea: geo.inArea,
       ipAddress: network.ipAddress, ipAllowed: network.ipAllowed, onTime,
       minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null,
       expectedStart: judged ? exp.start : null,
@@ -13561,7 +13642,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     audit({
       userId, userName: me?.name ?? "Unknown", action: "create", entityType: "checkin", entityId: checkin?.id ?? null,
       entityLabel: `${me?.name ?? "User"} morning check-in`,
-      details: JSON.stringify({ date, onTime: onTime == null ? null : !!onTime, minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", ipAllowed: network.ipAllowed == null ? null : !!network.ipAllowed }),
+      details: JSON.stringify({ date, onTime: onTime == null ? null : !!onTime, minutesLate: onTime === 0 ? minutesLate : onTime === 1 ? 0 : null, expectedStart: judged ? exp.start : null, scheduledOff: !exp.working, noSchedule: exp.source === "none", ipAllowed: network.ipAllowed == null ? null : !!network.ipAllowed, distanceM: geo.distanceM }),
     });
 
     // Policy: 3 lates per rolling 90 days. When this check-in is the one that
@@ -13639,8 +13720,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       requestedByUserId: userId,
     });
     const requester = storage.getUserById(userId) as any;
+    let request: any = result.request;
     if (result.created || result.resubmitted) {
-      await notifyAttendanceManagers(orgId, requester?.name ?? "A team member", String(checkin.date), userId);
       audit({
         userId,
         userName: requester?.name ?? "Unknown",
@@ -13650,8 +13731,136 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         entityLabel: `${requester?.name ?? "User"} late on ${checkin.date}`,
         details: JSON.stringify({ checkinId, attendanceDate: checkin.date, requestedVia: "app" }),
       });
+      // Claude makes the obvious calls; only a genuinely debatable one reaches a
+      // manager. Every failure path returns "unsure", so this degrades into the
+      // old behaviour rather than into a guess.
+      request = await autoReviewLateExcuse(orgId, Number(result.request.id), {
+        reason,
+        employeeName: requester?.name ?? "A team member",
+        attendanceDate: String(checkin.date),
+        expectedStart: checkin.expected_start ?? null,
+      }) ?? request;
     }
-    res.json({ ok: true, request: attendanceSelfRequest(result.request) });
+    res.json({ ok: true, request: attendanceSelfRequest(request) });
+  });
+
+
+  // ── Automatic first pass on late excuses ─────────────────────────────────────
+  // Owner ruling 2026-08-28: managers should only see the debatable ones.
+  // Traffic and a bare "personal matter" are denied, an agreed absence or a
+  // forgotten clock-in is excused, and anything else goes to a person. The
+  // employee can always ask for a human to look again.
+
+  /**
+   * The reviewer of record for an automatic decision. A real users row, because
+   * reviewAttendanceExcuseRequest validates the reviewer against the org — and
+   * because an audit trail should name who decided. It cannot sign in: no
+   * password is ever set on it.
+   */
+  function autoReviewUserId(orgId: number): number {
+    const sqlite = storageExtra.getRawSqlite();
+    const email = `auto-review@c3.internal`;
+    const found = sqlite.prepare(`SELECT id FROM users WHERE org_id=? AND email=?`).get(orgId, email) as any;
+    if (found?.id) return Number(found.id);
+    const info = sqlite.prepare(
+      `INSERT INTO users (org_id, name, email, role, is_active, exclude_from_stats, in_daily_assignments, created_at)
+       VALUES (?, 'C3 Auto-Review', ?, 'viewer', 1, 1, 0, ?)`,
+    ).run(orgId, email, new Date().toISOString());
+    return Number(info.lastInsertRowid);
+  }
+
+  function stampAutoDecision(requestId: number, verdict: string, rationale: string, model: string): void {
+    storageExtra.getRawSqlite().prepare(
+      `UPDATE attendance_excuse_requests SET auto_decision=?, auto_rationale=?, auto_model=?, auto_decided_at=? WHERE id=?`,
+    ).run(verdict, rationale.slice(0, 600), model, new Date().toISOString(), requestId);
+  }
+
+  function attendanceRequestRow(orgId: number, requestId: number): any {
+    return storageExtra.getRawSqlite()
+      .prepare(`SELECT * FROM attendance_excuse_requests WHERE id=? AND org_id=?`).get(requestId, orgId);
+  }
+
+  /** Returns the updated row, or null if it could not act. */
+  async function autoReviewLateExcuse(orgId: number, requestId: number, input: {
+    reason: string; employeeName: string; attendanceDate: string; expectedStart: string | null;
+  }): Promise<any | null> {
+    let verdict: "approved" | "denied" | "unsure" = "unsure";
+    let rationale = "This needs a manager to review.";
+    let model = "";
+    try {
+      const call = await adjudicateLateExcuse(input);
+      verdict = call.verdict; rationale = call.rationale; model = call.model;
+    } catch (error: any) {
+      console.error("[late-excuse] adjudicator threw:", error?.message ?? error);
+    }
+    try { stampAutoDecision(requestId, verdict, rationale, model); } catch {}
+
+    if (verdict === "unsure") {
+      // Exactly the old behaviour: the managers get it.
+      await notifyAttendanceManagers(orgId, input.employeeName, input.attendanceDate, undefined);
+      return attendanceRequestRow(orgId, requestId);
+    }
+    try {
+      const lateWindowEnd = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+      const result = storageExtra.reviewAttendanceExcuseRequest({
+        orgId,
+        requestId,
+        status: verdict,
+        reviewedByUserId: autoReviewUserId(orgId),
+        reviewerNote: rationale,
+        lateWindowStart: addIsoDays(lateWindowEnd, -(CHECKIN_LATE_WINDOW_DAYS - 1)),
+        lateWindowEnd,
+      });
+      audit({
+        userId: 0, userName: "C3 Auto-Review", action: "update",
+        entityType: "attendance_excuse_request", entityId: requestId,
+        entityLabel: `${input.employeeName} late on ${input.attendanceDate}`,
+        details: JSON.stringify({ status: verdict, automatic: true, model }),
+      });
+      // Tell the employee either way — an automatic denial they never see is
+      // just a silent decision. Managers are deliberately NOT notified.
+      notifyAttendanceUserDecision(Number((result.request as any).subject_id), input.attendanceDate, verdict);
+      return attendanceRequestRow(orgId, requestId);
+    } catch (error: any) {
+      console.error("[late-excuse] could not apply automatic decision:", error?.message ?? error);
+      await notifyAttendanceManagers(orgId, input.employeeName, input.attendanceDate, undefined);
+      return attendanceRequestRow(orgId, requestId);
+    }
+  }
+
+  // The employee asks a human to look at an automatic decision. This is what
+  // makes an automatic call safe to make at all.
+  app.post("/api/checkin/excuse-requests/:id/human-review", requireAuth, async (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId);
+    const requestId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(requestId) || requestId <= 0) return res.status(400).json({ error: "Invalid request id." });
+    const row = attendanceRequestRow(orgId, requestId);
+    // Only your own request, and only one a machine decided.
+    if (!row || row.subject_type !== "user" || Number(row.subject_id) !== userId) {
+      return res.status(404).json({ error: "Request was not found." });
+    }
+    if (!row.auto_decision || row.auto_decision === "unsure") {
+      return res.status(400).json({ error: "A manager is already reviewing this one." });
+    }
+    if (Number(row.human_review_requested) === 1) {
+      return res.status(409).json({ error: "A manager has already been asked to look at this." });
+    }
+    const note = String(req.body?.note ?? "").trim().slice(0, 500);
+    const me = storage.getUserById(userId) as any;
+    storageExtra.getRawSqlite().prepare(`
+      UPDATE attendance_excuse_requests
+         SET human_review_requested=1, human_review_requested_at=?, status='pending',
+             reviewed_by=NULL, reviewed_at=NULL, updated_at=?
+       WHERE id=? AND org_id=?`).run(new Date().toISOString(), new Date().toISOString(), requestId, orgId);
+    audit({
+      userId, userName: me?.name ?? "User", action: "update",
+      entityType: "attendance_excuse_request", entityId: requestId,
+      entityLabel: `${me?.name ?? "User"} asked for a human review`,
+      details: JSON.stringify({ note: note || null, overturning: row.auto_decision }),
+    });
+    await notifyAttendanceManagers(orgId, me?.name ?? "A team member", String(row.attendance_date), undefined);
+    res.json({ ok: true, request: attendanceSelfRequest(attendanceRequestRow(orgId, requestId)) });
   });
 
   // Manager/admin: private review queue. This is deliberately separate from
@@ -13950,6 +14159,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         networkMode: cfg.networkMode,
         networkConfigured: cfg.allowedIps.length > 0,
         allowedIps: canManageNetwork ? cfg.allowedIps : undefined,
+        geoMode: cfg.geoMode,
+        geoRadiusM: cfg.geoRadiusM,
+        officeLat: canManageNetwork ? cfg.officeLat : undefined,
+        officeLng: canManageNetwork ? cfg.officeLng : undefined,
+        geoConfigured: cfg.officeLat !== null && cfg.officeLng !== null,
       },
       clrs, los, loas,
       policy: { allowance: CHECKIN_LATE_ALLOWANCE, windowDays: CHECKIN_LATE_WINDOW_DAYS, windowStart },
@@ -14342,6 +14556,41 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         return res.status(400).json({ error: "Enter only valid, unique IPv4 or IPv6 addresses." });
       }
       patch.checkinAllowedIps = JSON.stringify(normalized);
+    }
+    // Geofence. Turning it ON without an office location would refuse every
+    // off-network check-in, so that combination is rejected outright rather
+    // than accepted and left to fail on real people tomorrow morning.
+    if (b.geoMode !== undefined && ["enforce", "off"].includes(String(b.geoMode))) {
+      patch.checkinGeoMode = String(b.geoMode);
+    }
+    if (b.officeLat !== undefined || b.officeLng !== undefined) {
+      const lat = b.officeLat === null || b.officeLat === "" ? null : Number(b.officeLat);
+      const lng = b.officeLng === null || b.officeLng === "" ? null : Number(b.officeLng);
+      if (lat === null && lng === null) {
+        patch.checkinOfficeLat = null;
+        patch.checkinOfficeLng = null;
+      } else if (!isValidLatLng(lat, lng)) {
+        return res.status(400).json({ error: "Enter a valid office latitude and longitude." });
+      } else {
+        patch.checkinOfficeLat = lat;
+        patch.checkinOfficeLng = lng;
+      }
+    }
+    if (b.geoRadiusM !== undefined) {
+      const r = Math.round(Number(b.geoRadiusM));
+      if (!Number.isFinite(r) || r < 25 || r > 5000) {
+        return res.status(400).json({ error: "The radius must be between 25m and 5000m." });
+      }
+      patch.checkinGeoRadiusM = r;
+    }
+    {
+      const current = checkinConfig();
+      const nextMode = patch.checkinGeoMode ?? current.geoMode;
+      const nextLat = patch.checkinOfficeLat !== undefined ? patch.checkinOfficeLat : current.officeLat;
+      const nextLng = patch.checkinOfficeLng !== undefined ? patch.checkinOfficeLng : current.officeLng;
+      if (nextMode === "enforce" && (nextLat === null || nextLng === null)) {
+        return res.status(400).json({ error: "Set the office location before turning the distance check on." });
+      }
     }
     if (Object.keys(patch).length) {
       // Audit before/after. This route silently replaced the approved-IP list

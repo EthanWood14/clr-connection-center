@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { checkinPosition } from "@/lib/checkin-location";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +47,12 @@ type ExcuseRequestSummary = {
   reason?: string | null;
   requestedAt?: string | null;
   reviewerNote?: string | null;
+  // Set when Claude made the first-pass call. "unsure" means it declined to
+  // decide and a manager already has it.
+  autoDecision?: "approved" | "denied" | "unsure" | null;
+  autoRationale?: string | null;
+  humanReviewRequested?: boolean;
+  canRequestHumanReview?: boolean;
 };
 type LateRow = {
   id: number; date: string; checkedInAt: string; minutesLate: number | null; expectedStart: string | null;
@@ -512,12 +519,23 @@ export default function CheckIns() {
         variant: ci?.on_time === 0 ? "destructive" : undefined,
       });
     },
-    onError: (e: any) => toast({ title: "Couldn't check in", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({
+      title: /location/i.test(String(e?.message ?? "")) ? "Location needed to check in" : "Couldn't check in",
+      description: e?.message,
+      variant: "destructive",
+    }),
   });
 
-  function doCheckIn() {
+  const [locating, setLocating] = useState(false);
+
+  async function doCheckIn() {
     checkinMut.reset();
-    checkinMut.mutate({});
+    // Send the location every time. On the office network the server ignores
+    // it; off the network it is what proves you are actually here.
+    setLocating(true);
+    let position: { lat?: number; lng?: number; accuracyM?: number } = {};
+    try { position = await checkinPosition(); } finally { setLocating(false); }
+    checkinMut.mutate(position);
   }
 
   const stats = me?.lateStats;
@@ -535,6 +553,16 @@ export default function CheckIns() {
       toast({ title: "Excuse request sent", description: "A manager will review your reason." });
     },
     onError: (e: any) => toast({ title: "Couldn't send request", description: e?.message, variant: "destructive" }),
+  });
+
+  // An automatic decision is never final — this is the escalation.
+  const humanReviewMut = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/checkin/excuse-requests/${id}/human-review`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin"] });
+      toast({ title: "Sent to a manager", description: "Someone will take another look." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't send", description: e?.message, variant: "destructive" }),
   });
 
   // Managers can reverse a late (and undo the reversal). The row keeps its real
@@ -785,6 +813,28 @@ export default function CheckIns() {
                         <span className="font-semibold">Reviewer note:</span> {mineRequest.reviewerNote}
                       </p>
                     )}
+                    {mineRequest.autoDecision && mineRequest.autoDecision !== "unsure" && (
+                      <p className="mt-2 text-[11px] opacity-80" data-testid="attendance-auto-decided">
+                        Decided automatically. If that is not right, a manager can take another look.
+                      </p>
+                    )}
+                    {mineRequest.humanReviewRequested && (
+                      <p className="mt-2 text-[11px] font-semibold" data-testid="attendance-human-requested">
+                        A manager has been asked to review this.
+                      </p>
+                    )}
+                    {mineRequest.canRequestHumanReview && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-3 bg-background"
+                        disabled={humanReviewMut.isPending}
+                        onClick={() => humanReviewMut.mutate(mineRequest.id)}
+                        data-testid="attendance-request-human"
+                      >
+                        Ask a manager to review this
+                      </Button>
+                    )}
                     {(mineRequest.status === "denied" || mineRequest.status === "cancelled") && (
                       <div className="mt-3 border-t border-current/20 pt-3">
                         <label className="block text-xs font-medium">
@@ -867,7 +917,7 @@ export default function CheckIns() {
               </Button>
               {me.networkMode !== "off" && (
                 <p className="text-[11px] text-muted-foreground">
-                  C3 checks the connection IP automatically. No location permission is requested.
+                  C3 checks the connection IP automatically. Off the office network it also asks your device for location, to confirm you are at the office.
                 </p>
               )}
             </div>
@@ -889,7 +939,7 @@ export default function CheckIns() {
               </Button>
               {me?.networkMode !== "off" && (
                 <p className="text-[11px] text-muted-foreground">
-                  C3 checks the connection IP automatically. No location permission is requested.
+                  C3 checks the connection IP automatically. Off the office network it also asks your device for location, to confirm you are at the office.
                 </p>
               )}
             </div>

@@ -247,13 +247,29 @@ test("the server derives check-in IPs and never trusts the request body", () => 
   assert.match(fn, /evaluateCheckinIp/);
 });
 
-test("check-in clients no longer request browser geolocation", () => {
-  for (const f of ["client/src/pages/check-ins.tsx", "client/src/pages/dashboard.tsx", "client/src/pages/portal.tsx"]) {
+test("only the staff check-in asks for location, and only to prove office proximity", () => {
+  // History: GPS was removed from every check-in client in favour of IP
+  // verification. The owner reinstated it on 2026-08-28, deliberately and
+  // narrowly — someone OFF the approved office network must now prove they are
+  // within the fence. The rule that matters is the narrowness.
+  //
+  // The external LO/LOA portal is untouched: those people are not at the office
+  // at all, so an office fence would be nonsense and asking them for location
+  // would be a pure privacy cost with no purpose.
+  const portal = read("client/src/pages/portal.tsx");
+  assert.doesNotMatch(portal, /navigator\.geolocation/, "the external portal must not request GPS");
+  assert.match(portal, /no location permission is requested/i);
+
+  // Staff check-in starts from two places; both must behave the same, or a
+  // dashboard check-in would be refused with no way to comply.
+  const helper = read("client/src/lib/checkin-location.ts");
+  assert.match(helper, /navigator\.geolocation/);
+  for (const f of ["client/src/pages/check-ins.tsx", "client/src/pages/dashboard.tsx"]) {
     const src = read(f);
-    assert.doesNotMatch(src, /navigator\.geolocation/, `${f} must not request GPS`);
-    assert.doesNotMatch(src, /accuracyM/, `${f} must not submit browser accuracy`);
-    assert.match(src, /no location permission is requested/i,
-      `${f} should explain that IP verification is automatic`);
+    assert.match(src, /checkinPosition/, `${f} must send location with a staff check-in`);
+    assert.doesNotMatch(src, /navigator\.geolocation/, `${f} should use the shared helper, not its own copy`);
+    assert.doesNotMatch(src, /no location permission is requested/i,
+      `${f} must not still promise that location is never requested`);
   }
 });
 
