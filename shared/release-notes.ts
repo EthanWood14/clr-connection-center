@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.13.0",
+    headline: "C3 opens much faster.",
+    items: [
+      { text: "Opening C3 used to download and start up the entire app — every screen, every chart, the whole portal — before showing you anything. It now loads only the screen you are on, so first entry is roughly a fifth of what it was. Pages you visit load in the background as you go.", audience: "everyone" },
+      { text: "Releases are lighter too: the parts that rarely change are kept separately, so a new version no longer makes everyone re-download everything.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.12.0",
     headline: "Late excuses answer themselves, and off-site check-ins prove they are here.",
     items: [

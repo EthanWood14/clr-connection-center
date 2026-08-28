@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route, Router, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -28,70 +29,70 @@ import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { DailyLoPrioritiesModal, dailyLoPrioritiesStorageKey } from "@/components/daily-lo-priorities-modal";
 import { businessTodayInTz } from "@/lib/business-day";
 
-import Dashboard from "@/pages/dashboard";
-import Directory from "@/pages/directory";
-import Assignments from "@/pages/assignments";
-import Outcomes from "@/pages/outcomes";
-import Leaderboard from "@/pages/leaderboard";
-import TeamStats from "@/pages/team-stats";
-import Settings from "@/pages/settings";
-import StateLookup from "@/pages/state-lookup";
-import CallHours from "@/pages/call-hours";
-import Appointments from "@/pages/appointments";
-import FallThroughs from "@/pages/fall-throughs";
-import Snooze from "@/pages/snooze";
-import Reporting from "@/pages/reporting";
-import AuditLog from "@/pages/audit-log";
-import NmlsChecks from "@/pages/nmls-checks";
-import NmlsStatus from "@/pages/nmls-status";
-import LoPerformance from "@/pages/lo-performance";
-import PrivacyPolicy from "@/pages/privacy-policy";
-import TermsOfUse from "@/pages/terms-of-use";
-import Chat from "@/pages/chat";
-import EodReport from "@/pages/eod-report";
-import EodAnalytics from "@/pages/eod-analytics";
-import AppReview from "@/pages/app-review";
-import ManagerDashboard from "@/pages/manager-dashboard";
-import TimeOff from "@/pages/time-off";
-import CompRequests from "@/pages/comp-requests";
-import TimeClock from "@/pages/time-clock";
-import WeeklySchedule from "@/pages/weekly-schedule";
-import MyReport from "@/pages/my-report";
-import ReportsArchive from "@/pages/reports-archive";
-import InstallApp from "@/pages/install";
-import Support from "@/pages/support";
-import IntroVideo from "@/pages/intro-video";
-import CallScript from "@/pages/call-script";
-import GlossaryPage from "@/pages/glossary";
-import LoVacation from "@/pages/lo-vacation";
-import WebhookSettings from "@/pages/webhook-settings";
-import Integrations from "@/pages/integrations";
-import BonzoProspects from "@/pages/bonzo-prospects";
-import MojoSessions from "@/pages/mojo-sessions";
-import OutboundCalls from "@/pages/outbound-calls";
-import Contacts from "@/pages/contacts";
-import MojoImport from "@/pages/mojo-import";
-import Forum from "@/pages/forum";
-import LeadSources from "@/pages/lead-sources";
-import CheckIns from "@/pages/check-ins";
-import ClrProfiles from "@/pages/clr-profiles";
-import ClrProfile from "@/pages/clr-profile";
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+const Directory = lazy(() => import("@/pages/directory"));
+const Assignments = lazy(() => import("@/pages/assignments"));
+const Outcomes = lazy(() => import("@/pages/outcomes"));
+const Leaderboard = lazy(() => import("@/pages/leaderboard"));
+const TeamStats = lazy(() => import("@/pages/team-stats"));
+const Settings = lazy(() => import("@/pages/settings"));
+const StateLookup = lazy(() => import("@/pages/state-lookup"));
+const CallHours = lazy(() => import("@/pages/call-hours"));
+const Appointments = lazy(() => import("@/pages/appointments"));
+const FallThroughs = lazy(() => import("@/pages/fall-throughs"));
+const Snooze = lazy(() => import("@/pages/snooze"));
+const Reporting = lazy(() => import("@/pages/reporting"));
+const AuditLog = lazy(() => import("@/pages/audit-log"));
+const NmlsChecks = lazy(() => import("@/pages/nmls-checks"));
+const NmlsStatus = lazy(() => import("@/pages/nmls-status"));
+const LoPerformance = lazy(() => import("@/pages/lo-performance"));
+const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy"));
+const TermsOfUse = lazy(() => import("@/pages/terms-of-use"));
+const Chat = lazy(() => import("@/pages/chat"));
+const EodReport = lazy(() => import("@/pages/eod-report"));
+const EodAnalytics = lazy(() => import("@/pages/eod-analytics"));
+const AppReview = lazy(() => import("@/pages/app-review"));
+const ManagerDashboard = lazy(() => import("@/pages/manager-dashboard"));
+const TimeOff = lazy(() => import("@/pages/time-off"));
+const CompRequests = lazy(() => import("@/pages/comp-requests"));
+const TimeClock = lazy(() => import("@/pages/time-clock"));
+const WeeklySchedule = lazy(() => import("@/pages/weekly-schedule"));
+const MyReport = lazy(() => import("@/pages/my-report"));
+const ReportsArchive = lazy(() => import("@/pages/reports-archive"));
+const InstallApp = lazy(() => import("@/pages/install"));
+const Support = lazy(() => import("@/pages/support"));
+const IntroVideo = lazy(() => import("@/pages/intro-video"));
+const CallScript = lazy(() => import("@/pages/call-script"));
+const GlossaryPage = lazy(() => import("@/pages/glossary"));
+const LoVacation = lazy(() => import("@/pages/lo-vacation"));
+const WebhookSettings = lazy(() => import("@/pages/webhook-settings"));
+const Integrations = lazy(() => import("@/pages/integrations"));
+const BonzoProspects = lazy(() => import("@/pages/bonzo-prospects"));
+const MojoSessions = lazy(() => import("@/pages/mojo-sessions"));
+const OutboundCalls = lazy(() => import("@/pages/outbound-calls"));
+const Contacts = lazy(() => import("@/pages/contacts"));
+const MojoImport = lazy(() => import("@/pages/mojo-import"));
+const Forum = lazy(() => import("@/pages/forum"));
+const LeadSources = lazy(() => import("@/pages/lead-sources"));
+const CheckIns = lazy(() => import("@/pages/check-ins"));
+const ClrProfiles = lazy(() => import("@/pages/clr-profiles"));
+const ClrProfile = lazy(() => import("@/pages/clr-profile"));
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ChangePassword from "@/pages/change-password";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
-import SuperAdmin from "@/pages/super-admin";
+const SuperAdmin = lazy(() => import("@/pages/super-admin"));
 import InviteAccept from "@/pages/invite";
-import Portal from "@/pages/portal";
+const Portal = lazy(() => import("@/pages/portal"));
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
-import SeatingChart from "@/pages/seating-chart";
-import ClrTraining from "@/pages/clr-training";
-import ClrTrainingTest from "@/pages/clr-training-test";
-import ClrTasks from "@/pages/clr-tasks";
-import Shotgun from "@/pages/shotgun";
-import { LapApp } from "@/components/lap/lap-shell";
+const SeatingChart = lazy(() => import("@/pages/seating-chart"));
+const ClrTraining = lazy(() => import("@/pages/clr-training"));
+const ClrTrainingTest = lazy(() => import("@/pages/clr-training-test"));
+const ClrTasks = lazy(() => import("@/pages/clr-tasks"));
+const Shotgun = lazy(() => import("@/pages/shotgun"));
+const LapApp = lazy(() => import("@/components/lap/lap-shell").then((m) => ({ default: m.LapApp })));
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -429,6 +430,11 @@ export default function App() {
       <TooltipProvider>
         <Router hook={useHashLocation}>
           <AuthProvider>
+            {/* Pages load on demand, so every route sits under one boundary.
+                The fallback is deliberately blank: a spinner that flashes for
+                80ms reads as jank, and SplashScreen already covers the real
+                first paint. */}
+            <Suspense fallback={<div className="min-h-screen bg-background" />}>
             <Switch>
               <Route path="/login" component={Login} />
               <Route path="/change-password" component={ChangePassword} />
@@ -448,6 +454,7 @@ export default function App() {
                 <AuthenticatedApp />
               </Route>
             </Switch>
+            </Suspense>
           </AuthProvider>
         </Router>
         <Toaster />

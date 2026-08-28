@@ -68,7 +68,10 @@ test("report review is searchable, filterable, sortable, exportable, and mobile 
 });
 
 test("EOD analytics is routed and only appears in the Team menu for managers", () => {
-  assert.match(app, /import EodAnalytics/);
+  // Wired into App.tsx — statically or lazily. Pages became lazy on 2026-08-28
+  // to cut the entry bundle, so pinning the import STYLE here would fail for a
+  // change that does not affect whether the page is routed.
+  assert.match(app, /EodAnalytics = lazy\(\(\) => import\("@\/pages\/eod-analytics"\)\)|import EodAnalytics from "@\/pages\/eod-analytics"/);
   assert.match(app, /<Route path="\/eod-analytics" component=\{EodAnalytics\}/);
   assert.match(sidebar, /const managerTeamItems/);
   assert.match(sidebar, /isManagerOrAdmin \? \[\.\.\.teamItems, \.\.\.managerTeamItems\] : teamItems/);
