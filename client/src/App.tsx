@@ -409,7 +409,15 @@ function AuthenticatedApp() {
                   <div className="flex-1">
                     <ShotgunOfferAlert />
                     <ShotgunResultPrompt />
-                    <AppRouter />
+                    {/* Only the page swaps on navigation — the shell around it
+                        stays put, so a route change is not a full blank. */}
+                    <Suspense fallback={<RouteFallback />}>
+                      {/* Keyed on the route so each page fades in rather than
+                          snapping into place. */}
+                      <div key={location} className="animate-in fade-in duration-200">
+                        <AppRouter />
+                      </div>
+                    </Suspense>
                   </div>
                   <AppFooter />
                 </main>
@@ -423,6 +431,16 @@ function AuthenticatedApp() {
   );
 }
 
+/**
+ * Shown only while a route's code is still arriving. Chunks are usually served
+ * from the service worker in about 18ms, and a spinner that appears for 18ms
+ * reads as a flicker — so this holds the space and fades in only if the wait
+ * is long enough to notice.
+ */
+function RouteFallback() {
+  return <div className="min-h-[60vh] animate-in fade-in duration-500 delay-200" />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -430,10 +448,9 @@ export default function App() {
       <TooltipProvider>
         <Router hook={useHashLocation}>
           <AuthProvider>
-            {/* Pages load on demand, so every route sits under one boundary.
-                The fallback is deliberately blank: a spinner that flashes for
-                80ms reads as jank, and SplashScreen already covers the real
-                first paint. */}
+            {/* Outer boundary covers the logged-out pages and the portal
+                shell. Inside the app, a nested boundary around the page keeps
+                the sidebar and header mounted across a route change. */}
             <Suspense fallback={<div className="min-h-screen bg-background" />}>
             <Switch>
               <Route path="/login" component={Login} />

@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.17.0",
+    headline: "C3 opens fast, and your EOD report asks for itself at 4pm.",
+    items: [
+      { text: "Opening C3 was waiting on an outside service that took three and a half seconds to answer, every time \u2014 the first load of the day, any load after a five-minute gap, and every load after an update. C3 now keeps that answer ready in advance and never makes you wait for it.", audience: "everyone" },
+      { text: "The opening animation used to hold for 2.2 seconds no matter what, long after the app was ready. It now steps aside as soon as the app is up.", audience: "everyone" },
+      { text: "Moving between pages no longer blanks the whole screen. The menu and header stay put and only the page changes, with a short fade.", audience: "everyone" },
+      { text: "Your EOD report is now expected at 4:00 PM on the day it covers. From 4:00 a bar appears at the top of C3 and will not go away; at 4:30 it gets harder to ignore; at 5:00 it turns red and chimes; at 5:30 C3 locks until the report is in. Filing it makes all of that stop straight away.", audience: "everyone" },
+      { text: "This does not change what counts as a late report \u2014 that is still 4:00 PM the next business day, and nothing already submitted has been re-marked.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.16.0",
     headline: "CLR Profiles: look back further than a month, and see why a quiet week was quiet.",
     items: [

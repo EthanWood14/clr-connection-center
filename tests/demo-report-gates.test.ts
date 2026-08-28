@@ -35,7 +35,10 @@ test("the demo remains read-only while real organizations keep both gates", () =
     routes.indexOf('app.get("/api/auth/eod-lock-status"'),
     routes.indexOf('// Admin-only: Complete System Manual PDF'),
   );
-  assert.match(eodEndpoint, /locked: missingDates\.length > 0, missingDates/);
+  // Real orgs still lock on a missing report. (The endpoint also locks on the
+  // 5:30pm rung for today's report; both paths must survive the demo check.)
+  assert.match(eodEndpoint, /locked: missingDates\.length > 0/);
+  assert.match(eodEndpoint, /missingDates,/);
 
   const dailyEndpoint = routes.slice(
     routes.indexOf('app.get("/api/call-logs/check-previous-day"'),

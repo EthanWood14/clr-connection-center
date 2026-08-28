@@ -25,8 +25,10 @@ export function SplashScreen() {
   useEffect(() => {
     if (!show) return;
     try { sessionStorage.setItem(sessionKey, "1"); } catch {}
-    const fadeTimer = setTimeout(() => setFading(true), 1850);
-    const unmountTimer = setTimeout(() => setShow(false), 2200);
+    // Long enough for the logo roll (0.95s) to read as deliberate, short
+    // enough that it is not covering an app that is already up.
+    const fadeTimer = setTimeout(() => setFading(true), 700);
+    const unmountTimer = setTimeout(() => setShow(false), 1000);
     return () => { clearTimeout(fadeTimer); clearTimeout(unmountTimer); };
   }, [show, sessionKey]);
 

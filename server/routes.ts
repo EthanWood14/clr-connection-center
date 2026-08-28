@@ -15,6 +15,7 @@ import { Resend } from "resend";
 import cron from "node-cron";
 
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
+import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
 import { adjudicateLateExcuse, lateExcuseConfigured } from "./late-excuse";
@@ -38,7 +39,7 @@ import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, com
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBonzoSource } from "./shotgun-bonzo";
@@ -4963,7 +4964,33 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const r = storageExtra.getEodReport(d, userId);
       if (!r) missingDates.push(d);
     }
-    res.json({ locked: missingDates.length > 0, missingDates });
+
+    // Today's report is expected at 4pm, and C3 gets progressively harder to
+    // ignore until it arrives. This is a prompt, not a verdict: lateness is
+    // still judged at 4pm the NEXT business day (eodIsOverdue), so nothing
+    // here touches the late statistics.
+    const todayDate = businessTodayInTz(timezone);
+    const clock = wallClockInTz(timezone);
+    const dow = new Date(`${todayDate}T12:00:00Z`).getUTCDay();
+    const submittedToday = !!storageExtra.getEodReport(todayDate, userId);
+    const stage: EodNagStage = eodNagStage({
+      submitted: submittedToday,
+      hour: clock.hour,
+      minute: clock.minute,
+      expectedToday: dow >= 1 && dow <= 5 && (!createdDate || todayDate >= createdDate),
+    });
+
+    res.json({
+      locked: missingDates.length > 0 || eodNagLocks(stage),
+      missingDates,
+      today: {
+        date: todayDate,
+        submitted: submittedToday,
+        stage,
+        chime: eodNagChimes(stage),
+        chimeIntervalMs: EOD_NAG_CHIME_INTERVAL_MS,
+      },
+    });
   });
 
   // Admin-only: Complete System Manual PDF.
@@ -16535,8 +16562,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // summary at /api/clr/outbound-summary. Token: LEADVAULT_REPORTING_TOKEN env
   // first, then webhook_settings.leadvault_reporting_token (Integrations page).
   // The token travels in the x-api-token header only — never in the URL.
-  const OUTBOUND_CALLS_CACHE_TTL_MS = 5 * 60 * 1000;
+  // Fresh enough to serve without asking again. These are whole-day rollups,
+  // so a five-minute window bought nothing and cost a 3.5-second wait.
+  const OUTBOUND_CALLS_CACHE_TTL_MS = 30 * 60 * 1000;
+  // Past this the cached copy is too old to show at all, and a caller waits.
+  const OUTBOUND_CALLS_STALE_MAX_MS = 12 * 60 * 60 * 1000;
   const outboundCallsCache = new Map<number, { at: number; data: any }>();
+  // One refresh at a time per window. Without this, a cold cache and three
+  // managers opening the dashboard together meant three 3.5-second fetches.
+  const outboundCallsInFlight = new Map<number, Promise<any>>();
 
   function leadvaultReportingToken(): string {
     const env = (process.env.LEADVAULT_REPORTING_TOKEN || "").trim();
@@ -16560,6 +16594,45 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
    * Shares the 5-minute outbound-calls cache; a dashboard load must not add a
    * live upstream round-trip.
    */
+  /** The actual upstream call. Deduped, so concurrent callers share one fetch. */
+  function fetchOutboundSummary(window: number, token: string): Promise<any> {
+    const existing = outboundCallsInFlight.get(window);
+    if (existing) return existing;
+    const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
+    const run = (async () => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10_000);
+      try {
+        const upstream = await fetch(`${base}/api/clr/outbound-summary?days=${window}`, {
+          headers: { "x-api-token": token, Accept: "application/json" },
+          signal: ctrl.signal,
+        });
+        if (!upstream.ok) return null;
+        const json: any = await upstream.json().catch(() => null);
+        if (!json || !Array.isArray(json.agents)) return null;
+        const payload = { configured: true, ...json, days: window };
+        outboundCallsCache.set(window, { at: Date.now(), data: payload });
+        return payload;
+      } catch { return null; } finally {
+        clearTimeout(timer);
+        outboundCallsInFlight.delete(window);
+      }
+    })();
+    outboundCallsInFlight.set(window, run);
+    return run;
+  }
+
+  /**
+   * Warm the cache off the request path. Called at boot and on a slow timer so
+   * that by the time anyone opens the dashboard the answer is already sitting
+   * in memory.
+   */
+  function warmOutboundCallsCache(): void {
+    const token = leadvaultReportingToken();
+    if (!token) return;
+    void fetchOutboundSummary(90, token).catch(() => {});
+  }
+
   async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
     const out = new Map<string, number>();
     const token = leadvaultReportingToken();
@@ -16567,26 +16640,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const window = [7, 30, 90].includes(days) ? days : 90;
     try {
       const cached = outboundCallsCache.get(window);
-      let payload = cached && Date.now() - cached.at < OUTBOUND_CALLS_CACHE_TTL_MS ? cached.data : null;
-      if (!payload) {
-        const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 10_000);
-        try {
-          const upstream = await fetch(`${base}/api/clr/outbound-summary?days=${window}`, {
-            headers: { "x-api-token": token, Accept: "application/json" },
-            signal: ctrl.signal,
-          });
-          if (!upstream.ok) return out;
-          const json: any = await upstream.json().catch(() => null);
-          if (!json || !Array.isArray(json.agents)) return out;
-          payload = { configured: true, ...json, days: window };
-          outboundCallsCache.set(window, { at: Date.now(), data: payload });
-        } finally {
-          clearTimeout(timer);
-        }
+      const age = cached ? Date.now() - cached.at : Infinity;
+      let payload: any = null;
+      if (cached && age < OUTBOUND_CALLS_CACHE_TTL_MS) {
+        payload = cached.data;
+      } else if (cached && age < OUTBOUND_CALLS_STALE_MAX_MS) {
+        // Serve what we have and refresh behind the request. A dashboard that
+        // is a few minutes stale beats one that takes four seconds.
+        payload = cached.data;
+        void fetchOutboundSummary(window, token).catch(() => {});
+      } else {
+        payload = await fetchOutboundSummary(window, token);
       }
-      for (const agent of payload.agents ?? []) {
+      if (!payload) return out;
+      for (const agent of (payload as any).agents ?? []) {
         if (!/^CallTools/i.test(String(agent?.agent ?? ""))) continue;
         for (const d of agent.by_day ?? []) {
           const date = String(d?.date ?? "").slice(0, 10);
@@ -16714,6 +16781,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   // Through the day, so an EOD opened at any hour sees a current number.
+  // Have the outbound-call rollup in memory before the first manager arrives.
+  // Cold, that upstream takes ~3.5s and used to block the whole dashboard.
+  setTimeout(() => warmOutboundCallsCache(), 8_000).unref?.();
+  setInterval(() => warmOutboundCallsCache(), 20 * 60 * 1000).unref?.();
+
   cron.schedule("15 * * * *", async () => {
     try {
       const orgs = (storageExtra.getRawSqlite()

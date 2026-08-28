@@ -53,7 +53,9 @@ test("today's report is never late, and the gate is what prompts instead", () =>
   // rolls over, long before the deadline can pass.
   const gate = routes.slice(routes.indexOf('app.get("/api/auth/eod-lock-status"'), routes.indexOf("Admin-only: Complete System Manual PDF"));
   assert.match(gate, /requiredEodWeekdaysInTz\(timezone, new Date\(\), 3, 10\)/);
-  assert.ok(!gate.includes("eodIsOverdue"), "the prompt must not wait for the lateness deadline");
+  // Comments may mention it; the code must not call it.
+  const gateCode = gate.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+  assert.ok(!gateCode.includes("eodIsOverdue"), "the prompt must not wait for the lateness deadline");
 });
 
 test("historical lateness is re-stamped once per rule change", () => {

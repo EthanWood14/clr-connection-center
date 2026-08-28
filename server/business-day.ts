@@ -85,6 +85,21 @@ function hourInTz(d: Date, tz: string): number {
   return isNaN(n) ? 0 : (n === 24 ? 0 : n);
 }
 
+/** Wall-clock hour and minute as observed in the given timezone. */
+export function wallClockInTz(tz: string | null | undefined, d: Date = new Date()): { hour: number; minute: number } {
+  const zone = tz || DEFAULT_TZ;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const raw = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10);
+  const h = raw("hour");
+  const m = raw("minute");
+  return {
+    hour: Number.isNaN(h) ? 0 : (h === 24 ? 0 : h),
+    minute: Number.isNaN(m) ? 0 : m,
+  };
+}
+
 // Add `days` calendar days to an ISO "YYYY-MM-DD" string. Pure string math -
 // no timezone confusion possible.
 export function addIsoDays(iso: string, days: number): string {
