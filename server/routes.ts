@@ -18996,6 +18996,67 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // One CLR's full page: identity + tenure, metrics for the period, goals,
   // a daily trend, and the operational extras (hours, attendance, comp).
+  // Dated manager notes on a CLR. Commentary, never a metric: no aggregate on
+  // this page reads clr_notes, so writing one cannot move a number or a bar.
+  app.get("/api/clr-profiles/:id/notes", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: "Invalid CLR id." });
+    // getUserById is not org-scoped, so a manager could otherwise read another
+    // tenant's people — the same check the profile routes make.
+    const u = storage.getUserById(userId) as any;
+    const uOrg = Number(u?.orgId ?? u?.org_id);
+    if (!u || (Number.isFinite(uOrg) && uOrg !== orgId)) return res.status(404).json({ error: "CLR not found." });
+    res.json({ notes: storageExtra.listClrNotes(orgId, userId) });
+  });
+
+  app.post("/api/clr-profiles/:id/notes", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: "Invalid CLR id." });
+    const u = storage.getUserById(userId) as any;
+    const uOrg = Number(u?.orgId ?? u?.org_id);
+    if (!u || (Number.isFinite(uOrg) && uOrg !== orgId)) return res.status(404).json({ error: "CLR not found." });
+    const me = storage.getUserById(actorId) as any;
+    const noteDate = String(req.body?.noteDate ?? "").trim() || businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+    try {
+      const note = storageExtra.addClrNote({
+        orgId, subjectUserId: userId, noteDate,
+        body: String(req.body?.body ?? ""),
+        authorUserId: actorId, authorName: String(me?.name ?? "Manager"),
+      });
+      audit({
+        userId: actorId, userName: me?.name ?? "Manager", action: "create",
+        entityType: "user", entityId: userId,
+        entityLabel: `Note on ${u.name ?? "CLR"} (${noteDate})`,
+        details: JSON.stringify({ noteDate }),
+      });
+      res.status(201).json({ note });
+    } catch (error: any) {
+      res.status(400).json({ error: String(error?.message ?? error) });
+    }
+  });
+
+  app.delete("/api/clr-profiles/notes/:noteId", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const noteId = parseInt(req.params.noteId, 10);
+    if (!Number.isInteger(noteId) || noteId <= 0) return res.status(400).json({ error: "Invalid note id." });
+    const me = storage.getUserById(actorId) as any;
+    const isAdmin = me?.role === "admin" || !!(me?.superAdmin ?? me?.super_admin);
+    const removed = storageExtra.deleteClrNote(orgId, noteId, actorId, isAdmin);
+    if (!removed) return res.status(404).json({ error: "Note not found, or it is not yours to remove." });
+    audit({
+      userId: actorId, userName: me?.name ?? "Manager", action: "delete",
+      entityType: "user", entityId: noteId, entityLabel: "CLR note", details: "{}",
+    });
+    res.json({ ok: true });
+  });
+
   app.get("/api/clr-profiles/:id", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const userId = parseInt(req.params.id, 10);
@@ -19018,14 +19079,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // ~9,700 DOM bars is a chart anyone wants.
       const DAILY_TREND_MAX_DAYS = 120;
       const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
-      const callLogs = (storage.getCallLogsByRange(startDate, endDate) as any[])
-        .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
       const ot = (o: any) => o.outcomeType ?? o.outcome_type;
-      const callsByDay = new Map<string, number>();
-      for (const l of callLogs) {
-        const d = l.logDate ?? l.log_date;
-        callsByDay.set(d, (callsByDay.get(d) ?? 0) + (l.callsMade ?? l.calls_made ?? 0));
-      }
       const transfersByDay = new Map<string, number>();
       const apptsByDay = new Map<string, number>();
       for (const o of outcomes) {
@@ -19033,12 +19087,56 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         if (t === "transfer") transfersByDay.set(o.date, (transfersByDay.get(o.date) ?? 0) + 1);
         else if (t === "appointment") apptsByDay.set(o.date, (apptsByDay.get(o.date) ?? 0) + 1);
       }
+
+      // The daily series used to be dominated by daily_call_logs.calls_made —
+      // which is the "Additional Calls" number a CLR types into their own EOD
+      // form. The tallest bars on the page were the least trustworthy figure on
+      // it, and they disagreed with EOD Analytics, which reads the dialer.
+      //
+      // These come from the dialer feeds instead: call time and conversations
+      // from CallTools, calls from Dialpad, and transfers/appointments from
+      // logged outcomes. Nothing here is self-reported.
+      const sqliteDb = storageExtra.getRawSqlite();
+      const numByDay = (sql: string, ...args: any[]) => {
+        const m = new Map<string, number>();
+        try {
+          for (const r of sqliteDb.prepare(sql).all(...args) as any[]) {
+            m.set(String(r.d), Number(r.n) || 0);
+          }
+        } catch { /* a feed that has never run yet simply contributes nothing */ }
+        return m;
+      };
+      const callTimeByDay = numByDay(
+        `SELECT activity_date AS d, SUM(active_seconds) AS n FROM callsync_agent_activity_daily
+          WHERE org_id=? AND assistant_id=? AND activity_date BETWEEN ? AND ? GROUP BY d`,
+        orgId, userId, startDate, endDate,
+      );
+      const conversationsByDay = numByDay(
+        `SELECT activity_date AS d, SUM(conversation) AS n FROM callsync_activity_events
+          WHERE org_id=? AND assistant_id=? AND activity_date BETWEEN ? AND ? GROUP BY d`,
+        orgId, userId, startDate, endDate,
+      );
+      const callToolsCallsByDay = numByDay(
+        `SELECT activity_date AS d, COUNT(DISTINCT COALESCE(NULLIF(call_id,''), external_event_id)) AS n
+           FROM callsync_activity_events
+          WHERE org_id=? AND assistant_id=? AND activity_date BETWEEN ? AND ? GROUP BY d`,
+        orgId, userId, startDate, endDate,
+      );
+      const dialpadByDay = numByDay(
+        `SELECT stat_date AS d, SUM(calls) AS n FROM dialpad_daily_stats
+          WHERE org_id=? AND user_id=? AND stat_date BETWEEN ? AND ? GROUP BY d`,
+        orgId, userId, startDate, endDate,
+      );
+
       const days: string[] = [];
       for (let d = startDate; d <= endDate && days.length <= DAILY_TREND_MAX_DAYS; d = addIsoDays(d, 1)) days.push(d);
       const dailyTooLong = days.length > DAILY_TREND_MAX_DAYS;
       const daily = dailyTooLong ? [] : days.map((day) => ({
         date: day,
-        calls: callsByDay.get(day) ?? 0,
+        callMinutes: Math.round((callTimeByDay.get(day) ?? 0) / 60),
+        dialpadCalls: dialpadByDay.get(day) ?? 0,
+        callToolsCalls: callToolsCallsByDay.get(day) ?? 0,
+        conversations: conversationsByDay.get(day) ?? 0,
         transfers: transfersByDay.get(day) ?? 0,
         appointments: apptsByDay.get(day) ?? 0,
       }));

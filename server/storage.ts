@@ -2428,6 +2428,28 @@ function runNewMigrations() {
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
   try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(MANAGER_EMAIL_DEFAULTS)}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
+  // Dated manager notes on a CLR.
+  //
+  // These are commentary — a conversation, a coaching point, context for a bad
+  // week. They carry their own date so they read as a log, and they are
+  // deliberately NOT a metric: nothing here is ever aggregated or plotted, so
+  // writing a note can never move a number on the profile.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS clr_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    subject_user_id INTEGER NOT NULL,
+    note_date TEXT NOT NULL,
+    body TEXT NOT NULL,
+    author_user_id INTEGER NOT NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (subject_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_user_id) REFERENCES users(id)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_notes_subject
+    ON clr_notes(org_id, subject_user_id, note_date DESC, id DESC)`);
+
   // Scheduled self-review: what Claude proposed, and what a human decided.
   // Suggestions are DATA — approving one records intent for a person to act on
   // and changes no behaviour in the app. Nothing reads these rows back as
@@ -5675,6 +5697,54 @@ export function getLoanOfficerAssistants(loId?: number) {
     ORDER BY a.full_name COLLATE NOCASE
   `).all(orgId) as any[]).map(normalizeLoa);
 }
+// ── Dated manager notes on a CLR ─────────────────────────────────────────────
+export type ClrNote = {
+  id: number; noteDate: string; body: string;
+  authorName: string; authorUserId: number; createdAt: string;
+};
+
+export function listClrNotes(orgId: number, subjectUserId: number, limit = 200): ClrNote[] {
+  return (sqlite.prepare(`
+    SELECT id, note_date, body, author_name, author_user_id, created_at
+      FROM clr_notes WHERE org_id=? AND subject_user_id=?
+     ORDER BY note_date DESC, id DESC LIMIT ?
+  `).all(orgId, subjectUserId, Math.max(1, Math.min(500, limit))) as any[]).map((r) => ({
+    id: Number(r.id),
+    noteDate: String(r.note_date),
+    body: String(r.body ?? ""),
+    authorName: String(r.author_name ?? ""),
+    authorUserId: Number(r.author_user_id),
+    createdAt: String(r.created_at),
+  }));
+}
+
+export function addClrNote(input: {
+  orgId: number; subjectUserId: number; noteDate: string; body: string;
+  authorUserId: number; authorName: string;
+}): ClrNote {
+  const body = String(input.body ?? "").trim().slice(0, 4000);
+  if (!body) throw new Error("Write the note before saving.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.noteDate))) throw new Error("The note date must be YYYY-MM-DD.");
+  const now = new Date().toISOString();
+  const info = sqlite.prepare(`
+    INSERT INTO clr_notes (org_id, subject_user_id, note_date, body, author_user_id, author_name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(input.orgId, input.subjectUserId, input.noteDate, body,
+    input.authorUserId, String(input.authorName ?? "").slice(0, 120), now, now);
+  return {
+    id: Number(info.lastInsertRowid), noteDate: input.noteDate, body,
+    authorName: String(input.authorName ?? ""), authorUserId: input.authorUserId, createdAt: now,
+  };
+}
+
+/** Only the author, or an admin, may remove a note. */
+export function deleteClrNote(orgId: number, noteId: number, actorUserId: number, actorIsAdmin: boolean): boolean {
+  const row = sqlite.prepare(`SELECT author_user_id FROM clr_notes WHERE id=? AND org_id=?`).get(noteId, orgId) as any;
+  if (!row) return false;
+  if (!actorIsAdmin && Number(row.author_user_id) !== actorUserId) return false;
+  return sqlite.prepare(`DELETE FROM clr_notes WHERE id=? AND org_id=?`).run(noteId, orgId).changes > 0;
+}
+
 // ── Email send ledger ────────────────────────────────────────────────────────
 // A send is "open" until Resend reports a terminal event for it.
 export const EMAIL_TERMINAL_EVENTS = ["delivered", "bounced", "complained", "suppressed", "canceled", "failed"];

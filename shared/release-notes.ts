@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.14.0",
+    headline: "CLR Profiles now show real phone activity, and take manager notes.",
+    items: [
+      { text: "The daily chart used to be dominated by the “Additional Calls” number a CLR types into their own EOD form — the least reliable figure on the page, and it disagreed with EOD Analytics. It now plots what the dialers actually recorded: call time, Dialpad calls, CallTools calls, conversations, transfers and appointments, with a button to switch between them.", audience: "manager" },
+      { text: "Managers can add dated notes to a CLR — what was discussed, context for a rough week. Notes are commentary only: nothing on the page counts them, so a note can never move a statistic or a bar.", audience: "manager" },
+      { text: "Off-network check-ins now require you to be within 200m of the office, using the office location C3 already had on file.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.13.0",
     headline: "C3 opens much faster.",
     items: [

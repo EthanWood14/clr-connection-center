@@ -2,20 +2,37 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   ArrowLeft, CalendarDays, PhoneForwarded, PhoneCall, Percent, CalendarCheck, Timer,
-  UserCheck, FileText, Wallet, Target, TrendingUp,
+  UserCheck, FileText, Wallet, Target, TrendingUp, X,
 } from "lucide-react";
 import { PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles";
+
+/**
+ * What a manager actually wants to see about a day on the phones. Every one of
+ * these comes from the dialer feeds or from logged outcomes — the old chart's
+ * dominant bar was the self-reported "Additional Calls" box on the EOD form.
+ */
+const DAILY_SERIES = [
+  { key: "callMinutes" as const, label: "Call time", color: "hsl(221 83% 53%)", format: (v: number) => `${v} min` },
+  { key: "dialpadCalls" as const, label: "Dialpad calls", color: "hsl(199 89% 48%)", format: (v: number) => `${v}` },
+  { key: "callToolsCalls" as const, label: "CallTools calls", color: "hsl(258 90% 66%)", format: (v: number) => `${v}` },
+  { key: "conversations" as const, label: "Conversations", color: "hsl(43 96% 46%)", format: (v: number) => `${v}` },
+  { key: "transfers" as const, label: "Transfers", color: "hsl(142 71% 45%)", format: (v: number) => `${v}` },
+  { key: "appointments" as const, label: "Appointments", color: "hsl(280 65% 60%)", format: (v: number) => `${v}` },
+];
+type DailySeriesKey = (typeof DAILY_SERIES)[number]["key"];
 
 const money = (c: number) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -49,7 +66,10 @@ type Resp = {
     futureContacts: number; noAnswer: number; transferRate: number; daysWithCalls: number;
   };
   goals: { calls: number; transfers: number; appointments: number };
-  daily: { date: string; calls: number; transfers: number; appointments: number }[];
+  daily: {
+    date: string; callMinutes: number; dialpadCalls: number; callToolsCalls: number;
+    conversations: number; transfers: number; appointments: number;
+  }[];
   hours: number;
   attendance: { checkins: number; lates: number; outsideArea: number; standing: { count: number; allowance: number; windowDays: number } };
   eodReports: number;
@@ -136,8 +156,34 @@ export default function ClrProfile() {
   });
 
   const m = data?.metrics;
-  const peakCalls = Math.max(1, ...(data?.daily ?? []).map((d) => d.calls));
-  const peakTransfers = Math.max(1, ...(data?.daily ?? []).map((d) => d.transfers));
+  const [seriesKey, setSeriesKey] = useState<DailySeriesKey>("callMinutes");
+  const activeSeries = DAILY_SERIES.find((x) => x.key === seriesKey) ?? DAILY_SERIES[0];
+  const periodTotal = (data?.daily ?? []).reduce((sum, d) => sum + Number((d as any)[seriesKey] ?? 0), 0);
+  const periodTotalLabel = `${activeSeries.label}: ${activeSeries.format(periodTotal)} across this period`;
+
+  // Notes are their own query so posting one never refetches the whole profile.
+  const notesQuery = useQuery<{ notes: { id: number; noteDate: string; body: string; authorName: string }[] }>({
+    queryKey: ["/api/clr-profiles", id, "notes"],
+    queryFn: () => apiRequest("GET", `/api/clr-profiles/${id}/notes`),
+    enabled: !!id,
+    retry: false,
+  });
+  const [noteBody, setNoteBody] = useState("");
+  const [noteDate, setNoteDate] = useState(() => new Date().toLocaleDateString("en-CA"));
+  const addNote = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/clr-profiles/${id}/notes`, { body: noteBody, noteDate }),
+    onSuccess: () => {
+      setNoteBody("");
+      queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id, "notes"] });
+      toast({ title: "Note added" });
+    },
+    onError: (e: any) => toast({ title: "Could not save the note", description: e?.message, variant: "destructive" }),
+  });
+  const removeNote = useMutation({
+    mutationFn: (noteId: number) => apiRequest("DELETE", `/api/clr-profiles/notes/${noteId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id, "notes"] }),
+    onError: (e: any) => toast({ title: "Could not remove the note", description: e?.message, variant: "destructive" }),
+  });
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto">
@@ -316,9 +362,9 @@ export default function ClrProfile() {
             </CardContent>
           </Card>
 
-          {/* Daily trend. Bar heights are px (not %) — percentage heights on a
-              grandchild of the fixed-height row resolve against an auto-height
-              parent and collapse to nothing. */}
+          {/* What the day actually looked like on the phones. Every series here
+              comes from the dialer feeds or from logged outcomes — none of it is
+              self-reported, which is what made the old "calls" bar untrustworthy. */}
           {data.dailyTooLong ? (
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base">Daily activity</CardTitle></CardHeader>
@@ -328,24 +374,109 @@ export default function ClrProfile() {
             </Card>
           ) : data.daily.length > 1 && (
             <Card>
-              <CardHeader className="pb-3"><CardTitle className="text-base">Daily activity</CardTitle></CardHeader>
-              <CardContent>
-                <div className="flex items-end gap-[2px]" style={{ height: 112 }}>
-                  {data.daily.map((d) => {
-                    const callPx = Math.round((d.calls / peakCalls) * 92);
-                    const transferPx = d.transfers > 0 ? Math.max(3, Math.round((d.transfers / peakTransfers) * 20)) : 0;
-                    return (
-                      <div key={d.date} className="flex-1 min-w-0 flex flex-col justify-end" title={`${d.date}: ${d.calls} calls, ${d.transfers} transfers, ${d.appointments} appts`}>
-                        {transferPx > 0 && <div className="w-full bg-emerald-500 rounded-t-sm" style={{ height: transferPx }} />}
-                        <div className="w-full bg-primary/30" style={{ height: Math.max(d.calls > 0 ? 2 : 0, callPx) }} />
-                      </div>
-                    );
-                  })}
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base">Daily activity</CardTitle>
+                    <CardDescription>{periodTotalLabel}</CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {DAILY_SERIES.map((sdef) => (
+                      <button
+                        key={sdef.key}
+                        type="button"
+                        onClick={() => setSeriesKey(sdef.key)}
+                        className={
+                          "rounded-md border px-2.5 py-1 text-xs transition-colors " +
+                          (seriesKey === sdef.key ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted")
+                        }
+                        data-testid={"clr-series-" + sdef.key}
+                      >
+                        {sdef.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">Calls (light) with transfers (green) on top. Peak {peakCalls} calls/day.</p>
+              </CardHeader>
+              <CardContent>
+                <div style={{ height: 240 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={data.daily} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
+                      <XAxis
+                        dataKey="date" tickLine={false} axisLine={false}
+                        tick={{ fontSize: 11 }} minTickGap={24}
+                        tickFormatter={(d: string) => d.slice(5)}
+                      />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} width={44} />
+                      <Tooltip
+                        cursor={{ className: "fill-muted/40" }}
+                        contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                        labelFormatter={(d) => String(d)}
+                        formatter={(v: any) => [activeSeries.format(Number(v)), activeSeries.label]}
+                      />
+                      <Bar dataKey={seriesKey} fill={activeSeries.color} radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </CardContent>
             </Card>
           )}
+
+          {/* Dated manager notes. Deliberately not a metric — nothing on this
+              page aggregates or plots them, so a note can never move a number. */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Manager notes</CardTitle>
+              <CardDescription>Dated commentary for context. Notes are never counted in any statistic or chart.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-[150px_1fr] sm:items-start">
+                <Input
+                  type="date" value={noteDate} onChange={(e) => setNoteDate(e.target.value)}
+                  data-testid="clr-note-date"
+                />
+                <Textarea
+                  rows={2} value={noteBody} onChange={(e) => setNoteBody(e.target.value)}
+                  placeholder="What happened, what was discussed, what to watch"
+                  data-testid="clr-note-body"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  disabled={addNote.isPending || !noteBody.trim()}
+                  onClick={() => addNote.mutate()}
+                  data-testid="clr-note-save"
+                >
+                  Add note
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {(notesQuery.data?.notes ?? []).map((n) => (
+                  <div key={n.id} className="rounded-lg border bg-muted/20 px-3 py-2" data-testid="clr-note">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {n.noteDate} · {n.authorName}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => removeNote.mutate(n.id)}
+                        className="rounded p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                        aria-label="Remove note"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-sm">{n.body}</p>
+                  </div>
+                ))}
+                {!notesQuery.isLoading && !(notesQuery.data?.notes ?? []).length && (
+                  <p className="text-sm text-muted-foreground">No notes yet.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Operational */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

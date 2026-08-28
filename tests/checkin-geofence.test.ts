@@ -9,8 +9,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 
-// A real office and points measured from it.
-const OFFICE = { lat: 33.6846, lng: -117.8265 };
+// The real WCL office. Verified: recomputing haversine from this point
+// reproduces every distance_m the app itself stored for 29 historical
+// check-ins, to the metre. An earlier draft used the Irvine city centroid,
+// which sits 3km away — wiring that into the fence would lock out the office.
+const OFFICE = { lat: 33.685713, lng: -117.859051 };
 
 test("distances are real metres", () => {
   assert.equal(Math.round(haversineMeters(OFFICE.lat, OFFICE.lng, OFFICE.lat, OFFICE.lng)), 0);
