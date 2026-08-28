@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
-  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck,
+  BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck, Sparkles,
   FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -215,6 +215,8 @@ const teamItems: NavItem[] = [
 
 const managerTeamItems: NavItem[] = [
   { title: "EOD Analytics",         url: "/eod-analytics", icon: BarChart2 },
+  // Admin-only in practice: the API refuses a non-admin, and the page says so.
+  { title: "App Review",            url: "/app-review",    icon: Sparkles },
 ];
 
 const toolItems: NavItem[] = [

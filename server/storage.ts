@@ -2420,6 +2420,45 @@ function runNewMigrations() {
   // Fix stale default manager_emails from woodea1@masters.edu -> Scott + Chris
   try { sqlite.exec(`UPDATE email_settings SET manager_emails = '${JSON.stringify(MANAGER_EMAIL_DEFAULTS)}' WHERE manager_emails LIKE '%woodea1@masters.edu%'`); } catch {}
 
+  // Scheduled self-review: what Claude proposed, and what a human decided.
+  // Suggestions are DATA — approving one records intent for a person to act on
+  // and changes no behaviour in the app. Nothing reads these rows back as
+  // instructions.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS app_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    cycle TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'running',
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    suggestion_count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_cents INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS app_review_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    review_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    area TEXT NOT NULL DEFAULT '',
+    problem TEXT NOT NULL DEFAULT '',
+    proposal TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    impact TEXT NOT NULL DEFAULT 'medium',
+    effort TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by INTEGER,
+    decided_at TEXT,
+    decision_note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (review_id) REFERENCES app_reviews(id) ON DELETE CASCADE
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_app_review_suggestions_status
+    ON app_review_suggestions(org_id, status, created_at DESC)`);
+
   // Every message handed to Resend, and what actually became of it.
   //
   // Resend returning an id means ACCEPTED, not delivered — and it discards the

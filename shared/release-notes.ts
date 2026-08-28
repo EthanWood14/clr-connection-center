@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.11.0",
+    headline: "C3 now reviews itself and suggests improvements.",
+    items: [
+      { text: "New App Review page for admins: every 3 days — and more thoroughly every 4 weeks — Claude looks at how C3 is actually being used and proposes specific changes, each with the numbers behind it. Approve or deny each one, with a note.", audience: "manager" },
+      { text: "Approving a suggestion records that you want it done; it never changes the app by itself. Every run shows which model produced it and roughly what it cost.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.10.1",
     headline: "Portal accounts are no longer treated as CLRs.",
     items: [

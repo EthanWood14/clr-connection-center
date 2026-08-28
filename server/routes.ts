@@ -15,6 +15,7 @@ import { Resend } from "resend";
 import cron from "node-cron";
 
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
+import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
@@ -15207,6 +15208,218 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     } catch (error) {
       sendLapError(res, error, "Unable to load the LAP result package.");
     }
+  });
+
+
+  // ── Scheduled self-review ────────────────────────────────────────────────────
+  // Claude looks at how C3 is actually being used every few days and proposes
+  // changes; a human approves or denies each one on the App Review page.
+  //
+  // Suggestions are DATA, never instructions: approving one records intent for
+  // a person to act on and changes nothing in the app. No code path reads a
+  // suggestion back and acts on it.
+
+  /** What the review reasons from: the live database, not the source tree. */
+  function buildReviewDigest(orgId: number): string {
+    const sqlite = storageExtra.getRawSqlite();
+    const one = (sql: string, ...args: any[]) => { try { return sqlite.prepare(sql).get(...args) as any; } catch { return null; } };
+    const many = (sql: string, ...args: any[]) => { try { return sqlite.prepare(sql).all(...args) as any[]; } catch { return []; } };
+    const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const since14 = new Date(Date.now() - 14 * 86_400_000).toISOString();
+    const lines: string[] = [];
+
+    lines.push("## Recent releases");
+    lines.push(recentReleaseSummary());
+
+    lines.push("\n## People");
+    for (const r of many(`SELECT role, COUNT(*) n, SUM(is_active) active FROM users WHERE org_id=? GROUP BY role`, orgId)) {
+      lines.push(`- role ${r.role}: ${r.n} total, ${r.active} active`);
+    }
+    const portals = many(`SELECT COALESCE(portal,'(internal)') p, COUNT(*) n FROM users WHERE org_id=? GROUP BY p`, orgId);
+    lines.push(`- by portal: ${portals.map((p: any) => `${p.p}=${p.n}`).join(", ")}`);
+
+    lines.push("\n## Transfers (last 30 days)");
+    const tr = one(`SELECT COUNT(*) n,
+        SUM(CASE WHEN loa_id IS NULL THEN 1 ELSE 0 END) no_loa,
+        SUM(CASE WHEN verification_status IS NULL THEN 1 ELSE 0 END) unverified,
+        SUM(CASE WHEN COALESCE(lead_source,'')='' THEN 1 ELSE 0 END) no_source,
+        SUM(CASE WHEN COALESCE(notes,'')='' THEN 1 ELSE 0 END) no_notes
+      FROM lead_outcomes WHERE org_id=? AND outcome_type='transfer' AND date>=?`, orgId, since30);
+    if (tr) lines.push(`- ${tr.n} transfers; ${tr.no_loa} without an LOA, ${tr.unverified} unverified, ${tr.no_source} without a lead source, ${tr.no_notes} with empty notes`);
+    for (const r of many(`SELECT outcome_type, COUNT(*) n FROM lead_outcomes WHERE org_id=? AND date>=? GROUP BY outcome_type ORDER BY n DESC`, orgId, since30)) {
+      lines.push(`- outcome ${r.outcome_type}: ${r.n}`);
+    }
+
+    lines.push("\n## Shotgun (last 30 days)");
+    for (const r of many(`SELECT status, COUNT(*) n FROM shotgun_leads WHERE org_id=? AND created_at>=? GROUP BY status`, orgId, since30)) {
+      lines.push(`- ${r.status}: ${r.n}`);
+    }
+
+    lines.push("\n## EOD reports (last 30 days)");
+    const eod = one(`SELECT COUNT(*) n, SUM(submitted_late) late FROM eod_reports WHERE report_date>=?`, since30);
+    if (eod) lines.push(`- ${eod.n} filed, ${eod.late ?? 0} late (due 4pm the next business day)`);
+
+    lines.push("\n## Comp requests (last 30 days)");
+    for (const r of many(`SELECT status, COUNT(*) n, SUM(amount_cents) cents FROM comp_requests WHERE org_id=? AND created_at>=? GROUP BY status`, orgId, since14)) {
+      lines.push(`- ${r.status}: ${r.n} requests, $${((r.cents ?? 0) / 100).toFixed(2)}`);
+    }
+    const noReceipt = one(`SELECT COUNT(*) n FROM comp_requests c WHERE c.org_id=? AND c.created_at>=? AND c.amount_cents>1000
+      AND NOT EXISTS (SELECT 1 FROM comp_attachments a WHERE a.comp_id=c.id)`, orgId, since14);
+    if (noReceipt) lines.push(`- ${noReceipt.n} requests over $10 with no receipt attached`);
+
+    lines.push("\n## Email health (last 14 days)");
+    for (const r of many(`SELECT COALESCE(last_event,'pending') e, COUNT(*) n FROM email_sends WHERE accepted_at>=? GROUP BY e ORDER BY n DESC`, since14)) {
+      lines.push(`- ${r.e}: ${r.n}`);
+    }
+
+    lines.push("\n## Notifications raised (last 14 days)");
+    for (const r of many(`SELECT type, COUNT(*) n FROM notifications WHERE created_at>=? GROUP BY type ORDER BY n DESC LIMIT 20`, since14)) {
+      lines.push(`- ${r.type}: ${r.n}`);
+    }
+
+    lines.push("\n## Audit activity (last 14 days, top actions)");
+    for (const r of many(`SELECT entity_type, action, COUNT(*) n FROM audit_logs WHERE created_at>=? GROUP BY entity_type, action ORDER BY n DESC LIMIT 25`, since14)) {
+      lines.push(`- ${r.entity_type}/${r.action}: ${r.n}`);
+    }
+
+    lines.push("\n## Feature surfaces with NO recorded activity in 30 days");
+    const idle: string[] = [];
+    const activity: Array<[string, string]> = [
+      ["Shotgun leads", `SELECT COUNT(*) n FROM shotgun_leads WHERE org_id=${orgId} AND created_at>='${since30}'`],
+      ["LAP result packages", `SELECT COUNT(*) n FROM lap_result_packages WHERE org_id=${orgId} AND created_at>='${since30}'`],
+      ["LAP package notes", `SELECT COUNT(*) n FROM lap_package_notes WHERE org_id=${orgId} AND created_at>='${since30}'`],
+      ["Comp draws", `SELECT COUNT(*) n FROM comp_draws WHERE org_id=${orgId}`],
+      ["Forum posts", `SELECT COUNT(*) n FROM forum_posts WHERE created_at>='${since30}'`],
+      ["Chat messages", `SELECT COUNT(*) n FROM chat_messages WHERE created_at>='${since30}'`],
+    ];
+    for (const [label, sql] of activity) {
+      const row = one(sql);
+      if (row && Number(row.n) === 0) idle.push(label);
+      else if (row) lines.push(`- ${label}: ${row.n}`);
+    }
+    if (idle.length) lines.push(`- NO activity at all: ${idle.join(", ")}`);
+
+    return lines.join("\n");
+  }
+
+  async function runAppReview(orgId: number, cycle: ReviewCycle): Promise<{ id: number; count: number }> {
+    const sqlite = storageExtra.getRawSqlite();
+    const started = new Date().toISOString();
+    const info = sqlite.prepare(`INSERT INTO app_reviews (org_id, cycle, status, started_at) VALUES (?,?,'running',?)`)
+      .run(orgId, cycle, started);
+    const reviewId = Number(info.lastInsertRowid);
+    try {
+      const digest = buildReviewDigest(orgId);
+      // Don't let it re-propose what it proposed last time.
+      const recent = (sqlite.prepare(`SELECT title FROM app_review_suggestions WHERE org_id=? ORDER BY id DESC LIMIT 40`)
+        .all(orgId) as any[]).map((r) => String(r.title));
+      const result = await requestSuggestions(cycle, digest, recent);
+      if (result.refusal) throw new Error(`Model declined: ${result.refusal}`);
+      const now = new Date().toISOString();
+      const insert = sqlite.prepare(`INSERT INTO app_review_suggestions
+        (org_id, review_id, title, area, problem, proposal, evidence, impact, effort, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      sqlite.transaction(() => {
+        for (const sug of result.suggestions) {
+          insert.run(orgId, reviewId, String(sug.title ?? "").slice(0, 300), String(sug.area ?? "").slice(0, 80),
+            String(sug.problem ?? "").slice(0, 4000), String(sug.proposal ?? "").slice(0, 4000),
+            String(sug.evidence ?? "").slice(0, 4000), String(sug.impact ?? "medium").slice(0, 12),
+            String(sug.effort ?? "medium").slice(0, 12), now);
+        }
+      })();
+      sqlite.prepare(`UPDATE app_reviews SET status='complete', finished_at=?, model=?, suggestion_count=?,
+        input_tokens=?, output_tokens=?, cost_cents=? WHERE id=?`)
+        .run(new Date().toISOString(), result.model, result.suggestions.length,
+          result.inputTokens, result.outputTokens,
+          estimateCostCents(result.model, result.inputTokens, result.outputTokens), reviewId);
+      console.log(`[app-review] ${cycle}: ${result.suggestions.length} suggestion(s) from ${result.model}`);
+      return { id: reviewId, count: result.suggestions.length };
+    } catch (error: any) {
+      sqlite.prepare(`UPDATE app_reviews SET status='failed', finished_at=?, error=? WHERE id=?`)
+        .run(new Date().toISOString(), String(error?.message ?? error).slice(0, 1000), reviewId);
+      console.error(`[app-review] ${cycle} failed:`, error?.message ?? error);
+      throw error;
+    }
+  }
+
+  /** Due when nothing of that cycle has completed inside its interval. */
+  function appReviewDue(orgId: number, cycle: ReviewCycle): boolean {
+    const days = cycle === "deep" ? DEEP_INTERVAL_DAYS : ROUTINE_INTERVAL_DAYS;
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+    const row = storageExtra.getRawSqlite().prepare(
+      `SELECT 1 FROM app_reviews WHERE org_id=? AND cycle=? AND status='complete' AND started_at>=? LIMIT 1`,
+    ).get(orgId, cycle, cutoff);
+    return !row;
+  }
+
+  // Checked hourly rather than scheduled on an exact day, so a restart or a
+  // deploy can never make a cycle skip its turn entirely.
+  cron.schedule("20 * * * *", () => {
+    if (!anthropicConfigured()) return;
+    void runWithOrg({ orgId: 1, superAdmin: false }, async () => {
+      try {
+        if (appReviewDue(1, "deep")) await runAppReview(1, "deep");
+        else if (appReviewDue(1, "routine")) await runAppReview(1, "routine");
+      } catch { /* already recorded on the review row */ }
+    });
+  }, { timezone: BUSINESS_DAY_DEFAULT_TZ });
+
+  app.get("/api/app-review", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    const status = String(req.query.status ?? "pending");
+    const where = ["s.org_id=?"];
+    const params: any[] = [orgId];
+    if (status !== "all") { where.push("s.status=?"); params.push(status); }
+    const suggestions = sqlite.prepare(`
+      SELECT s.*, u.name AS decided_by_name, r.cycle, r.model
+        FROM app_review_suggestions s
+        LEFT JOIN users u ON u.id = s.decided_by
+        LEFT JOIN app_reviews r ON r.id = s.review_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY CASE s.impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, s.id DESC
+       LIMIT 200`).all(...params);
+    const reviews = sqlite.prepare(`SELECT * FROM app_reviews WHERE org_id=? ORDER BY id DESC LIMIT 10`).all(orgId);
+    const counts = sqlite.prepare(`SELECT status, COUNT(*) n FROM app_review_suggestions WHERE org_id=? GROUP BY status`).all(orgId);
+    res.json({
+      suggestions, reviews,
+      counts: Object.fromEntries((counts as any[]).map((c) => [c.status, c.n])),
+      configured: anthropicConfigured(),
+      nextRoutineDue: appReviewDue(orgId, "routine"),
+      nextDeepDue: appReviewDue(orgId, "deep"),
+    });
+  });
+
+  app.post("/api/app-review/run", requireAuth, async (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    if (!anthropicConfigured()) return res.status(503).json({ error: "No Claude API key configured (ANTHROPIC_API_KEY)." });
+    const cycle: ReviewCycle = req.body?.cycle === "deep" ? "deep" : "routine";
+    try {
+      const out = await runAppReview(Number(req.session_user?.orgId ?? 1) || 1, cycle);
+      res.json({ ok: true, ...out });
+    } catch (error: any) {
+      res.status(502).json({ error: String(error?.message ?? error) });
+    }
+  });
+
+  app.post("/api/app-review/suggestions/:id/decision", requireAuth, (req: any, res) => {
+    if (!requireAdminSession(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const id = Number(req.params.id);
+    const status = req.body?.status === "approved" ? "approved" : req.body?.status === "denied" ? "denied" : null;
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid suggestion id." });
+    if (!status) return res.status(400).json({ error: "Decision must be approved or denied." });
+    const note = String(req.body?.note ?? "").trim().slice(0, 2000);
+    const info = storageExtra.getRawSqlite().prepare(
+      `UPDATE app_review_suggestions SET status=?, decided_by=?, decided_at=?, decision_note=? WHERE id=? AND org_id=?`,
+    ).run(status, userId, new Date().toISOString(), note, id, orgId);
+    if (!info.changes) return res.status(404).json({ error: "Suggestion was not found." });
+    audit({ userId, userName: (storage.getUserById(userId) as any)?.name ?? "Admin", action: "update",
+      entityType: "app_review_suggestion", entityId: id, entityLabel: status,
+      details: JSON.stringify({ status, note }) });
+    res.json({ ok: true });
   });
 
   // ── Package notes thread ────────────────────────────────────────────────────

@@ -50,6 +50,7 @@ import TermsOfUse from "@/pages/terms-of-use";
 import Chat from "@/pages/chat";
 import EodReport from "@/pages/eod-report";
 import EodAnalytics from "@/pages/eod-analytics";
+import AppReview from "@/pages/app-review";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import TimeOff from "@/pages/time-off";
 import CompRequests from "@/pages/comp-requests";
@@ -198,6 +199,7 @@ function AppRouter() {
       <Route path="/nmls-status" component={NmlsStatus} />
       <Route path="/eod-report" component={EodReport} />
       <Route path="/eod-analytics" component={EodAnalytics} />
+      <Route path="/app-review" component={AppReview} />
       <Route path="/team-dashboard" component={ManagerDashboard} />
       <Route path="/time-off" component={TimeOff} />
       <Route path="/comp-requests" component={CompRequests} />
