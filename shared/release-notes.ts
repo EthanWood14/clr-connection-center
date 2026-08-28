@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.10.1",
+    headline: "Portal accounts are no longer treated as CLRs.",
+    items: [
+      { text: "The shared LO Assistant Portal login was being counted as a CLR: it was sent EOD reminders and escalating overdue notices for reports it can never file, at an address that is not a mailbox. Portal accounts are now excluded from every CLR list — reminders, daily assignments, rosters and stats.", audience: "manager" },
+      { text: "The third overdue notice used to be titled “3th reminder”. It now reads “reminder #3”.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.10.0",
     headline: "Paste a screenshot straight onto a comp request.",
     items: [

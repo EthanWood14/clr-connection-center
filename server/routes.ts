@@ -13,6 +13,8 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
+
+import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
@@ -1118,7 +1120,7 @@ async function sendReport(
   //
   // The flag still governs the dashboard, the leaderboard and assignment
   // generation. This is deliberately scoped to what gets emailed.
-  const isClrRow = (u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr));
+  const isClrRow = (u: any) => u.isActive && clrRoleMatches(u);
   const clrs = users.filter((u: any) =>
     isClrRow(u) && (scopedClrId ? u.id === scopedClrId : true)
   );
@@ -1896,7 +1898,7 @@ function shuffled<T>(arr: T[]): T[] {
 
 // Same pool as daily assignment generation: CLRs who actually take assignments.
 function nmlsAssigneePool(): any[] {
-  return storage.getUsers().filter((u: any) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+  return storage.getUsers().filter((u: any) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && clrRoleMatches(u));
 }
 
 function notifyNmlsAssignment(assigneeId: number, lo: any) {
@@ -2998,6 +3000,7 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
       WHERE is_active = 1
         AND org_id = ?
         AND role = 'assistant'
+        AND ${CLR_PORTAL_SQL}
     `).all(org.id) as any[];
 
     if (!clrs.length) continue;
@@ -3067,7 +3070,7 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
           ? `📋 EOD Report Reminder — ${eodDayLabel(reportDate)}`
           : sendCount === 2
           ? `🔔 Follow-up: EOD Report Still Missing — ${eodDayLabel(reportDate)}`
-          : `⚠️ Overdue EOD Report — ${eodDayLabel(reportDate)} (${sendCount}th reminder)`;
+          : `⚠️ Overdue EOD Report — ${eodDayLabel(reportDate)} (reminder #${sendCount})`;
 
         try {
           // Immediate (not deferred): the eod_reminder_log upsert below must only
@@ -4893,7 +4896,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? user.orgId ?? user.org_id ?? 0);
     if (isDemoOrg(orgId)) return res.json({ locked: false, missingDates: [], exempt: true });
 
-    const isClr = user.role === "assistant" || (user.role === "admin" && !!(user.isClr ?? user.is_clr));
+    const isClr = clrRoleMatches(user);
     if (!isClr) return res.json({ locked: false, missingDates: [] });
 
     const createdAtRaw = user.createdAt ?? user.created_at ?? null;
@@ -8021,7 +8024,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       .filter((s: any) => sourceAppearsOn(s.id, clampPct(s.appearancePct ?? 100), date))
       .sort((a: any, b: any) => a.id - b.id);
     const clrs = (storage.getUsers() as any[])
-      .filter((u) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .filter((u) => u.isActive && u.inDailyAssignments && !u.excludeFromStats && clrRoleMatches(u))
       .sort((a, b) => a.id - b.id);
     const dayNum = Math.floor(new Date(date + "T00:00:00Z").getTime() / 86400000);
     return appearing.map((s: any, i: number) => {
@@ -10281,6 +10284,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE is_active = 1
         AND org_id = ?
         AND (role = 'assistant' OR (role = 'admin' AND is_clr = 1))
+        AND ${CLR_PORTAL_SQL}
         AND in_daily_assignments = 1
         AND id != ?
         AND NOT EXISTS (
@@ -10438,7 +10442,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(400).json({ error: "items must be a non-empty array" });
     }
 
-    const assistants = storage.getUsers().filter(u => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && !u.excludeFromStats && clrRoleMatches(u));
     const orgId = Number((user as any)?.orgId ?? (user as any)?.org_id ?? 1) || 1;
     const vacationIds = approvedTimeOffUserIds(storageExtra.getRawSqlite(), orgId, date);
     const unavailableItem = items.find((item: any) => vacationIds.has(Number(item.assistantId)));
@@ -11939,7 +11943,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     // ── EOD Report status grid (today) ──
     const allClrs = storage.getUsers().filter((u: any) =>
-      u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr))
+      u.isActive && clrRoleMatches(u)
     ) as any[];
     // Non-counted CLRs: stay in the EOD grid (they still submit EODs) but drop
     // out of scorecard metrics, leaderboard, and per-CLR aggregate cards.
@@ -13848,7 +13852,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       for (const row of timeOffRows) approvedTimeOff.add(Number(row.user_id));
     } catch {}
     const clrs = (storage.getUsers() as any[])
-      .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .filter((u) => u.isActive && !u.excludeFromStats && clrRoleMatches(u))
       .map((u) => {
         const exp = checkinExpectedStart(u.id, orgId, date);
         const lateCount = lateCounts.get(u.id) ?? 0;
@@ -14109,7 +14113,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   function buildScorecardDigestRows(orgId: number, from: string, to: string) {
     const sqlite = storageExtra.getRawSqlite();
     const clrs = (storage.getUsers() as any[])
-      .filter((u) => u.isActive && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+      .filter((u) => u.isActive && !u.excludeFromStats && clrRoleMatches(u));
     const outcomes = sqlite.prepare(
       `SELECT assistant_id, outcome_type FROM lead_outcomes WHERE org_id=? AND date >= ? AND date <= ?`,
     ).all(orgId, from, to) as any[];
@@ -16694,7 +16698,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const gate = requireAdminOrViewerSession(req as any, res);
     if (!gate) return;
     const list = (storage.getUsers() as any[])
-      .filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .filter((u: any) => u.isActive && clrRoleMatches(u))
       .map((u: any) => ({ id: u.id, name: u.name, email: u.email }));
     res.json(list);
   });
@@ -16871,7 +16875,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/monthly-assignments/shuffle", requireAuth, (req, res) => {
     const month = (req.body.month as string) || new Date().toISOString().slice(0, 7);
     const activeLos = storage.getLoanOfficers().filter(lo => lo.internalStatus === "active");
-    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && (u.role === "assistant" || (u.role === "admin" && u.isClr)));
+    const assistants = storage.getUsers().filter(u => u.isActive && u.inDailyAssignments && !u.excludeFromStats && clrRoleMatches(u));
     if (!assistants.length) return res.status(400).json({ error: "No active CLRs are included in daily assignments." });
     // Shuffle LOs randomly then distribute round-robin
     const shuffled = [...activeLos].sort(() => Math.random() - 0.5);
@@ -18385,7 +18389,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // also carry a CLR seat).
   function clrRoster(): any[] {
     return (storage.getUsers() as any[])
-      .filter((u) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
+      .filter((u) => u.isActive && clrRoleMatches(u))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
   }
   // Core metric block for one CLR over a date range — shared by the roster tiles
