@@ -15,6 +15,7 @@ import { Resend } from "resend";
 import cron from "node-cron";
 
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
+import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
 import { adjudicateLateExcuse, lateExcuseConfigured } from "./late-excuse";
 import { evaluateGeofence, isValidLatLng, DEFAULT_CHECKIN_RADIUS_M } from "./geo";
@@ -207,6 +208,16 @@ function resolveNamedPeriod(name: string, tz?: string): { startDate: string; end
   }
   if (name === "90days") {
     return { startDate: addIsoDays(todayStr, -89), endDate: todayStr };
+  }
+  if (name === "180days") {
+    return { startDate: addIsoDays(todayStr, -179), endDate: todayStr };
+  }
+  if (name === "lastmonth") {
+    const [y, m] = todayStr.split("-").map(n => parseInt(n, 10));
+    const start = new Date(Date.UTC(y, m - 2, 1, 12, 0, 0));
+    const end   = new Date(Date.UTC(y, m - 1, 0, 12, 0, 0)); // last day of the previous month
+    const fmt = (dt: Date) => dt.toISOString().split("T")[0];
+    return { startDate: fmt(start), endDate: fmt(end) };
   }
   if (name === "alltime") {
     return { startDate: "2000-01-01", endDate: todayStr };
@@ -1251,6 +1262,40 @@ async function sendReport(
       };
     });
 
+  // Notes a manager wrote about a specific person for these dates — why
+  // somebody was out, context the numbers alone would not explain. Opt-in per
+  // note; nothing here is counted in any figure above.
+  const dayNotesHtml = (() => {
+    let notes: Array<{ noteDate: string; body: string; authorName: string; kind: string; subjectName: string }> = [];
+    try {
+      notes = storageExtra.listDailyReportNotes(
+        currentOrgId() ?? 1, startDate, endDate,
+      ) as any[];
+    } catch { return ""; }
+    if (!notes.length) return "";
+    const esc = (v: string) => String(v ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+    const tone = (k: string) => (k === "pip"
+      ? { bg: "#fdf2f8", border: "#db2777", label: "PIP" }
+      : k === "warning"
+        ? { bg: "#fef2f2", border: "#dc2626", label: "Warning" }
+        : { bg: "#f8fafc", border: "#64748b", label: "Note" });
+    const rows = notes.map((n) => {
+      const c = tone(n.kind);
+      return `<div style="padding:10px 12px;margin-bottom:8px;background:${c.bg};border-left:3px solid ${c.border};border-radius:0 6px 6px 0">
+        <div style="font-size:12px;font-weight:600;color:#0F182D">${esc(n.subjectName) || "\u2014"}
+          <span style="font-weight:400;color:#64748b">\u00b7 ${esc(n.noteDate)} \u00b7 ${c.label}</span>
+        </div>
+        <div style="font-size:13px;color:#334155;margin-top:3px">${esc(n.body)}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:3px">\u2014 ${esc(n.authorName)}</div>
+      </div>`;
+    }).join("");
+    return `
+    <div style="margin-top:28px">
+      <h2 style="margin:0 0 14px;font-size:15px;font-weight:700;color:#0F182D;letter-spacing:-0.2px">Notes (${notes.length})</h2>
+      ${rows}
+    </div>`;
+  })();
+
   const transferDetailsHtml = transferDetails.length > 0 ? (() => {
     const esc = (s: string) => (s ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
     const detailLine = (label: string, val: string | null | undefined) =>
@@ -1638,6 +1683,8 @@ async function sendReport(
 
     <!--SEC:outcomeBreakdown-->${outcomeBreakdownHtml}<!--/SEC:outcomeBreakdown-->
 
+
+    <!--SEC:dayNotes-->${dayNotesHtml}<!--/SEC:dayNotes-->
 
     <!--SEC:transferDetails-->${transferDetailsHtml}<!--/SEC:transferDetails-->
 
@@ -19016,6 +19063,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ notes: storageExtra.listClrNotes(orgId, userId) });
   });
 
+  // Every note is kept for the record; this only moves where it is surfaced.
+  app.patch("/api/clr-profiles/notes/:noteId", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const noteId = parseInt(req.params.noteId, 10);
+    if (!Number.isInteger(noteId) || noteId <= 0) return res.status(400).json({ error: "Invalid note id." });
+    const me = storage.getUserById(actorId) as any;
+    const note = storageExtra.setClrNoteDisplay(orgId, noteId, actorId, me?.role === "admin", {
+      showOnChart: req.body?.showOnChart === undefined ? undefined : !!req.body.showOnChart,
+      inDailyReport: req.body?.inDailyReport === undefined ? undefined : !!req.body.inDailyReport,
+      kind: req.body?.kind,
+    });
+    if (!note) return res.status(404).json({ error: "Note not found." });
+    audit({
+      userId: actorId, userName: me?.name ?? "Manager", action: "update",
+      entityType: "user", entityId: noteId,
+      entityLabel: `Note display (${note.kind}${note.showOnChart ? ", on chart" : ""}${note.inDailyReport ? ", in report" : ""})`,
+    });
+    res.json({ note });
+  });
+
   app.post("/api/clr-profiles/:id/notes", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -19032,6 +19101,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         orgId, subjectUserId: userId, noteDate,
         body: String(req.body?.body ?? ""),
         authorUserId: actorId, authorName: String(me?.name ?? "Manager"),
+        kind: req.body?.kind,
+        showOnChart: req.body?.showOnChart === undefined ? undefined : !!req.body.showOnChart,
+        inDailyReport: !!req.body?.inDailyReport,
       });
       audit({
         userId: actorId, userName: me?.name ?? "Manager", action: "create",
@@ -19082,6 +19154,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // Per-day trend. Bucketed via maps (not a filter per day) and capped —
       // "all time" spans back to 2000, and neither a ~9,700-entry payload nor
       // ~9,700 DOM bars is a chart anyone wants.
+      // Day bars stop being readable past a quarter, so longer ranges fold into
+      // weeks and then months rather than being refused. Kept as the day-width
+      // threshold; nothing is blanked any more.
       const DAILY_TREND_MAX_DAYS = 120;
       const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
       const ot = (o: any) => o.outcomeType ?? o.outcome_type;
@@ -19133,10 +19208,53 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         orgId, userId, startDate, endDate,
       );
 
-      const days: string[] = [];
-      for (let d = startDate; d <= endDate && days.length <= DAILY_TREND_MAX_DAYS; d = addIsoDays(d, 1)) days.push(d);
-      const dailyTooLong = days.length > DAILY_TREND_MAX_DAYS;
-      const daily = dailyTooLong ? [] : days.map((day) => ({
+      // Never chart into the future. "This month" runs to the last day of the
+      // month, so on the 28th the last three bars were empty and read as three
+      // days of doing nothing rather than three days that have not happened.
+      const businessToday = businessTodayInTz(tz || BUSINESS_DAY_DEFAULT_TZ);
+      let chartEnd = endDate > businessToday ? businessToday : endDate;
+      // "All time" resolves to 2000-01-01, but no feed has a row before 2026.
+      // Charting from 2000 is ~9,700 empty buckets in front of the real data.
+      let chartStart = startDate;
+      const firstActivity = (() => {
+        try {
+          const r = sqliteDb.prepare(
+            `SELECT MIN(d) AS d FROM (
+               SELECT MIN(activity_date) AS d FROM callsync_agent_activity_daily WHERE org_id=? AND assistant_id=?
+               UNION ALL SELECT MIN(activity_date) FROM callsync_activity_events WHERE org_id=? AND assistant_id=?
+               UNION ALL SELECT MIN(stat_date) FROM dialpad_daily_stats WHERE org_id=? AND user_id=?
+               UNION ALL SELECT MIN(date) FROM lead_outcomes WHERE assistant_id=?
+             )`,
+          ).get(orgId, userId, orgId, userId, orgId, userId, userId) as any;
+          return r?.d ? String(r.d) : null;
+        } catch { return null; }
+      })();
+      if (firstActivity && firstActivity > chartStart) chartStart = firstActivity;
+      if (chartStart > chartEnd) chartStart = chartEnd;
+
+      // Approved time off, so an empty bar can say "away" instead of implying
+      // a wasted day. Both stores count: scheduled PTO and approved absences.
+      const timeOffDays = new Set<string>();
+      try {
+        for (const r of sqliteDb.prepare(
+          `SELECT start_date, end_date FROM time_off_requests
+            WHERE org_id=? AND user_id=? AND status='approved'
+              AND start_date<=? AND end_date>=?`,
+        ).all(orgId, userId, chartEnd, chartStart) as any[]) {
+          for (let d = String(r.start_date) < chartStart ? chartStart : String(r.start_date);
+               d <= chartEnd && d <= String(r.end_date); d = addIsoDays(d, 1)) timeOffDays.add(d);
+        }
+      } catch { /* time-off is optional context, never a reason to 500 */ }
+      try {
+        for (const r of sqliteDb.prepare(
+          `SELECT attendance_date FROM attendance_excuse_requests
+            WHERE org_id=? AND subject_type='user' AND subject_id=?
+              AND kind='absence' AND status='approved'
+              AND attendance_date BETWEEN ? AND ?`,
+        ).all(orgId, userId, chartStart, chartEnd) as any[]) timeOffDays.add(String(r.attendance_date));
+      } catch { /* same */ }
+
+      const dayValue = (day: string): ActivityPoint => ({
         date: day,
         callMinutes: Math.round((callTimeByDay.get(day) ?? 0) / 60),
         dialpadCalls: dialpadByDay.get(day) ?? 0,
@@ -19144,7 +19262,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         conversations: conversationsByDay.get(day) ?? 0,
         transfers: transfersByDay.get(day) ?? 0,
         appointments: apptsByDay.get(day) ?? 0,
-      }));
+      });
+      const bucketWidth = chooseBucketWidth(chartStart, chartEnd);
+      const { buckets } = buildBuckets({
+        startDate: chartStart, endDate: chartEnd, dayValue,
+        timeOffDays, width: bucketWidth, hideEmptyWeekends: true,
+      });
+      const daily = buckets;
+      // Retained so older clients that still branch on it keep working; the
+      // chart is never refused now, whatever the range.
+      const dailyTooLong = false;
+      // Manager notes the author chose to pin to the chart. Annotation only —
+      // no total on this page reads them, so a note cannot move a number.
+      const chartNotes = storageExtra.listClrChartNotes(orgId, userId, chartStart, chartEnd);
 
       // Weekly goals (per-CLR override falls back to the user's own).
       let goals = {
@@ -19202,6 +19332,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         },
         period, startDate, endDate,
         metrics, goals, daily, dailyTooLong,
+        bucket: bucketWidth, chartStart, chartEnd, chartNotes,
         // Lifetime figures and how they sit against the rest of the floor.
         // Independent of the selected period on purpose: "all time" is the
         // question this answers, and the period tiles above answer the other.

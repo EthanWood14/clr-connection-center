@@ -29,6 +29,21 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.16.0",
+    headline: "CLR Profiles: look back further than a month, and see why a quiet week was quiet.",
+    items: [
+      { text: "The timeframe now stretches to last month, 3 months, 6 months or all time. It still opens on this month. Longer ranges used to show an empty chart with \u201ctoo many days\u201d \u2014 now the bars simply widen to a week or a month so the shape stays readable.", audience: "manager" },
+      { text: "The chart no longer draws days that have not happened yet. Looking at this month on the 28th used to leave three empty bars on the end that read like three days of doing nothing.", audience: "manager" },
+      { text: "Quiet weekends are left off. A Saturday nobody was expected to work no longer looks like a failed day \u2014 but a weekend somebody did work still shows up.", audience: "manager" },
+      { text: "Approved time off is shaded on the chart, so an empty bar reads as \u201caway\u201d instead of \u201cwasted day\u201d.", audience: "manager" },
+      { text: "Over 3 months, 6 months or all time the chart adds a trend line, so you can see the direction rather than squinting at individual bars.", audience: "manager" },
+      { text: "Manager notes can now be pinned to the chart. A pinned note shows as a marker above its bar and reads out when you hover it \u2014 so a dip has its explanation attached instead of living somewhere else. Every note is still kept whether or not it is pinned, and no note is ever counted in any figure.", audience: "manager" },
+      { text: "A note can also be sent into that day\u2019s report emails \u2014 for instance why somebody was out \u2014 so the people reading the report get the context with the numbers. You can turn that section off in Settings like any other.", audience: "manager" },
+      { text: "Weekly goals stop being multiplied out over long ranges. Comparing a month of work against a target scaled up 26 times told you nothing.", audience: "manager" },
+      { text: "CLR Profiles load faster: the records behind the page had never been indexed, so every visit read the whole table.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.15.0",
     headline: "The Bonzo one-click Shotgun button works again.",
     items: [

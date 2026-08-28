@@ -12,10 +12,15 @@ import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight }
 export const PERIODS = [
   { value: "week", label: "This week" },
   { value: "month", label: "This month" },
+  { value: "lastmonth", label: "Last month" },
   { value: "30days", label: "Last 30 days" },
-  { value: "90days", label: "Last 90 days" },
+  { value: "90days", label: "Last 3 months" },
+  { value: "180days", label: "Last 6 months" },
   { value: "alltime", label: "All time" },
 ];
+
+/** Ranges long enough that the chart trades day bars for a trend. */
+export const LONG_PERIODS = new Set(["90days", "180days", "alltime"]);
 
 export function fmtStartDate(d: string | null) {
   if (!d) return "—";

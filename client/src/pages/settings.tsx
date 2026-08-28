@@ -1162,6 +1162,7 @@ function EmailReportsCard() {
                     { key: "summary", label: "Team summary stat cards" },
                     { key: "outcomeBreakdown", label: "Team outcome breakdown" },
                     { key: "clrBreakdown", label: "CLR breakdown / daily activity" },
+                    { key: "dayNotes", label: "Manager notes about people (why someone was out)" },
                     { key: "transferDetails", label: "Transfer details" },
                     { key: "activeLos", label: "Active LOs callout" },
                     { key: "eodNotes", label: "CLR EOD notes & activity log" },

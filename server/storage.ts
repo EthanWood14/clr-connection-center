@@ -2449,6 +2449,36 @@ function runNewMigrations() {
   )`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_notes_subject
     ON clr_notes(org_id, subject_user_id, note_date DESC, id DESC)`);
+  // Every note is kept for the record. These three switches only control where
+  // a note is ALSO surfaced — none of them affects any metric, and no aggregate
+  // reads this table, so a note can never move a number on the page.
+  {
+    const noteCols = sqlite.prepare(`PRAGMA table_info(clr_notes)`).all() as any[];
+    // 'note' | 'warning' | 'pip' — drawn differently on the profile chart.
+    if (!noteCols.find((c) => c.name === "kind")) {
+      sqlite.exec(`ALTER TABLE clr_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'`);
+    }
+    // Opt-in: show this note as a marker on the CLR profile chart.
+    if (!noteCols.find((c) => c.name === "show_on_chart")) {
+      sqlite.exec(`ALTER TABLE clr_notes ADD COLUMN show_on_chart INTEGER NOT NULL DEFAULT 0`);
+    }
+    // Opt-in: include this note in that day's report emails ("out sick", ...).
+    if (!noteCols.find((c) => c.name === "in_daily_report")) {
+      sqlite.exec(`ALTER TABLE clr_notes ADD COLUMN in_daily_report INTEGER NOT NULL DEFAULT 0`);
+    }
+    // The daily report reads by DATE across everyone, not by subject.
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_notes_daily_report
+      ON clr_notes(org_id, note_date) WHERE in_daily_report=1`);
+  }
+  {
+    // lead_outcomes had NO indexes at all, so every CLR profile load full-scanned
+    // it — the single largest cost in that request, ahead of all four dialer
+    // aggregations combined.
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_lead_outcomes_assistant_date
+      ON lead_outcomes(assistant_id, date)`);
+    sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_lead_outcomes_date
+      ON lead_outcomes(date)`);
+  }
 
   // Scheduled self-review: what Claude proposed, and what a human decided.
   // Suggestions are DATA — approving one records intent for a person to act on
@@ -5698,43 +5728,131 @@ export function getLoanOfficerAssistants(loId?: number) {
   `).all(orgId) as any[]).map(normalizeLoa);
 }
 // ── Dated manager notes on a CLR ─────────────────────────────────────────────
+export const CLR_NOTE_KINDS = ["note", "warning", "pip"] as const;
+export type ClrNoteKind = (typeof CLR_NOTE_KINDS)[number];
+
+export function clrNoteKind(value: unknown): ClrNoteKind {
+  const v = String(value ?? "note").trim().toLowerCase();
+  return (CLR_NOTE_KINDS as readonly string[]).includes(v) ? (v as ClrNoteKind) : "note";
+}
+
 export type ClrNote = {
   id: number; noteDate: string; body: string;
   authorName: string; authorUserId: number; createdAt: string;
+  kind: ClrNoteKind; showOnChart: boolean; inDailyReport: boolean;
 };
 
 export function listClrNotes(orgId: number, subjectUserId: number, limit = 200): ClrNote[] {
   return (sqlite.prepare(`
-    SELECT id, note_date, body, author_name, author_user_id, created_at
+    SELECT id, note_date, body, author_name, author_user_id, created_at,
+           kind, show_on_chart, in_daily_report
       FROM clr_notes WHERE org_id=? AND subject_user_id=?
      ORDER BY note_date DESC, id DESC LIMIT ?
-  `).all(orgId, subjectUserId, Math.max(1, Math.min(500, limit))) as any[]).map((r) => ({
+  `).all(orgId, subjectUserId, Math.max(1, Math.min(500, limit))) as any[]).map(clrNoteRow);
+}
+
+function clrNoteRow(r: any): ClrNote {
+  return {
     id: Number(r.id),
     noteDate: String(r.note_date),
     body: String(r.body ?? ""),
     authorName: String(r.author_name ?? ""),
     authorUserId: Number(r.author_user_id),
     createdAt: String(r.created_at),
+    kind: clrNoteKind(r.kind),
+    showOnChart: !!Number(r.show_on_chart ?? 0),
+    inDailyReport: !!Number(r.in_daily_report ?? 0),
+  };
+}
+
+/**
+ * Notes a manager chose to pin to the profile chart, for one subject and range.
+ * Annotation only — the caller must never fold these into a metric.
+ */
+export function listClrChartNotes(
+  orgId: number, subjectUserId: number, startDate: string, endDate: string,
+): ClrNote[] {
+  return (sqlite.prepare(`
+    SELECT id, note_date, body, author_name, author_user_id, created_at,
+           kind, show_on_chart, in_daily_report
+      FROM clr_notes
+     WHERE org_id=? AND subject_user_id=? AND show_on_chart=1
+       AND note_date BETWEEN ? AND ?
+     ORDER BY note_date ASC, id ASC LIMIT 500
+  `).all(orgId, subjectUserId, startDate, endDate) as any[]).map(clrNoteRow);
+}
+
+/**
+ * Notes a manager flagged for the report emails covering these dates, across
+ * everyone in the org. A range rather than one day because the weekly and
+ * month-to-date reports cover more than a single date.
+ */
+export function listDailyReportNotes(
+  orgId: number, startDate: string, endDate?: string,
+): Array<ClrNote & { subjectUserId: number; subjectName: string }> {
+  const from = startDate;
+  const to = endDate ?? startDate;
+  return (sqlite.prepare(`
+    SELECT n.id, n.note_date, n.body, n.author_name, n.author_user_id, n.created_at,
+           n.kind, n.show_on_chart, n.in_daily_report,
+           n.subject_user_id, COALESCE(u.name, '') AS subject_name
+      FROM clr_notes n
+      LEFT JOIN users u ON u.id = n.subject_user_id
+     WHERE n.org_id=? AND n.note_date BETWEEN ? AND ? AND n.in_daily_report=1
+     ORDER BY n.note_date ASC, subject_name COLLATE NOCASE ASC, n.id ASC LIMIT 200
+  `).all(orgId, from, to) as any[]).map((r) => ({
+    ...clrNoteRow(r),
+    subjectUserId: Number(r.subject_user_id),
+    subjectName: String(r.subject_name ?? ""),
   }));
 }
 
 export function addClrNote(input: {
   orgId: number; subjectUserId: number; noteDate: string; body: string;
   authorUserId: number; authorName: string;
+  kind?: string; showOnChart?: boolean; inDailyReport?: boolean;
 }): ClrNote {
   const body = String(input.body ?? "").trim().slice(0, 4000);
   if (!body) throw new Error("Write the note before saving.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.noteDate))) throw new Error("The note date must be YYYY-MM-DD.");
   const now = new Date().toISOString();
+  const kind = clrNoteKind(input.kind);
+  // A warning or PIP is the kind of note a manager always wants in front of
+  // them later, so it goes on the chart unless explicitly turned off.
+  const showOnChart = input.showOnChart ?? (kind !== "note");
+  const inDailyReport = !!input.inDailyReport;
   const info = sqlite.prepare(`
-    INSERT INTO clr_notes (org_id, subject_user_id, note_date, body, author_user_id, author_name, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO clr_notes (org_id, subject_user_id, note_date, body, author_user_id, author_name,
+                           created_at, updated_at, kind, show_on_chart, in_daily_report)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(input.orgId, input.subjectUserId, input.noteDate, body,
-    input.authorUserId, String(input.authorName ?? "").slice(0, 120), now, now);
+    input.authorUserId, String(input.authorName ?? "").slice(0, 120), now, now,
+    kind, showOnChart ? 1 : 0, inDailyReport ? 1 : 0);
   return {
     id: Number(info.lastInsertRowid), noteDate: input.noteDate, body,
     authorName: String(input.authorName ?? ""), authorUserId: input.authorUserId, createdAt: now,
+    kind, showOnChart, inDailyReport,
   };
+}
+
+/**
+ * Flip where an existing note is surfaced. The note itself is never edited and
+ * never deleted by this — every note stays on the record either way.
+ */
+export function setClrNoteDisplay(
+  orgId: number, noteId: number, actorUserId: number, actorIsAdmin: boolean,
+  patch: { showOnChart?: boolean; inDailyReport?: boolean; kind?: string },
+): ClrNote | null {
+  const row = sqlite.prepare(`SELECT * FROM clr_notes WHERE id=? AND org_id=?`).get(noteId, orgId) as any;
+  if (!row) return null;
+  if (!actorIsAdmin && Number(row.author_user_id) !== actorUserId) return null;
+  const showOnChart = patch.showOnChart ?? !!Number(row.show_on_chart ?? 0);
+  const inDailyReport = patch.inDailyReport ?? !!Number(row.in_daily_report ?? 0);
+  const kind = patch.kind === undefined ? clrNoteKind(row.kind) : clrNoteKind(patch.kind);
+  sqlite.prepare(
+    `UPDATE clr_notes SET show_on_chart=?, in_daily_report=?, kind=?, updated_at=? WHERE id=? AND org_id=?`,
+  ).run(showOnChart ? 1 : 0, inDailyReport ? 1 : 0, kind, new Date().toISOString(), noteId, orgId);
+  return clrNoteRow({ ...row, show_on_chart: showOnChart ? 1 : 0, in_daily_report: inDailyReport ? 1 : 0, kind });
 }
 
 /** Only the author, or an admin, may remove a note. */

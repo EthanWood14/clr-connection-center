@@ -9,15 +9,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
   ArrowLeft, CalendarDays, PhoneForwarded, PhoneCall, Percent, CalendarCheck, Timer,
-  UserCheck, FileText, Wallet, Target, TrendingUp, X,
+  UserCheck, FileText, Wallet, Target, TrendingUp, X, AlertTriangle, StickyNote, Palmtree,
 } from "lucide-react";
-import { PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles";
+import { PERIODS, LONG_PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles";
+
+/** How a pinned note is drawn. Warnings and PIPs must not look like context. */
+const NOTE_STYLES = {
+  note:    { label: "Note",    dot: "hsl(38 92% 50%)",  Icon: StickyNote,    ring: "border-amber-400/60 bg-amber-400/10" },
+  warning: { label: "Warning", dot: "hsl(0 84% 60%)",   Icon: AlertTriangle, ring: "border-red-500/60 bg-red-500/10" },
+  pip:     { label: "PIP",     dot: "hsl(340 82% 52%)", Icon: AlertTriangle, ring: "border-pink-600/60 bg-pink-600/15" },
+} as const;
+type NoteKind = keyof typeof NOTE_STYLES;
+type ClrNote = {
+  id: number; noteDate: string; body: string; authorName: string;
+  kind: string; showOnChart: boolean; inDailyReport: boolean;
+};
+const noteStyle = (k: string) => NOTE_STYLES[(k as NoteKind)] ?? NOTE_STYLES.note;
 
 /**
  * What a manager actually wants to see about a day on the phones. Every one of
@@ -60,6 +73,9 @@ type Resp = {
     tenureDays: number | null; startDateIsEstimate: boolean;
   };
   period: string; startDate: string; endDate: string; dailyTooLong?: boolean; periodWeeks?: number;
+  bucket?: "day" | "week" | "month";
+  chartStart?: string; chartEnd?: string;
+  chartNotes?: ClrNote[];
   metrics: {
     calls: number; transfers: number; transfersDirect: number; transfersAppointment: number;
     appointments: number; callbacks: number; deferrals: number; fellThrough: number;
@@ -67,7 +83,9 @@ type Resp = {
   };
   goals: { calls: number; transfers: number; appointments: number };
   daily: {
-    date: string; callMinutes: number; dialpadCalls: number; callToolsCalls: number;
+    date: string; endDate: string; dayCount: number;
+    timeOffDays: number; allTimeOff: boolean;
+    callMinutes: number; dialpadCalls: number; callToolsCalls: number;
     conversations: number; transfers: number; appointments: number;
   }[];
   hours: number;
@@ -159,19 +177,85 @@ export default function ClrProfile() {
   const [seriesKey, setSeriesKey] = useState<DailySeriesKey>("callMinutes");
   const activeSeries = DAILY_SERIES.find((x) => x.key === seriesKey) ?? DAILY_SERIES[0];
   const periodTotal = (data?.daily ?? []).reduce((sum, d) => sum + Number((d as any)[seriesKey] ?? 0), 0);
-  const periodTotalLabel = `${activeSeries.label}: ${activeSeries.format(periodTotal)} across this period`;
+  const bucket = data?.bucket ?? "day";
+  const bucketWord = bucket === "day" ? "day" : bucket === "week" ? "week" : "month";
+  const periodTotalLabel = `${activeSeries.label}: ${activeSeries.format(periodTotal)} across this period · one bar per ${bucketWord}`;
+
+  // A trend only means something once there are enough bars to have a shape,
+  // which is exactly the long ranges. Least squares over the visible series.
+  const showTrend = LONG_PERIODS.has(period) && (data?.daily?.length ?? 0) >= 3;
+  const chartRows = (data?.daily ?? []).map((d, i, arr) => {
+    let trend: number | undefined;
+    if (showTrend) {
+      const n = arr.length;
+      let sx = 0, sy = 0, sxy = 0, sxx = 0;
+      for (let k = 0; k < n; k += 1) {
+        const y = Number((arr[k] as any)[seriesKey] ?? 0);
+        sx += k; sy += y; sxy += k * y; sxx += k * k;
+      }
+      const denom = n * sxx - sx * sx;
+      if (denom !== 0) {
+        const slope = (n * sxy - sx * sy) / denom;
+        const intercept = (sy - slope * sx) / n;
+        trend = Math.max(0, intercept + slope * i);
+      }
+    }
+    return { ...d, trend };
+  });
+  const trendDelta = showTrend && chartRows.length > 1
+    ? (chartRows[chartRows.length - 1].trend ?? 0) - (chartRows[0].trend ?? 0)
+    : 0;
+
+  // Bucket start -> the notes pinned inside it, so a week bar can carry a note
+  // written on the Wednesday.
+  const notesByBucket = new Map<string, ClrNote[]>();
+  for (const n of data?.chartNotes ?? []) {
+    const row = (data?.daily ?? []).find((d) => n.noteDate >= d.date && n.noteDate <= d.endDate);
+    if (!row) continue;
+    const list = notesByBucket.get(row.date) ?? [];
+    list.push(n);
+    notesByBucket.set(row.date, list);
+  }
+  // Past a couple of months a weekly target multiplied out stops meaning
+  // anything, so the goal bars are withheld rather than drawn against a
+  // number nobody set.
+  const goalsTooLong = (data?.periodWeeks ?? 1) > 9;
+  const axisLabel = (d: string) => {
+    if (bucket === "month") return d.slice(0, 7);
+    // Keep the year visible once a range can span one.
+    return LONG_PERIODS.has(period) ? `${d.slice(5)}/${d.slice(2, 4)}` : d.slice(5);
+  };
 
   // Notes are their own query so posting one never refetches the whole profile.
-  const notesQuery = useQuery<{ notes: { id: number; noteDate: string; body: string; authorName: string }[] }>({
+  const notesQuery = useQuery<{ notes: ClrNote[] }>({
     queryKey: ["/api/clr-profiles", id, "notes"],
     queryFn: () => apiRequest("GET", `/api/clr-profiles/${id}/notes`),
     enabled: !!id,
     retry: false,
   });
   const [noteBody, setNoteBody] = useState("");
+  const [noteKind, setNoteKind] = useState<NoteKind>("note");
+  const [noteOnChart, setNoteOnChart] = useState(false);
+  const [noteInReport, setNoteInReport] = useState(false);
   const [noteDate, setNoteDate] = useState(() => new Date().toLocaleDateString("en-CA"));
+  // Flipping a switch never edits or removes the note itself.
+  const setNoteDisplay = useMutation({
+    mutationFn: (v: { id: number; showOnChart?: boolean; inDailyReport?: boolean }) =>
+      apiRequest("PATCH", `/api/clr-profiles/notes/${v.id}`, {
+        showOnChart: v.showOnChart, inDailyReport: v.inDailyReport,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id, "notes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id] });
+    },
+    onError: (e: any) => toast({ title: "Could not update the note", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
   const addNote = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/clr-profiles/${id}/notes`, { body: noteBody, noteDate }),
+    mutationFn: () => apiRequest("POST", `/api/clr-profiles/${id}/notes`, {
+      body: noteBody, noteDate, kind: noteKind,
+      showOnChart: noteOnChart, inDailyReport: noteInReport,
+    }),
     onSuccess: () => {
       setNoteBody("");
       queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id, "notes"] });
@@ -324,7 +408,7 @@ export default function ClrProfile() {
                 {/* Goals are WEEKLY, so scale them to the selected window —
                     otherwise a month of work is judged against one week's target. */}
                 {([["Calls", m!.calls, data.goals.calls], ["Transfers", m!.transfers, data.goals.transfers], ["Appointments", m!.appointments, data.goals.appointments]] as const).map(([label, actual, weeklyGoal]) => {
-                  const target = weeklyGoal > 0 ? weeklyGoal * (data.periodWeeks ?? 1) : 0;
+                  const target = weeklyGoal > 0 && !goalsTooLong ? weeklyGoal * (data.periodWeeks ?? 1) : 0;
                   return (
                     <div key={label}>
                       <div className="flex items-baseline justify-between text-sm">
@@ -338,8 +422,8 @@ export default function ClrProfile() {
                   );
                 })}
                 <p className="text-[11px] text-muted-foreground sm:col-span-3">
-                  {period === "alltime"
-                    ? "Weekly goals aren't meaningful over all time — pick a shorter timeframe."
+                  {goalsTooLong
+                    ? "Weekly goals aren't meaningful over a range this long — pick a shorter timeframe."
                     : `Weekly goals scaled to this period${(data.periodWeeks ?? 1) > 1 ? ` (×${data.periodWeeks} weeks)` : ""}. A period still in progress will read low.`}
                 </p>
               </CardContent>
@@ -365,19 +449,14 @@ export default function ClrProfile() {
           {/* What the day actually looked like on the phones. Every series here
               comes from the dialer feeds or from logged outcomes — none of it is
               self-reported, which is what made the old "calls" bar untrustworthy. */}
-          {data.dailyTooLong ? (
-            <Card>
-              <CardHeader className="pb-3"><CardTitle className="text-base">Daily activity</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">Too many days to chart for this range — pick a shorter timeframe to see the daily breakdown.</p>
-              </CardContent>
-            </Card>
-          ) : data.daily.length > 1 && (
+          {data.daily.length >= 1 && (
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base">Daily activity</CardTitle>
+                    <CardTitle className="text-base">
+                      {bucket === "day" ? "Daily activity" : bucket === "week" ? "Weekly activity" : "Monthly activity"}
+                    </CardTitle>
                     <CardDescription>{periodTotalLabel}</CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -401,22 +480,89 @@ export default function ClrProfile() {
               <CardContent>
                 <div style={{ height: 240 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.daily} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+                    <ComposedChart data={chartRows} margin={{ top: 18, right: 8, bottom: 4, left: -10 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
+                      {/* Days away are shaded, so an empty bar reads as "off"
+                          rather than as a day that went nowhere. */}
+                      {chartRows.filter((d) => d.allTimeOff).map((d) => (
+                        <ReferenceArea
+                          key={"off-" + d.date} x1={d.date} x2={d.date}
+                          fill="hsl(var(--muted-foreground))" fillOpacity={0.14}
+                        />
+                      ))}
                       <XAxis
                         dataKey="date" tickLine={false} axisLine={false}
                         tick={{ fontSize: 11 }} minTickGap={24}
-                        tickFormatter={(d: string) => d.slice(5)}
+                        tickFormatter={(d: any) => (typeof d === "string" ? axisLabel(d) : String(d))}
                       />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} width={44} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} width={54} />
                       <Tooltip
                         cursor={{ className: "fill-muted/40" }}
-                        contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                        labelFormatter={(d) => String(d)}
-                        formatter={(v: any) => [activeSeries.format(Number(v)), activeSeries.label]}
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const row = payload[0]?.payload ?? {};
+                          const notes: ClrNote[] = notesByBucket.get(String(label)) ?? [];
+                          return (
+                            <div className="max-w-[280px] rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+                              <p className="font-semibold">
+                                {row.date === row.endDate ? row.date : row.date + " → " + row.endDate}
+                              </p>
+                              <p className="mt-0.5 tabular-nums">
+                                {activeSeries.label}: {activeSeries.format(Number(row[seriesKey] ?? 0))}
+                              </p>
+                              {row.timeOffDays > 0 && (
+                                <p className="mt-0.5 text-muted-foreground">
+                                  {row.timeOffDays === row.dayCount ? "Time off" : row.timeOffDays + " day(s) off"}
+                                </p>
+                              )}
+                              {notes.map((n) => {
+                                const st = noteStyle(n.kind);
+                                return (
+                                  <p key={n.id} className={"mt-1.5 rounded border px-1.5 py-1 " + st.ring}>
+                                    <span className="font-semibold">{st.label} · {n.noteDate}</span>
+                                    <br />{n.body}
+                                    <br /><span className="text-muted-foreground">— {n.authorName}</span>
+                                  </p>
+                                );
+                              })}
+                            </div>
+                          );
+                        }}
                       />
                       <Bar dataKey={seriesKey} fill={activeSeries.color} radius={[3, 3, 0, 0]} />
-                    </BarChart>
+                      {showTrend && (
+                        <Line
+                          type="monotone" dataKey="trend" dot={false} strokeWidth={2}
+                          stroke="hsl(var(--foreground))" strokeOpacity={0.5} strokeDasharray="5 4"
+                          isAnimationActive={false} legendType="none"
+                        />
+                      )}
+                      {/* Pinned notes ride above the bars. Annotation only —
+                          no total on this page reads them. */}
+                      {chartRows.filter((d) => notesByBucket.has(d.date)).map((d) => {
+                        const notes = notesByBucket.get(d.date) ?? [];
+                        const worst = notes.find((n) => n.kind === "pip")
+                          ?? notes.find((n) => n.kind === "warning") ?? notes[0];
+                        const st = noteStyle(worst?.kind ?? "note");
+                        const hover = notes
+                          .map((n) => n.noteDate + " " + noteStyle(n.kind).label + ": " + n.body)
+                          .join("\n\n");
+                        return (
+                          <ReferenceArea
+                            key={"note-" + d.date} x1={d.date} x2={d.date}
+                            shape={(props: any) => (
+                              <g transform={"translate(" + (props.x + (props.width ?? 0) / 2) + ", 8)"}>
+                                <title>{hover}</title>
+                                <circle r={7} fill={st.dot} />
+                                <text textAnchor="middle" y={3.5} fontSize={10} fontWeight={700} fill="#ffffff">
+                                  {notes.length > 1 ? notes.length : "!"}
+                                </text>
+                              </g>
+                            )}
+                          />
+                        );
+                      })}
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               </CardContent>
@@ -428,7 +574,10 @@ export default function ClrProfile() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Manager notes</CardTitle>
-              <CardDescription>Dated commentary for context. Notes are never counted in any statistic or chart.</CardDescription>
+              <CardDescription>
+                Every note is kept on the record. The two switches only choose where it also shows —
+                no note is ever counted in a statistic.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid gap-2 sm:grid-cols-[150px_1fr] sm:items-start">
@@ -442,7 +591,46 @@ export default function ClrProfile() {
                   data-testid="clr-note-body"
                 />
               </div>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex gap-1">
+                    {(Object.keys(NOTE_STYLES) as NoteKind[]).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => {
+                          setNoteKind(k);
+                          // A warning or a PIP is the thing you most want to see
+                          // against the numbers later, so pin it by default.
+                          if (k !== "note") setNoteOnChart(true);
+                        }}
+                        className={
+                          "rounded-md border px-2.5 py-1 text-xs transition-colors " +
+                          (noteKind === k ? noteStyle(k).ring + " font-semibold" : "hover:bg-muted")
+                        }
+                        data-testid={"clr-note-kind-" + k}
+                      >
+                        {noteStyle(k).label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox" checked={noteOnChart}
+                      onChange={(e) => setNoteOnChart(e.target.checked)}
+                      data-testid="clr-note-on-chart"
+                    />
+                    Show on chart
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox" checked={noteInReport}
+                      onChange={(e) => setNoteInReport(e.target.checked)}
+                      data-testid="clr-note-in-report"
+                    />
+                    Add to that day&rsquo;s report email
+                  </label>
+                </div>
                 <Button
                   size="sm"
                   disabled={addNote.isPending || !noteBody.trim()}
@@ -453,24 +641,46 @@ export default function ClrProfile() {
                 </Button>
               </div>
               <div className="space-y-2">
-                {(notesQuery.data?.notes ?? []).map((n) => (
-                  <div key={n.id} className="rounded-lg border bg-muted/20 px-3 py-2" data-testid="clr-note">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        {n.noteDate} · {n.authorName}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => removeNote.mutate(n.id)}
-                        className="rounded p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                        aria-label="Remove note"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                {(notesQuery.data?.notes ?? []).map((n) => {
+                  const st = noteStyle(n.kind);
+                  return (
+                    <div key={n.id} className={"rounded-lg border px-3 py-2 " + (n.kind === "note" ? "bg-muted/20" : st.ring)} data-testid="clr-note">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          <st.Icon className="h-3 w-3" style={{ color: st.dot }} />
+                          {st.label} · {n.noteDate} · {n.authorName}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => removeNote.mutate(n.id)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                          aria-label="Remove note"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-sm">{n.body}</p>
+                      <div className="mt-1.5 flex flex-wrap gap-3">
+                        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox" checked={n.showOnChart}
+                            onChange={(e) => setNoteDisplay.mutate({ id: n.id, showOnChart: e.target.checked })}
+                            data-testid="clr-note-toggle-chart"
+                          />
+                          On chart
+                        </label>
+                        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox" checked={n.inDailyReport}
+                            onChange={(e) => setNoteDisplay.mutate({ id: n.id, inDailyReport: e.target.checked })}
+                            data-testid="clr-note-toggle-report"
+                          />
+                          In report email
+                        </label>
+                      </div>
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap text-sm">{n.body}</p>
-                  </div>
-                ))}
+                  );
+                })}
                 {!notesQuery.isLoading && !(notesQuery.data?.notes ?? []).length && (
                   <p className="text-sm text-muted-foreground">No notes yet.</p>
                 )}
