@@ -19184,6 +19184,96 @@ ${note}` : daysLine;
   // a daily trend, and the operational extras (hours, attendance, comp).
   // Dated manager notes on a CLR. Commentary, never a metric: no aggregate on
   // this page reads clr_notes, so writing one cannot move a number or a bar.
+  // ── "Go see your manager" ────────────────────────────────────────────────
+  // A manager raises a summons; that person's C3 alarms until a manager clears
+  // it. The person summoned cannot clear their own — that is the whole point.
+  app.get("/api/summons/mine", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const row = storageExtra.getRawSqlite().prepare(
+        `SELECT id, reason, raised_by_name, raised_at FROM manager_summons
+          WHERE org_id=? AND user_id=? AND cleared_at IS NULL ORDER BY id DESC LIMIT 1`,
+      ).get(orgId, userId) as any;
+      res.json({ active: !!row, summons: row ?? null });
+    } catch { res.json({ active: false, summons: null }); }
+  });
+
+  app.get("/api/summons", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    try {
+      const rows = storageExtra.getRawSqlite().prepare(
+        `SELECT s.id, s.user_id, s.reason, s.raised_by_name, s.raised_at, COALESCE(u.name,'') AS user_name
+           FROM manager_summons s LEFT JOIN users u ON u.id = s.user_id
+          WHERE s.org_id=? AND s.cleared_at IS NULL ORDER BY s.id DESC`,
+      ).all(orgId) as any[];
+      res.json({ summons: rows });
+    } catch { res.json({ summons: [] }); }
+  });
+
+  app.post("/api/summons", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const userId = parseInt(String(req.body?.userId ?? ""), 10);
+    if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: "Pick who to call in." });
+    if (userId === actorId) return res.status(400).json({ error: "You cannot summon yourself." });
+    // getUserById is not org-scoped — a manager must not reach another tenant.
+    const target = storage.getUserById(userId) as any;
+    const tOrg = Number(target?.orgId ?? target?.org_id);
+    if (!target || (Number.isFinite(tOrg) && tOrg !== orgId)) return res.status(404).json({ error: "Person not found." });
+    const me = storage.getUserById(actorId) as any;
+    const reason = String(req.body?.reason ?? "").trim().slice(0, 300);
+    const db = storageExtra.getRawSqlite();
+    try {
+      const existing = db.prepare(
+        `SELECT id FROM manager_summons WHERE org_id=? AND user_id=? AND cleared_at IS NULL`,
+      ).get(orgId, userId) as any;
+      if (existing) return res.status(200).json({ id: Number(existing.id), alreadyActive: true });
+      const info = db.prepare(
+        `INSERT INTO manager_summons (org_id, user_id, reason, raised_by, raised_by_name, raised_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(orgId, userId, reason, actorId, String(me?.name ?? "A manager"), new Date().toISOString());
+      audit({
+        userId: actorId, userName: me?.name ?? "Manager", action: "create",
+        entityType: "user", entityId: userId,
+        entityLabel: `Called ${target.name ?? "someone"} in to see a manager`,
+      });
+      try {
+        (storage as any).createNotification?.({
+          userId, type: "manager_summons", title: "Go see your manager",
+          message: reason ? `${me?.name ?? "A manager"} needs you: ${reason}` : `${me?.name ?? "A manager"} needs to see you.`,
+        });
+      } catch { /* the alarm itself is the notification */ }
+      res.json({ id: Number(info.lastInsertRowid) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Could not call them in." });
+    }
+  });
+
+  // Only a manager can stand the alarm down — never the person it is aimed at.
+  app.post("/api/summons/:id/clear", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid summons." });
+    const me = storage.getUserById(actorId) as any;
+    const db = storageExtra.getRawSqlite();
+    const row = db.prepare(`SELECT user_id FROM manager_summons WHERE id=? AND org_id=?`).get(id, orgId) as any;
+    if (!row) return res.status(404).json({ error: "Summons not found." });
+    db.prepare(
+      `UPDATE manager_summons SET cleared_at=?, cleared_by=?, cleared_by_name=? WHERE id=? AND org_id=? AND cleared_at IS NULL`,
+    ).run(new Date().toISOString(), actorId, String(me?.name ?? ""), id, orgId);
+    audit({
+      userId: actorId, userName: me?.name ?? "Manager", action: "update",
+      entityType: "user", entityId: Number(row.user_id), entityLabel: "Checked in — alarm cleared",
+    });
+    res.json({ ok: true });
+  });
+
   app.get("/api/clr-profiles/:id/notes", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;

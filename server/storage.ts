@@ -2447,6 +2447,27 @@ function runNewMigrations() {
     FOREIGN KEY (subject_user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (author_user_id) REFERENCES users(id)
   )`);
+  // "Go see your manager." A raised summons takes over that person's C3 until a
+  // MANAGER clears it — the person being summoned deliberately cannot dismiss
+  // their own, or it would just be a notification they close.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS manager_summons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    raised_by INTEGER NOT NULL,
+    raised_by_name TEXT NOT NULL DEFAULT '',
+    raised_at TEXT NOT NULL,
+    cleared_at TEXT,
+    cleared_by INTEGER,
+    cleared_by_name TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+  // One live summons per person: raising a second while one stands would mean
+  // clearing one still leaves the alarm running.
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_manager_summons_live
+    ON manager_summons(org_id, user_id) WHERE cleared_at IS NULL`);
+
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_notes_subject
     ON clr_notes(org_id, subject_user_id, note_date DESC, id DESC)`);
   // Every note is kept for the record. These three switches only control where

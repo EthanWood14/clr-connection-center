@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.20.0",
+    headline: "Managers can call someone in, and C3 will not let them miss it.",
+    items: [
+      { text: "From a CLR’s profile there is now a “Call them in” button. Their C3 takes over the whole screen, flashes red and sounds a siren until a manager marks them as checked in. They cannot close it, and it beats every other prompt in the app.", audience: "manager" },
+      { text: "If you get called in, there is one button: silence the sound for two minutes. It stops the noise only — the screen keeps going and only a manager can stand it down — so you can finish a call with a borrower and then go.", audience: "everyone" },
+      { text: "The flashing is kept to one flash a second, well under the rate that can trigger a seizure, and anyone whose device asks for reduced motion gets a steady red screen instead of a flashing one. It is every bit as hard to ignore.", audience: "everyone" },
+      { text: "You cannot call yourself in, only one alarm can be running for a person at a time, and every call-in and check-in is recorded.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.19.2",
     headline: "Training requests can actually be submitted now.",
     items: [

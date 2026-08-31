@@ -1,0 +1,171 @@
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth";
+import { AlertTriangle } from "lucide-react";
+
+/**
+ * "Go see your manager."
+ *
+ * When a manager calls someone in, that person's C3 becomes impossible to
+ * ignore until a MANAGER clears it. The person being summoned cannot dismiss
+ * it — that is the entire point; a dismissable one is just a notification.
+ *
+ * Two deliberate limits on how far the "crazy" goes:
+ *
+ *  - The flash is capped at 2Hz. Anything above three flashes per second is a
+ *    seizure risk for photosensitive epilepsy, and this fires on a whole
+ *    floor's screens without warning. It is a slow, full-screen colour slam
+ *    rather than a fast strobe, which is at least as hard to ignore.
+ *  - Anyone who has asked their system for reduced motion gets a steady
+ *    high-contrast screen instead of a flashing one. It still takes the app
+ *    over completely; it just does not pulse.
+ *
+ * The siren can be silenced for two minutes at a time. That does NOT clear the
+ * alarm — the screen keeps going and a manager still has to stand it down —
+ * but a CLR mid-call with a borrower needs a way to stop the noise without
+ * abandoning the call.
+ */
+
+interface Summons {
+  id: number;
+  reason: string;
+  raised_by_name: string;
+  raised_at: string;
+}
+
+const SILENCE_MS = 2 * 60 * 1000;
+
+/** A two-tone siren that keeps wailing until it is told to stop. */
+function startSiren(): () => void {
+  let ctx: AudioContext | null = null;
+  let stopped = false;
+  try {
+    const Ctx = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!Ctx) return () => {};
+    ctx = new Ctx();
+    void ctx.resume?.();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    gain.gain.value = 0.13;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    // Sweep between two pitches forever — the shape of an actual siren.
+    const now = ctx.currentTime;
+    osc.frequency.setValueAtTime(620, now);
+    for (let i = 0; i < 600; i += 1) {
+      const at = now + i * 0.9;
+      osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 980 : 620, at + 0.45);
+      osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 620 : 980, at + 0.9);
+    }
+    osc.start();
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      try { osc.stop(); } catch { /* already stopped */ }
+      try { void ctx?.close(); } catch { /* already closed */ }
+    };
+  } catch {
+    return () => { try { void ctx?.close(); } catch { /* nothing to close */ } };
+  }
+}
+
+export function ManagerSummonsAlarm() {
+  const { user } = useAuth();
+  const [silencedUntil, setSilencedUntil] = useState(0);
+  const [flashOn, setFlashOn] = useState(false);
+  const stopSirenRef = useRef<(() => void) | null>(null);
+
+  const { data } = useQuery<{ active: boolean; summons: Summons | null }>({
+    queryKey: ["/api/summons/mine"],
+    enabled: !!user,
+    // Short poll: being called in is urgent, and this is one tiny row.
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+
+  const active = !!data?.active && !!data.summons;
+  const reducedMotion = typeof window !== "undefined"
+    && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const silenced = silencedUntil > Date.now();
+
+  // The flash. 2Hz — deliberately under the three-per-second threshold that
+  // makes flashing content a seizure risk.
+  useEffect(() => {
+    if (!active || reducedMotion) { setFlashOn(false); return; }
+    const id = setInterval(() => setFlashOn((v) => !v), 500);
+    return () => clearInterval(id);
+  }, [active, reducedMotion]);
+
+  // The siren, and stopping it the moment the alarm clears or is silenced.
+  useEffect(() => {
+    const shouldSound = active && !silenced;
+    if (shouldSound && !stopSirenRef.current) {
+      stopSirenRef.current = startSiren();
+    } else if (!shouldSound && stopSirenRef.current) {
+      stopSirenRef.current();
+      stopSirenRef.current = null;
+    }
+    return () => {
+      if (stopSirenRef.current) { stopSirenRef.current(); stopSirenRef.current = null; }
+    };
+  }, [active, silenced]);
+
+  // Re-render when a silence window runs out so the siren picks back up.
+  useEffect(() => {
+    if (!silenced) return;
+    const id = setTimeout(() => setSilencedUntil(0), Math.max(0, silencedUntil - Date.now()) + 50);
+    return () => clearTimeout(id);
+  }, [silenced, silencedUntil]);
+
+  if (!active || !data?.summons) return null;
+  const s = data.summons;
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+      style={{
+        backgroundColor: reducedMotion ? "#7f1d1d" : (flashOn ? "#dc2626" : "#450a0a"),
+        transition: reducedMotion ? undefined : "background-color 220ms linear",
+      }}
+      role="alertdialog"
+      aria-live="assertive"
+      aria-label="Go see your manager"
+      data-testid="manager-summons-alarm"
+    >
+      <div className="w-full max-w-lg rounded-2xl border-4 border-white/80 bg-black/55 p-8 text-center shadow-2xl">
+        <AlertTriangle
+          className="mx-auto h-16 w-16 text-white"
+          style={{ opacity: reducedMotion ? 1 : (flashOn ? 1 : 0.45) }}
+        />
+        <h1 className="mt-4 text-4xl font-black uppercase tracking-tight text-white">
+          Go see your manager
+        </h1>
+        <p className="mt-3 text-lg font-semibold text-white/90" data-testid="summons-who">
+          {s.raised_by_name || "A manager"} is asking for you — now.
+        </p>
+        {s.reason && (
+          <p className="mt-2 rounded-lg bg-white/15 px-3 py-2 text-base text-white" data-testid="summons-reason">
+            {s.reason}
+          </p>
+        )}
+        <p className="mt-5 text-sm text-white/80">
+          This clears when a manager marks you as checked in. You cannot close it yourself.
+        </p>
+        <button
+          type="button"
+          onClick={() => setSilencedUntil(Date.now() + SILENCE_MS)}
+          disabled={silenced}
+          className="mt-5 rounded-lg border-2 border-white/70 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:opacity-50"
+          data-testid="summons-silence"
+        >
+          {silenced ? "Sound off for 2 minutes" : "Silence the sound for 2 minutes"}
+        </button>
+        <p className="mt-2 text-xs text-white/70">
+          Silencing stops the noise only — if you are on a call, finish it and go.
+        </p>
+      </div>
+    </div>
+  );
+}

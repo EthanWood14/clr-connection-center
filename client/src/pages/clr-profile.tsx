@@ -241,6 +241,31 @@ export default function ClrProfile() {
   const [trainDates, setTrainDates] = useState<string[]>([]);
   const [trainRate, setTrainRate] = useState<TrainingRate>("standard");
   const [trainDay, setTrainDay] = useState("");
+  const [summonReason, setSummonReason] = useState("");
+  const summonsQuery = useQuery<{ summons: Array<{ id: number; user_id: number; reason: string; raised_by_name: string }> }>({
+    queryKey: ["/api/summons"],
+    queryFn: () => apiRequest("GET", "/api/summons"),
+    refetchInterval: 20_000,
+    retry: false,
+  });
+  const liveSummons = (summonsQuery.data?.summons ?? []).find((x) => Number(x.user_id) === Number(id));
+  const callIn = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/summons", { userId: Number(id), reason: summonReason }),
+    onSuccess: () => {
+      setSummonReason("");
+      queryClient.invalidateQueries({ queryKey: ["/api/summons"] });
+      toast({ title: "Called in", description: "Their C3 is alarming until you mark them checked in." });
+    },
+    onError: (e: any) => toast({ title: "Could not call them in", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+  const clearSummons = useMutation({
+    mutationFn: (sid: number) => apiRequest("POST", `/api/summons/${sid}/clear`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/summons"] });
+      toast({ title: "Checked in", description: "Their alarm has stopped." });
+    },
+    onError: (e: any) => toast({ title: "Could not clear it", description: String(e?.message ?? e), variant: "destructive" }),
+  });
   const addTrainDay = (d: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
     setTrainDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
@@ -594,6 +619,51 @@ export default function ClrProfile() {
               </CardContent>
             </Card>
           )}
+
+          <Card className={liveSummons ? "border-red-500/70 bg-red-500/5" : undefined}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Call them in</CardTitle>
+              <CardDescription>
+                Takes over {data.clr.name}&rsquo;s C3 with a siren and a flashing screen until you mark
+                them checked in. They cannot switch it off themselves.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {liveSummons ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-red-600 dark:text-red-400" data-testid="summons-active">
+                    Alarming now{liveSummons.reason ? ` — “${liveSummons.reason}”` : ""}
+                  </p>
+                  <Button
+                    size="sm"
+                    disabled={clearSummons.isPending}
+                    onClick={() => clearSummons.mutate(liveSummons.id)}
+                    data-testid="summons-clear"
+                  >
+                    They checked in — stop it
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={summonReason}
+                    onChange={(e) => setSummonReason(e.target.value)}
+                    placeholder="What is this about? (optional)"
+                    className="h-9 flex-1 min-w-[200px]"
+                    data-testid="summons-reason-input"
+                  />
+                  <Button
+                    size="sm" variant="destructive"
+                    disabled={callIn.isPending}
+                    onClick={() => callIn.mutate()}
+                    data-testid="summons-raise"
+                  >
+                    Call them in
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="pb-3">

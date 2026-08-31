@@ -16,6 +16,7 @@ import { IntroModal } from "@/components/intro-modal";
 import { PipelineSopModal, PIPELINE_SOP_INTERVAL_DAYS } from "@/components/pipeline-sop-modal";
 import { DailyReportGate, DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGate, EodLockGateActive } from "@/components/eod-lock-gate";
+import { ManagerSummonsAlarm } from "@/components/manager-summons-alarm";
 import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
@@ -378,6 +379,8 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
+      {/* Sits above every other gate — being called in outranks them. */}
+      <ManagerSummonsAlarm />
       <DailyReportGate>
         <EodLockGate>
           <DeferredAppPrompts
