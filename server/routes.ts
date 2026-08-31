@@ -17,6 +17,7 @@ import cron from "node-cron";
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
+import { filterRecipients } from "./deliverable-email";
 import {
   trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
   isTrainingRate,
@@ -725,14 +726,28 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
   const from = fromName
     ? `${fromName.replace(/[<>"]/g, "")} <${(baseFrom.match(/<([^>]+)>/)?.[1] ?? baseFrom).trim()}>`
     : baseFrom;
-  const toArr = Array.isArray(to) ? to : [to];
+  // Resend drops the WHOLE message if any one recipient is undeliverable, so a
+  // single dead address costs everyone else the email. Strip those here, at the
+  // one place every send passes through, rather than at each call site.
+  const requested = Array.isArray(to) ? to : [to];
+  const { to: toArr, dropped } = filterRecipients(requested);
+  if (dropped.length) {
+    console.warn(`[sendEmail] dropped undeliverable recipient(s): ${JSON.stringify(dropped)} — subject=${JSON.stringify(subject)}`);
+  }
+  if (!toArr.length) {
+    // Everyone on the list was undeliverable. Sending to nobody would be a
+    // silent no-op billed as a success; say so instead.
+    console.error(`[sendEmail] no deliverable recipients for ${JSON.stringify(subject)} (asked: ${JSON.stringify(requested)})`);
+    throw new Error("No deliverable recipients for this email.");
+  }
+  const bccList = bcc ? filterRecipients(Array.isArray(bcc) ? bcc : [bcc]).to : [];
   console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}… keySource=${apiKey === DEFAULT_RESEND_KEY ? "default" : "db"}`);
   let result: any;
   try {
     const resend = new Resend(apiKey);
     result = await resend.emails.send({
       from, to: toArr, subject, html,
-      ...(bcc ? { bcc: Array.isArray(bcc) ? bcc : [bcc] } : {}),
+      ...(bccList.length ? { bcc: bccList } : {}),
       ...(replyTo && replyTo.includes("@") ? { replyTo } : {}),
       ...(attachments?.length ? { attachments } : {}),
     });
