@@ -17,6 +17,7 @@ import { PipelineSopModal, PIPELINE_SOP_INTERVAL_DAYS } from "@/components/pipel
 import { DailyReportGate, DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGate, EodLockGateActive } from "@/components/eod-lock-gate";
 import { ManagerSummonsAlarm } from "@/components/manager-summons-alarm";
+import { SummonsWatchdog } from "@/components/summons-watchdog";
 import { CookieNotice } from "@/components/cookie-notice";
 import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
@@ -382,6 +383,8 @@ function AuthenticatedApp() {
     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
       {/* Sits above every other gate — being called in outranks them. */}
       <ManagerSummonsAlarm />
+      {/* Restarts a stalled or out-of-date tab BEFORE the alarm has to fire. */}
+      <SummonsWatchdog />
       <DailyReportGate>
         <EodLockGate>
           <DeferredAppPrompts

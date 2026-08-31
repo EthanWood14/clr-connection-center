@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.24.0",
+    headline: "The call-in alarm now wakes a stalled C3 first.",
+    items: [
+      { text: "These tabs stay open all day — laptops sleep, pages get stuck, and a tab can still be running an old version. Any of those could have swallowed a call-in alarm. C3 now quietly refreshes itself the moment a call-in is raised, so the alarm fires on a fresh page every time.", audience: "everyone" },
+      { text: "It refreshes once per call-in and never again for the same one, so it can never get stuck reloading over and over. It also refreshes on its own if your tab is running an out-of-date version.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.23.0",
     headline: "Call the whole floor in at once.",
     items: [
