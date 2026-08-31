@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.22.0",
+    headline: "Being called in now comes with a video.",
+    items: [
+      { text: "The call-in alarm plays a clip on loop as its centrepiece. The siren drops to a low background growl while the clip is audible, so the two are not shouting over each other — and if the browser blocks the sound, the siren comes back up to full instead.", audience: "everyone" },
+      { text: "Silencing for two minutes now mutes the clip as well as the siren, so the button does what it says. The screen keeps going, and it still takes a manager to stand it down.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.21.0",
     headline: "Hand someone a link to set loan officer priority.",
     items: [

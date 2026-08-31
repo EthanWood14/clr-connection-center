@@ -63,3 +63,22 @@ test("the alarm outranks the other gates", () => {
   assert.ok(app.indexOf("<ManagerSummonsAlarm />") < app.indexOf("<EodLockGate"),
     "the summons must render above the EOD lock");
 });
+
+test("the video leads and the siren gets out of its way", () => {
+  assert.match(alarm, /data-testid="summons-video"/);
+  assert.match(alarm, /src="\/summons\.mp4"/);
+  assert.match(alarm, /loop/, "it has to keep going, not stop after one play");
+  // The siren drops right back once the video is carrying the sound.
+  assert.match(alarm, /const level = videoAudible \? 0\.03 : 0\.13/);
+  assert.ok(0.03 < 0.13, "the backing level must be quieter than the solo level");
+  // Autoplay with sound is refused until a page has been interacted with, so
+  // there must be a muted fallback — and the siren stays loud in that case.
+  assert.match(alarm, /v\.muted = true;/);
+  assert.match(alarm, /setVideoAudible\(false\)/);
+});
+
+test("silencing silences the video too", () => {
+  // Otherwise the button would be a lie: the siren stops and the clip keeps
+  // shouting.
+  assert.match(alarm, /if \(silenced\) \{ v\.muted = true; setVideoAudible\(false\); \}/);
+});
