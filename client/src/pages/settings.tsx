@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, UserPlus } from "lucide-react";
+import { Settings2, Save, RotateCcw, Info, Users, Megaphone, Activity, Lock, Mail, Shuffle, RepeatIcon, Calendar, ShieldCheck, PlayCircle, RefreshCw, Send, User, Sliders, LayoutGrid, Target, PhoneCall, Download, FileText, Shield, MessageSquare, UserPlus, Star} from "lucide-react";
 import AuditLog from "@/pages/audit-log";
 import { TeamManagement } from "@/components/team-management";
 import { BroadcastNotifications } from "@/components/broadcast-notifications";
@@ -638,6 +638,103 @@ function NmlsScheduleCard() {
             </div>
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Share links that let someone without a C3 login set loan-officer priority.
+ * That is lead routing, so each link is separately revocable, expires, and
+ * every change made through one lands in the audit trail.
+ */
+function LoPriorityLinks() {
+  const { toast } = useToast();
+  const [label, setLabel] = useState("");
+  const [days, setDays] = useState("7");
+  const { data, refetch } = useQuery<{ links: any[] }>({
+    queryKey: ["/api/lo-priority-links"],
+    queryFn: () => apiRequest("GET", "/api/lo-priority-links"),
+    retry: false,
+  });
+  const create = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/lo-priority-links", { label, days: Number(days) || 7 }),
+    onSuccess: (r: any) => {
+      setLabel("");
+      void refetch();
+      const url = `${window.location.origin}/#/lo-priority/${r.token}`;
+      navigator.clipboard?.writeText(url);
+      toast({ title: "Link created and copied", description: url });
+    },
+    onError: (e: any) => toast({ title: "Could not create the link", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/lo-priority-links/${id}/revoke`, {}),
+    onSuccess: () => { void refetch(); toast({ title: "Link revoked" }); },
+  });
+  const live = (data?.links ?? []).filter((l: any) => !l.revoked_at
+    && (!l.expires_at || new Date(l.expires_at).getTime() > Date.now()));
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Star className="w-4 h-4 text-amber-500" />
+          Loan officer priority — share link
+        </CardTitle>
+        <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
+          <span>
+            Anyone with the link can set which loan officers get leads first, without logging in.
+            That is lead routing, so keep the expiry short and revoke a link once it has done its job.
+            The page shows names and priority only, and every change is recorded.
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={label} onChange={(e) => setLabel(e.target.value)}
+            placeholder="What is this link for?" className="h-9 flex-1 min-w-[200px]"
+            data-testid="lo-link-label"
+          />
+          <Input
+            type="number" min="1" max="90" value={days} onChange={(e) => setDays(e.target.value)}
+            className="h-9 w-24" data-testid="lo-link-days"
+          />
+          <span className="text-xs text-muted-foreground">days</span>
+          <Button size="sm" disabled={create.isPending} onClick={() => create.mutate()} data-testid="lo-link-create">
+            Create link
+          </Button>
+        </div>
+        {live.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No active links.</p>
+        ) : live.map((l: any) => (
+          <div key={l.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" data-testid="lo-link-row">
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{l.label || `Link #${l.id}`}</p>
+              <p className="text-[11px] text-muted-foreground">
+                by {l.created_by_name || "—"} · expires {l.expires_at ? new Date(l.expires_at).toLocaleDateString() : "never"}
+                {" · "}used {l.use_count ?? 0}x
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm" variant="outline"
+                onClick={() => {
+                  const url = `${window.location.origin}/#/lo-priority/${l.token}`;
+                  navigator.clipboard?.writeText(url);
+                  toast({ title: "Copied", description: url });
+                }}
+              >
+                Copy
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => revoke.mutate(l.id)} data-testid="lo-link-revoke">
+                Revoke
+              </Button>
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );
@@ -3098,6 +3195,7 @@ export default function Settings() {
 
   const reportsTab = (
     <div className="space-y-6">
+      <LoPriorityLinks />
       <EmailReportsCard />
     </div>
   );

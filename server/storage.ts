@@ -2447,6 +2447,25 @@ function runNewMigrations() {
     FOREIGN KEY (subject_user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (author_user_id) REFERENCES users(id)
   )`);
+  // A share link that lets somebody without a C3 login set which loan officers
+  // are prioritised. This changes lead ROUTING, so each link is its own
+  // revocable, expiring credential rather than a reuse of the org portal code,
+  // and it can do nothing except move priority tiers.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS lo_priority_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    token TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_by INTEGER,
+    created_by_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked_at TEXT,
+    last_used_at TEXT,
+    use_count INTEGER NOT NULL DEFAULT 0
+  )`);
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lo_priority_links_token ON lo_priority_links(token)`);
+
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss
   // their own, or it would just be a notification they close.

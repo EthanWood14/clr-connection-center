@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.21.0",
+    headline: "Hand someone a link to set loan officer priority.",
+    items: [
+      { text: "In Settings you can create a share link that lets somebody set which loan officers get leads first — no C3 login needed. Give it a label, pick how long it should last, and it copies itself to your clipboard.", audience: "manager" },
+      { text: "The page behind the link can do one thing only: move loan officers between Priority, Standard and Last resort. It shows names and priority — no phone numbers, no logins, no leads, nothing else — and it cannot touch anything outside your team.", audience: "manager" },
+      { text: "Because this decides who gets leads, each link expires on its own (a week unless you say otherwise), you can revoke any of them instantly, and every change is written to the audit trail with the name the person types in.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.20.0",
     headline: "Managers can call someone in, and C3 will not let them miss it.",
     items: [

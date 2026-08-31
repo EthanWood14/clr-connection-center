@@ -5411,6 +5411,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // exists precisely for requests the strict same-site cookie cannot ride —
     // which requireAuth here would 401 before the route ever ran.
     if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo") return next();
+    // LO priority share link — no C3 login. Every request resolves a single
+    // revocable, expiring token inside the handler before touching anything,
+    // and the link can only move priority tiers.
+    if (req.path.startsWith("/lo-priority/")) return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -19184,6 +19188,144 @@ ${note}` : daysLine;
   // a daily trend, and the operational extras (hours, attendance, comp).
   // Dated manager notes on a CLR. Commentary, never a metric: no aggregate on
   // this page reads clr_notes, so writing one cannot move a number or a bar.
+  // ── LO priority share link ───────────────────────────────────────────────
+  // Hands someone outside C3 the ability to set which loan officers are
+  // prioritised. That is lead routing, so: its own token, an expiry, a revoke
+  // switch, and an audit row naming the link on every change.
+  function loPriorityLink(token: string): any | null {
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(String(token ?? ""))) return null;
+    try {
+      const row = storageExtra.getRawSqlite().prepare(
+        `SELECT * FROM lo_priority_links WHERE token=? AND revoked_at IS NULL`,
+      ).get(String(token)) as any;
+      if (!row) return null;
+      if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
+      return row;
+    } catch { return null; }
+  }
+
+  app.get("/api/lo-priority/:token", (req: any, res) => {
+    const link = loPriorityLink(req.params.token);
+    if (!link) return res.status(404).json({ error: "This link is no longer active." });
+    const orgId = Number(link.org_id) || 1;
+    try {
+      const los = storageExtra.getRawSqlite().prepare(
+        `SELECT id, full_name AS fullName, priority_tier AS priorityTier, internal_status AS internalStatus
+           FROM loan_officers WHERE org_id=? AND internal_status='active'
+          ORDER BY priority_tier ASC, full_name COLLATE NOCASE ASC`,
+      ).all(orgId) as any[];
+      res.json({ label: String(link.label ?? ""), expiresAt: link.expires_at ?? null, los });
+    } catch (e: any) {
+      res.status(500).json({ error: "Could not load the loan officers." });
+    }
+  });
+
+  app.post("/api/lo-priority/:token", (req: any, res) => {
+    const link = loPriorityLink(req.params.token);
+    if (!link) return res.status(404).json({ error: "This link is no longer active." });
+    const orgId = Number(link.org_id) || 1;
+    const raw = Array.isArray(req.body?.changes) ? req.body.changes : [];
+    // Only ever a tier move, only ever tiers 1-3, only ever LOs in this org.
+    const changes = raw
+      .map((c: any) => ({ loId: Number(c?.loId), tier: Number(c?.priorityTier) }))
+      .filter((c: any) => Number.isInteger(c.loId) && c.loId > 0 && [1, 2, 3].includes(c.tier))
+      .slice(0, 200);
+    if (!changes.length) return res.status(400).json({ error: "Nothing to change." });
+    const db = storageExtra.getRawSqlite();
+    const who = String(req.body?.who ?? "").trim().slice(0, 80);
+    let applied = 0;
+    const names: string[] = [];
+    try {
+      const run = db.transaction(() => {
+        for (const c of changes) {
+          const lo = db.prepare(`SELECT id, full_name, priority_tier FROM loan_officers WHERE id=? AND org_id=?`).get(c.loId, orgId) as any;
+          if (!lo) continue;
+          if (Number(lo.priority_tier) === c.tier) continue;
+          db.prepare(`UPDATE loan_officers SET priority_tier=?, updated_at=? WHERE id=? AND org_id=?`)
+            .run(c.tier, new Date().toISOString(), c.loId, orgId);
+          names.push(`${lo.full_name}: ${lo.priority_tier} -> ${c.tier}`);
+          applied += 1;
+        }
+        db.prepare(`UPDATE lo_priority_links SET use_count=use_count+1, last_used_at=? WHERE id=?`)
+          .run(new Date().toISOString(), link.id);
+      });
+      run();
+      if (applied) {
+        runWithOrg({ orgId, superAdmin: false }, () => {
+          audit({
+            userId: Number(link.created_by) || 0,
+            userName: who ? `${who} (via share link)` : `Share link "${link.label || link.id}"`,
+            action: "update", entityType: "loan_officer", entityId: 0,
+            entityLabel: `Priority changed by link: ${names.slice(0, 12).join(", ")}`,
+          });
+        });
+      }
+      res.json({ applied });
+    } catch (e: any) {
+      res.status(500).json({ error: "Could not save the changes." });
+    }
+  });
+
+  // Managers create and revoke the links.
+  app.get("/api/lo-priority-links", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    try {
+      const rows = storageExtra.getRawSqlite().prepare(
+        `SELECT id, token, label, created_by_name, created_at, expires_at, revoked_at, last_used_at, use_count
+           FROM lo_priority_links WHERE org_id=? ORDER BY id DESC LIMIT 50`,
+      ).all(orgId) as any[];
+      res.json({ links: rows });
+    } catch { res.json({ links: [] }); }
+  });
+
+  app.post("/api/lo-priority-links", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(actorId) as any;
+    const label = String(req.body?.label ?? "").trim().slice(0, 120);
+    // Default to a week. An link that changes lead routing should not outlive
+    // the reason it was made.
+    const days = Math.max(1, Math.min(90, Number(req.body?.days) || 7));
+    const token = crypto.randomBytes(24).toString("base64url");
+    const nowIso = new Date().toISOString();
+    const expires = new Date(Date.now() + days * 86400000).toISOString();
+    try {
+      const info = storageExtra.getRawSqlite().prepare(
+        `INSERT INTO lo_priority_links (org_id, token, label, created_by, created_by_name, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(orgId, token, label, actorId, String(me?.name ?? ""), nowIso, expires);
+      audit({
+        userId: actorId, userName: me?.name ?? "Manager", action: "create",
+        entityType: "loan_officer", entityId: 0,
+        entityLabel: `Created an LO priority share link${label ? ` (${label})` : ""}, expires ${expires.slice(0, 10)}`,
+      });
+      res.json({ id: Number(info.lastInsertRowid), token, expiresAt: expires });
+    } catch (e: any) {
+      res.status(500).json({ error: "Could not create the link." });
+    }
+  });
+
+  app.post("/api/lo-priority-links/:id/revoke", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(actorId) as any;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid link." });
+    const r = storageExtra.getRawSqlite().prepare(
+      `UPDATE lo_priority_links SET revoked_at=? WHERE id=? AND org_id=? AND revoked_at IS NULL`,
+    ).run(new Date().toISOString(), id, orgId);
+    if (r.changes) {
+      audit({
+        userId: actorId, userName: me?.name ?? "Manager", action: "delete",
+        entityType: "loan_officer", entityId: 0, entityLabel: `Revoked LO priority share link #${id}`,
+      });
+    }
+    res.json({ ok: true });
+  });
+
   // ── "Go see your manager" ────────────────────────────────────────────────
   // A manager raises a summons; that person's C3 alarms until a manager clears
   // it. The person summoned cannot clear their own — that is the whole point.
