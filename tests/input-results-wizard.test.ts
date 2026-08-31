@@ -118,3 +118,62 @@ test("appointment notes edits are mirrored to Bonzo", () => {
   assert.match(appts, /Reschedule/);
   assert.match(patch, /syncAppointmentResultToBonzo\(id, "rescheduled", newDt\)/);
 });
+
+// ── Reform: the page is built around what CLRs actually log ──────────────────
+// Measured on prod over 2,759 transfers since 2026-06-01: transfers are 89% of
+// all outcomes and phone is filled 92% of the time, while lead_timeframe,
+// prequalification_notes, next_steps and lead_goal sit at 0.0% and
+// lo_action_plan at 0.2%. The form opens on the common answer and puts the
+// long tail behind one control.
+
+test("the form opens on the answer for the case that is 89% of outcomes", () => {
+  const entry = page.slice(page.indexOf("function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
+  assert.match(entry, /outcomeType: "transfer",/);
+  assert.match(entry, /transferType: "direct",/, "Direct is the common shape - do not make them click it");
+  // Editing must reflect what was recorded, never invent a transfer type.
+  const edit = page.slice(page.indexOf("function EditOutcomeDialog"));
+  assert.match(edit, /transferType: null,/, "editing must not preselect");
+});
+
+test("the long tail is collapsed, but never hidden silently", () => {
+  assert.match(page, /data-testid="toggle-info-gathering"/);
+  assert.match(page, /\{showInfo && INFO_FIELDS\.map\(/, "the section collapses");
+  // A collapsed section that hid filled values would be a trap.
+  assert.match(page, /infoFilledCount/, "the header must say how many are filled");
+});
+
+test("burst entry keeps the form up but never carries one call into the next", () => {
+  assert.match(page, /data-testid="button-log-and-next"/);
+  const reset = page.slice(page.indexOf("if (!resetSignal) return;"), page.indexOf("setConfirmBonzo(false);"));
+  assert.ok(reset.length > 0, "there must be a reset between calls");
+  // Routing repeats between calls; who you spoke to never does.
+  for (const keep of ["outcomeType", "transferType", "loId", "loaId"]) {
+    assert.ok(reset.includes(keep), keep + " should carry over");
+  }
+  for (const clear of ["borrowerName", "phoneNumber", "notes", "leadSource", "qualOwnHome", "conversationNotes"]) {
+    assert.ok(!reset.includes(clear), clear + " must NOT carry into the next call");
+  }
+});
+
+test("a normal submit does not accidentally behave as Log & next", () => {
+  // form.handleSubmit passes the submit EVENT as its second argument, which
+  // would arrive as a truthy keepOpen and leave the dialog open every time.
+  // Only the entry dialog's onSubmit takes keepOpen, so only it must wrap.
+  const entry = page.slice(page.indexOf("function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
+  assert.match(entry, /form\.handleSubmit\(\(v\) => onSubmit\(v\)\)/);
+  assert.ok(!/handleSubmit\(onSubmit\)/.test(entry), "the entry form must not pass onSubmit bare");
+});
+
+test("the dialog is wide enough to see the form it contains", () => {
+  assert.ok(!/DialogContent className="max-w-lg p-0 gap-0 max-h-\[92vh\]/.test(page),
+    "a ~50-field form does not fit in 512px");
+  assert.match(page, /DialogContent className="max-w-3xl/);
+});
+
+test("the running count is the logger's own work, on the form's own date", () => {
+  assert.match(page, /data-testid="text-today-count"/);
+  const scope = page.slice(page.indexOf("const todayStr = businessTodayClient()"), page.indexOf("const filtered ="));
+  assert.match(scope, /businessTodayClient\(\)/, "must agree with the date the form defaults to");
+  assert.match(scope, /Number\(o\.assistantId\) === Number\(authUser\.id\)/,
+    "the counter describes YOUR entries, not the current filter");
+});

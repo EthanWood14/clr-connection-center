@@ -358,11 +358,19 @@ function OutcomeFormDialog({
   isPending,
   users,
   los,
+  todayCount = 0,
+  todayRecent = [],
+  resetSignal = 0,
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (values: OutcomeFormValues) => void;
+  onSubmit: (values: OutcomeFormValues, keepOpen?: boolean) => void;
   isPending: boolean;
+  /** Logged so far today, so burst entry can see itself accumulate. */
+  todayCount?: number;
+  todayRecent?: Array<{ id: number; borrowerName?: string | null; outcomeType: string }>;
+  /** Bumped by the page after a successful "Log & next", to clear the form. */
+  resetSignal?: number;
   users: any[];
   los: any[];
 }) {
@@ -377,7 +385,9 @@ function OutcomeFormDialog({
       loId: 0,
       loaId: null,
       outcomeType: "transfer",
-      transferType: null,
+      // 2,759 of the last 3,085 outcomes were transfers, and Direct is the
+      // common shape — so the form opens on the answer, not the question.
+      transferType: "direct",
       bulkTexter: null,
       helperAssisted: null,
       borrowerName: "",
@@ -432,6 +442,30 @@ function OutcomeFormDialog({
   // Final gate before anything is logged: a confirmation step that asks
   // whether the call has been put into Bonzo (with one-click notes copy).
   const [confirmBonzo, setConfirmBonzo] = useState(false);
+  // The long tail is collapsed by default. Nothing is hidden silently — the
+  // header keeps a count of what is filled inside it.
+  const [showInfo, setShowInfo] = useState(false);
+
+  // After a "Log & next", clear the call-specific answers and keep only the
+  // routing context. Carrying the borrower, phone, notes, qualification
+  // answers or lead source would silently attribute one call's details to the
+  // next one — the failure mode is a wrong record, not a slow one.
+  useEffect(() => {
+    if (!resetSignal) return;
+    const keep = form.getValues();
+    form.reset({
+      ...form.formState.defaultValues as OutcomeFormValues,
+      date: keep.date,
+      assistantId: keep.assistantId,
+      outcomeType: keep.outcomeType,
+      transferType: keep.transferType,
+      loId: keep.loId,
+      loaId: keep.loaId,
+    });
+    setConfirmBonzo(false);
+    setShowInfo(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetSignal]);
   // Org toggle: ask whether Bulk Texter was part of the transfer.
   const { data: bulkTexterCfg } = useQuery<{ askBulkTexter: boolean }>({ queryKey: ["/api/settings/bulk-texter"] });
   const askBulkTexter = !!bulkTexterCfg?.askBulkTexter;
@@ -441,6 +475,8 @@ function OutcomeFormDialog({
   const helperName = helperCfg?.helperName || "Elleine";
 
   const watchedType = form.watch("outcomeType");
+  const infoValues = form.watch(INFO_FIELDS.map((f) => f.name) as any);
+  const infoFilledCount = (infoValues as any[]).filter((v) => String(v ?? "").trim()).length;
   const watchedTransferType = form.watch("transferType");
   const watchedBulkTexter = form.watch("bulkTexter");
   const watchedHelper = form.watch("helperAssisted");
@@ -516,14 +552,22 @@ function OutcomeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden">
+      <DialogContent className="max-w-3xl p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden">
         <DialogHeader className="space-y-1 px-4 sm:px-5 pt-4 sm:pt-5 pb-2 shrink-0">
           <DialogTitle className="text-base">
             {confirmBonzo ? "One last thing — Bonzo" : "Log Outcome"}
+            {todayCount > 0 && (
+              <span className="ml-2 align-middle text-[11px] font-normal text-muted-foreground" data-testid="text-today-count">
+                {todayCount} logged today
+                {todayRecent.length > 0 && (
+                  <> · last: {todayRecent.map((o) => o.borrowerName || OUTCOME_LABELS[o.outcomeType] || "—").join(", ")}</>
+                )}
+              </span>
+            )}
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
+          <form onSubmit={form.handleSubmit((v) => onSubmit(v))} className="flex flex-col min-h-0 flex-1">
             <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
 
           {/* Outcome type — the first thing on the page, always visible and
@@ -799,8 +843,21 @@ function OutcomeFormDialog({
                 </p>
               )}
 
-              <p className="text-sm font-semibold text-foreground pt-1">Info Gathering</p>
-              {INFO_FIELDS.map((f, index) => (
+              <button
+                type="button"
+                onClick={() => setShowInfo((v) => !v)}
+                className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm font-semibold hover:bg-muted"
+                data-testid="toggle-info-gathering"
+              >
+                <span>Info Gathering</span>
+                <span className="text-[11px] font-normal text-muted-foreground">
+                  {infoFilledCount > 0 ? `${infoFilledCount} filled` : "optional"} · {showInfo ? "hide" : "show"}
+                </span>
+              </button>
+              {/* Kept in the DOM when hidden would mean 20 registered inputs on
+                  every render; unmounting is fine because react-hook-form holds
+                  the values, so reopening restores what was typed. */}
+              {showInfo && INFO_FIELDS.map((f, index) => (
                 <div key={f.name} className="space-y-1.5">
                   {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
                     <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
@@ -905,9 +962,20 @@ function OutcomeFormDialog({
                 <Button type="button" variant="outline" size="sm" onClick={() => setConfirmBonzo(false)} disabled={isPending}>
                   <ChevronLeft className="w-4 h-4 mr-1" /> Not yet — go back
                 </Button>
-                <Button type="submit" disabled={isPending} data-testid="button-confirm-bonzo">
-                  {isPending ? "Saving…" : "Yes, it's in Bonzo — Log Outcome"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={isPending} data-testid="button-confirm-bonzo">
+                    {isPending ? "Saving…" : "Yes, it's in Bonzo — Log Outcome"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={isPending}
+                    onClick={() => form.handleSubmit((v) => onSubmit(v, true))()}
+                    data-testid="button-log-and-next"
+                  >
+                    Log &amp; next
+                  </Button>
+                </div>
               </>
             ) : (
               <>
@@ -1289,6 +1357,7 @@ export default function Outcomes() {
   const { toast } = useToast();
   const { user: authUser } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [formResetSignal, setFormResetSignal] = useState(0);
   const [editTarget, setEditTarget] = useState<any | null>(null);
   const [filterType, setFilterType] = useState("all");
 
@@ -1315,12 +1384,17 @@ export default function Outcomes() {
   const refreshAll = () => queryClient.invalidateQueries();
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/outcomes", data),
-    onSuccess: () => {
+    mutationFn: ({ data }: { data: any; keepOpen?: boolean }) =>
+      apiRequest("POST", "/api/outcomes", data),
+    onSuccess: (_res, vars) => {
       refreshAll();
-      setDialogOpen(false);
+      // "Log & next" leaves the form up for the next call. Closing and
+      // reopening the dialog 20-40 times a day was the single most repeated
+      // action on this page.
+      if (vars?.keepOpen) setFormResetSignal((n) => n + 1);
+      else setDialogOpen(false);
       markStep(authUser?.id, "log_outcome");
-      toast({ title: "Outcome logged" });
+      toast({ title: vars?.keepOpen ? "Logged — next call" : "Outcome logged" });
     },
     onError: () => toast({ title: "Error logging outcome", variant: "destructive" }),
   });
@@ -1365,6 +1439,15 @@ export default function Outcomes() {
     },
     onError: () => toast({ title: "Error deleting outcome", variant: "destructive" }),
   });
+
+  // Today's own rows, for the burst-entry counter. Scoped to the logged-in
+  // person even when a manager is filtering to someone else, because the
+  // counter describes what YOU have just been entering.
+  const todayStr = businessTodayClient();
+  const loggedToday = outcomes
+    .filter((o: any) => String(o.date).slice(0, 10) === todayStr
+      && (!authUser?.id || Number(o.assistantId) === Number(authUser.id)))
+    .sort((a: any, b: any) => Number(b.id) - Number(a.id));
 
   const filtered = outcomes.filter((o: any) => {
     const matchType = filterType === "all" || o.outcomeType === filterType;
@@ -1617,7 +1700,7 @@ export default function Outcomes() {
       <OutcomeFormDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        onSubmit={values => {
+        onSubmit={(values, keepOpen) => {
           // For appointment/callback types, appointmentDatetime IS the follow-up date.
           // Copy it into followUpDate so the record appears in Upcoming Appointments.
           const normalized = {
@@ -1628,11 +1711,14 @@ export default function Outcomes() {
               ? (values.leadSourceOther || "").trim() || null
               : values.leadSource || null,
           };
-          createMutation.mutate(normalized);
+          createMutation.mutate({ data: normalized, keepOpen });
         }}
         isPending={createMutation.isPending}
         users={users}
         los={los}
+        todayCount={loggedToday.length}
+        todayRecent={loggedToday.slice(0, 3)}
+        resetSignal={formResetSignal}
       />
 
       <EditOutcomeDialog
