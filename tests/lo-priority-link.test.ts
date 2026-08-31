@@ -29,13 +29,13 @@ test("the link can ONLY move priority tiers", () => {
   // The read exposes names and tiers, nothing else — no phone, email, NMLS or
   // credential columns.
   const read = publicBlock.slice(publicBlock.indexOf('app.get("/api/lo-priority/:token"'), publicBlock.indexOf('app.post("/api/lo-priority/:token"'));
-  assert.match(read, /SELECT id, full_name AS fullName, priority_tier AS priorityTier/);
+  assert.match(read, /SELECT id, full_name AS fullName, needs_transfers AS pinned/);
   for (const leak of ["phone", "email", "bonzo_password", "nmls_id", "other_credentials"]) {
     assert.ok(!read.includes(leak), `the public read must not expose ${leak}`);
   }
   const write = publicBlock.slice(publicBlock.indexOf('app.post("/api/lo-priority/:token"'));
-  assert.match(write, /\[1, 2, 3\]\.includes\(c\.tier\)/, "only real tiers");
-  assert.match(write, /UPDATE loan_officers SET priority_tier=\?, updated_at=\?/);
+  assert.match(write, /pinned: c\?\.pinned === true/, "the pin is a boolean, nothing else");
+  assert.match(write, /UPDATE loan_officers SET needs_transfers=\?, updated_at=\?/);
   // It must not be able to write anything else about an LO.
   assert.equal((write.match(/UPDATE loan_officers SET/g) ?? []).length, 1);
 });
@@ -75,6 +75,29 @@ test("the public routes are exempt from the login wall, and only those", () => {
 });
 
 test("the page starts from what is set, so an untouched LO is not rewritten", () => {
-  assert.match(page, /for \(const lo of data\.los\) next\[lo\.id\] = Number\(lo\.priorityTier\) \|\| 2/);
-  assert.match(page, /draft\[lo\.id\] !== \(Number\(lo\.priorityTier\) \|\| 2\)/, "only changed rows are sent");
+  assert.match(page, /for \(const lo of data\.los\) next\[lo\.id\] = !!lo\.pinned/);
+  assert.match(page, /\(draft\[lo\.id\] \?\? lo\.pinned\) !== lo\.pinned/, "only changed rows are sent");
+});
+
+test("the link drives the SAME flag the app pins on", () => {
+  // needs_transfers is what the state view highlights and sorts to the top,
+  // and what the start-of-day "prioritized loan officers" modal is built from.
+  // If the link wrote anything else it would look like it worked and change
+  // nothing anyone sees.
+  const modal = readFileSync(join(root, "client/src/components/daily-lo-priorities-modal.tsx"), "utf8");
+  assert.match(modal, /needsTransfers \?\? lo\.needs_transfers/, "the start-of-day list reads this flag");
+  const stateView = readFileSync(join(root, "client/src/pages/state-lookup.tsx"), "utf8");
+  assert.match(stateView, /lo\.needsTransfers \? "border-2 border-amber-400/, "the state view highlights on it");
+  const write = publicBlock.slice(publicBlock.indexOf('app.post("/api/lo-priority/:token"'));
+  assert.match(write, /needs_transfers/);
+  // And it must NOT quietly move the separate priority tier.
+  assert.ok(!/priority_tier=/.test(write), "the link must not touch priority_tier");
+});
+
+test("the page shows what is pinned before anything is touched", () => {
+  assert.match(page, /data-testid="lo-pinned-summary"/);
+  assert.match(page, /Pinned right now/);
+  // Ordered so the pinned ones lead, the same as the state view does.
+  const read = publicBlock.slice(publicBlock.indexOf('app.get("/api/lo-priority/:token"'), publicBlock.indexOf('app.post("/api/lo-priority/:token"'));
+  assert.match(read, /ORDER BY needs_transfers DESC/);
 });

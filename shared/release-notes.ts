@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.25.0",
+    headline: "The share link now pins the loan officers people actually see.",
+    items: [
+      { text: "The link was changing the wrong thing — a background tier nobody looks at — so pinning through it appeared to work and changed nothing. It now sets the same pin you use in the state view: pinned officers get the amber highlight, sort to the top, and are the list every CLR is shown when they start the day.", audience: "manager" },
+      { text: "The page also opens by telling you who is pinned right now, before you touch anything, so you are never guessing at the current state.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.24.0",
     headline: "The call-in alarm now wakes a stalled C3 first.",
     items: [

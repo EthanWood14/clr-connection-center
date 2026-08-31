@@ -19224,11 +19224,16 @@ ${note}` : daysLine;
     if (!link) return res.status(404).json({ error: "This link is no longer active." });
     const orgId = Number(link.org_id) || 1;
     try {
+      // needs_transfers is the pin: it is what the state view highlights and
+      // sorts to the top, and what the start-of-day "prioritized loan officers"
+      // list is built from. priority_tier is a separate, slower-moving thing and
+      // this link deliberately does not touch it.
       const los = storageExtra.getRawSqlite().prepare(
-        `SELECT id, full_name AS fullName, priority_tier AS priorityTier, internal_status AS internalStatus
+        `SELECT id, full_name AS fullName, needs_transfers AS pinned,
+                priority_tier AS priorityTier, internal_status AS internalStatus
            FROM loan_officers WHERE org_id=? AND internal_status='active'
-          ORDER BY priority_tier ASC, full_name COLLATE NOCASE ASC`,
-      ).all(orgId) as any[];
+          ORDER BY needs_transfers DESC, full_name COLLATE NOCASE ASC`,
+      ).all(orgId).map((r: any) => ({ ...r, pinned: !!Number(r.pinned) })) as any[];
       res.json({ label: String(link.label ?? ""), expiresAt: link.expires_at ?? null, los });
     } catch (e: any) {
       res.status(500).json({ error: "Could not load the loan officers." });
@@ -19240,10 +19245,10 @@ ${note}` : daysLine;
     if (!link) return res.status(404).json({ error: "This link is no longer active." });
     const orgId = Number(link.org_id) || 1;
     const raw = Array.isArray(req.body?.changes) ? req.body.changes : [];
-    // Only ever a tier move, only ever tiers 1-3, only ever LOs in this org.
+    // Only ever the pin, only ever on or off, only ever LOs in this org.
     const changes = raw
-      .map((c: any) => ({ loId: Number(c?.loId), tier: Number(c?.priorityTier) }))
-      .filter((c: any) => Number.isInteger(c.loId) && c.loId > 0 && [1, 2, 3].includes(c.tier))
+      .map((c: any) => ({ loId: Number(c?.loId), pinned: c?.pinned === true || c?.pinned === 1 || c?.pinned === "1" }))
+      .filter((c: any) => Number.isInteger(c.loId) && c.loId > 0)
       .slice(0, 200);
     if (!changes.length) return res.status(400).json({ error: "Nothing to change." });
     const db = storageExtra.getRawSqlite();
@@ -19253,12 +19258,12 @@ ${note}` : daysLine;
     try {
       const run = db.transaction(() => {
         for (const c of changes) {
-          const lo = db.prepare(`SELECT id, full_name, priority_tier FROM loan_officers WHERE id=? AND org_id=?`).get(c.loId, orgId) as any;
+          const lo = db.prepare(`SELECT id, full_name, needs_transfers FROM loan_officers WHERE id=? AND org_id=?`).get(c.loId, orgId) as any;
           if (!lo) continue;
-          if (Number(lo.priority_tier) === c.tier) continue;
-          db.prepare(`UPDATE loan_officers SET priority_tier=?, updated_at=? WHERE id=? AND org_id=?`)
-            .run(c.tier, new Date().toISOString(), c.loId, orgId);
-          names.push(`${lo.full_name}: ${lo.priority_tier} -> ${c.tier}`);
+          if (!!Number(lo.needs_transfers) === c.pinned) continue;
+          db.prepare(`UPDATE loan_officers SET needs_transfers=?, updated_at=? WHERE id=? AND org_id=?`)
+            .run(c.pinned ? 1 : 0, new Date().toISOString(), c.loId, orgId);
+          names.push(`${lo.full_name}: ${c.pinned ? "pinned" : "unpinned"}`);
           applied += 1;
         }
         db.prepare(`UPDATE lo_priority_links SET use_count=use_count+1, last_used_at=? WHERE id=?`)
@@ -19271,7 +19276,7 @@ ${note}` : daysLine;
             userId: Number(link.created_by) || 0,
             userName: who ? `${who} (via share link)` : `Share link "${link.label || link.id}"`,
             action: "update", entityType: "loan_officer", entityId: 0,
-            entityLabel: `Priority changed by link: ${names.slice(0, 12).join(", ")}`,
+            entityLabel: `Pinned loan officers changed by link: ${names.slice(0, 12).join(", ")}`,
           });
         });
       }

@@ -751,14 +751,14 @@ function LoPriorityLinks() {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Star className="w-4 h-4 text-amber-500" />
-          Loan officer priority — share link
+          Pinned loan officers — share link
         </CardTitle>
         <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
           <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
           <span>
-            Anyone with the link can set which loan officers get leads first, without logging in.
-            That is lead routing, so keep the expiry short and revoke a link once it has done its job.
-            The page shows names and priority only, and every change is recorded.
+            Anyone with the link can pin which loan officers need transfers, without logging in. Pinned ones are highlighted in the state view and are what every CLR sees at the start of the day.
+            That steers where transfers go, so keep the expiry short and revoke a link once it has done its job.
+            The page shows names and the pin only, and every change is recorded.
           </span>
         </div>
       </CardHeader>

@@ -6,30 +6,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Star, Check } from "lucide-react";
+import { Pin, Check, Flag } from "lucide-react";
 
 /**
- * Public page behind an LO priority share link — no C3 login.
+ * Public page behind an LO pin share link — no C3 login.
  *
- * It can do exactly one thing: move active loan officers between the three
- * priority tiers. It cannot read a phone number, a credential, a lead or a
- * person's pay, because the endpoint behind it only ever returns names and
- * tiers. Every save is written to the audit trail against the link.
+ * It moves exactly one flag: needs_transfers. That is the pin the state view
+ * highlights and sorts to the top, and it is what builds the "prioritized loan
+ * officers" list every CLR sees at the start of the day. It deliberately does
+ * not touch priority_tier, which is a separate and slower-moving thing.
+ *
+ * It cannot read a phone number, a credential or a lead, because the endpoint
+ * behind it returns names and the pin only. Every save is written to the audit
+ * trail against the link.
  */
 
-const TIERS = [
-  { tier: 1, label: "Priority", hint: "Gets leads first", cls: "border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300" },
-  { tier: 2, label: "Standard", hint: "Normal rotation", cls: "border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300" },
-  { tier: 3, label: "Last resort", hint: "Only if nobody else fits", cls: "border-slate-400 bg-slate-400/15 text-slate-600 dark:text-slate-300" },
-] as const;
-
-interface Lo { id: number; fullName: string; priorityTier: number | null; internalStatus: string }
+interface Lo {
+  id: number;
+  fullName: string;
+  pinned: boolean;
+  internalStatus: string;
+}
 
 export default function LoPriorityLink() {
   const [, params] = useRoute("/lo-priority/:token");
   const token = params?.token ?? "";
   const { toast } = useToast();
-  const [draft, setDraft] = useState<Record<number, number>>({});
+  const [draft, setDraft] = useState<Record<number, boolean>>({});
   const [who, setWho] = useState("");
 
   const { data, isLoading, error, refetch } = useQuery<{ label: string; expiresAt: string | null; los: Lo[] }>({
@@ -39,20 +42,22 @@ export default function LoPriorityLink() {
     retry: false,
   });
 
-  // Start from what is actually set, so an untouched LO is never rewritten.
+  // Start from what is actually pinned right now, so an untouched loan officer
+  // is never rewritten and the page always opens showing the truth.
   useEffect(() => {
     if (!data?.los) return;
-    const next: Record<number, number> = {};
-    for (const lo of data.los) next[lo.id] = Number(lo.priorityTier) || 2;
+    const next: Record<number, boolean> = {};
+    for (const lo of data.los) next[lo.id] = !!lo.pinned;
     setDraft(next);
   }, [data?.los]);
 
-  const changed = (data?.los ?? []).filter((lo) => draft[lo.id] && draft[lo.id] !== (Number(lo.priorityTier) || 2));
+  const changed = (data?.los ?? []).filter((lo) => (draft[lo.id] ?? lo.pinned) !== lo.pinned);
+  const pinnedNow = (data?.los ?? []).filter((lo) => draft[lo.id] ?? lo.pinned);
 
   const save = useMutation({
     mutationFn: () => apiRequest("POST", `/api/lo-priority/${token}`, {
       who,
-      changes: changed.map((lo) => ({ loId: lo.id, priorityTier: draft[lo.id] })),
+      changes: changed.map((lo) => ({ loId: lo.id, pinned: draft[lo.id] })),
     }),
     onSuccess: (r: any) => {
       toast({ title: "Saved", description: `${r?.applied ?? 0} loan officer${r?.applied === 1 ? "" : "s"} updated.` });
@@ -69,12 +74,12 @@ export default function LoPriorityLink() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl">
-              <Star className="h-5 w-5 text-amber-500" /> Loan officer priority
+              <Flag className="h-5 w-5 text-amber-500" /> Pinned loan officers
             </CardTitle>
             <CardDescription>
               {data?.label
                 ? data.label
-                : "Set which loan officers get leads first. This page can only change priority — nothing else."}
+                : "Pin the loan officers who need transfers. Pinned ones are highlighted at the top of the state view and are the list every CLR sees when they start the day."}
               {data?.expiresAt && (
                 <> {" "}This link stops working on {new Date(data.expiresAt).toLocaleDateString()}.</>
               )}
@@ -87,34 +92,55 @@ export default function LoPriorityLink() {
                 This link is no longer active. Ask whoever sent it for a new one.
               </p>
             )}
+
+            {/* What is pinned right now, before anything is touched. */}
+            {!isLoading && !error && (
+              <div className="rounded-lg border bg-muted/30 px-3 py-2" data-testid="lo-pinned-summary">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Pinned right now — {pinnedNow.length} of {(data?.los ?? []).length}
+                </p>
+                <p className="mt-1 text-sm">
+                  {pinnedNow.length === 0
+                    ? "Nobody is pinned. Every CLR will start the day with an empty list."
+                    : pinnedNow.map((lo) => lo.fullName).join(", ")}
+                </p>
+              </div>
+            )}
+
             {!isLoading && !error && (data?.los ?? []).length === 0 && (
               <p className="text-sm text-muted-foreground">No active loan officers to show.</p>
             )}
-            {(data?.los ?? []).map((lo) => (
-              <div key={lo.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2" data-testid="lo-priority-row">
-                <span className="text-sm font-medium">{lo.fullName}</span>
-                <div className="flex gap-1">
-                  {TIERS.map((t) => {
-                    const active = (draft[lo.id] ?? Number(lo.priorityTier) ?? 2) === t.tier;
-                    return (
-                      <button
-                        key={t.tier}
-                        type="button"
-                        title={t.hint}
-                        onClick={() => setDraft((prev) => ({ ...prev, [lo.id]: t.tier }))}
-                        className={
-                          "rounded-md border px-2.5 py-1 text-xs transition-colors "
-                          + (active ? t.cls + " font-semibold" : "hover:bg-muted")
-                        }
-                        data-testid={`lo-tier-${lo.id}-${t.tier}`}
-                      >
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+
+            {(data?.los ?? []).map((lo) => {
+              const on = draft[lo.id] ?? lo.pinned;
+              const moved = on !== lo.pinned;
+              return (
+                <button
+                  key={lo.id}
+                  type="button"
+                  onClick={() => setDraft((prev) => ({ ...prev, [lo.id]: !on }))}
+                  className={
+                    "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors "
+                    + (on
+                      ? "border-2 border-amber-400 bg-amber-50/60 dark:border-amber-500 dark:bg-amber-950/20"
+                      : "hover:bg-muted")
+                  }
+                  data-testid={`lo-pin-${lo.id}`}
+                  aria-pressed={on}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <Pin className={"h-4 w-4 " + (on ? "text-amber-500" : "text-muted-foreground/40")} />
+                    {lo.fullName}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    {moved && <span className="text-[11px] font-semibold text-primary">changed</span>}
+                    <span className={"text-xs " + (on ? "font-semibold text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
+                      {on ? "Pinned" : "Not pinned"}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </CardContent>
         </Card>
 
