@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.27.0",
+    headline: "Transfer write-up now shows for the whole team at a glance.",
+    items: [
+      { text: "The CLR Profiles list gains a Write-up column beside Transfers, Calls and Ratio, so you can see who is filling transfers in properly without opening each profile. Somebody with no transfers in the period shows a dash rather than a zero.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.26.0",
     headline: "New: how completely transfers are written up.",
     items: [

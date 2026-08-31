@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight } from "lucide-react";
+import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight, ClipboardCheck} from "lucide-react";
 
 export const PERIODS = [
   { value: "week", label: "This week" },
@@ -43,6 +43,7 @@ type Row = {
   activeWorkdays: number; inTraining: boolean;
   startDate: string | null; createdAt: string | null; tenureDays: number | null; startDateIsEstimate: boolean;
   metrics: { calls: number; transfers: number; appointments: number; transferRate: number };
+  completeness?: { pct: number | null; transfers: number; complete: number };
 };
 
 // What to show as "started": the real start date, else fall back to when the
@@ -124,7 +125,7 @@ export default function ClrProfiles() {
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 group-hover:text-primary" />
               </div>
 
-              <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t">
+              <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t">
                 <div>
                   <p className="text-lg font-bold tabular-nums leading-none">{c.metrics.transfers}</p>
                   <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><PhoneForwarded className="w-2.5 h-2.5" /> Transfers</p>
@@ -136,6 +137,21 @@ export default function ClrProfiles() {
                 <div>
                   <p className="text-lg font-bold tabular-nums leading-none">{c.metrics.transferRate}%</p>
                   <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><Percent className="w-2.5 h-2.5" /> Ratio</p>
+                </div>
+                <div>
+                  {/* No transfers means no score — a 0% here would read as a
+                      failure rather than as nothing to measure. */}
+                  <p
+                    className={"text-lg font-bold tabular-nums leading-none "
+                      + (c.completeness?.pct == null ? "text-muted-foreground"
+                        : c.completeness.pct >= 90 ? "text-emerald-600 dark:text-emerald-400"
+                        : c.completeness.pct >= 70 ? "text-amber-600 dark:text-amber-400"
+                        : "text-red-600 dark:text-red-400")}
+                    data-testid="clr-list-completeness"
+                  >
+                    {c.completeness?.pct == null ? "—" : `${c.completeness.pct}%`}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><ClipboardCheck className="w-2.5 h-2.5" /> Write-up</p>
                 </div>
               </div>
             </button>

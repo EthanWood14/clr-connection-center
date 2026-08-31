@@ -19176,10 +19176,42 @@ ${note}` : daysLine;
     const period = (req.query.period as string) || "month";
     const { startDate, endDate } = resolveNamedPeriod(period, tzFromRequest(req, storageExtra.getRawSqlite()));
     try {
-      const trainingByUser = clrTrainingByUser(Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1);
+      const listOrgId = Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1;
+      const trainingByUser = clrTrainingByUser(listOrgId);
+
+      // Transfer write-up completeness for everyone, in ONE scan rather than a
+      // query per CLR — this endpoint already loops the roster.
+      const completenessByUser = new Map<number, CompletenessRow[]>();
+      try {
+        const listDb = storageExtra.getRawSqlite();
+        const loaLos = new Set<number>(
+          (listDb.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+            .map((r: any) => Number(r.lo_id)),
+        );
+        for (const o of listDb.prepare(
+          `SELECT assistant_id, borrower_name, phone_number, lead_source, conversation_notes, loa_id, lo_id
+             FROM lead_outcomes
+            WHERE org_id=? AND outcome_type='transfer' AND date BETWEEN ? AND ?`,
+        ).all(listOrgId, startDate, endDate) as any[]) {
+          const uid = Number(o.assistant_id);
+          if (!Number.isFinite(uid)) continue;
+          const list = completenessByUser.get(uid) ?? [];
+          list.push({
+            borrowerName: o.borrower_name,
+            phoneNumber: o.phone_number,
+            leadSource: o.lead_source,
+            conversationNotes: o.conversation_notes,
+            loaId: Number(o.loa_id ?? 0) || null,
+            loHasLoa: loaLos.has(Number(o.lo_id ?? 0)),
+          });
+          completenessByUser.set(uid, list);
+        }
+      } catch { /* the statistic is context, never a reason to fail the list */ }
+
       const rows = clrRoster().map((u) => {
         const m = clrMetrics(u.id, startDate, endDate);
         return {
+          completeness: summarizeCompleteness(completenessByUser.get(Number(u.id)) ?? []),
           userId: u.id,
           name: u.name,
           ...trainingForUser(trainingByUser, u.id),
@@ -19194,7 +19226,10 @@ ${note}` : daysLine;
           metrics: m,
         };
       });
-      res.json({ period, startDate, endDate, clrs: rows });
+      const teamCompleteness = summarizeCompleteness(
+        Array.from(completenessByUser.values()).flat(),
+      );
+      res.json({ period, startDate, endDate, clrs: rows, teamCompleteness });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "Failed to load CLR profiles" });
     }
