@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.23.0",
+    headline: "Call the whole floor in at once.",
+    items: [
+      { text: "Settings now has “Call everyone in”. It sets off the same alarm — video, siren, flashing screen — on every screen in the team at the same time, and one button stops it for everybody.", audience: "manager" },
+      { text: "It behaves like the individual version: nobody can close it themselves, anyone mid-call can silence the sound for two minutes while the screen stays up, and pressing it twice will not start a second one.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.22.0",
     headline: "Being called in now comes with a video.",
     items: [

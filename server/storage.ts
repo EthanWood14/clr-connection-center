@@ -2482,10 +2482,18 @@ function runNewMigrations() {
     cleared_by_name TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
-  // One live summons per person: raising a second while one stands would mean
-  // clearing one still leaves the alarm running.
+  // An all-hands summons alarms everybody at once. It carries the raiser's id
+  // in user_id (so the foreign key still holds) and is marked by this flag.
+  try { sqlite.exec(`ALTER TABLE manager_summons ADD COLUMN all_hands INTEGER NOT NULL DEFAULT 0`); } catch { /* already there */ }
+  // One live PERSONAL summons per person: a second would survive clearing the
+  // first. All-hands rows are excluded, or an all-hands raised by a manager who
+  // is themselves summoned would collide on user_id.
+  try { sqlite.exec(`DROP INDEX IF EXISTS idx_manager_summons_live`); } catch { /* fine */ }
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_manager_summons_live
-    ON manager_summons(org_id, user_id) WHERE cleared_at IS NULL`);
+    ON manager_summons(org_id, user_id) WHERE cleared_at IS NULL AND all_hands = 0`);
+  // And only one live all-hands per org, for the same reason.
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_manager_summons_all_hands
+    ON manager_summons(org_id) WHERE cleared_at IS NULL AND all_hands = 1`);
 
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_clr_notes_subject
     ON clr_notes(org_id, subject_user_id, note_date DESC, id DESC)`);

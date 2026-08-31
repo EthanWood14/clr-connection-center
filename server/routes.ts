@@ -19349,9 +19349,13 @@ ${note}` : daysLine;
     const userId = Number(req.session_user?.userId) || 0;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
+      // An all-hands summons alarms everyone in the org, so it matches
+      // regardless of who this is. A personal one wins if both are live, since
+      // it names a reason meant for this person.
       const row = storageExtra.getRawSqlite().prepare(
-        `SELECT id, reason, raised_by_name, raised_at FROM manager_summons
-          WHERE org_id=? AND user_id=? AND cleared_at IS NULL ORDER BY id DESC LIMIT 1`,
+        `SELECT id, reason, raised_by_name, raised_at, all_hands FROM manager_summons
+          WHERE org_id=? AND cleared_at IS NULL AND (user_id=? AND all_hands=0 OR all_hands=1)
+          ORDER BY all_hands ASC, id DESC LIMIT 1`,
       ).get(orgId, userId) as any;
       res.json({ active: !!row, summons: row ?? null });
     } catch { res.json({ active: false, summons: null }); }
@@ -19362,7 +19366,8 @@ ${note}` : daysLine;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     try {
       const rows = storageExtra.getRawSqlite().prepare(
-        `SELECT s.id, s.user_id, s.reason, s.raised_by_name, s.raised_at, COALESCE(u.name,'') AS user_name
+        `SELECT s.id, s.user_id, s.reason, s.raised_by_name, s.raised_at, s.all_hands,
+                COALESCE(u.name,'') AS user_name
            FROM manager_summons s LEFT JOIN users u ON u.id = s.user_id
           WHERE s.org_id=? AND s.cleared_at IS NULL ORDER BY s.id DESC`,
       ).all(orgId) as any[];
@@ -19374,6 +19379,32 @@ ${note}` : daysLine;
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const actorId = Number(req.session_user?.userId) || 0;
+    const allHands = req.body?.allHands === true || req.body?.allHands === 1 || req.body?.allHands === "1";
+    if (allHands) {
+      const me2 = storage.getUserById(actorId) as any;
+      const reason2 = String(req.body?.reason ?? "").trim().slice(0, 300);
+      const db2 = storageExtra.getRawSqlite();
+      try {
+        const live = db2.prepare(
+          `SELECT id FROM manager_summons WHERE org_id=? AND all_hands=1 AND cleared_at IS NULL`,
+        ).get(orgId) as any;
+        if (live) return res.json({ id: Number(live.id), alreadyActive: true, allHands: true });
+        // user_id carries the raiser so the foreign key holds; all_hands is what
+        // makes it everyone's.
+        const info2 = db2.prepare(
+          `INSERT INTO manager_summons (org_id, user_id, reason, raised_by, raised_by_name, raised_at, all_hands)
+           VALUES (?, ?, ?, ?, ?, ?, 1)`,
+        ).run(orgId, actorId, reason2, actorId, String(me2?.name ?? "A manager"), new Date().toISOString());
+        audit({
+          userId: actorId, userName: me2?.name ?? "Manager", action: "create",
+          entityType: "user", entityId: 0,
+          entityLabel: `Called EVERYONE in${reason2 ? ` (${reason2})` : ""}`,
+        });
+        return res.json({ id: Number(info2.lastInsertRowid), allHands: true });
+      } catch (e: any) {
+        return res.status(500).json({ error: e?.message ?? "Could not call everyone in." });
+      }
+    }
     const userId = parseInt(String(req.body?.userId ?? ""), 10);
     if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: "Pick who to call in." });
     if (userId === actorId) return res.status(400).json({ error: "You cannot summon yourself." });
@@ -19386,12 +19417,12 @@ ${note}` : daysLine;
     const db = storageExtra.getRawSqlite();
     try {
       const existing = db.prepare(
-        `SELECT id FROM manager_summons WHERE org_id=? AND user_id=? AND cleared_at IS NULL`,
+        `SELECT id FROM manager_summons WHERE org_id=? AND user_id=? AND all_hands=0 AND cleared_at IS NULL`,
       ).get(orgId, userId) as any;
       if (existing) return res.status(200).json({ id: Number(existing.id), alreadyActive: true });
       const info = db.prepare(
-        `INSERT INTO manager_summons (org_id, user_id, reason, raised_by, raised_by_name, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO manager_summons (org_id, user_id, reason, raised_by, raised_by_name, raised_at, all_hands)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`,
       ).run(orgId, userId, reason, actorId, String(me?.name ?? "A manager"), new Date().toISOString());
       audit({
         userId: actorId, userName: me?.name ?? "Manager", action: "create",

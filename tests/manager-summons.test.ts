@@ -82,3 +82,36 @@ test("silencing silences the video too", () => {
   // shouting.
   assert.match(alarm, /if \(silenced\) \{ v\.muted = true; setVideoAudible\(false\); \}/);
 });
+
+test("an all-hands summons reaches everyone, and one stop clears everyone", () => {
+  // The /mine query must match an all-hands row regardless of who is asking.
+  const mine = routes.slice(routes.indexOf('app.get("/api/summons/mine"'), routes.indexOf('app.get("/api/summons"'));
+  assert.match(mine, /user_id=\? AND all_hands=0 OR all_hands=1/);
+  // A personal summons names a reason meant for that person, so it wins.
+  assert.match(mine, /ORDER BY all_hands ASC, id DESC/);
+  const post = routes.slice(routes.indexOf('app.post("/api/summons"'), routes.indexOf('app.post("/api/summons/:id/clear"'));
+  assert.match(post, /const allHands = req\.body\?\.allHands === true/);
+  // Raising a second all-hands returns the live one instead of duplicating.
+  assert.match(post, /alreadyActive: true, allHands: true/);
+  // It is still one row, so the existing clear route stops it for everybody.
+  assert.match(post, /INSERT INTO manager_summons \(org_id, user_id, reason, raised_by, raised_by_name, raised_at, all_hands\)[\s\S]{0,80}VALUES \(\?, \?, \?, \?, \?, \?, 1\)/);
+});
+
+test("the two kinds of summons cannot collide in the database", () => {
+  // A personal summons for a manager who also raised an all-hands would share
+  // user_id, so the personal uniqueness index has to exclude all-hands rows.
+  assert.match(storage, /ON manager_summons\(org_id, user_id\) WHERE cleared_at IS NULL AND all_hands = 0/);
+  assert.match(storage, /ON manager_summons\(org_id\) WHERE cleared_at IS NULL AND all_hands = 1/);
+  // The personal path must mark itself as not-all-hands, or it would alarm
+  // the whole company.
+  const post = routes.slice(routes.indexOf('app.post("/api/summons"'), routes.indexOf('app.post("/api/summons/:id/clear"'));
+  assert.match(post, /raised_at, all_hands\)[\s\S]{0,80}VALUES \(\?, \?, \?, \?, \?, \?, 0\)/);
+  assert.match(post, /AND all_hands=0 AND cleared_at IS NULL/, "the duplicate check is per-person only");
+});
+
+test("only a manager can call everyone in", () => {
+  const post = routes.slice(routes.indexOf('app.post("/api/summons"'), routes.indexOf('app.post("/api/summons/:id/clear"'));
+  // The gate is the first thing in the handler, before the all-hands branch.
+  assert.ok(post.indexOf("requireManagerOrAdmin") < post.indexOf("allHands"),
+    "the manager check must run before the all-hands branch");
+});

@@ -648,6 +648,77 @@ function NmlsScheduleCard() {
  * That is lead routing, so each link is separately revocable, expires, and
  * every change made through one lands in the audit trail.
  */
+/**
+ * Calls the whole floor in at once. Same alarm as a personal call-in, aimed at
+ * everybody, and one button stops it for everybody.
+ */
+function AllHandsSummons() {
+  const { toast } = useToast();
+  const [reason, setReason] = useState("");
+  const { data, refetch } = useQuery<{ summons: any[] }>({
+    queryKey: ["/api/summons"],
+    queryFn: () => apiRequest("GET", "/api/summons"),
+    refetchInterval: 20_000,
+    retry: false,
+  });
+  const live = (data?.summons ?? []).find((x: any) => Number(x.all_hands) === 1);
+  const raise = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/summons", { allHands: true, reason }),
+    onSuccess: () => {
+      setReason("");
+      void refetch();
+      toast({ title: "Everyone has been called in", description: "Every screen is alarming until you stop it." });
+    },
+    onError: (e: any) => toast({ title: "Could not call everyone in", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+  const stop = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/summons/${id}/clear`, {}),
+    onSuccess: () => { void refetch(); toast({ title: "Stopped for everyone" }); },
+  });
+
+  return (
+    <Card className={live ? "border-red-500/70 bg-red-500/5" : undefined}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Megaphone className="w-4 h-4 text-red-600" />
+          Call everyone in
+        </CardTitle>
+        <div className="flex items-start gap-2 mt-1 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
+          <span>
+            Sets off the call-in alarm on every screen in the team at once — video, siren and all.
+            Nobody can close it; one button here stops it for everybody. People mid-call with a
+            borrower can silence the sound for two minutes, but the screen stays up.
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {live ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-red-600 dark:text-red-400" data-testid="all-hands-active">
+              Alarming on every screen{live.reason ? ` — \u201c${live.reason}\u201d` : ""}
+            </p>
+            <Button size="sm" disabled={stop.isPending} onClick={() => stop.mutate(live.id)} data-testid="all-hands-stop">
+              Stop it for everyone
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder="What is this about? (optional)"
+              className="h-9 flex-1 min-w-[200px]" data-testid="all-hands-reason"
+            />
+            <Button size="sm" variant="destructive" disabled={raise.isPending} onClick={() => raise.mutate()} data-testid="all-hands-raise">
+              Call everyone in
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function LoPriorityLinks() {
   const { toast } = useToast();
   const [label, setLabel] = useState("");
@@ -3195,6 +3266,7 @@ export default function Settings() {
 
   const reportsTab = (
     <div className="space-y-6">
+      <AllHandsSummons />
       <LoPriorityLinks />
       <EmailReportsCard />
     </div>
