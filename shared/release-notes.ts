@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.19.0",
+    headline: "Trainers can claim their training days.",
+    items: [
+      { text: "Pick Training on a comp request and you get a day picker: add each day you spent training, choose “Standard” at $20 a day or “Double time” at $40, and the total works itself out. It files as an ordinary comp request and goes through the same approval as everything else.", audience: "everyone" },
+      { text: "Managers can file the same thing straight from someone’s CLR profile, for that person — no need to switch pages.", audience: "manager" },
+      { text: "A day that has already been claimed is dropped when the request is filed, and the total recalculated, so the same training day can never be paid twice. The amount is always worked out from the days themselves.", audience: "manager" },
+      { text: "Approved training pay shows up in that CLR’s earnings on their profile alongside everything else they have earned.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.18.1",
     headline: "Input Results now uses the width it has.",
     items: [

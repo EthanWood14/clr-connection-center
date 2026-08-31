@@ -17,6 +17,10 @@ import cron from "node-cron";
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
+import {
+  trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
+  isTrainingRate,
+} from "@shared/training-comp";
 import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
 import { adjudicateLateExcuse, lateExcuseConfigured } from "./late-excuse";
 import { evaluateGeofence, isValidLatLng, DEFAULT_CHECKIN_RADIUS_M } from "./geo";
@@ -588,6 +592,24 @@ function maybeCancelCompApprovalEmail(token: string | null | undefined): void {
 // user. Category-independent (keyed on hours_entry_ids, not category) so that
 // recategorizing a time request still keeps its shifts claimed. excludeReqId
 // skips one row — used when editing so a request doesn't count against itself.
+/**
+ * Training days already spoken for. Same rule as claimed shifts: a day is taken
+ * while its request is live, and stays taken once paid even if the request is
+ * later denied — so a paid training day can never be re-filed and paid again.
+ */
+function compClaimedTrainingDates(userId: number, orgId: number, excludeReqId?: number): Set<string> {
+  const db = storageExtra.getRawSqlite();
+  const rows = db.prepare(
+    "SELECT id, training_dates FROM comp_requests WHERE user_id=? AND org_id=? AND training_dates IS NOT NULL AND (status NOT IN ('draft','denied') OR is_paid=1 OR is_received=1)"
+  ).all(userId, orgId) as any[];
+  const s = new Set<string>();
+  for (const r of rows) {
+    if (excludeReqId && Number(r.id) === Number(excludeReqId)) continue;
+    try { for (const d of JSON.parse(r.training_dates)) if (typeof d === "string") s.add(d); } catch { /* a malformed row claims nothing */ }
+  }
+  return s;
+}
+
 function compClaimedShiftIds(userId: number, orgId: number, excludeReqId?: number): Set<number> {
   const db = storageExtra.getRawSqlite();
   // A shift is claimed while its request is live (pending/approved) OR has been
@@ -3629,6 +3651,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN received_at TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN approval_token TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN last_reminder_at TEXT`); } catch {}
+  // Training-day pay: which days a request covers, and at which rate. Stored so
+  // the same day cannot be claimed twice and so an approver can see the days.
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN training_dates TEXT`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN training_rate TEXT`); } catch {}
   // "Processing" stage: managers flip this on once an approved request is being
   // worked through for payout (sits between Approved and Paid in the tracker).
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN is_processing INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -9124,7 +9150,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const sessUserId = Number(sess?.userId);
     if (!sessUserId) return res.status(401).json({ error: "Unauthorized" });
     const body = req.body ?? {};
-    const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
+    let description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : "";
     let category = COMP_CATEGORIES.has(body.category) ? body.category : "other";
     // Normalize the legacy "hours" alias to "time" at intake so every time-request
     // invariant (shift-backed only, never recurring) applies — a crafted "hours"
@@ -9132,7 +9158,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (category === "hours") category = "time";
     let amountCents = Math.round(Number(body.amountCents));
     const expenseDate = (typeof body.expenseDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) ? body.expenseDate : null;
-    const note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
+    let note = typeof body.note === "string" ? body.note.slice(0, 1000) : "";
     const isReimbursement = (body.isReimbursement === true || body.isReimbursement === 1 || body.isReimbursement === "1") ? 1 : 0;
     // For "time" comp requests filed from the Time Clock: the exact shift IDs this
     // request covers + a snapshot of their dates/times. The hours and $ amount are
@@ -9141,7 +9167,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const rawEntryIds: number[] = Array.isArray(body.hoursEntryIds)
       ? Array.from(new Set(body.hoursEntryIds.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)))
       : [];
-    if (!description) return res.status(400).json({ error: "A description is required." });
+    // A training-day request describes itself from the days it covers, so it is
+    // the one kind that does not need the submitter to write a description.
+    const isTrainingDays = body.category === "training"
+      && Array.isArray(body.trainingDates) && body.trainingDates.length > 0;
+    if (!description && !isTrainingDays) return res.status(400).json({ error: "A description is required." });
     // Managers/admins can file a comp request ON BEHALF of a CLR. When they do, it
     // is created as a pending request (not a draft) under that CLR and emailed to
     // the approver. Everyone else just saves a draft for themselves.
@@ -9160,6 +9190,34 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // shifts the target user actually owns — the client's numbers are ignored.
     let hoursCovered: number | null = null, hoursPeriod: string | null = null;
     let hoursEntryIdsJson: string | null = null, hoursDetail: string | null = null;
+    // Training-day mode: the amount is the day count times the rate, computed
+    // here. The client's amountCents is ignored exactly as it is for time, so a
+    // crafted request cannot name its own price.
+    let trainingDatesJson: string | null = null, trainingRateStored: string | null = null;
+    if (category === "training" && Array.isArray(body.trainingDates) && body.trainingDates.length) {
+      const tz = tzFromRequest(req, storageExtra.getRawSqlite());
+      const today = businessTodayInTz(tz || BUSINESS_DAY_DEFAULT_TZ);
+      const asked = normalizeTrainingDates(body.trainingDates, today);
+      if (!asked.length) return res.status(400).json({ error: "Pick at least one training day (and not a future date)." });
+      const taken = compClaimedTrainingDates(targetId, orgId);
+      const days = asked.filter((d) => !taken.has(d));
+      if (!days.length) {
+        return res.status(400).json({ error: "Those training days have already been requested." });
+      }
+      const rate = isTrainingRate(body.trainingRate) ? body.trainingRate : "standard";
+      amountCents = trainingAmountCents(days.length, rate);
+      trainingDatesJson = JSON.stringify(days);
+      trainingRateStored = rate;
+      // Describe what was actually accepted, not what was asked for — if two of
+      // the five days requested were already claimed, the approver must see a
+      // three-day request, and the amount above already reflects that.
+      description = describeTrainingDays(days, rate);
+      const dropped = asked.length - days.length;
+      const daysLine = `Training days: ${trainingDetail(days)}`
+        + (dropped > 0 ? ` (${dropped} already requested and not included)` : "");
+      note = note ? `${daysLine}
+${note}` : daysLine;
+    }
     if (category === "time" && rawEntryIds.length) {
       const claimed = compClaimedShiftIds(targetId, orgId);
       const subset = rawEntryIds
@@ -9202,7 +9260,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       let recurringId: number | null = null;
       let recurringReused = false;
       const createAll = db.transaction(() => {
-        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, token, nowIso, nowIso, nowIso);
+        const info = db.prepare("INSERT INTO comp_requests (org_id, user_id, description, category, amount_cents, expense_date, note, is_reimbursement, hours_covered, hours_period, hours_entry_ids, hours_detail, training_dates, training_rate, status, approval_token, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)").run(orgId, targetId, description, category, amountCents, expenseDate, note, isReimbursement, hoursCovered, hoursPeriod, hoursEntryIdsJson, hoursDetail, trainingDatesJson, trainingRateStored, token, nowIso, nowIso, nowIso);
         if (wantsRecurring) {
           const period = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ }).slice(0, 7);
           const dup = db.prepare("SELECT id FROM comp_recurring WHERE org_id=? AND user_id=? AND description=? AND amount_cents=? AND day_of_month=? AND active=1").get(orgId, targetId, description, amountCents, recurringDay) as any;

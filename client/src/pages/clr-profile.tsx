@@ -18,6 +18,7 @@ import {
   UserCheck, FileText, Wallet, Target, TrendingUp, X, AlertTriangle, StickyNote, Palmtree,
 } from "lucide-react";
 import { PERIODS, LONG_PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles";
+import { TRAINING_DAY_RATES, trainingAmountCents, type TrainingRate } from "@shared/training-comp";
 
 /** How a pinned note is drawn. Warnings and PIPs must not look like context. */
 const NOTE_STYLES = {
@@ -235,6 +236,26 @@ export default function ClrProfile() {
   });
   const [noteBody, setNoteBody] = useState("");
   const [noteKind, setNoteKind] = useState<NoteKind>("note");
+  // Training-day pay filed for THIS CLR. The server prices the days and drops
+  // any already claimed, exactly as it does from the comp page.
+  const [trainDates, setTrainDates] = useState<string[]>([]);
+  const [trainRate, setTrainRate] = useState<TrainingRate>("standard");
+  const [trainDay, setTrainDay] = useState("");
+  const fileTraining = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/comp", {
+      category: "training",
+      trainingDates: trainDates,
+      trainingRate: trainRate,
+      onBehalfOf: Number(id),
+      amountCents: trainingAmountCents(trainDates.length, trainRate),
+    }),
+    onSuccess: () => {
+      setTrainDates([]); setTrainDay("");
+      queryClient.invalidateQueries({ queryKey: ["/api/clr-profiles", id] });
+      toast({ title: "Training pay requested", description: "Filed as a comp request and sent for approval." });
+    },
+    onError: (e: any) => toast({ title: "Could not file training pay", description: String(e?.message ?? e), variant: "destructive" }),
+  });
   const [noteOnChart, setNoteOnChart] = useState(false);
   const [noteInReport, setNoteInReport] = useState(false);
   const [noteDate, setNoteDate] = useState(() => new Date().toLocaleDateString("en-CA"));
@@ -568,6 +589,75 @@ export default function ClrProfile() {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Training pay</CardTitle>
+              <CardDescription>
+                Days {data.clr.name} spent training someone. Filed as an ordinary comp request for
+                them, and it goes through the same approval as everything else.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date" value={trainDay} className="h-9 w-44"
+                  onChange={(e) => {
+                    const d = e.target.value;
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+                    setTrainDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
+                    setTrainDay("");
+                  }}
+                  data-testid="clr-training-day"
+                />
+                <div className="flex gap-1">
+                  {(Object.keys(TRAINING_DAY_RATES) as TrainingRate[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setTrainRate(r)}
+                      className={"rounded-md border px-2.5 py-1 text-xs transition-colors "
+                        + (trainRate === r ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted")}
+                      data-testid={"clr-training-rate-" + r}
+                    >
+                      {TRAINING_DAY_RATES[r].label} · {TRAINING_DAY_RATES[r].perDay}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {trainDates.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {trainDates.map((d) => (
+                    <span key={d} className="inline-flex items-center gap-1 rounded-md border bg-muted/30 px-2 py-1 text-xs">
+                      {d}
+                      <button
+                        type="button" aria-label={"Remove " + d}
+                        onClick={() => setTrainDates((prev) => prev.filter((x) => x !== d))}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  {trainDates.length > 0
+                    ? `${trainDates.length} day${trainDates.length === 1 ? "" : "s"} \u00d7 ${TRAINING_DAY_RATES[trainRate].perDay} = $${(trainingAmountCents(trainDates.length, trainRate) / 100).toFixed(2)}`
+                    : "Pick each day they trained."}
+                </p>
+                <Button
+                  size="sm"
+                  disabled={fileTraining.isPending || trainDates.length === 0}
+                  onClick={() => fileTraining.mutate()}
+                  data-testid="clr-training-submit"
+                >
+                  Request training pay
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Dated manager notes. Deliberately not a metric — nothing on this
               page aggregates or plots them, so a note can never move a number. */}

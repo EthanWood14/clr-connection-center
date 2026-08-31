@@ -56,6 +56,8 @@ interface CompItem {
 const TRANSFER_CLS = "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300";
 const TIME_CLS = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
 const OTHER_CLS = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+import { TRAINING_DAY_RATES, trainingAmountCents, type TrainingRate } from "@shared/training-comp";
+
 const CATEGORIES: Record<string, { label: string; icon: any; cls: string }> = {
   software:  { label: "Software",  icon: Laptop,         cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
   transfers: { label: "Transfers", icon: ArrowLeftRight, cls: TRANSFER_CLS },
@@ -936,6 +938,17 @@ export default function CompRequests() {
   // request so the server prices those shifts and marks them claimed. Only
   // meaningful while category === "time".
   const [hoursMeta, setHoursMeta] = useState<{ entryIds: number[]; hoursPeriod: string; hoursDetail: string } | null>(null);
+  // Training-day pay: the days being claimed and the rate. The amount shown is
+  // a preview — the server prices the days and drops any already claimed.
+  const [trainingDates, setTrainingDates] = useState<string[]>([]);
+  const [trainingRate, setTrainingRate] = useState<TrainingRate>("standard");
+  const [trainingDay, setTrainingDay] = useState("");
+  const isTrainingDays = category === "training" && trainingDates.length > 0;
+  const addTrainingDay = (d: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    setTrainingDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
+    setTrainingDay("");
+  };
 
   // Prefill handed over from another page (e.g. the Time Clock's "file a comp
   // request for these hours" button). One-shot: consumed and cleared on mount.
@@ -952,6 +965,12 @@ export default function CompRequests() {
       // shift-backed (priced + deduped server-side, already-claimed shifts dropped).
       if (p.category === "time" && Array.isArray(p.hoursEntryIds) && p.hoursEntryIds.length && /^\d{4}-\d{2}$/.test(p.hoursPeriod ?? "")) {
         setHoursMeta({ entryIds: p.hoursEntryIds.map(Number), hoursPeriod: p.hoursPeriod, hoursDetail: typeof p.hoursDetail === "string" ? p.hoursDetail : "" });
+      }
+      // Handed over from a CLR profile: the training days already chosen there.
+      if (p.category === "training" && Array.isArray(p.trainingDates) && p.trainingDates.length) {
+        setTrainingDates(p.trainingDates.filter((d: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(d))).sort());
+        if (p.trainingRate === "double" || p.trainingRate === "standard") setTrainingRate(p.trainingRate);
+        if (Number.isFinite(p.onBehalfOf) && p.onBehalfOf > 0) setCompForUserId(String(p.onBehalfOf));
       }
     } catch {}
   }, []);
@@ -1038,6 +1057,8 @@ export default function CompRequests() {
         // Only send shift metadata for a time request filled from the hint/Time Clock.
         // The server prices these shifts itself; the amount above is just a preview.
         ...(category === "time" && hoursMeta ? { hoursEntryIds: hoursMeta.entryIds, hoursPeriod: hoursMeta.hoursPeriod, hoursDetail: hoursMeta.hoursDetail } : {}),
+        // Same contract as hours: send the days, let the server price them.
+        ...(isTrainingDays ? { trainingDates, trainingRate } : {}),
       });
       // Upload any receipts attached on the form to the new item. Failures used
       // to be swallowed while the success toast still counted them, so a
@@ -1075,6 +1096,7 @@ export default function CompRequests() {
           + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".",
       });
       setDescription(""); setAmount(""); setNote(""); setExpenseDate(""); setCompForUserId(""); setPendingFiles([]); setIsReimbursement(false); setHoursMeta(null); setCategory("transfers"); setRecurringMonthly(false);
+      setTrainingDates([]); setTrainingRate("standard"); setTrainingDay("");
       queryClient.invalidateQueries({ queryKey: ["/api/comp/recurring"] });
       refresh();
     },
@@ -1360,7 +1382,9 @@ export default function CompRequests() {
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
                 <Input
                   type="number" min="0" step="0.01" inputMode="decimal"
-                  value={amount} onChange={e => setAmount(e.target.value)}
+                  value={isTrainingDays ? (trainingAmountCents(trainingDates.length, trainingRate) / 100).toFixed(2) : amount}
+                  onChange={e => setAmount(e.target.value)}
+                  readOnly={isTrainingDays}
                   placeholder="0.00" className="pl-6" data-testid="input-comp-amount"
                 />
               </div>
@@ -1388,10 +1412,64 @@ export default function CompRequests() {
               <Input type="date" value={expenseDate} onChange={e => setExpenseDate(e.target.value)} data-testid="input-comp-date" />
             </div>
           </div>
+          {category === "training" && (
+            <div className="rounded-lg border bg-muted/20 p-3 space-y-2" data-testid="training-days-picker">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold">Training days</p>
+                <div className="flex gap-1">
+                  {(Object.keys(TRAINING_DAY_RATES) as TrainingRate[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setTrainingRate(r)}
+                      className={"rounded-md border px-2.5 py-1 text-xs transition-colors "
+                        + (trainingRate === r ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted")}
+                      data-testid={"training-rate-" + r}
+                    >
+                      {TRAINING_DAY_RATES[r].label} · {TRAINING_DAY_RATES[r].perDay}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date" value={trainingDay}
+                  onChange={(e) => addTrainingDay(e.target.value)}
+                  className="h-9 w-44" data-testid="input-training-day"
+                />
+                <span className="text-xs text-muted-foreground">Pick each day you trained — add as many as you need.</span>
+              </div>
+              {trainingDates.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {trainingDates.map((d) => (
+                    <span key={d} className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs" data-testid="training-day-chip">
+                      {fmtDate(d)}
+                      <button
+                        type="button"
+                        aria-label={"Remove " + d}
+                        onClick={() => setTrainingDates((prev) => prev.filter((x) => x !== d))}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {trainingDates.length > 0
+                  ? `${trainingDates.length} day${trainingDates.length === 1 ? "" : "s"} × ${TRAINING_DAY_RATES[trainingRate].perDay} = ${money(trainingAmountCents(trainingDates.length, trainingRate))}. `
+                  : ""}
+                A day already claimed on another request is dropped when this is filed, and the total re-checked.
+              </p>
+            </div>
+          )}
           <div>
             <label className="text-xs font-medium text-muted-foreground">Description</label>
             <Input
-              value={description} onChange={e => setDescription(e.target.value)}
+              value={isTrainingDays ? "Training pay — written from the days above" : description}
+              onChange={e => setDescription(e.target.value)}
+              readOnly={isTrainingDays}
               maxLength={300} placeholder="What did you spend on?" data-testid="input-comp-description"
             />
           </div>
