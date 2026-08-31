@@ -130,3 +130,26 @@ test("managers can file it from a CLR's profile, for that CLR", () => {
   assert.match(m, /onBehalfOf: Number\(id\)/, "it must be filed for the CLR whose profile this is");
   assert.match(m, /trainingDates: trainDates/);
 });
+
+test("the day field stores what you type, so a date can actually be entered", () => {
+  // The bug this pins: the input is CONTROLLED on a value that was only ever
+  // set to "". Every partial keystroke hit an early return before storing, so
+  // React rewrote the field back to empty on each render and the date could
+  // never be completed. A controlled field must store every intermediate value.
+  const handler = comp.slice(comp.indexOf("const onTrainingDayChange"), comp.indexOf("const addTrainingDay"));
+  assert.ok(handler.length > 0, "the comp page needs a change handler that stores first");
+  const setPos = handler.indexOf("setTrainingDay(v)");
+  const testPos = handler.indexOf("test(v)");
+  assert.ok(setPos > 0, "it must store the typed value");
+  assert.ok(setPos < testPos, "it must store BEFORE validating, or partial input is discarded");
+
+  // Same shape on the profile card.
+  const prof = profile.slice(profile.indexOf('type="date" value={trainDay}'), profile.indexOf('data-testid="clr-training-day"'));
+  assert.match(prof, /setTrainDay\(d\);/, "the profile field must store the typed value too");
+  assert.ok(prof.indexOf("setTrainDay(d)") < prof.indexOf("test(d)"),
+    "store before validating on the profile card as well");
+
+  // And there is a way to add a day that does not depend on autodetection.
+  assert.match(comp, /data-testid="button-add-training-day"/);
+  assert.match(profile, /data-testid="clr-training-add-day"/);
+});

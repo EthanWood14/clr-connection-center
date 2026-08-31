@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.19.1",
+    headline: "Fixed: the training day box wouldn’t accept a date.",
+    items: [
+      { text: "The date box on a training request cleared itself as you typed, so there was no way to put a day in at all. It now keeps what you enter, and there is an “Add day” button next to it as well. Both the comp page and the CLR profile were affected.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.19.0",
     headline: "Trainers can claim their training days.",
     items: [

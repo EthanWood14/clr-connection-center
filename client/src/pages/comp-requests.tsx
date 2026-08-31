@@ -944,6 +944,13 @@ export default function CompRequests() {
   const [trainingRate, setTrainingRate] = useState<TrainingRate>("standard");
   const [trainingDay, setTrainingDay] = useState("");
   const isTrainingDays = category === "training" && trainingDates.length > 0;
+  // A date input is only half-typed for most of the time the user is typing in
+  // it. The field must store EVERY intermediate value or React rewrites it back
+  // to "" on each keystroke and the date can never be completed.
+  const onTrainingDayChange = (v: string) => {
+    setTrainingDay(v);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) addTrainingDay(v);
+  };
   const addTrainingDay = (d: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
     setTrainingDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
@@ -1434,9 +1441,17 @@ export default function CompRequests() {
               <div className="flex flex-wrap items-center gap-2">
                 <Input
                   type="date" value={trainingDay}
-                  onChange={(e) => addTrainingDay(e.target.value)}
+                  onChange={(e) => onTrainingDayChange(e.target.value)}
                   className="h-9 w-44" data-testid="input-training-day"
                 />
+                <Button
+                  type="button" size="sm" variant="outline"
+                  disabled={!/^\d{4}-\d{2}-\d{2}$/.test(trainingDay)}
+                  onClick={() => addTrainingDay(trainingDay)}
+                  data-testid="button-add-training-day"
+                >
+                  Add day
+                </Button>
                 <span className="text-xs text-muted-foreground">Pick each day you trained — add as many as you need.</span>
               </div>
               {trainingDates.length > 0 && (

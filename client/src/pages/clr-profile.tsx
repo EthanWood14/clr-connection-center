@@ -241,6 +241,11 @@ export default function ClrProfile() {
   const [trainDates, setTrainDates] = useState<string[]>([]);
   const [trainRate, setTrainRate] = useState<TrainingRate>("standard");
   const [trainDay, setTrainDay] = useState("");
+  const addTrainDay = (d: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    setTrainDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
+    setTrainDay("");
+  };
   const fileTraining = useMutation({
     mutationFn: () => apiRequest("POST", "/api/comp", {
       category: "training",
@@ -603,13 +608,22 @@ export default function ClrProfile() {
                 <Input
                   type="date" value={trainDay} className="h-9 w-44"
                   onChange={(e) => {
+                    // Store every keystroke. A half-typed date is still a value
+                    // the field has to hold, or it clears itself as you type.
                     const d = e.target.value;
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
-                    setTrainDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
-                    setTrainDay("");
+                    setTrainDay(d);
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) addTrainDay(d);
                   }}
                   data-testid="clr-training-day"
                 />
+                <Button
+                  type="button" size="sm" variant="outline"
+                  disabled={!/^\d{4}-\d{2}-\d{2}$/.test(trainDay)}
+                  onClick={() => addTrainDay(trainDay)}
+                  data-testid="clr-training-add-day"
+                >
+                  Add day
+                </Button>
                 <div className="flex gap-1">
                   {(Object.keys(TRAINING_DAY_RATES) as TrainingRate[]).map((r) => (
                     <button
