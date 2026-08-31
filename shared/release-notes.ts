@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.19.2",
+    headline: "Training requests can actually be submitted now.",
+    items: [
+      { text: "The Save button stayed greyed out on a training request no matter what you picked, because it was waiting on the description and amount boxes — the two things a training request fills in for you. It now unlocks as soon as you have picked a day.", audience: "everyone" },
+      { text: "Verified end to end this time: picking two days at double time files an $80 request, and asking again for a day you already claimed is refused rather than paid twice.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.19.1",
     headline: "Fixed: the training day box wouldn’t accept a date.",
     items: [

@@ -1058,7 +1058,7 @@ export default function CompRequests() {
     mutationFn: async () => {
       const created: any = await apiRequest("POST", "/api/comp", {
         description, category, expenseDate: expenseDate || undefined, note, isReimbursement,
-        amountCents: Math.round(parseFloat(amount || "0") * 100),
+        amountCents: isTrainingDays ? trainingCents : Math.round(parseFloat(amount || "0") * 100),
         onBehalfOf: compForUserId ? Number(compForUserId) : undefined,
         recurringMonthly: recurringMonthly && category !== "time",
         // Only send shift metadata for a time request filled from the hint/Time Clock.
@@ -1253,8 +1253,12 @@ export default function CompRequests() {
     onError: (e: any) => toast({ title: "Could not update", description: e?.message ?? "Try again.", variant: "destructive" }),
   });
 
-  const amountValid = parseFloat(amount || "0") > 0;
-  const canSubmit = !!description.trim() && amountValid && !createMutation.isPending;
+  // A training request derives BOTH its amount and its description from the
+  // days picked, so the gate has to read the days — not the two text fields,
+  // which stay empty on purpose and would keep the button disabled forever.
+  const trainingCents = trainingAmountCents(trainingDates.length, trainingRate);
+  const amountValid = isTrainingDays ? trainingCents > 0 : parseFloat(amount || "0") > 0;
+  const canSubmit = (isTrainingDays || !!description.trim()) && amountValid && !createMutation.isPending;
   const pendingCount = team.filter(r => r.status === "pending").length;
 
   // ── Filter / search / sort / windowing (keeps hundreds of rows manageable) ──

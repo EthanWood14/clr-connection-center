@@ -4916,7 +4916,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.cookie(COOKIE_NAME, payload, {
       signed: true,
       httpOnly: true,
-      sameSite: isProduction ? "strict" : "none",
+      // "none" REQUIRES secure, which dev (plain http) is not — browsers drop
+      // such a cookie outright, so local login could never hold a session.
+      sameSite: isProduction ? "strict" : "lax",
       secure: isProduction,
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -5352,7 +5354,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.cookie(COOKIE_NAME, payload, {
       signed: true,
       httpOnly: true,
-      sameSite: isProduction ? "strict" : "none",
+      // "none" REQUIRES secure, which dev (plain http) is not — browsers drop
+      // such a cookie outright, so local login could never hold a session.
+      sameSite: isProduction ? "strict" : "lax",
       secure: isProduction,
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -21864,7 +21868,9 @@ ${note}` : daysLine;
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
-      sameSite: isProduction ? "strict" : "none",
+      // "none" REQUIRES secure, which dev (plain http) is not — browsers drop
+      // such a cookie outright, so local login could never hold a session.
+      sameSite: isProduction ? "strict" : "lax",
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -21884,7 +21890,9 @@ ${note}` : daysLine;
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
       signed: true, httpOnly: true,
-      sameSite: isProduction ? "strict" : "none",
+      // "none" REQUIRES secure, which dev (plain http) is not — browsers drop
+      // such a cookie outright, so local login could never hold a session.
+      sameSite: isProduction ? "strict" : "lax",
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
