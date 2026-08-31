@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.26.0",
+    headline: "New: how completely transfers are written up.",
+    items: [
+      { text: "A CLR’s profile now shows what share of the information a transfer asks for actually got filled in — borrower name, phone, lead source, the call summary, and the LOA — with a bar per field so you can see which one is pulling the number down.", audience: "manager" },
+      { text: "Each transfer is only scored against the fields that applied to it. An LOA is counted solely on transfers whose loan officer has one, so nobody is marked down for a box that was never theirs to fill.", audience: "manager" },
+      { text: "Fields the form no longer asks for are left out entirely — counting them would have put a ceiling on the score that no amount of effort could lift.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.25.0",
     headline: "The share link now pins the loan officers people actually see.",
     items: [

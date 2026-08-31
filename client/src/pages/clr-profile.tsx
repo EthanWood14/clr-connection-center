@@ -75,6 +75,14 @@ type Resp = {
   };
   period: string; startDate: string; endDate: string; dailyTooLong?: boolean; periodWeeks?: number;
   bucket?: "day" | "week" | "month";
+  completeness?: {
+    pct: number | null;
+    transfers: number;
+    filled: number;
+    expected: number;
+    complete: number;
+    byField: Array<{ key: string; label: string; filled: number; expected: number; pct: number | null }>;
+  };
   chartStart?: string; chartEnd?: string;
   chartNotes?: ClrNote[];
   metrics: {
@@ -616,6 +624,59 @@ export default function ClrProfile() {
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {data.completeness && data.completeness.transfers > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-base">Transfer write-up</CardTitle>
+                    <CardDescription>
+                      How much of the information a transfer asks for actually got filled in.
+                      Each transfer is scored only against the fields that applied to it.
+                    </CardDescription>
+                  </div>
+                  <span
+                    className={"text-3xl font-bold tabular-nums "
+                      + ((data.completeness.pct ?? 0) >= 90 ? "text-emerald-600 dark:text-emerald-400"
+                        : (data.completeness.pct ?? 0) >= 70 ? "text-amber-600 dark:text-amber-400"
+                        : "text-red-600 dark:text-red-400")}
+                    data-testid="clr-completeness-pct"
+                  >
+                    {data.completeness.pct === null ? "—" : `${data.completeness.pct}%`}
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <p className="text-xs text-muted-foreground" data-testid="clr-completeness-summary">
+                  {data.completeness.complete} of {data.completeness.transfers} transfer
+                  {data.completeness.transfers === 1 ? "" : "s"} fully written up
+                  {" · "}{data.completeness.filled} of {data.completeness.expected} fields
+                </p>
+                {data.completeness.byField
+                  .filter((f) => f.expected > 0)
+                  .sort((a, b) => (a.pct ?? 100) - (b.pct ?? 100))
+                  .map((f) => (
+                    <div key={f.key} className="flex items-center gap-3" data-testid="clr-completeness-field">
+                      <span className="w-32 shrink-0 text-xs text-muted-foreground">{f.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={"h-full rounded-full "
+                            + ((f.pct ?? 0) >= 90 ? "bg-emerald-500" : (f.pct ?? 0) >= 70 ? "bg-amber-500" : "bg-red-500")}
+                          style={{ width: `${f.pct ?? 0}%` }}
+                        />
+                      </div>
+                      <span className="w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                        {f.pct}% ({f.filled}/{f.expected})
+                      </span>
+                    </div>
+                  ))}
+                <p className="text-[11px] text-muted-foreground">
+                  An LOA is only counted on transfers whose loan officer has one.
+                </p>
               </CardContent>
             </Card>
           )}

@@ -17,6 +17,7 @@ import cron from "node-cron";
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
+import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
 import { filterRecipients } from "./deliverable-email";
 import {
   trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
@@ -19693,6 +19694,28 @@ ${note}` : daysLine;
       // no total on this page reads them, so a note cannot move a number.
       const chartNotes = storageExtra.listClrChartNotes(orgId, userId, chartStart, chartEnd);
 
+      // How completely this CLR wrote up their transfers. Scored per transfer
+      // against the fields that were actually expected of it — an LOA only
+      // counts where the loan officer has one, or the number would blame people
+      // for a field that does not apply.
+      const losWithLoa = new Set<number>();
+      try {
+        for (const r of sqliteDb.prepare(
+          `SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`,
+        ).all() as any[]) losWithLoa.add(Number(r.lo_id));
+      } catch { /* no assistants configured: the LOA field is simply never expected */ }
+      const transferRows: CompletenessRow[] = outcomes
+        .filter((o: any) => ot(o) === "transfer")
+        .map((o: any) => ({
+          borrowerName: o.borrowerName ?? o.borrower_name,
+          phoneNumber: o.phoneNumber ?? o.phone_number,
+          leadSource: o.leadSource ?? o.lead_source,
+          conversationNotes: o.conversationNotes ?? o.conversation_notes,
+          loaId: Number(o.loaId ?? o.loa_id ?? 0) || null,
+          loHasLoa: losWithLoa.has(Number(o.loId ?? o.lo_id ?? 0)),
+        }));
+      const completeness = summarizeCompleteness(transferRows);
+
       // Weekly goals (per-CLR override falls back to the user's own).
       let goals = {
         calls: Number(u.goalCallsWeekly ?? u.goal_calls_weekly ?? 0),
@@ -19750,6 +19773,7 @@ ${note}` : daysLine;
         period, startDate, endDate,
         metrics, goals, daily, dailyTooLong,
         bucket: bucketWidth, chartStart, chartEnd, chartNotes,
+        completeness,
         // Lifetime figures and how they sit against the rest of the floor.
         // Independent of the selected period on purpose: "all time" is the
         // question this answers, and the period tiles above answer the other.
