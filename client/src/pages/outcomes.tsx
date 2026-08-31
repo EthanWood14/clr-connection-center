@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { LoaPicker } from "@/components/loa-controls";
@@ -603,6 +603,9 @@ function OutcomeFormDialog({
 
           {!confirmBonzo && (
           <>
+            {/* Short fields share a row. One field per line turned a wide
+                dialog into a long scroll. */}
+            <div className="grid gap-3 sm:grid-cols-2">
             <FormField control={form.control} name="date" render={({ field }) => (
               <FormItem>
                 <FormLabel>Date</FormLabel>
@@ -610,6 +613,29 @@ function OutcomeFormDialog({
                 <FormMessage />
               </FormItem>
             )} />
+            <FormField control={form.control} name="assistantId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>CLR Assistant</FormLabel>
+                {meIsAdmin ? (
+                  <Select value={String(field.value)} onValueChange={v => field.onChange(Number(v))}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-assistant"><SelectValue placeholder="Select assistant" /></SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {users.map((u: any) => (
+                        <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <FormControl>
+                    <Input value={(meUser as any)?.name ?? "You"} readOnly disabled data-testid="select-assistant" />
+                  </FormControl>
+                )}
+                <FormMessage />
+              </FormItem>
+            )} />
+            </div>
             {isTransfer && (
               <FormField control={form.control} name="transferType" render={({ field }) => (
                 <FormItem>
@@ -638,6 +664,7 @@ function OutcomeFormDialog({
                 </FormItem>
               )} />
             )}
+            <div className="grid gap-3 sm:grid-cols-2">
             {isTransfer && askBulkTexter && (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
                 <div className="space-y-0.5">
@@ -664,71 +691,53 @@ function OutcomeFormDialog({
                 />
               </div>
             )}
-            <FormField control={form.control} name="assistantId" render={({ field }) => (
-              <FormItem>
-                <FormLabel>CLR Assistant</FormLabel>
-                {meIsAdmin ? (
-                  <Select value={String(field.value)} onValueChange={v => field.onChange(Number(v))}>
+            </div>
+            {/* Routing: who it went to, and who took it. */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField control={form.control} name="loId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Loan Officer
+                    {watchedType === "appointment" && (
+                      <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">optional</span>
+                    )}
+                  </FormLabel>
+                  <Select
+                    value={field.value ? String(field.value) : UNASSIGNED_LO}
+                    onValueChange={v => field.onChange(v === UNASSIGNED_LO ? null : Number(v))}
+                  >
                     <FormControl>
-                      <SelectTrigger data-testid="select-assistant"><SelectValue placeholder="Select assistant" /></SelectTrigger>
+                      <SelectTrigger data-testid="select-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {users.map((u: any) => (
-                        <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                      {/* Booking without an LO has to be a deliberate choice, not
+                          an empty field someone forgot — so it is a real option. */}
+                      {watchedType === "appointment" && (
+                        <SelectItem value={UNASSIGNED_LO} data-testid="select-lo-unassigned">
+                          No LO yet — assign later
+                        </SelectItem>
+                      )}
+                      {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
+                        <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                ) : (
-                  <FormControl>
-                    <Input value={(meUser as any)?.name ?? "You"} readOnly disabled data-testid="select-assistant" />
-                  </FormControl>
-                )}
-                <FormMessage />
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="loId" render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  Loan Officer
-                  {watchedType === "appointment" && (
-                    <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">optional</span>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="loaId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Loan Officer Assistant (optional)</FormLabel>
+                  <LoaPicker loId={form.watch("loId")} value={field.value ?? null} onChange={field.onChange} />
+                  {isTransfer && field.value == null && isChrisRedoble(los.find((lo: any) => lo.id === form.watch("loId"))?.fullName) && (
+                    <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1" data-testid="loa-missing-hint">
+                      (LOA missing) — pick which assistant took this transfer, or it'll be attributed to Chris directly.
+                    </p>
                   )}
-                </FormLabel>
-                <Select
-                  value={field.value ? String(field.value) : UNASSIGNED_LO}
-                  onValueChange={v => field.onChange(v === UNASSIGNED_LO ? null : Number(v))}
-                >
-                  <FormControl>
-                    <SelectTrigger data-testid="select-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {/* Booking without an LO has to be a deliberate choice, not
-                        an empty field someone forgot — so it is a real option. */}
-                    {watchedType === "appointment" && (
-                      <SelectItem value={UNASSIGNED_LO} data-testid="select-lo-unassigned">
-                        No LO yet — assign later
-                      </SelectItem>
-                    )}
-                    {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
-                      <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="loaId" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Loan Officer Assistant (optional)</FormLabel>
-                <LoaPicker loId={form.watch("loId")} value={field.value ?? null} onChange={field.onChange} />
-                {isTransfer && field.value == null && isChrisRedoble(los.find((lo: any) => lo.id === form.watch("loId"))?.fullName) && (
-                  <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1" data-testid="loa-missing-hint">
-                    (LOA missing) — pick which assistant took this transfer, or it'll be attributed to Chris directly.
-                  </p>
-                )}
-                <FormMessage />
-              </FormItem>
-            )} />
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
             <FormField control={form.control} name="leadSource" render={({ field }) => (
               <FormItem>
                 <FormLabel>Which lead source did this come in from?</FormLabel>
@@ -752,18 +761,20 @@ function OutcomeFormDialog({
                 </FormItem>
               )} />
             )}
-            <FormField control={form.control} name="borrowerName" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Borrower Name</FormLabel>
-                <FormControl><Input {...field} placeholder="Optional" data-testid="input-borrower-name" /></FormControl>
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="phoneNumber" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Phone Number</FormLabel>
-                <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-phone-number" /></FormControl>
-              </FormItem>
-            )} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField control={form.control} name="borrowerName" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Borrower Name</FormLabel>
+                  <FormControl><Input {...field} placeholder="Optional" data-testid="input-borrower-name" /></FormControl>
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="phoneNumber" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Phone Number</FormLabel>
+                  <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-phone-number" /></FormControl>
+                </FormItem>
+              )} />
+            </div>
             {!isTransfer && watchedType === "appointment" && (
               <FormField control={form.control} name="appointmentDatetime" render={({ field }) => (
                 <FormItem>
@@ -814,10 +825,11 @@ function OutcomeFormDialog({
           {!confirmBonzo && isTransfer && (
             <>
               <p className="text-sm font-semibold text-foreground">Qualification</p>
+              <div className="grid gap-2 sm:grid-cols-3">
               {QUAL_QUESTIONS.map(q => (
                 <FormField key={q.name} control={form.control} name={q.name as any} render={({ field }) => (
-                  <FormItem>
-                    <div className="flex items-center justify-between gap-3">
+                  <FormItem className="rounded-md border px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
                       <FormLabel className="mb-0 text-[13px] leading-snug">
                         {q.label}
                         {q.cue && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">({q.cue})</span>}
@@ -837,6 +849,7 @@ function OutcomeFormDialog({
                   </FormItem>
                 )} />
               ))}
+              </div>
               {form.watch("qualInvestment") === "yes" && (
                 <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400" data-testid="qual-investment-hint">
                   {INVESTMENT_ROUTING_HINT}
@@ -857,13 +870,18 @@ function OutcomeFormDialog({
               {/* Kept in the DOM when hidden would mean 20 registered inputs on
                   every render; unmounting is fine because react-hook-form holds
                   the values, so reopening restores what was typed. */}
-              {showInfo && INFO_FIELDS.map((f, index) => (
-                <div key={f.name} className="space-y-1.5">
+              {showInfo && (
+              <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+              {INFO_FIELDS.map((f, index) => (
+                <Fragment key={f.name}>
                   {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
-                    <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
+                    <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">{f.section}</p>
                   )}
+                  {/* A chip row or a field with its own notes box needs the
+                      full width; a plain input does not. */}
+                  <div className={(f.options || f.notes) ? "space-y-1.5 sm:col-span-2" : "space-y-1.5"}>
                   <FormField control={form.control} name={f.name as any} render={({ field }) => (
-                    <FormItem className="grid grid-cols-[9.5rem_1fr] items-start gap-2 space-y-0">
+                    <FormItem className="grid grid-cols-[7.5rem_1fr] items-start gap-2 space-y-0">
                       <FormLabel className="mb-0 pt-1.5 text-[12px] text-muted-foreground">{f.label}</FormLabel>
                       {f.options ? (
                         <div className="space-y-1.5">
@@ -913,8 +931,11 @@ function OutcomeFormDialog({
                       )}
                     </FormItem>
                   )} />
-                </div>
+                  </div>
+                </Fragment>
               ))}
+              </div>
+              )}
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
                   <div className="flex items-center justify-between gap-2">

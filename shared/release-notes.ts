@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.18.1",
+    headline: "Input Results now uses the width it has.",
+    items: [
+      { text: "Fields that belong together sit on the same line instead of each taking a whole row — date beside who logged it, borrower beside phone, loan officer beside assistant, and the three qualification questions across one line. The window got wider last release but everything was still stacked, so it just meant more scrolling.", audience: "everyone" },
+      { text: "Info Gathering, when you open it, is two side by side rather than twenty stacked — so you can take it in at a glance.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.18.0",
     headline: "Input Results is built around the call you actually just had.",
     items: [

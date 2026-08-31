@@ -137,7 +137,8 @@ test("the form opens on the answer for the case that is 89% of outcomes", () => 
 
 test("the long tail is collapsed, but never hidden silently", () => {
   assert.match(page, /data-testid="toggle-info-gathering"/);
-  assert.match(page, /\{showInfo && INFO_FIELDS\.map\(/, "the section collapses");
+  assert.match(page, /\{showInfo && \(/, "the section collapses");
+  assert.match(page, /INFO_FIELDS\.map\(\(f, index\) =>/, "the shared field list still drives it");
   // A collapsed section that hid filled values would be a trap.
   assert.match(page, /infoFilledCount/, "the header must say how many are filled");
 });
@@ -176,4 +177,23 @@ test("the running count is the logger's own work, on the form's own date", () =>
   assert.match(scope, /businessTodayClient\(\)/, "must agree with the date the form defaults to");
   assert.match(scope, /Number\(o\.assistantId\) === Number\(authUser\.id\)/,
     "the counter describes YOUR entries, not the current filter");
+});
+
+test("short fields share a row instead of each taking the full width", () => {
+  const entry = page.slice(page.indexOf("function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
+  // A date picker spanning a 768px dialog is wasted space, and one field per
+  // line turns a wide window straight back into a long scroll.
+  const rows = entry.match(/grid gap-3 sm:grid-cols-2/g) ?? [];
+  assert.ok(rows.length >= 4, "expected several paired rows, found " + rows.length);
+  for (const pair of [["input-outcome-date", "select-assistant"], ["input-borrower-name", "input-phone-number"], ["select-lo", "LoaPicker"]]) {
+    const i = entry.indexOf(pair[0]), j = entry.indexOf(pair[1]);
+    assert.ok(i > 0 && j > 0, pair[0] + " / " + pair[1] + " must both exist");
+    const between = entry.slice(Math.min(i, j), Math.max(i, j));
+    assert.ok(!/grid gap-3 sm:grid-cols-2/.test(between), pair[0] + " and " + pair[1] + " belong in the same row");
+  }
+  // Three qualification answers on one line, not three.
+  assert.match(entry, /grid gap-2 sm:grid-cols-3/);
+  // The 20 info fields are two-up, with section headings breaking the row.
+  assert.match(entry, /grid gap-x-4 gap-y-2 sm:grid-cols-2/);
+  assert.match(entry, /sm:col-span-2">\{f\.section\}/);
 });
