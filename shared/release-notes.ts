@@ -32,7 +32,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     version: "4.18.0",
     headline: "Input Results is built around the call you actually just had.",
     items: [
-      { text: "The window is much wider, so the form is visible instead of squeezed into a narrow column you had to scroll.", audience: "everyone" },
+      { text: "The window is much wider, so you can see the form instead of scrolling a narrow strip.", audience: "everyone" },
       { text: "It opens ready for a transfer, set to Direct — that is nine out of ten calls, so that is two fewer clicks on almost every one.", audience: "everyone" },
       { text: "Info Gathering is tucked behind one button instead of twenty boxes you scroll past every time. It tells you how many are filled, so nothing hides from you, and it is one click away when a call needs it.", audience: "everyone" },
       { text: "New “Log & next” button: log the call and stay put, ready for the next one. It keeps the date, the result type and the loan officer, and clears the borrower, phone, notes and answers — so one call can never be recorded against another.", audience: "everyone" },
