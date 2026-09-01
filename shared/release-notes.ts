@@ -29,6 +29,19 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.33.0",
+    headline: "Write-up scoring now matches what a call is actually worth.",
+    items: [
+      { text: "The three qualification answers \u2014 owns a home, bankruptcy in the last six months, investment or second home \u2014 now count four times any other question. They decide whether the lead is workable at all, and a write-up missing one of them was being marked down as if it had skipped a phone number.", audience: "everyone" },
+      { text: "Borrower email and the exact credit score no longer count toward the score. Both are still on the form and still worth getting; the credit band is what the loan officer prices against, so that is what is scored.", audience: "everyone" },
+      { text: "New tickboxes on Info Gathering: No co-borrower, Free and clear, and No HELOC. Tick one and that whole section stops being asked of you \u2014 a blank co-borrower box used to look exactly the same whether there was no co-borrower or nobody asked, and you were marked down either way. It also writes the fact into the notes the loan officer reads.", audience: "everyone" },
+      { text: "Ticking one of those clears the boxes it covers, so a half-typed answer cannot sit hidden behind it \u2014 it would have quietly gone missing from the handoff and could have blocked the form from submitting with an error on a box no longer on screen.", audience: "everyone" },
+      { text: "The routing note for investment and second homes \u2014 give it to LOA Justin, Mateo, or John \u2014 now sits beside the question on both the Script page and Input Results, instead of appearing only after you answer Yes. You need to know where it goes before you decide.", audience: "everyone" },
+      { text: "A CLR profile now marks the questions that count four times, so it is clear which gap is worth closing first.", audience: "manager" },
+      { text: "Because the rules changed, Write-up percentages before and after today are not measured the same way and should not be compared across that line.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.32.1",
     headline: "W2-only states are pink on the map — and actually coloured in now.",
     items: [

@@ -12,6 +12,10 @@ export const LEAD_SOURCE_OPTIONS = [
 
 export type QualAnswer = "yes" | "no" | "";
 
+// Sits next to the investment question, which already names the case, so this
+// is only the part that says what to DO about it.
+export const INVESTMENT_ROUTING_HINT = "Give to LOA Justin, Mateo, or John.";
+
 export type LeadCapture = {
   leadSource: string;        // one of LEAD_SOURCE_OPTIONS or "other"
   leadSourceOther: string;   // what the CLR typed when leadSource === "other"
@@ -35,6 +39,12 @@ export type LeadCapture = {
   infoHelocRate: string;
   infoHelocPayment: string;
   infoIncome: string;
+  // Section toggles. "Not asked" and "asked, and there is none" look identical
+  // in a blank field, so the score has no way to tell a gap from a fact. These
+  // record the fact, and the sections they cover stop being expected.
+  naCoborrower: QualAnswer;
+  mortgageFreeClear: QualAnswer;
+  naHeloc: QualAnswer;
   infoEmployment: string;
   infoEmploymentNotes: string;
   infoCreditScore: string;
@@ -42,18 +52,19 @@ export type LeadCapture = {
   infoMilitaryNotes: string;
 };
 
-export const QUAL_QUESTIONS: { name: keyof LeadCapture; label: string; cue: string }[] = [
+export const QUAL_QUESTIONS: { name: keyof LeadCapture; label: string; cue: string; hint?: string }[] = [
   { name: "qualOwnHome", label: "Do you own a home?", cue: "must be Yes" },
   { name: "qualBankruptcy", label: "Bankruptcy in the last 6 months?", cue: "should be No" },
-  { name: "qualInvestment", label: "Investment property / secondary residence?", cue: "" },
+  // The routing note rides on the question itself, not on a Yes answer: you
+  // need to know where it goes BEFORE you decide, and a note that only appears
+  // afterwards teaches nobody who to hand it to.
+  { name: "qualInvestment", label: "Investment property / secondary residence?", cue: "", hint: INVESTMENT_ROUTING_HINT },
   // Credit lived here too, as "Credit score over 500? (est)" plus a free-text
   // estimate, while Info Gathering asked for "Credit score" separately — the
   // same fact in two places, filled inconsistently. There is now one banded
   // credit field below, and every band is above 500, so the old yes/no gate is
   // answered by picking one.
 ];
-
-export const INVESTMENT_ROUTING_HINT = "Investment / secondary residence — give this to LOA Justin, Mateo, or John.";
 
 /** The bands LOs price against. Ranges are inclusive of the lower bound. */
 export const CREDIT_SCORE_BANDS = ["500-580", "580-620", "620-720", "720+"] as const;
@@ -116,6 +127,49 @@ export const INFO_FIELDS: InfoField[] = [
   },
 ];
 
+/**
+ * A whole section answered in one tap.
+ *
+ * These are not cosmetic. A blank co-borrower box means either "there isn't
+ * one" or "nobody asked", and the completeness score cannot tell those apart —
+ * so it marks the second, and the first gets punished for a fact. Ticking the
+ * toggle states the fact, writes it into the handoff the LO reads, and takes
+ * the section out of what the score expects.
+ */
+export type SectionToggle = {
+  name: keyof LeadCapture;
+  section: InfoField["section"];
+  /** The tickbox wording on both capture surfaces. */
+  label: string;
+  /** Written into the composed note in place of the fields it covers. */
+  noteLabel: string;
+  noteValue: string;
+  covers: Array<keyof LeadCapture>;
+};
+
+export const SECTION_TOGGLES: SectionToggle[] = [
+  {
+    name: "naCoborrower", section: "Co-borrower", label: "No co-borrower",
+    noteLabel: "Co-Borrower", noteValue: "N/A",
+    covers: ["infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerCreditScore"],
+  },
+  {
+    name: "mortgageFreeClear", section: "First mortgage", label: "Free and clear",
+    noteLabel: "First Mortgage", noteValue: "Free and clear",
+    covers: ["infoBalance", "infoRate", "infoPayment"],
+  },
+  {
+    name: "naHeloc", section: "HELOC", label: "No HELOC",
+    noteLabel: "HELOC", noteValue: "N/A",
+    covers: ["infoHelocBalance", "infoHelocRate", "infoHelocPayment"],
+  },
+];
+
+/** The toggle covering a section, if it has one. */
+export function toggleForSection(section: InfoField["section"]): SectionToggle | undefined {
+  return SECTION_TOGGLES.find((tg) => tg.section === section);
+}
+
 export function emptyLeadCapture(): LeadCapture {
   return {
     leadSource: "", leadSourceOther: "",
@@ -124,6 +178,7 @@ export function emptyLeadCapture(): LeadCapture {
     infoCoborrowerName: "", infoCoborrowerDob: "", infoCoborrowerCreditScore: "",
     infoAddress: "", infoGoal: "", infoTakeOut: "", infoValue: "", infoBalance: "",
     infoRate: "", infoPayment: "", infoHelocBalance: "", infoHelocRate: "", infoHelocPayment: "", infoIncome: "",
+    naCoborrower: "", mortgageFreeClear: "", naHeloc: "",
     infoEmployment: "", infoEmploymentNotes: "",
     infoCreditScore: "",
     infoMilitary: "", infoMilitaryNotes: "",
@@ -163,12 +218,21 @@ export function composeLeadCaptureNotes(c: LeadCapture): string {
   const info: Array<[string, string]> = [
     ["Borrower Email", c.infoBorrowerEmail], ["Borrower DOB", c.infoBorrowerDob],
     ["Credit Score", c.infoCreditScore], ["Exact Borrower Credit Score", c.infoCreditScoreExact],
-    ["Co-Borrower Name", c.infoCoborrowerName], ["Co-Borrower DOB", c.infoCoborrowerDob],
-    ["Co-Borrower Credit Score", c.infoCoborrowerCreditScore],
+    ...(c.naCoborrower === "yes"
+      ? [["Co-Borrower", "N/A"] as [string, string]]
+      : ([["Co-Borrower Name", c.infoCoborrowerName], ["Co-Borrower DOB", c.infoCoborrowerDob],
+          ["Co-Borrower Credit Score", c.infoCoborrowerCreditScore]] as Array<[string, string]>)),
     ["Property Address", c.infoAddress], ["Goal / Debts to Pay Off", c.infoGoal], ["Cash Needed / Take Out", c.infoTakeOut],
-    ["Estimated Home Value", c.infoValue], ["First Mortgage Balance", c.infoBalance], ["First Mortgage Rate", c.infoRate],
-    ["Monthly PITI / Payment", c.infoPayment], ["HELOC Balance", c.infoHelocBalance],
-    ["HELOC Rate", c.infoHelocRate], ["HELOC Monthly Payment", c.infoHelocPayment], ["Monthly Income", c.infoIncome],
+    ["Estimated Home Value", c.infoValue],
+    ...(c.mortgageFreeClear === "yes"
+      ? [["First Mortgage", "Free and clear"] as [string, string]]
+      : ([["First Mortgage Balance", c.infoBalance], ["First Mortgage Rate", c.infoRate],
+          ["Monthly PITI / Payment", c.infoPayment]] as Array<[string, string]>)),
+    ...(c.naHeloc === "yes"
+      ? [["HELOC", "N/A"] as [string, string]]
+      : ([["HELOC Balance", c.infoHelocBalance], ["HELOC Rate", c.infoHelocRate],
+          ["HELOC Monthly Payment", c.infoHelocPayment]] as Array<[string, string]>)),
+    ["Monthly Income", c.infoIncome],
     ["W2/SE/Retired", withNotes(c.infoEmployment, c.infoEmploymentNotes)],
     ["Military", withNotes(c.infoMilitary, c.infoMilitaryNotes)],
   ];

@@ -81,7 +81,7 @@ type Resp = {
     filled: number;
     expected: number;
     complete: number;
-    byField: Array<{ key: string; label: string; filled: number; expected: number; pct: number | null }>;
+    byField: Array<{ key: string; label: string; weight?: number; filled: number; expected: number; pct: number | null }>;
   };
   chartStart?: string; chartEnd?: string;
   chartNotes?: ClrNote[];
@@ -658,10 +658,20 @@ export default function ClrProfile() {
                 </p>
                 {data.completeness.byField
                   .filter((f) => f.expected > 0)
-                  .sort((a, b) => (a.pct ?? 100) - (b.pct ?? 100))
+                  .sort((a, b) => (a.pct ?? 100) - (b.pct ?? 100)
+                    || (b.weight ?? 1) - (a.weight ?? 1))
                   .map((f) => (
                     <div key={f.key} className="flex items-center gap-3" data-testid="clr-completeness-field">
-                      <span className="w-32 shrink-0 text-xs text-muted-foreground">{f.label}</span>
+                      <span className="w-32 shrink-0 text-xs text-muted-foreground">
+                        {f.label}
+                        {(f.weight ?? 1) > 1 && (
+                          <span
+                            className="ml-1 rounded bg-primary/10 px-1 font-semibold text-primary"
+                            title={`Counts ${f.weight}x — a qualification answer decides whether the lead is workable at all`}
+                            data-testid="clr-completeness-weight"
+                          >&times;{f.weight}</span>
+                        )}
+                      </span>
                       <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                         <div
                           className={"h-full rounded-full "
@@ -675,7 +685,9 @@ export default function ClrProfile() {
                     </div>
                   ))}
                 <p className="text-[11px] text-muted-foreground">
-                  An LOA is only counted on transfers whose loan officer has one.
+                  Qualification answers count &times;4. An LOA is only counted on
+                  transfers whose loan officer has one, and a section marked N/A
+                  is not counted at all.
                 </p>
               </CardContent>
             </Card>

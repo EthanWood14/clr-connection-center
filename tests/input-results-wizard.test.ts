@@ -65,17 +65,22 @@ test("the summary is replaced by the qualification checklist", () => {
   // Questions and info fields live in the shared module both surfaces render.
   assert.match(page, /QUAL_QUESTIONS\.map/);
   assert.match(page, /INFO_FIELDS\.map/);
-  assert.match(page, /INVESTMENT_ROUTING_HINT/);
+  // The routing note is part of the question now, not a banner that waits
+  // for a Yes — you need to know where it goes before you answer.
+  assert.match(page, /\{q\.hint\}/);
+  assert.doesNotMatch(page, /qualInvestment"\) === "yes" &&/);
   assert.match(lib, /Do you own a home\?/);
   assert.match(lib, /must be Yes/);
   assert.match(lib, /Bankruptcy in the last 6 months\?/);
   assert.match(lib, /should be No/);
   assert.match(lib, /Investment property \/ secondary residence\?/);
-  assert.match(lib, /give this to LOA Justin, Mateo, or John/i);
+  assert.match(lib, /justin/i);
+  assert.match(lib, /mateo/i);
+  assert.match(lib, /john/i);
   // Credit is no longer a qualification question: it was asked there AND in
   // Info Gathering, so it is one banded field now. Scoped to the array —
   // a whole-file scan would match the comment explaining the removal.
-  const qualBlock = lib.slice(lib.indexOf("QUAL_QUESTIONS"), lib.indexOf("INVESTMENT_ROUTING_HINT"));
+  const qualBlock = lib.slice(lib.indexOf("export const QUAL_QUESTIONS"), lib.indexOf("CREDIT_SCORE_BANDS"));
   assert.doesNotMatch(qualBlock, /name: "qualCredit/, "no credit question in the checklist");
   assert.match(lib, /CREDIT_SCORE_BANDS = \["500-580", "580-620", "620-720", "720\+"\]/);
   for (const label of ["Borrower email", "Borrower date of birth",
@@ -195,5 +200,5 @@ test("short fields share a row instead of each taking the full width", () => {
   assert.match(entry, /grid gap-2 sm:grid-cols-3/);
   // The 20 info fields are two-up, with section headings breaking the row.
   assert.match(entry, /grid gap-x-4 gap-y-2 sm:grid-cols-2/);
-  assert.match(entry, /sm:col-span-2">\{f\.section\}/);
+  assert.match(entry, /uppercase tracking-wide text-muted-foreground">\{f\.section\}/);
 });

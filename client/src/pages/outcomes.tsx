@@ -29,7 +29,7 @@ import {
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
-import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, INVESTMENT_ROUTING_HINT, composeLeadCaptureNotes } from "@/lib/lead-capture";
+import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection, composeLeadCaptureNotes } from "@/lib/lead-capture";
 import { copyToClipboard } from "@/lib/utils";
 
 // Compliance reminder displayed above every CLR-facing notes textarea.
@@ -201,6 +201,10 @@ const outcomeFormSchema = z.object({
   qualOwnHome: z.string().optional(),
   qualBankruptcy: z.string().optional(),
   qualInvestment: z.string().optional(),
+
+  naCoborrower: z.string().optional(),
+  mortgageFreeClear: z.string().optional(),
+  naHeloc: z.string().optional(),
 
   infoAddress: z.string().optional(),
   infoBorrowerEmail: z.string().email("Enter a valid email").or(z.literal("")).optional(),
@@ -414,6 +418,10 @@ function OutcomeFormDialog({
       qualBankruptcy: "",
       qualInvestment: "",
 
+      naCoborrower: "",
+      mortgageFreeClear: "",
+      naHeloc: "",
+
       infoAddress: "",
       infoBorrowerEmail: "",
       infoBorrowerDob: "",
@@ -476,6 +484,10 @@ function OutcomeFormDialog({
 
   const watchedType = form.watch("outcomeType");
   const infoValues = form.watch(INFO_FIELDS.map((f) => f.name) as any);
+  const toggleValues = form.watch(SECTION_TOGGLES.map((tg) => tg.name) as any) as unknown as string[];
+  const naSections = new Set(
+    SECTION_TOGGLES.filter((_tg, i) => toggleValues?.[i] === "yes").map((tg) => tg.section),
+  );
   const infoFilledCount = (infoValues as any[]).filter((v) => String(v ?? "").trim()).length;
   const watchedTransferType = form.watch("transferType");
   const watchedBulkTexter = form.watch("bulkTexter");
@@ -515,7 +527,8 @@ function OutcomeFormDialog({
         "infoAddress", "infoGoal", "infoTakeOut", "infoValue", "infoBalance", "infoRate",
         "infoPayment", "infoHelocBalance", "infoHelocRate", "infoHelocPayment",
         "infoIncome", "infoEmployment", "infoEmploymentNotes",
-        "infoCreditScore", "infoMilitary", "infoMilitaryNotes"] as const) {
+        "infoCreditScore", "infoMilitary", "infoMilitaryNotes",
+        "naCoborrower", "mortgageFreeClear", "naHeloc"] as const) {
         form.setValue(k, "");
       }
       setConfirmBonzo(true);
@@ -833,6 +846,12 @@ function OutcomeFormDialog({
                       <FormLabel className="mb-0 text-[13px] leading-snug">
                         {q.label}
                         {q.cue && <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">({q.cue})</span>}
+                        {q.hint && (
+                          <span
+                            className={`mt-0.5 block text-[11px] font-semibold ${field.value === "yes" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                            data-testid={`qual-${q.name}-hint`}
+                          >{q.hint}</span>
+                        )}
                       </FormLabel>
                       <div className="flex gap-2 shrink-0">
                         {(["yes", "no"] as const).map(v => (
@@ -850,11 +869,6 @@ function OutcomeFormDialog({
                 )} />
               ))}
               </div>
-              {form.watch("qualInvestment") === "yes" && (
-                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400" data-testid="qual-investment-hint">
-                  {INVESTMENT_ROUTING_HINT}
-                </p>
-              )}
 
               <button
                 type="button"
@@ -875,10 +889,50 @@ function OutcomeFormDialog({
               {INFO_FIELDS.map((f, index) => (
                 <Fragment key={f.name}>
                   {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
-                    <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">{f.section}</p>
+                    <div className="flex items-center justify-between gap-2 pt-2 sm:col-span-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
+                      {(() => {
+                        const tg = toggleForSection(f.section);
+                        if (!tg) return null;
+                        return (
+                          <FormField control={form.control} name={tg.name as any} render={({ field }) => (
+                            <FormItem className="space-y-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const turningOn = field.value !== "yes";
+                                  field.onChange(turningOn ? "yes" : "");
+                                  // Empty what the section covered. The values
+                                  // would otherwise survive unmounted: dropped
+                                  // silently from the LO handoff, still counted
+                                  // in "N filled", and — if one was mid-typed
+                                  // and invalid — blocking submit from a box
+                                  // nobody can see to fix.
+                                  if (turningOn) {
+                                    for (const k of tg.covers) form.setValue(k as any, "", { shouldValidate: false });
+                                    form.clearErrors(tg.covers as any);
+                                  }
+                                }}
+                                data-testid={`toggle-${tg.name}`}
+                                aria-pressed={field.value === "yes"}
+                                className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${
+                                  field.value === "yes"
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-border text-muted-foreground hover:bg-muted"
+                                }`}
+                              >{tg.label}</button>
+                            </FormItem>
+                          )} />
+                        );
+                      })()}
+                    </div>
                   )}
+                  {/* A section declared N/A keeps its heading and its tickbox,
+                      so the answer stays visible and undoable, but drops the
+                      boxes nobody should be filling. */}
                   {/* A chip row or a field with its own notes box needs the
                       full width; a plain input does not. */}
+                  {naSections.has(f.section) ? null : (
                   <div className={(f.options || f.notes) ? "space-y-1.5 sm:col-span-2" : "space-y-1.5"}>
                   <FormField control={form.control} name={f.name as any} render={({ field }) => (
                     <FormItem className="grid grid-cols-[7.5rem_1fr] items-start gap-2 space-y-0">
@@ -932,6 +986,7 @@ function OutcomeFormDialog({
                     </FormItem>
                   )} />
                   </div>
+                  )}
                 </Fragment>
               ))}
               </div>

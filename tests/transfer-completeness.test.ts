@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   scoreTransfer, summarizeCompleteness, capturedLabels,
   CAPTURE_LABELS, TRANSFER_COMPLETENESS_FIELDS,
+  UNSCORED_LABELS, QUAL_LABELS, QUAL_WEIGHT,
 } from "../shared/transfer-completeness";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,12 +19,15 @@ const blank = {
   notes: "", loId: null, transferType: "", loaId: null, loHasLoa: false,
 };
 
+const SCORED = CAPTURE_LABELS.filter((l) => !UNSCORED_LABELS.has(l));
+/** 6 stored fields, 18 plain capture answers, 3 qualification answers at 4x. */
+const BLANK_WEIGHT = 6 + (SCORED.length - QUAL_LABELS.length) + QUAL_LABELS.length * QUAL_WEIGHT;
+
 test("the score is every fillable field, not a chosen few", () => {
-  // 6 stored fields + 23 capture answers when no LOA applies.
-  assert.equal(scoreTransfer(blank).expected, 6 + CAPTURE_LABELS.length);
-  assert.equal(CAPTURE_LABELS.length, 23);
+  assert.equal(SCORED.length, 21);
+  assert.equal(scoreTransfer(blank).expected, BLANK_WEIGHT);
   // With an LOA expected it is one more.
-  assert.equal(scoreTransfer({ ...blank, loHasLoa: true }).expected, 7 + CAPTURE_LABELS.length);
+  assert.equal(scoreTransfer({ ...blank, loHasLoa: true }).expected, BLANK_WEIGHT + 1);
 });
 
 test("nothing filled is 0%, everything filled is 100%", () => {
@@ -82,7 +86,7 @@ test("the average is over fields, not over transfers", () => {
   const a = { ...blank, borrowerName: "A" };
   const b = { ...blank };
   const sum = summarizeCompleteness([a, b]);
-  assert.equal(sum.expected, 2 * (6 + CAPTURE_LABELS.length));
+  assert.equal(sum.expected, 2 * BLANK_WEIGHT);
   assert.equal(sum.filled, 1);
   assert.equal(sum.transfers, 2);
   assert.equal(sum.complete, 0);
@@ -119,4 +123,166 @@ test("every field the score counts is one a person can actually fill", () => {
   for (const derived of ["id", "createdAt", "updatedAt", "verificationStatus", "bonzoProspectId", "orgId", "assistantId", "date", "outcomeType", "tags"]) {
     assert.ok(!keys.includes(derived), `${derived} is not something a person fills in`);
   }
+});
+
+const panel = readFileSync(join(root, "client/src/components/lead-capture-panel.tsx"), "utf8");
+const wizard = readFileSync(join(root, "client/src/pages/outcomes.tsx"), "utf8");
+
+const answered = (labels: string[]) => labels.map((l) => `${l}: yes`).join("\n");
+
+test("a qualification answer is worth four of anything else", () => {
+  // They decide whether the lead is workable at all. Missing the home-ownership
+  // answer is not one-twenty-first of a problem.
+  assert.equal(QUAL_WEIGHT, 4);
+  const onlyQual = { ...blank, conversationNotes: answered([...QUAL_LABELS]) };
+  const onlyPlain = { ...blank, conversationNotes: answered(SCORED.filter((l) => !QUAL_LABELS.includes(l as any)).slice(0, 3)) };
+  // Same three answers either way; the qualification ones move the score 4x.
+  assert.equal(scoreTransfer(onlyQual).filled, 3 * QUAL_WEIGHT);
+  assert.equal(scoreTransfer(onlyPlain).filled, 3);
+});
+
+test("borrower email and the exact score are asked, and not counted", () => {
+  for (const label of ["Borrower Email", "Exact Borrower Credit Score"]) {
+    assert.ok(UNSCORED_LABELS.has(label), `${label} should not be scored`);
+    // Still on the form: dropping the field is a different decision from
+    // dropping it out of the score.
+    assert.ok(capture.includes(`"${label}"`), `${label} should still be captured`);
+    assert.ok(!TRANSFER_COMPLETENESS_FIELDS.some((f) => f.label === label));
+  }
+  // The band it replaces IS still scored.
+  assert.ok(TRANSFER_COMPLETENESS_FIELDS.some((f) => f.label === "Credit Score"));
+});
+
+test("a section marked N/A stops being expected", () => {
+  const base = BLANK_WEIGHT;
+  for (const [marker, value, fields] of [
+    ["Co-Borrower", "N/A", ["Co-Borrower Name", "Co-Borrower DOB", "Co-Borrower Credit Score"]],
+    ["First Mortgage", "Free and clear", ["First Mortgage Balance", "First Mortgage Rate", "Monthly PITI / Payment"]],
+    ["HELOC", "N/A", ["HELOC Balance", "HELOC Rate", "HELOC Monthly Payment"]],
+  ] as Array<[string, string, string[]]>) {
+    const row = { ...blank, conversationNotes: `${marker}: ${value}` };
+    const score = scoreTransfer(row);
+    assert.equal(score.expected, base - fields.length, `${marker} should drop ${fields.length} fields`);
+    for (const f of fields) {
+      assert.ok(!score.missing.includes(`capture:${f}`), `${f} is still being asked for`);
+    }
+  }
+});
+
+test("saying a section is N/A earns no credit on its own", () => {
+  // Otherwise the cheapest route to a good score is to declare everything
+  // absent. It removes the ask; it does not answer anything.
+  const naEverything = {
+    ...blank,
+    conversationNotes: ["Co-Borrower: N/A", "First Mortgage: Free and clear", "HELOC: N/A"].join("\n"),
+  };
+  assert.equal(scoreTransfer(naEverything).filled, 0);
+  assert.equal(summarizeCompleteness([naEverything]).pct, 0);
+  // And the markers themselves are never scored fields.
+  for (const m of ["Co-Borrower", "First Mortgage", "HELOC"]) {
+    assert.ok(!TRANSFER_COMPLETENESS_FIELDS.some((f) => f.label === m), `${m} must not be a field`);
+  }
+});
+
+test("a real co-borrower is not marked down for having one", () => {
+  // The marker exists so "there isn't one" and "nobody asked" stop looking
+  // identical -- it must not become a field that everyone else is missing.
+  const hasOne = { ...blank, conversationNotes: answered(["Co-Borrower Name", "Co-Borrower DOB", "Co-Borrower Credit Score"]) };
+  assert.equal(scoreTransfer(hasOne).expected, BLANK_WEIGHT);
+  assert.equal(scoreTransfer(hasOne).filled, 3);
+});
+
+test("the composer writes the marker in place of the section", () => {
+  const composer = capture.slice(capture.indexOf("export function composeLeadCaptureNotes"));
+  assert.match(composer, /c\.naCoborrower === "yes"/);
+  assert.match(composer, /\["Co-Borrower", "N\/A"\]/);
+  assert.match(composer, /c\.mortgageFreeClear === "yes"/);
+  assert.match(composer, /\["First Mortgage", "Free and clear"\]/);
+  assert.match(composer, /c\.naHeloc === "yes"/);
+  assert.match(composer, /\["HELOC", "N\/A"\]/);
+  // A marker line must not collide with the fields it covers: "HELOC:" and
+  // "HELOC Balance:" are told apart by the colon, so both must keep it.
+  for (const m of ["Co-Borrower", "First Mortgage", "HELOC"]) {
+    assert.ok(!capturedLabels(`${m} Balance: 100`).has(m), `${m} matched a field line`);
+  }
+  assert.ok(capturedLabels("HELOC: N/A").has("HELOC"));
+});
+
+test("both capture surfaces offer the same three N/A toggles", () => {
+  // One definition, or the Script page and the wizard drift apart and the same
+  // call gets written up two different ways.
+  assert.match(capture, /export const SECTION_TOGGLES/);
+  for (const name of ["naCoborrower", "mortgageFreeClear", "naHeloc"]) {
+    assert.ok(capture.includes(name), `${name} missing from the shared definition`);
+    assert.ok(wizard.includes(name), `${name} missing from Input Results`);
+  }
+  for (const src of [wizard, panel]) {
+    assert.match(src, /toggleForSection\(f\.section\)/);
+    assert.match(src, /naSections\.has\(f\.section\) \? null : \(/);
+  }
+  // Free and clear is a first-mortgage answer, not a co-borrower one.
+  assert.match(capture, /name: "mortgageFreeClear", section: "First mortgage", label: "Free and clear"/);
+});
+
+test("the routing note sits on the investment question itself", () => {
+  const qual = capture.slice(capture.indexOf("export const QUAL_QUESTIONS"), capture.indexOf("CREDIT_SCORE_BANDS"));
+  assert.match(qual, /name: "qualInvestment"[^}]*hint: INVESTMENT_ROUTING_HINT/);
+  for (const src of [wizard, panel]) assert.match(src, /\{q\.hint\}/);
+  for (const name of [/justin/i, /mateo/i, /john/i]) assert.match(capture, name);
+});
+
+test("describing a section is not the same as saying it is absent", () => {
+  // The Shotgun result path stores a CLR's raw note straight into
+  // conversation_notes, so free prose really does reach this parser. A note
+  // saying there IS a mortgage must not delete the mortgage questions.
+  const prose = [
+    "Co-Borrower: wife is on the loan",
+    "First Mortgage: 320k at 6.5%",
+    "HELOC: has one, about 40k",
+  ].join("\n");
+  const described = { ...blank, conversationNotes: prose };
+  assert.equal(scoreTransfer(described).expected, BLANK_WEIGHT,
+    "affirming a section must not remove it from the score");
+  for (const m of ["Co-Borrower", "First Mortgage", "HELOC"]) {
+    assert.ok(!capturedLabels(prose).has(m), `${m} fired on prose`);
+  }
+  // Only the exact wording the composer writes counts, and it is case-blind.
+  assert.ok(capturedLabels("Co-Borrower: n/a").has("Co-Borrower"));
+  assert.ok(capturedLabels("First Mortgage: FREE AND CLEAR").has("First Mortgage"));
+  // Anything else fails closed: the section stays expected.
+  assert.ok(!capturedLabels("First Mortgage: N/A").has("First Mortgage"));
+  assert.ok(!capturedLabels("HELOC: none").has("HELOC"));
+});
+
+test("turning a section off empties the boxes it hides", () => {
+  // Left behind, those values vanish from the LO handoff without anyone
+  // seeing it, still count toward "N filled", and — if one is half-typed and
+  // fails its own rule — block submit from a box that is no longer on screen.
+  const wiz = readFileSync(join(root, "client/src/pages/outcomes.tsx"), "utf8");
+  assert.match(wiz, /for \(const k of tg\.covers\) form\.setValue\(k as any, ""/);
+  assert.match(wiz, /form\.clearErrors\(tg\.covers as any\)/);
+  // The panel must do it in ONE update: two set() calls would each spread a
+  // stale capture and the second would undo the first.
+  assert.match(panel, /const setSection = \(tg: SectionToggle\)/);
+  assert.match(panel, /if \(turningOn\) for \(const k of tg\.covers\)/);
+  assert.match(panel, /onClick=\{\(\) => setSection\(tg\)\}/);
+  // covers must name every field its section renders.
+  for (const [tg, fields] of [
+    ["naCoborrower", ["infoCoborrowerName", "infoCoborrowerDob", "infoCoborrowerCreditScore"]],
+    ["mortgageFreeClear", ["infoBalance", "infoRate", "infoPayment"]],
+    ["naHeloc", ["infoHelocBalance", "infoHelocRate", "infoHelocPayment"]],
+  ] as Array<[string, string[]]>) {
+    const block = capture.slice(capture.indexOf(`name: "${tg}"`));
+    const covers = block.slice(block.indexOf("covers:"), block.indexOf("]", block.indexOf("covers:")));
+    for (const f of fields) assert.ok(covers.includes(f), `${tg} does not clear ${f}`);
+  }
+});
+
+test("a field that counts four times says so on the profile", () => {
+  // Otherwise the one worth fixing first looks exactly like the one worth
+  // fixing last.
+  const profile = readFileSync(join(root, "client/src/pages/clr-profile.tsx"), "utf8");
+  assert.match(profile, /data-testid="clr-completeness-weight"/);
+  assert.match(profile, /\(f\.weight \?\? 1\) > 1 &&/);
+  assert.match(profile, /weight\?: number/, "the response type must carry it");
 });

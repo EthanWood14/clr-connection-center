@@ -48,7 +48,71 @@ export const CAPTURE_LABELS = [
   "Monthly Income",
   "W2/SE/Retired",
   "Military",
+  // Section markers. Not fields — each one states that a whole section does not
+  // apply, and takes that section out of what is expected. The colon is what
+  // keeps them apart from the fields they cover: a line beginning "HELOC:"
+  // cannot be "HELOC Balance:".
+  "Co-Borrower",
+  "First Mortgage",
+  "HELOC",
 ] as const;
+
+/**
+ * Asked on the form, deliberately not counted.
+ *
+ * The section markers are here because they are conditions rather than fields:
+ * scoring them would mark down every transfer that DOES have a co-borrower for
+ * not saying it has none.
+ */
+export const UNSCORED_LABELS = new Set<string>([
+  // Ethan, 1 Sep 2026: not part of what a transfer is judged on.
+  "Borrower Email",
+  // The band is what the LO prices against; the exact figure is a bonus.
+  "Exact Borrower Credit Score",
+  "Co-Borrower",
+  "First Mortgage",
+  "HELOC",
+]);
+
+/**
+ * The qualification answers, weighted four times everything else.
+ *
+ * They decide whether the lead is workable at all. A write-up missing the
+ * home-ownership answer is not one field of twenty-eight short, it is missing
+ * the thing the LO
+ * needs first, and an unweighted average said otherwise.
+ */
+export const QUAL_LABELS = ["Owns Home", "Bankruptcy Last 6 Months", "Investment/2nd Home"] as const;
+export const QUAL_WEIGHT = 4;
+
+/**
+ * The one value each marker is allowed to carry.
+ *
+ * Matching the label alone was wrong: a free-text note reading
+ * "First Mortgage: 320k at 6.5%" DESCRIBES a mortgage, and would have deleted
+ * the whole first-mortgage section from the score for saying so. The Shotgun
+ * result path stores a CLR's raw note straight into conversation_notes, so
+ * that text really does reach this parser. Only what composeLeadCaptureNotes
+ * writes counts, and anything else fails closed — the section stays expected.
+ */
+const MARKER_VALUES: Record<string, string> = {
+  "Co-Borrower": "n/a",
+  "First Mortgage": "free and clear",
+  "HELOC": "n/a",
+};
+
+/** Which marker, if any, switches a field off. */
+const COVERED_BY: Record<string, string> = {
+  "Co-Borrower Name": "Co-Borrower",
+  "Co-Borrower DOB": "Co-Borrower",
+  "Co-Borrower Credit Score": "Co-Borrower",
+  "First Mortgage Balance": "First Mortgage",
+  "First Mortgage Rate": "First Mortgage",
+  "Monthly PITI / Payment": "First Mortgage",
+  "HELOC Balance": "HELOC",
+  "HELOC Rate": "HELOC",
+  "HELOC Monthly Payment": "HELOC",
+};
 
 export interface TransferRow {
   borrowerName?: string | null;
@@ -76,9 +140,14 @@ export function capturedLabels(blob: unknown): Set<string> {
     for (const label of CAPTURE_LABELS) {
       if (found.has(label)) continue;
       const prefix = `${label}:`;
-      if (line.startsWith(prefix) && line.slice(prefix.length).trim().length > 0) {
-        found.add(label);
-      }
+      if (!line.startsWith(prefix)) continue;
+      const value = line.slice(prefix.length).trim();
+      if (!value) continue;
+      // A marker states that a section does not apply. Any other value is
+      // somebody describing the section, which is the opposite claim.
+      const only = MARKER_VALUES[label];
+      if (only && value.toLowerCase() !== only) continue;
+      found.add(label);
     }
   }
   return found;
@@ -87,28 +156,36 @@ export function capturedLabels(blob: unknown): Set<string> {
 export interface CompletenessField {
   key: string;
   label: string;
-  expected: (row: TransferRow) => boolean;
+  /** How many of everything else this one field is worth. */
+  weight: number;
+  expected: (row: TransferRow, captured: Set<string>) => boolean;
   filled: (row: TransferRow, captured: Set<string>) => boolean;
 }
 
 /** The fields stored in their own columns. */
 const COLUMN_FIELDS: CompletenessField[] = [
-  { key: "borrowerName", label: "Borrower name", expected: () => true, filled: (r) => text(r.borrowerName) },
-  { key: "phoneNumber", label: "Phone number", expected: () => true, filled: (r) => text(r.phoneNumber) },
-  { key: "leadSource", label: "Lead source", expected: () => true, filled: (r) => text(r.leadSource) },
-  { key: "loId", label: "Loan officer", expected: () => true, filled: (r) => Number(r.loId ?? 0) > 0 },
-  { key: "transferType", label: "Transfer type", expected: () => true, filled: (r) => text(r.transferType) },
-  { key: "notes", label: "Other notes", expected: () => true, filled: (r) => text(r.notes) },
+  { key: "borrowerName", label: "Borrower name", weight: 1, expected: () => true, filled: (r) => text(r.borrowerName) },
+  { key: "phoneNumber", label: "Phone number", weight: 1, expected: () => true, filled: (r) => text(r.phoneNumber) },
+  { key: "leadSource", label: "Lead source", weight: 1, expected: () => true, filled: (r) => text(r.leadSource) },
+  { key: "loId", label: "Loan officer", weight: 1, expected: () => true, filled: (r) => Number(r.loId ?? 0) > 0 },
+  { key: "transferType", label: "Transfer type", weight: 1, expected: () => true, filled: (r) => text(r.transferType) },
+  { key: "notes", label: "Other notes", weight: 1, expected: () => true, filled: (r) => text(r.notes) },
   // Only a fair ask when the loan officer actually has an assistant.
-  { key: "loaId", label: "LOA", expected: (r) => !!r.loHasLoa, filled: (r) => Number(r.loaId ?? 0) > 0 },
+  { key: "loaId", label: "LOA", weight: 1, expected: (r) => !!r.loHasLoa, filled: (r) => Number(r.loaId ?? 0) > 0 },
 ];
+
+const QUAL_SET = new Set<string>(QUAL_LABELS);
 
 export const TRANSFER_COMPLETENESS_FIELDS: CompletenessField[] = [
   ...COLUMN_FIELDS,
-  ...CAPTURE_LABELS.map((label) => ({
+  ...CAPTURE_LABELS.filter((label) => !UNSCORED_LABELS.has(label)).map((label) => ({
     key: `capture:${label}`,
     label,
-    expected: () => true,
+    weight: QUAL_SET.has(label) ? QUAL_WEIGHT : 1,
+    expected: (_r: TransferRow, captured: Set<string>) => {
+      const marker = COVERED_BY[label];
+      return !marker || !captured.has(marker);
+    },
     filled: (_r: TransferRow, captured: Set<string>) => captured.has(label),
   })),
 ];
@@ -125,9 +202,9 @@ export function scoreTransfer(row: TransferRow): TransferScore {
   let expected = 0;
   const missing: string[] = [];
   for (const f of TRANSFER_COMPLETENESS_FIELDS) {
-    if (!f.expected(row)) continue;
-    expected += 1;
-    if (f.filled(row, captured)) filled += 1;
+    if (!f.expected(row, captured)) continue;
+    expected += f.weight;
+    if (f.filled(row, captured)) filled += f.weight;
     else missing.push(f.key);
   }
   return { filled, expected, missing };
@@ -139,14 +216,17 @@ export interface CompletenessSummary {
   transfers: number;
   filled: number;
   expected: number;
-  byField: Array<{ key: string; label: string; filled: number; expected: number; pct: number | null }>;
+  byField: Array<{ key: string; label: string; weight: number; filled: number; expected: number; pct: number | null }>;
   /** Transfers with every expected field present. */
   complete: number;
 }
 
 export function summarizeCompleteness(rows: TransferRow[]): CompletenessSummary {
+  // byField counts TRANSFERS, unweighted — "how often did anyone fill this in"
+  // is a different question from "how much did it move the score", and mixing
+  // them would make a 4x field look four times as common as it is.
   const byField = TRANSFER_COMPLETENESS_FIELDS.map((f) => ({
-    key: f.key, label: f.label, filled: 0, expected: 0, pct: null as number | null,
+    key: f.key, label: f.label, weight: f.weight, filled: 0, expected: 0, pct: null as number | null,
   }));
   let filled = 0;
   let expected = 0;
@@ -158,10 +238,10 @@ export function summarizeCompleteness(rows: TransferRow[]): CompletenessSummary 
     let rowMissing = 0;
     for (let i = 0; i < TRANSFER_COMPLETENESS_FIELDS.length; i += 1) {
       const f = TRANSFER_COMPLETENESS_FIELDS[i];
-      if (!f.expected(row)) continue;
+      if (!f.expected(row, captured)) continue;
       byField[i].expected += 1;
-      rowExpected += 1;
-      if (f.filled(row, captured)) { byField[i].filled += 1; filled += 1; }
+      rowExpected += f.weight;
+      if (f.filled(row, captured)) { byField[i].filled += 1; filled += f.weight; }
       else rowMissing += 1;
     }
     expected += rowExpected;

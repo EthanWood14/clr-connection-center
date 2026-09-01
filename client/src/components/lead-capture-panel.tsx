@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClipboardCheck } from "lucide-react";
 import {
   type LeadCapture, type QualAnswer,
-  LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, INVESTMENT_ROUTING_HINT,
+  LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection,
+  type SectionToggle,
 } from "@/lib/lead-capture";
 
 export function LeadCapturePanel({
@@ -18,6 +19,19 @@ export function LeadCapturePanel({
   onChange: (next: LeadCapture) => void;
 }) {
   const set = (k: keyof LeadCapture, v: string) => onChange({ ...capture, [k]: v });
+  // Turning a section off empties it in the same update — two calls to set()
+  // would each spread a stale `capture` and the second would undo the first.
+  const setSection = (tg: SectionToggle) => {
+    const turningOn = capture[tg.name] !== "yes";
+    const next: LeadCapture = { ...capture, [tg.name]: turningOn ? "yes" : "" };
+    if (turningOn) for (const k of tg.covers) (next as any)[k] = "";
+    onChange(next);
+  };
+  // Sections the CLR has said do not apply — heading and tickbox stay, the
+  // boxes go, so an N/A answer is visible and undoable rather than just blank.
+  const naSections = new Set(
+    SECTION_TOGGLES.filter((tg) => capture[tg.name] === "yes").map((tg) => tg.section),
+  );
 
   return (
     <Card data-testid="lead-capture-panel">
@@ -67,6 +81,12 @@ export function LeadCapturePanel({
                 <span className="text-xs leading-snug">
                   {q.label}
                   {q.cue && <span className="ml-1 text-[10px] text-muted-foreground">({q.cue})</span>}
+                  {q.hint && (
+                    <span
+                      className={`mt-0.5 block text-[10px] font-semibold ${capture[q.name] === "yes" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                      data-testid={`panel-${q.name}-hint`}
+                    >{q.hint}</span>
+                  )}
                 </span>
                 <div className="flex gap-1 shrink-0">
                   {(["yes", "no"] as QualAnswer[]).map(v => (
@@ -82,11 +102,6 @@ export function LeadCapturePanel({
               </div>
             ))}
           </div>
-          {capture.qualInvestment === "yes" && (
-            <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1.5" data-testid="panel-investment-hint">
-              {INVESTMENT_ROUTING_HINT}
-            </p>
-          )}
         </div>
 
         {/* Info gathering */}
@@ -96,8 +111,27 @@ export function LeadCapturePanel({
             {INFO_FIELDS.map((f, index) => (
               <div key={f.name}>
                 {(index === 0 || INFO_FIELDS[index - 1].section !== f.section) && (
-                  <p className="pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
+                  <div className="flex items-center justify-between gap-2 pb-1 pt-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{f.section}</p>
+                    {(() => {
+                      const tg = toggleForSection(f.section);
+                      if (!tg) return null;
+                      const on = capture[tg.name] === "yes";
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setSection(tg)}
+                          data-testid={`panel-toggle-${tg.name}`}
+                          aria-pressed={on}
+                          className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${
+                            on ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"
+                          }`}
+                        >{tg.label}</button>
+                      );
+                    })()}
+                  </div>
                 )}
+                {naSections.has(f.section) ? null : (
                 <div className="grid grid-cols-[7.5rem_1fr] items-start gap-1.5">
                   <span className="text-[11px] text-muted-foreground leading-tight pt-1">{f.label}</span>
                   {f.options ? (
@@ -142,6 +176,7 @@ export function LeadCapturePanel({
                     />
                   )}
                 </div>
+                )}
               </div>
             ))}
           </div>
