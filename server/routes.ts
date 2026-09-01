@@ -11881,6 +11881,15 @@ ${note}` : daysLine;
     const range = req.query.range as string | undefined;
     const users = storage.getUsers();
     const trainingByUser = clrTrainingByUser(currentOrgId() ?? 1);
+    // Which loan officers have an assistant — an LOA is only expected on
+    // transfers going to one of these, so the score is not charged for a field
+    // that did not apply. Loaded once, not per bucket.
+    const historyLoaLos = new Set<number>();
+    try {
+      for (const r of storageExtra.getRawSqlite()
+        .prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`)
+        .all() as any[]) historyLoaLos.add(Number(r.lo_id));
+    } catch { /* no assistants configured: the LOA field is simply never expected */ }
 
     // Helper: build a single bucket result from an array of outcomes
     function buildBucket(label: string, startDate: string, endDate: string, outcomes: any[]) {
@@ -11905,7 +11914,26 @@ ${note}` : daysLine;
         if (o.outcomeType === "transfer" || o.outcome_type === "transfer") tally[aid].transfers++;
       }
       const clrStats = Object.values(tally).sort((a: any, b: any) => b.transfers - a.transfers);
-      return { label, startDate, endDate, transfers, appointments, total, convRate, clrStats };
+      // How completely the transfers in this bucket were written up. Scored
+      // from the outcomes already in hand, so this costs no extra query.
+      const writeUp = summarizeCompleteness(
+        outcomes
+          .filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer")
+          .map((o: any) => ({
+            borrowerName: o.borrowerName ?? o.borrower_name,
+            phoneNumber: o.phoneNumber ?? o.phone_number,
+            leadSource: o.leadSource ?? o.lead_source,
+            conversationNotes: o.conversationNotes ?? o.conversation_notes,
+            loaId: Number(o.loaId ?? o.loa_id ?? 0) || null,
+            loHasLoa: historyLoaLos.has(Number(o.loId ?? o.lo_id ?? 0)),
+          })),
+      );
+      // null, not 0, when the bucket had no transfers — the line should break
+      // rather than dive to the floor on a quiet day.
+      return {
+        label, startDate, endDate, transfers, appointments, total, convRate, clrStats,
+        writeUpRate: writeUp.pct,
+      };
     }
 
     // Pad date string to ISO date
@@ -12422,6 +12450,36 @@ ${note}` : daysLine;
       const trendMap = new Map<string, any>();
       for (const r of trendRows) trendMap.set(r.date, r);
 
+      // Transfer write-up completeness per day. One scan over the range, scored
+      // against only the fields that applied to each transfer — an LOA counts
+      // solely where the loan officer has one.
+      const writeUpByDate = new Map<string, number | null>();
+      try {
+        const wuLoaLos = new Set<number>(
+          (sqlite.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+            .map((r: any) => Number(r.lo_id)),
+        );
+        const byDay = new Map<string, CompletenessRow[]>();
+        for (const o of sqlite.prepare(
+          `SELECT date, borrower_name, phone_number, lead_source, conversation_notes, loa_id, lo_id
+             FROM lead_outcomes
+            WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
+        ).all(currentOrgId() ?? 1, startDate, endDate) as any[]) {
+          const d = String(o.date);
+          const list = byDay.get(d) ?? [];
+          list.push({
+            borrowerName: o.borrower_name,
+            phoneNumber: o.phone_number,
+            leadSource: o.lead_source,
+            conversationNotes: o.conversation_notes,
+            loaId: Number(o.loa_id ?? 0) || null,
+            loHasLoa: wuLoaLos.has(Number(o.lo_id ?? 0)),
+          });
+          byDay.set(d, list);
+        }
+        byDay.forEach((rows, d) => writeUpByDate.set(d, summarizeCompleteness(rows).pct));
+      } catch { /* the series is context, never a reason to fail the dashboard */ }
+
       // For "all time" build a series only of dates that actually have data, otherwise contiguous.
       const trend: any[] = [];
       if (days === 0) {
@@ -12441,6 +12499,9 @@ ${note}` : daysLine;
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
             fellThrough: row ? Number(row.fell_through) || 0 : 0,
+            // null, not 0, on a day with no transfers — nothing to measure is
+            // not the same as measured badly.
+            writeUpRate: writeUpByDate.has(d) ? writeUpByDate.get(d) : null,
           });
         }
       } else {
@@ -12457,6 +12518,9 @@ ${note}` : daysLine;
             transfers: row ? Number(row.transfers) || 0 : 0,
             appointments: row ? Number(row.appointments) || 0 : 0,
             fellThrough: row ? Number(row.fell_through) || 0 : 0,
+            // null, not 0, on a day with no transfers — nothing to measure is
+            // not the same as measured badly.
+            writeUpRate: writeUpByDate.has(d) ? writeUpByDate.get(d) : null,
           });
           cur.setDate(cur.getDate() + 1);
         }

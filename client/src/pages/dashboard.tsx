@@ -21,8 +21,7 @@ import { useAuth } from "@/lib/auth";
 import { GoalCelebration, useGoalCelebration } from "@/components/goal-celebration";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, AreaChart, Area, LineChart, Line, CartesianGrid,
-} from "recharts";
+  PieChart, Pie, Cell, AreaChart, Area, LineChart, Line, CartesianGrid, Legend} from "recharts";
 import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
 import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
@@ -563,7 +562,7 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Conversion Rate Trend</CardTitle>
+              <CardTitle className="text-sm font-semibold">Conversion &amp; write-up rate</CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={200}>
@@ -571,8 +570,16 @@ function TabWeeklyStats({ stats, leaderboardData, losData }: any) {
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
-                  <Tooltip formatter={(v: any) => `${v}%`} />
+                  <Tooltip formatter={(v: any) => (v == null ? "—" : `${v}%`)} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Line type="monotone" dataKey="convRate" stroke="#1A2B4A" strokeWidth={2} dot={{ r: 3 }} name="Conv. Rate" />
+                  {/* How completely transfers were written up. The line breaks
+                      on a period with no transfers rather than dropping to zero,
+                      which would read as a collapse instead of a quiet day. */}
+                  <Line
+                    type="monotone" dataKey="writeUpRate" stroke="#C49A3C" strokeWidth={2}
+                    dot={{ r: 3 }} name="Write-up" connectNulls={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>

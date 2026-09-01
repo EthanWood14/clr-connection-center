@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.28.0",
+    headline: "Write-up rate is now a line on the dashboard trend.",
+    items: [
+      { text: "The Team trend chart adds a gold Write-up line showing what share of each day’s transfers were filled in properly. It reads against a percentage scale on the right, so it sits alongside the transfer and appointment counts without squashing them.", audience: "manager" },
+      { text: "On a day with no transfers the line breaks instead of dropping to zero — a quiet day is not a bad one.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.27.0",
     headline: "Transfer write-up now shows for the whole team at a glance.",
     items: [

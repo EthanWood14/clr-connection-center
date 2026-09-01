@@ -812,12 +812,28 @@ export default function ManagerDashboard() {
                   <LineChart data={trendData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }} interval={Math.max(0, Math.floor(trendData.length / 8))} />
-                    <YAxis tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }} />
-                    <Tooltip contentStyle={{ backgroundColor: isDark ? "#1f1d1c" : "#ffffff", border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`, color: isDark ? "#e4e4e7" : "#0f172a" }} />
+                    <YAxis yAxisId="count" tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }} />
+                    {/* Write-up is a percentage; on the counts axis it would be
+                        either flattened or towering. Its own 0-100 scale. */}
+                    <YAxis
+                      yAxisId="pct" orientation="right" domain={[0, 100]} unit="%"
+                      tick={{ fontSize: 11, fill: isDark ? "#a1a1aa" : "#64748b" }}
+                    />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: isDark ? "#1f1d1c" : "#ffffff", border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`, color: isDark ? "#e4e4e7" : "#0f172a" }}
+                      formatter={(v: any, n: any) => (n === "Write-up" ? (v == null ? "—" : `${v}%`) : v)}
+                    />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="transfers" stroke={GREEN} strokeWidth={2} dot={false} name="Transfers" />
-                    <Line type="monotone" dataKey="appointments" stroke={BLUE} strokeWidth={2} dot={false} name="Appointments" />
-                    <Line type="monotone" dataKey="fellThrough" stroke={RED} strokeWidth={2} dot={false} name="Fell through" />
+                    <Line yAxisId="count" type="monotone" dataKey="transfers" stroke={GREEN} strokeWidth={2} dot={false} name="Transfers" />
+                    <Line yAxisId="count" type="monotone" dataKey="appointments" stroke={BLUE} strokeWidth={2} dot={false} name="Appointments" />
+                    <Line yAxisId="count" type="monotone" dataKey="fellThrough" stroke={RED} strokeWidth={2} dot={false} name="Fell through" />
+                    {/* Breaks on a day with no transfers rather than dropping to
+                        zero, which would read as a collapse instead of a quiet day. */}
+                    <Line
+                      yAxisId="pct" type="monotone" dataKey="writeUpRate" stroke={GOLD}
+                      strokeWidth={2} strokeDasharray="5 4" dot={false}
+                      name="Write-up" connectNulls={false}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
