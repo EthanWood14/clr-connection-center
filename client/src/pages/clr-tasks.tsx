@@ -17,7 +17,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-type Completion = { id: number; dueAt: string; completedAt: string; completedByName: string; note: string };
+type Completion = { id: number; dueAt: string; completedAt: string; completedByName: string; note: string; calls_made?: number | null; callsMade?: number | null };
+type HistoryRow = { id: number; taskId: number; title: string; dueAt: string; completedAt: string; completedByName: string; note: string; callsMade: number | null };
+
+/** A task whose completion should also report a call count. Mirrors the server. */
+const wantsCallCount = (title: string) => /^call\b/i.test(String(title ?? "").trim());
+const MIN_NOTE = 10;
 type ClrTask = {
   id: number; title: string; description: string; assignedUserId: number; assignedUserName: string;
   createdByUserId: number; createdByName: string; priority: "low" | "normal" | "high" | "urgent";
@@ -126,6 +131,14 @@ function TaskEditor({ open, onClose, task, payload }: {
 export default function ClrTasks() {
   const { toast } = useToast();
   const [filter, setFilter] = useState<"open" | "overdue" | "completed" | "all">("open");
+  const [completionCalls, setCompletionCalls] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const historyQuery = useQuery<{ history: HistoryRow[]; canManage: boolean; totalCalls: number }>({
+    queryKey: ["/api/clr-tasks/history"],
+    queryFn: () => apiRequest("GET", "/api/clr-tasks/history"),
+    enabled: showHistory,
+    retry: false,
+  });
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ClrTask | null>(null);
@@ -136,13 +149,17 @@ export default function ClrTasks() {
   const payload = data ?? { tasks: [], canManage: false, assignees: [], summary: { active: 0, overdue: 0, dueSoon: 0, completed: 0 } };
 
   const complete = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/clr-tasks/${completing!.id}/complete`, { note: completionNote }),
+    mutationFn: () => apiRequest("POST", `/api/clr-tasks/${completing!.id}/complete`, {
+      note: completionNote,
+      ...(completing && wantsCallCount(completing.title) ? { callsMade: Number(completionCalls) } : {}),
+    }),
     onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clr-tasks"] });
       toast({ title: result?.recurring ? "Done — the next occurrence is ready" : "Task complete", description: result?.recurring ? "This occurrence is complete. Its next scheduled deadline remains separate." : "Nice work. Your manager can see the completion." });
       setCompleting(null); setCompletionNote("");
     },
     onError: (error: any) => toast({ title: "Could not complete task", description: error?.message, variant: "destructive" }),
+    onSettled: () => setCompletionCalls(""),
   });
 
   const archive = useMutation({
@@ -181,7 +198,39 @@ export default function ClrTasks() {
           ].map((item) => <Card key={item.label} className="bg-background/80 shadow-sm backdrop-blur"><CardContent className="flex items-center gap-3 p-4"><item.icon className={`h-6 w-6 ${item.color}`} /><div><p className="text-2xl font-black tabular-nums">{item.value}</p><p className="text-xs text-muted-foreground">{item.label}</p></div></CardContent></Card>)}
         </section>
 
-        <Card className="bg-background/85 shadow-sm backdrop-blur"><CardContent className="p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(["open", "overdue", "completed", "all"] as const).map((value) => <Button key={value} size="sm" variant={filter === value ? "default" : "outline"} onClick={() => setFilter(value)} className="capitalize">{value}{value === "overdue" && payload.summary.overdue ? ` (${payload.summary.overdue})` : ""}</Button>)}</div><div className="relative sm:w-72"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search task, CLR, or details…" /></div></div></CardContent></Card>
+        <Card className="bg-background/85 shadow-sm backdrop-blur"><CardContent className="p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-2">{(["open", "overdue", "completed", "all"] as const).map((value) => <Button key={value} size="sm" variant={filter === value ? "default" : "outline"} onClick={() => setFilter(value)} className="capitalize">{value}{value === "overdue" && payload.summary.overdue ? ` (${payload.summary.overdue})` : ""}</Button>)}</div><div className="flex items-center gap-2 sm:w-auto"><Button size="sm" variant={showHistory ? "default" : "outline"} onClick={() => setShowHistory((v) => !v)} className="gap-1.5" data-testid="button-task-history"><History className="h-4 w-4" /> History</Button><div className="flex items-center gap-2 sm:w-auto"><Button size="sm" variant={showHistory ? "default" : "outline"} onClick={() => setShowHistory((v) => !v)} className="gap-1.5" data-testid="button-task-history"><History className="h-4 w-4" /> History</Button><div className="relative sm:w-72"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search task, CLR, or details…" /></div></div></div></div></CardContent></Card>
+
+        {showHistory && (
+          <Card className="bg-background/90 shadow-sm" data-testid="task-history-panel">
+            <CardContent className="p-5">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-lg font-black"><History className="h-5 w-5" /> Completion history</h2>
+                <p className="text-xs text-muted-foreground">
+                  {historyQuery.data?.canManage ? "Everyone's completions" : "Your completions"}
+                  {(historyQuery.data?.totalCalls ?? 0) > 0 && ` · ${historyQuery.data!.totalCalls.toLocaleString()} calls reported`}
+                </p>
+              </div>
+              {historyQuery.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+              {!historyQuery.isLoading && !(historyQuery.data?.history ?? []).length && (
+                <p className="text-sm text-muted-foreground">Nothing completed yet.</p>
+              )}
+              <div className="space-y-2">
+                {(historyQuery.data?.history ?? []).map((h) => (
+                  <div key={h.id} className="rounded-lg border bg-muted/20 px-3 py-2" data-testid="task-history-row">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-sm font-semibold">{h.title || `Task #${h.taskId}`}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {h.completedByName} · {format(new Date(h.completedAt), "EEE, MMM d 'at' h:mm a")}
+                        {h.callsMade != null && ` · ${h.callsMade} call${h.callsMade === 1 ? "" : "s"}`}
+                      </p>
+                    </div>
+                    {h.note && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">&ldquo;{h.note}&rdquo;</p>}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <section className="space-y-3" data-testid="clr-task-list">
           {filtered.length === 0 ? <Card className="border-dashed bg-background/60"><CardContent className="flex flex-col items-center p-12 text-center"><CheckCircle2 className="h-12 w-12 text-emerald-500" /><h2 className="mt-4 text-lg font-bold">Nothing here needs attention</h2><p className="mt-1 text-sm text-muted-foreground">Try another filter, or enjoy the clean slate.</p></CardContent></Card> : filtered.map((task) => {
@@ -198,7 +247,24 @@ export default function ClrTasks() {
       </div>
 
       <TaskEditor open={editorOpen} onClose={() => { setEditorOpen(false); setEditing(null); }} task={editing} payload={payload} />
-      <Dialog open={!!completing} onOpenChange={(open) => { if (!open && !complete.isPending) setCompleting(null); }}><DialogContent><DialogHeader><DialogTitle>Complete “{completing?.title}”?</DialogTitle><DialogDescription>{completing?.recurrence === "none" ? "This closes the task and saves it in the completion history." : "This records the current cycle and automatically creates the next deadline."}</DialogDescription></DialogHeader><div className="space-y-1.5 py-2"><Label htmlFor="completion-note">Completion note <span className="font-normal text-muted-foreground">(optional)</span></Label><Textarea id="completion-note" rows={4} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} placeholder="What was completed, the result, or anything your manager should know…" /></div><DialogFooter><Button variant="outline" onClick={() => setCompleting(null)} disabled={complete.isPending}>Cancel</Button><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => complete.mutate()} disabled={complete.isPending}>{complete.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : <><Check className="mr-2 h-4 w-4" />Complete task</>}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={!!completing} onOpenChange={(open) => { if (!open && !complete.isPending) setCompleting(null); }}><DialogContent><DialogHeader><DialogTitle>Complete “{completing?.title}”?</DialogTitle><DialogDescription>{completing?.recurrence === "none" ? "This closes the task and saves it in the completion history." : "This records the current cycle and automatically creates the next deadline."}</DialogDescription></DialogHeader><div className="space-y-3 py-2">
+                {completing && wantsCallCount(completing.title) && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="completion-calls">How many calls did you make? <span className="text-destructive">*</span></Label>
+                    <Input id="completion-calls" type="number" min="0" inputMode="numeric" value={completionCalls}
+                      onChange={(event) => setCompletionCalls(event.target.value)} placeholder="0" data-testid="input-completion-calls" />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="completion-note">Certify what you did <span className="text-destructive">*</span></Label>
+                  <Textarea id="completion-note" rows={4} value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} placeholder="What you actually did, and the result. This is the record your manager sees." data-testid="textarea-completion-note" />
+                  <p className="text-[11px] text-muted-foreground">
+                    {completionNote.trim().length < MIN_NOTE
+                      ? `${MIN_NOTE - completionNote.trim().length} more character${MIN_NOTE - completionNote.trim().length === 1 ? "" : "s"} needed — ticking a box is not a record.`
+                      : "Saved with your name and the time, and kept in the history."}
+                  </p>
+                </div>
+              </div><DialogFooter><Button variant="outline" onClick={() => setCompleting(null)} disabled={complete.isPending}>Cancel</Button><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => complete.mutate()} disabled={complete.isPending || completionNote.trim().length < MIN_NOTE || (!!completing && wantsCallCount(completing.title) && !(Number(completionCalls) >= 0 && completionCalls.trim() !== ""))} data-testid="button-complete-task">{complete.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : <><Check className="mr-2 h-4 w-4" />Complete task</>}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
 }

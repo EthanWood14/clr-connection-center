@@ -7227,6 +7227,47 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
+  // How many calls the completion covered. Only meaningful on calling tasks,
+  // so it stays null elsewhere rather than forcing a number nobody has.
+  try { taskSqlite().exec(`ALTER TABLE clr_task_completions ADD COLUMN calls_made INTEGER`); } catch { /* already there */ }
+
+  /** A task whose completion should also report a call count. */
+  function taskWantsCallCount(title: unknown): boolean {
+    return /^call\b/i.test(String(title ?? "").trim());
+  }
+
+  // The full completion record, not just the last few per open task. A CLR
+  // sees their own; a manager sees everyone's.
+  app.get("/api/clr-tasks/history", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    const canManage = taskManager(me);
+    const who = Number(req.query.userId) || 0;
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
+    const wheres = ["c.org_id=?"];
+    const params: any[] = [orgId];
+    if (!canManage) { wheres.push("c.completed_by_user_id=?"); params.push(userId); }
+    else if (who) { wheres.push("c.completed_by_user_id=?"); params.push(who); }
+    try {
+      const rows = taskSqlite().prepare(`
+        SELECT c.id, c.task_id AS taskId, c.due_at AS dueAt, c.completed_at AS completedAt,
+               c.note, c.calls_made AS callsMade,
+               COALESCE(u.name,'') AS completedByName, COALESCE(t.title,'') AS title
+          FROM clr_task_completions c
+          LEFT JOIN users u ON u.id = c.completed_by_user_id
+          LEFT JOIN clr_tasks t ON t.id = c.task_id
+         WHERE ${wheres.join(" AND ")}
+         ORDER BY c.completed_at DESC
+         LIMIT ?
+      `).all(...params, limit) as any[];
+      const totalCalls = rows.reduce((a, r) => a + (Number(r.callsMade) || 0), 0);
+      res.json({ history: rows, canManage, totalCalls });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "Could not load the history." });
+    }
+  });
+
   app.post("/api/clr-tasks/:id/complete", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
@@ -7236,15 +7277,31 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!task) return res.status(404).json({ error: "Task not found." });
     if (!taskManager(me) && Number(task.assigned_user_id) !== userId) return res.status(403).json({ error: "This task is assigned to another CLR." });
     if (task.status !== "active") return res.status(409).json({ error: "This task is not currently open." });
+    // Completing a task is a claim that the work happened, so it has to be
+    // signed for. A bare tick is not a record anyone can check later.
     const note = String(req.body?.note ?? "").trim();
+    if (note.length < 10) {
+      return res.status(400).json({ error: "Say what you did — a completion note of at least 10 characters is required." });
+    }
     if (note.length > 2000) return res.status(400).json({ error: "Completion note must be 2,000 characters or fewer." });
+    // Calls made, on calling tasks only.
+    let callsMade: number | null = null;
+    if (taskWantsCallCount(task.title)) {
+      const raw = req.body?.callsMade;
+      const n = Math.round(Number(raw));
+      if (raw === undefined || raw === null || raw === "" || !Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: "Enter how many calls you made (0 or more)." });
+      }
+      if (n > 5000) return res.status(400).json({ error: "That call count looks wrong — enter the real number." });
+      callsMade = n;
+    }
     const completedAt = new Date().toISOString();
     const scheduleDays = (() => { try { return JSON.parse(String(task.schedule_days ?? "[]")); } catch { return []; } })();
     const nextDue = nextTaskOccurrenceForRow({ ...task, schedule_days: JSON.stringify(scheduleDays) });
     try {
       taskSqlite().transaction(() => {
-        taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note) VALUES (?,?,?,?,?,?)`)
-          .run(id, orgId, task.due_at, userId, completedAt, note);
+        taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note,calls_made) VALUES (?,?,?,?,?,?,?)`)
+          .run(id, orgId, task.due_at, userId, completedAt, note, callsMade);
         taskSqlite().prepare(`UPDATE clr_tasks SET status='completed',updated_at=? WHERE id=? AND org_id=?`)
           .run(completedAt, id, orgId);
       })();

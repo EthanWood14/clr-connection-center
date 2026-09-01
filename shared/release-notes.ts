@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.30.0",
+    headline: "Finishing a task now means signing for it.",
+    items: [
+      { text: "Marking a task done requires a short note saying what you actually did. Ticking a box left no record anyone could check later; now there is one, with your name and the time on it.", audience: "everyone" },
+      { text: "Any task that starts with “Call” also asks how many calls you made, so the Meta Leads rounds have a real number against them rather than just a tick.", audience: "everyone" },
+      { text: "New History button on the Task Center: every completion, who did it, when, the note, and the calls reported — with a running total. You see your own; managers see everyone’s.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.29.0",
     headline: "Write-up now sits in the Transfer Scorecard, and counts the whole form.",
     items: [
