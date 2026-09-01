@@ -21919,6 +21919,28 @@ ${note}` : daysLine;
     if (!outcomeId) return res.status(400).json({ error: "outcomeId required" });
     const outcome = (storageExtra.getSqlite().prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId)) as any;
     if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+    // Transfers go through the real sync, not the old pushOutcomeToBonzo path.
+    // That path resolves the prospect against the local bonzo_prospects mirror,
+    // which holds zero rows, so it can only ever return no_prospect_match --
+    // and it posts the free-text notes without the write-up. syncTransferToBonzo
+    // looks the prospect up live by phone, dedupes, and posts both halves.
+    // This is also the way to re-push a transfer that was missed.
+    if (outcome.outcome_type === "transfer") {
+      try {
+        await syncTransferToBonzo(Number(outcomeId));
+        const after = (storageExtra.getSqlite().prepare(`SELECT bonzo_prospect_id, bonzo_synced_at FROM lead_outcomes WHERE id=?`).get(outcomeId)) as any;
+        return res.json({
+          attempted: true,
+          ok: !!after?.bonzo_prospect_id,
+          via: "syncTransferToBonzo",
+          prospectId: after?.bonzo_prospect_id ?? null,
+          syncedAt: after?.bonzo_synced_at ?? null,
+          reason: after?.bonzo_prospect_id ? undefined : "no_prospect_matched — see server log for why",
+        });
+      } catch (e: any) {
+        return res.status(500).json({ attempted: true, ok: false, error: String(e?.message ?? e) });
+      }
+    }
     const result = await pushOutcomeToBonzo({
       id: outcome.id,
       borrowerName: outcome.borrower_name,

@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.34.2",
+    headline: "A transfer that missed Bonzo can be sent again.",
+    items: [
+      { text: "Re-pushing a transfer to Bonzo now runs the same sync a fresh transfer does, so a call that was logged before today can be sent across with its notes. It will not post twice if it is already there.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.34.1",
     headline: "Whichever box you typed the write-up into now reaches Bonzo.",
     items: [
