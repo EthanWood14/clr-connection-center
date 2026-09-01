@@ -18,6 +18,7 @@ import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
+import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { filterRecipients } from "./deliverable-email";
 import {
   trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
@@ -14464,6 +14465,55 @@ ${note}` : daysLine;
       loas: external.filter((e) => e.type === "loa"),
     };
   }
+
+  /**
+   * Which networks people check in from.
+   *
+   * Admin-only, and deliberately so: it is a list of home IP addresses with
+   * names attached. Managers get the check-in board; they do not need this.
+   */
+  app.get("/api/checkin/networks", requireAuth, (req: any, res) => {
+    const actor = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!(actor?.role === "admin" || actor?.superAdmin)) return res.status(403).json({ error: "Admin only" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const cfg = checkinConfig();
+    const sqlite = storageExtra.getRawSqlite();
+    const obs: NetworkObservation[] = [];
+    // Both check-in tables, because the office wifi question is about the
+    // building, not about which portal somebody happened to use.
+    try {
+      const rows = sqlite.prepare(
+        `SELECT m.ip_address AS ip, m.ip_allowed AS was, m.created_at AS at, u.name AS person
+           FROM morning_checkins m LEFT JOIN users u ON u.id = m.user_id
+          WHERE m.org_id = ? AND m.ip_address IS NOT NULL`,
+      ).all(orgId) as any[];
+      for (const r of rows) obs.push({ ip: r.ip, wasAllowed: r.was ?? null, person: r.person ?? null, source: "clr", at: r.at ?? null });
+    } catch { /* table predates the column on an older install */ }
+    try {
+      const rows = sqlite.prepare(
+        `SELECT ip_address AS ip, ip_allowed AS was, created_at AS at, subject_type, subject_id
+           FROM external_checkins
+          WHERE org_id = ? AND ip_address IS NOT NULL`,
+      ).all(orgId) as any[];
+      for (const r of rows) {
+        let person: string | null = null;
+        try { person = attendanceSubjectName(orgId, r.subject_type, Number(r.subject_id)); } catch { person = null; }
+        obs.push({ ip: r.ip, wasAllowed: r.was ?? null, person, source: "external", at: r.at ?? null });
+      }
+    } catch { /* same */ }
+    const summary = summarizeNetworks(obs, cfg.allowedIps);
+    res.json({
+      ...summary,
+      mode: cfg.networkMode,
+      allowedIps: cfg.allowedIps,
+      // The address this request came from, so an admin standing in the office
+      // can recognise it and add it without reading a log.
+      currentIp: requestIp(req),
+      // "off" records nothing at all, so the lists below stop moving and
+      // quietly go stale. That has to be said, not inferred.
+      recording: cfg.networkMode !== "off",
+    });
+  });
 
   app.get("/api/checkin/admin", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;

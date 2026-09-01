@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.36.0",
+    headline: "See which networks people check in from.",
+    items: [
+      { text: "New Networks panel on the Check-In page: every address check-ins have come from, split into the office wifi and everywhere else, with how many check-ins, who, and when it was last used.", audience: "manager" },
+      { text: "An address you recognise can be marked as the office right there, and every past check-in from it immediately reads as in-office. No need to go and edit a list of numbers in Settings.", audience: "manager" },
+      { text: "It also says plainly when addresses are not being recorded at all — which they currently are not — with a button to start. Until then the panel is history only and today is not on it.", audience: "manager" },
+      { text: "An approved address that nothing has ever come from is called out, since that usually means a typo or a network that has since changed.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.35.1",
     headline: "Two Bonzo calls that could only ever fail.",
     items: [

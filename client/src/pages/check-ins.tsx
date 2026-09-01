@@ -20,6 +20,7 @@ import {
   UserCheck, ChevronLeft, ChevronRight, CheckCircle2, XCircle, MinusCircle,
   Clock, AlertTriangle, CalendarOff, Copy, ExternalLink, RotateCcw, MessageSquareText,
   Send, ShieldCheck, RefreshCw,
+  Wifi,
 } from "lucide-react";
 // Check-ins use the PLAIN local calendar date — deliberately NOT the shared
 // business-day helper, which rolls forward at 7pm and would point the roster at
@@ -480,6 +481,198 @@ function RollingLateCount({
         lates · {windowDays}d
       </p>
     </div>
+  );
+}
+
+// ── Networks ────────────────────────────────────────────────────────────────
+// Which addresses people check in from, split into the office wifi and
+// everything else. Admin-only: it is a list of home IPs with names on them.
+type NetworkRow = {
+  ip: string;
+  allowed: boolean;
+  changed: boolean;
+  checkins: number;
+  clrCheckins: number;
+  externalCheckins: number;
+  people: string[];
+  firstSeen: string | null;
+  lastSeen: string | null;
+};
+type NetworksResp = {
+  office: NetworkRow[];
+  offNetwork: NetworkRow[];
+  totals: { checkins: number; office: number; offNetwork: number; addresses: number };
+  unusedEntries: string[];
+  mode: "enforce" | "record" | "off";
+  allowedIps: string[];
+  currentIp: string | null;
+  recording: boolean;
+};
+
+function NetworkList({
+  rows, tone, onApprove, busyIp, emptyText,
+}: {
+  rows: NetworkRow[];
+  tone: "office" | "other";
+  onApprove?: (ip: string) => void;
+  busyIp?: string | null;
+  emptyText: string;
+}) {
+  if (!rows.length) return <p className="px-1 py-2 text-xs text-muted-foreground">{emptyText}</p>;
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r) => (
+        <div
+          key={r.ip}
+          data-testid="network-row"
+          className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border px-2.5 py-2 ${
+            tone === "office"
+              ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30"
+              : "border-border bg-muted/25"
+          }`}
+        >
+          <span className="font-mono text-xs font-semibold">{r.ip}</span>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {r.checkins} check-in{r.checkins === 1 ? "" : "s"}
+          </span>
+          {r.people.length > 0 && (
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={r.people.join(", ")}>
+              {r.people.slice(0, 3).join(", ")}
+              {r.people.length > 3 ? ` +${r.people.length - 3}` : ""}
+            </span>
+          )}
+          {r.lastSeen && (
+            <span className="text-[11px] text-muted-foreground">last {String(r.lastSeen).slice(0, 10)}</span>
+          )}
+          {/* The stored flag and the allowlist disagree: this address changed
+              status at some point, so somebody's history reads differently now
+              than it did on the day. */}
+          {r.changed && (
+            <span className="rounded bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+              title="Some check-ins from this address were recorded with the opposite status">
+              status changed
+            </span>
+          )}
+          {tone === "other" && onApprove && (
+            <button
+              type="button"
+              onClick={() => onApprove(r.ip)}
+              disabled={busyIp === r.ip}
+              data-testid={`approve-ip-${r.ip}`}
+              className="rounded-md border px-2 py-0.5 text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+            >
+              {busyIp === r.ip ? "Adding…" : "This is the office"}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NetworksCard() {
+  const { toast } = useToast();
+  const [busyIp, setBusyIp] = useState<string | null>(null);
+  const { data, isLoading, refetch } = useQuery<NetworksResp>({
+    queryKey: ["/api/checkin/networks"],
+    queryFn: () => apiRequest("GET", "/api/checkin/networks"),
+  });
+
+  const save = async (patch: Record<string, unknown>, okMsg: string, ip?: string) => {
+    if (ip) setBusyIp(ip);
+    try {
+      await apiRequest("POST", "/api/checkin/settings", patch);
+      await refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/checkin/admin"] });
+      toast({ title: okMsg });
+    } catch (e: any) {
+      toast({ title: "Could not save", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusyIp(null);
+    }
+  };
+
+  return (
+    <Card data-testid="checkin-networks">
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Wifi className="h-4 w-4" /> Networks
+            </CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Where check-ins come from. Approved addresses are the office wifi.
+            </p>
+          </div>
+          {data && (
+            <Badge variant="outline" className="text-[11px]">
+              {data.totals.office} in office · {data.totals.offNetwork} elsewhere
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {data && (
+          <>
+            {/* Recording off means the lists below stop moving. Saying "no data"
+                would be a lie -- the data is simply no longer being collected. */}
+            {!data.recording && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                data-testid="networks-recording-off">
+                <span>
+                  <strong>Not recording.</strong> Addresses are not being saved, so this is
+                  only history — today's check-ins are not on it.
+                </span>
+                <Button size="sm" variant="outline" className="h-7 text-xs"
+                  onClick={() => save({ networkMode: "record" }, "Now recording check-in networks")}
+                  data-testid="networks-start-recording">
+                  Start recording
+                </Button>
+              </div>
+            )}
+            {data.currentIp && (
+              <p className="text-[11px] text-muted-foreground">
+                You are on <span className="font-mono font-semibold text-foreground">{data.currentIp}</span>
+                {data.office.some((r) => r.ip === data.currentIp)
+                  ? " — an approved office address."
+                  : data.allowedIps.length
+                  ? " — not on the approved list."
+                  : " — nothing is approved yet."}
+              </p>
+            )}
+
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Office wifi{data.allowedIps.length ? ` · ${data.allowedIps.join(", ")}` : ""}
+              </p>
+              <NetworkList rows={data.office} tone="office"
+                emptyText={data.allowedIps.length
+                  ? "No check-ins have come from the approved addresses."
+                  : "No addresses approved yet. Mark one below as the office."} />
+            </div>
+
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Everywhere else
+              </p>
+              <NetworkList rows={data.offNetwork} tone="other" busyIp={busyIp}
+                emptyText="Every check-in came from an approved address."
+                onApprove={(ip) => save({ allowedIps: [...data.allowedIps, ip] }, `${ip} added as an office address`, ip)} />
+            </div>
+
+            {/* An approved entry nothing matches is usually a typo or a network
+                that has since changed -- silent until it is pointed at. */}
+            {data.unusedEntries.length > 0 && (
+              <p className="text-[11px] text-muted-foreground" data-testid="networks-unused">
+                Approved but never seen: <span className="font-mono">{data.unusedEntries.join(", ")}</span>. Worth
+                checking these are still right.
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1077,6 +1270,8 @@ export default function CheckIns() {
       )}
 
       {/* Request reasons are intentionally isolated from the team-wide board below. */}
+      {isAdmin && <NetworksCard />}
+
       {isManager && (
         <Card data-testid="attendance-requests">
           <CardHeader className="pb-3">
