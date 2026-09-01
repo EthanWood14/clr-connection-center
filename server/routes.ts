@@ -21739,23 +21739,29 @@ ${note}` : daysLine;
     // (email, $60k request, address, free and clear, SSDI income) was there,
     // and her capture block held one line naming the lead source. Posting only
     // conversation_notes silently drops whichever half the CLR actually used.
-    const convo = [
+    const halves = [
       String(o.conversation_notes ?? "").trim(),
       String(o.notes ?? "").trim(),
-    ].filter(Boolean).join("\n\n");
-    if (convo) {
+    ].filter(Boolean);
+    if (halves.length) {
       try {
         const marker = transferNoteMarker(outcomeId);
         const existing = await getProspectNotes(prospectId);
-        // Two independent dedupe checks. The MARKER catches our own re-sync and
-        // is immune to formatting — a text comparison cannot do that job, since
-        // the rendered note deliberately no longer matches its plain source.
-        // The TEXT check separately catches a CLR who pasted the same content
-        // by hand before the sync ran.
+        // The MARKER catches our own re-sync and is immune to formatting — a
+        // text comparison cannot do that job, since the rendered note
+        // deliberately no longer matches its plain source.
         const already = existing.some((n) => n.content.includes(marker));
-        const pasted = !already && notePlainText(convo).length > 0
-          && existing.some((n) => notePlainText(n.content).includes(notePlainText(convo)));
-        if (already || pasted) {
+        // The TEXT check catches a CLR who pasted by hand before the sync ran,
+        // and it is done PER HALF. Comparing the joined body was wrong: pasting
+        // one half then made the search string strictly longer than anything on
+        // the prospect, so nothing matched and the note went up duplicating the
+        // paste. Joy Crosett's free text was already on her record by hand.
+        const fresh = already ? [] : halves.filter((h) => {
+          const plain = notePlainText(h);
+          return plain.length > 0 && !existing.some((n) => notePlainText(n.content).includes(plain));
+        });
+        const convo = fresh.join("\n\n");
+        if (already || !convo) {
           noted = already ? "already_posted" : "duplicate_skipped";
         } else {
           // Bonzo renders notes as HTML — plain newlines collapse into one

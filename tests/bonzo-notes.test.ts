@@ -72,7 +72,7 @@ test("re-syncing does not post the note twice", () => {
   assert.match(routes, /n\.content\.includes\(marker\)/);
   assert.match(routes, /already_posted/);
   // …and a CLR's manual paste is still caught by content.
-  assert.match(routes, /notePlainText\(n\.content\)\.includes\(notePlainText\(convo\)\)/);
+  assert.match(routes, /notePlainText\(n\.content\)\.includes\(plain\)/);
   assert.ok(notePlainText(html).includes(notePlainText("Address: 4417 Cedar Ridge Rd")));
 });
 

@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.34.3",
+    headline: "The Bonzo note no longer repeats what you already pasted.",
+    items: [
+      { text: "If you had already pasted part of a write-up into Bonzo yourself, the automatic note could still go up repeating it. Each part is now checked against the prospect separately, and only what is genuinely missing gets posted.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.34.2",
     headline: "A transfer that missed Bonzo can be sent again.",
     items: [

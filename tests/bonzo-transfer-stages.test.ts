@@ -120,7 +120,7 @@ test("transfer notes post to Bonzo once, never twice", () => {
   // text comparison for a CLR who pasted the same content by hand. See
   // tests/bonzo-notes.test.ts for the rendering itself.
   assert.match(sync, /n\.content\.includes\(marker\)/);
-  assert.match(sync, /notePlainText\(n\.content\)\.includes\(notePlainText\(convo\)\)/,
+  assert.match(sync, /notePlainText\(n\.content\)\.includes\(plain\)/,
     "a CLR's manual paste of the same text must suppress the auto-note");
   assert.match(sync, /CLR Transfer — /);
   assert.match(sync, /duplicate_skipped/);
@@ -216,5 +216,9 @@ test("both halves of the write-up reach Bonzo, not just the structured one", () 
   // Other Notes; her capture block was one line naming the lead source.
   assert.match(sync, /String\(o\.conversation_notes \?\? ""\)\.trim\(\),/);
   assert.match(sync, /String\(o\.notes \?\? ""\)\.trim\(\),/);
-  assert.match(sync, /filter\(Boolean\)\.join/);
+  assert.match(sync, /const halves = \[/);
+  // Each half is checked against the prospect separately, so a CLR who
+  // pasted one of them by hand does not get it posted a second time.
+  assert.match(sync, /const fresh = already \? \[\] : halves\.filter/);
+  assert.match(sync, /const convo = fresh\.join/);
 });
