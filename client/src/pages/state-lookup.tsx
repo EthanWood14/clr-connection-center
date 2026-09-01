@@ -126,7 +126,10 @@ export default function StateLookup() {
   const transferCountsEndpoint = isLapPortal
     ? "/api/lap/loan-officers/transfer-counts"
     : "/api/loan-officers/transfer-counts";
-  const { data: transferData } = useQuery<{ counts: Record<string, { d7: number; d30: number; allTime: number }> }>({
+  const { data: transferData } = useQuery<{
+    counts: Record<string, { d7: number; d30: number; allTime: number }>;
+    loas?: Record<string, Array<{ loaId: number; name: string; active: boolean; d7: number; d30: number; allTime: number }>>;
+  }>({
     queryKey: [transferCountsEndpoint],
   });
   const transferCounts = transferData?.counts ?? {};
@@ -137,6 +140,18 @@ export default function StateLookup() {
   const transfersFor = useCallback(
     (loId: number | string) => transferCounts[String(loId)]?.[countWindow] ?? 0,
     [transferCounts, countWindow],
+  );
+  // Assistants for a loan officer, with their own count on the SAME window the
+  // page is showing, so the LO figure and the LOA figures are comparable.
+  // Highest first — the question being asked is who is carrying the load.
+  const loasFor = useCallback(
+    (loId: number | string) => {
+      const list = transferData?.loas?.[String(loId)] ?? [];
+      return [...list]
+        .map((l) => ({ ...l, count: l[countWindow] ?? 0 }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    },
+    [transferData, countWindow],
   );
 
 
@@ -565,6 +580,22 @@ export default function StateLookup() {
                                 )}
                               </div>
                             </div>
+
+                            {loasFor(lo.id).length > 0 && (
+                              <div className="mt-3 rounded-lg border bg-muted/25 p-2" data-testid={`loa-counts-${lo.id}`}>
+                                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Transfers by LOA · {countWindow === "d7" ? "last 7 days" : countWindow === "d30" ? "last 30 days" : "all time"}
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                  {loasFor(lo.id).map((a) => (
+                                    <div key={a.loaId} className="flex items-baseline justify-between gap-2" data-testid="loa-count-row">
+                                      <span className={`truncate text-xs ${a.active ? "" : "text-muted-foreground line-through"}`}>{a.name}</span>
+                                      <span className="shrink-0 text-xs font-bold tabular-nums">{a.count}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
 
                             <div className="mt-3 space-y-1.5">
                               {lo.phone && (

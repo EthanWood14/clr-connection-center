@@ -8081,7 +8081,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   app.get("/api/loan-officers/transfer-counts", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
-    res.json({ counts: loTransferCounts(orgId) });
+    res.json({ counts: loTransferCounts(orgId), loas: loaTransferCounts(orgId) });
   });
 
   app.get("/api/loan-officers/:id", (req: any, res) => {
@@ -15420,6 +15420,47 @@ ${note}` : daysLine;
       };
     }
     return counts;
+  }
+
+  /**
+   * Per-assistant transfer counts, on the same three windows as the LO totals
+   * so the State Lookup window toggle drives both. Keyed by LO id.
+   */
+  function loaTransferCounts(orgId: number) {
+    const sqlite = storageExtra.getRawSqlite();
+    const byLo: Record<string, Array<{ loaId: number; name: string; active: boolean; d7: number; d30: number; allTime: number }>> = {};
+    try {
+      const assistants = sqlite.prepare(
+        `SELECT id, lo_id, full_name AS name, active FROM loan_officer_assistants ORDER BY full_name COLLATE NOCASE`,
+      ).all() as any[];
+      if (!assistants.length) return byLo;
+      const rows = sqlite.prepare(
+        `SELECT lo_id, loa_id,
+                COUNT(*) AS all_time,
+                SUM(CASE WHEN date >= date('now','-30 day') THEN 1 ELSE 0 END) AS d30,
+                SUM(CASE WHEN date >= date('now','-7 day')  THEN 1 ELSE 0 END) AS d7
+           FROM lead_outcomes
+          WHERE org_id = ? AND outcome_type = 'transfer' AND loa_id IS NOT NULL
+          GROUP BY lo_id, loa_id`,
+      ).all(orgId) as any[];
+      const tally = new Map<string, { d7: number; d30: number; allTime: number }>();
+      for (const r of rows) {
+        tally.set(`${r.lo_id}:${r.loa_id}`, {
+          d7: Number(r.d7) || 0, d30: Number(r.d30) || 0, allTime: Number(r.all_time) || 0,
+        });
+      }
+      for (const a of assistants) {
+        const key = `${a.lo_id}:${a.id}`;
+        const c = tally.get(key) ?? { d7: 0, d30: 0, allTime: 0 };
+        (byLo[String(a.lo_id)] ??= []).push({
+          loaId: Number(a.id),
+          name: String(a.name ?? ""),
+          active: !!Number(a.active),
+          ...c,
+        });
+      }
+    } catch { /* no assistants table on an older install — the section stays empty */ }
+    return byLo;
   }
 
   app.get("/api/lap/loan-officers/transfer-counts", requireAuth, (req: any, res) => {

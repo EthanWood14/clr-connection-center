@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.32.0",
+    headline: "State Lookup shows exactly how many transfers each assistant has taken.",
+    items: [
+      { text: "Open a state and every loan officer who has assistants now lists them by name with their own transfer count beside the officer’s total, so you can see who is actually taking the work rather than guessing from the team figure.", audience: "everyone" },
+      { text: "The counts follow the 7 day / 30 day / all time switch already on the page, and the heading says which window you are looking at, so a number is never ambiguous.", audience: "everyone" },
+      { text: "Assistants who have left are still listed, crossed out — they kept the transfers they took, and hiding them would make the numbers stop adding up.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.31.0",
     headline: "W2-only states are marked on the map, and Chris is off them for good.",
     items: [
