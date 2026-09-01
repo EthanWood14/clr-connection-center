@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.39.0",
+    headline: "No EOD report by 4:15 and the alarm goes off.",
+    items: [
+      { text: "4:00pm you get a warning that names the deadline. At 4:15, if today’s report still is not in, C3 goes red and starts wailing, and there is one button: fill out your EOD report. No dismiss, no later, and the Escape key does nothing.", audience: "everyone" },
+      { text: "Whatever you were typing is saved first. If you were halfway through logging a transfer, the borrower name, the phone number and the rest are kept and named back to you on the alarm screen — losing ten minutes of work should not be the penalty for a late report.", audience: "everyone" },
+      { text: "You can silence the noise for two minutes at a time if you are on a call with a borrower. The screen keeps going and the report is still required; only the sound stops, and it comes back.", audience: "everyone" },
+      { text: "It only fires on a day a report is actually expected, and never once today’s is filed. Catching up on an older missing report gets the ordinary lock screen, not the alarm.", audience: "everyone" },
+      { text: "The old 4:30, 5:00 and 5:30 steps are gone. Each was gentler than the 4:15 alarm, so they made the ladder get easier as you climbed it.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.38.0",
     headline: "Ask C3: ask questions about your data in plain English.",
     items: [

@@ -21,13 +21,15 @@ test("nothing nags before 4pm", () => {
 });
 
 test("the ladder escalates through the afternoon", () => {
+  // Two rungs. The old five went 4:00 banner, 4:30 pulse, 5:00 chime, 5:30
+  // lock; putting the siren at 4:15 made every later rung gentler than the one
+  // before it, and a ladder that gets easier as you climb is not a ladder.
+  assert.equal(at(15, 59), "none");
   assert.equal(at(16, 0), "due");
-  assert.equal(at(16, 29), "due");
-  assert.equal(at(16, 30), "urgent");
-  assert.equal(at(17, 0), "alarm");
-  assert.equal(at(17, 29), "alarm");
-  assert.equal(at(17, 30), "locked");
-  assert.equal(at(23, 59), "locked");
+  assert.equal(at(16, 14), "due", "the warning gets its full fifteen minutes");
+  assert.equal(at(16, 15), "siren");
+  assert.equal(at(17, 30), "siren");
+  assert.equal(at(23, 59), "siren", "it does not lapse at the end of the day");
 });
 
 test("filing the report stops the nagging immediately, at any hour", () => {
@@ -40,13 +42,14 @@ test("a day no report is expected never nags", () => {
   assert.equal(at(18, 0, { expectedToday: false }), "none");
 });
 
-test("only the last rung takes the app away, and only the loud ones make noise", () => {
-  assert.equal(eodNagLocks("alarm"), false, "5pm must not lock — the banner escalates first");
-  assert.equal(eodNagLocks("locked"), true);
-  assert.equal(eodNagChimes("due"), false);
-  assert.equal(eodNagChimes("urgent"), false, "the pulse is visual; sound starts at the alarm rung");
-  assert.equal(eodNagChimes("alarm"), true);
-  assert.equal(eodNagChimes("locked"), true);
+test("the alarm and the lock are the same rung", () => {
+  // On purpose. An alarm you can click past is a notification, and a lock with
+  // no alarm is something people sit in front of without noticing.
+  assert.equal(eodNagLocks("none"), false);
+  assert.equal(eodNagLocks("due"), false, "4pm warns; it does not take the app away");
+  assert.equal(eodNagLocks("siren"), true);
+  assert.equal(eodNagChimes("due"), false, "the first rung is quiet");
+  assert.equal(eodNagChimes("siren"), true);
 });
 
 test("the rungs are ordered and none share a time", () => {
@@ -58,7 +61,7 @@ test("the rungs are ordered and none share a time", () => {
 
 test("the countdown to the next rung is honest", () => {
   assert.equal(minutesToNextStage({ submitted: false, hour: 15, minute: 30, expectedToday: true }), 30);
-  assert.equal(minutesToNextStage({ submitted: false, hour: 17, minute: 0, expectedToday: true }), 30);
+  assert.equal(minutesToNextStage({ submitted: false, hour: 16, minute: 5, expectedToday: true }), 10);
   assert.equal(minutesToNextStage({ submitted: false, hour: 18, minute: 0, expectedToday: true }), null);
   assert.equal(minutesToNextStage({ submitted: true, hour: 9, minute: 0, expectedToday: true }), null);
 });
@@ -110,4 +113,67 @@ test("a CLR can always reach the form the nag is demanding", () => {
   assert.match(gate, /location !== "\/eod-report"/);
   assert.equal((gate.match(/location !== "\/eod-report"/g) ?? []).length, 2,
     "both the overlay and the banner must stand down on the EOD page");
+});
+
+test("the siren fires at 4:15 and only for a day a report is expected", () => {
+  // A siren on somebody's day off is how an alarm gets ignored for good.
+  assert.equal(at(16, 15, { expectedToday: false }), "none");
+  assert.equal(at(16, 15, { submitted: true }), "none");
+  assert.equal(at(16, 15), "siren");
+});
+
+test("the takeover cannot be dismissed, only satisfied", () => {
+  const siren = readFileSync(join(root, "client/src/components/eod-siren.tsx"), "utf8");
+  // One button, and it goes to the form. No close, no later, no X.
+  assert.match(siren, /data-testid="eod-siren-go"/);
+  // Prose may say "C3 is closed"; what must not exist is a CONTROL that
+  // closes it. Only two buttons: go to the form, and mute the noise.
+  const buttons = [...siren.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(buttons.filter((b) => b.startsWith("eod-siren-")).sort(),
+    ["eod-siren-go", "eod-siren-rescued", "eod-siren-silence"]);
+  assert.doesNotMatch(siren, /onClick=\{[^}]*(dismiss|onClose|setOpen\(false\))/i);
+  // Escape is the reflex, so it is swallowed in the capture phase.
+  assert.match(siren, /if \(e\.key === "Escape"\)/);
+  assert.match(siren, /addEventListener\("keydown", onKey, true\)/);
+  // Silencing stops the sound and nothing else -- the gate is unaffected.
+  assert.match(siren, /The report is still required/);
+});
+
+test("everything on screen is saved before the screen is taken", () => {
+  const siren = readFileSync(join(root, "client/src/components/eod-siren.tsx"), "utf8");
+  const rescue = readFileSync(join(root, "client/src/lib/draft-rescue.ts"), "utf8");
+  // Once, in a useMemo: a sweep after the takeover has rendered would only
+  // ever capture the takeover's own controls.
+  assert.match(siren, /useMemo<RescuedDraft \| null>\(/);
+  assert.match(siren, /rescueDrafts\("EOD report alarm at 4:15pm"\)/);
+  // And it says so, or losing the screen reads as losing the work.
+  assert.match(siren, /data-testid="eod-siren-rescued"/);
+  // A credential in localStorage is worse than retyping one.
+  assert.match(rescue, /type === "password"/);
+  assert.match(rescue, /current-password/);
+});
+
+test("the siren is for TODAY's report, not a backlog", () => {
+  const gate = readFileSync(join(root, "client/src/components/eod-lock-gate.tsx"), "utf8");
+  assert.match(gate, /const showSiren = showOverlay && nagStage === "siren" && !today\?\.submitted/);
+  // Catching up on last Tuesday keeps the calm overlay.
+  assert.match(gate, /\{showOverlay && !showSiren &&/);
+  // And the EOD form itself stays reachable, or there is no way to comply.
+  assert.match(gate, /location !== "\/eod-report"/);
+});
+
+test("both alarms share one flash rate, because it is a safety number", () => {
+  const alarm = readFileSync(join(root, "client/src/lib/alarm.ts"), "utf8");
+  const summons = readFileSync(join(root, "client/src/components/manager-summons-alarm.tsx"), "utf8");
+  const siren = readFileSync(join(root, "client/src/components/eod-siren.tsx"), "utf8");
+  assert.match(alarm, /export const ALARM_FLASH_MS = 500/);
+  // 500ms is 2Hz, under the three-per-second photosensitive-seizure threshold.
+  assert.ok(500 >= 1000 / 3, "the flash must stay under 3Hz");
+  assert.match(summons, /ALARM_FLASH_MS/);
+  assert.match(siren, /useAlarmFlash\(true\)/);
+  // Neither may keep its own copy of the siren.
+  for (const src of [summons, siren]) assert.doesNotMatch(src, /function startSiren\(/);
+  // Reduced motion still gets the takeover, just not the strobe.
+  assert.match(alarm, /prefers-reduced-motion: reduce/);
+  assert.match(siren, /reduced\s*$/m);
 });

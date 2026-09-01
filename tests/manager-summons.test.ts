@@ -44,11 +44,17 @@ test("only one live summons per person", () => {
 test("the flash stays under the seizure threshold and respects reduced motion", () => {
   // Above three flashes per second, flashing content is a photosensitive
   // epilepsy risk. This fires unannounced on a whole floor's screens.
-  const m = alarm.match(/setInterval\(\(\) => setFlashOn\(\(v\) => !v\), (\d+)\)/);
+  // The number lives in lib/alarm now that a second alarm (the 4:15 EOD
+  // siren) needs the same guarantee. Two copies of a safety threshold is one
+  // too many, so this reads it from there and checks the component uses it.
+  const shared = readFileSync(join(root, "client/src/lib/alarm.ts"), "utf8");
+  const m = shared.match(/export const ALARM_FLASH_MS = (\d+)/);
   assert.ok(m, "the flash interval must be explicit");
   const ms = Number(m[1]);
   assert.ok(ms >= 334, `a ${ms}ms toggle flashes faster than 3/sec`);
-  assert.match(alarm, /prefers-reduced-motion: reduce/);
+  assert.match(alarm, /setFlashOn\(\(v\) => !v\), ALARM_FLASH_MS\)/);
+  assert.doesNotMatch(alarm, /setFlashOn\(\(v\) => !v\), \d+\)/, "no local copy of the rate");
+  assert.match(shared, /prefers-reduced-motion: reduce/);
   assert.match(alarm, /if \(!active \|\| reducedMotion\)/, "reduced motion must skip the flashing");
 });
 

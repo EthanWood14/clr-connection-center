@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { AlertTriangle } from "lucide-react";
+import { startSiren, ALARM_FLASH_MS, prefersReducedMotion } from "@/lib/alarm";
 
 /**
  * "Go see your manager."
@@ -42,47 +43,6 @@ interface Summons {
 
 const SILENCE_MS = 2 * 60 * 1000;
 
-/**
- * A two-tone siren that keeps wailing until it is told to stop.
- *
- * `level` lets it drop right back when the video is carrying the noise — the
- * point is to be impossible to ignore, not to drown out the thing the alarm is
- * showing you.
- */
-function startSiren(level: number): () => void {
-  let ctx: AudioContext | null = null;
-  let stopped = false;
-  try {
-    const Ctx = window.AudioContext ?? (window as any).webkitAudioContext;
-    if (!Ctx) return () => {};
-    ctx = new Ctx();
-    void ctx.resume?.();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sawtooth";
-    gain.gain.value = level;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    // Sweep between two pitches forever — the shape of an actual siren.
-    const now = ctx.currentTime;
-    osc.frequency.setValueAtTime(620, now);
-    for (let i = 0; i < 600; i += 1) {
-      const at = now + i * 0.9;
-      osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 980 : 620, at + 0.45);
-      osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 620 : 980, at + 0.9);
-    }
-    osc.start();
-    return () => {
-      if (stopped) return;
-      stopped = true;
-      try { osc.stop(); } catch { /* already stopped */ }
-      try { void ctx?.close(); } catch { /* already closed */ }
-    };
-  } catch {
-    return () => { try { void ctx?.close(); } catch { /* nothing to close */ } };
-  }
-}
-
 export function ManagerSummonsAlarm() {
   const { user } = useAuth();
   const [silencedUntil, setSilencedUntil] = useState(0);
@@ -105,15 +65,14 @@ export function ManagerSummonsAlarm() {
   });
 
   const active = !!data?.active && !!data.summons;
-  const reducedMotion = typeof window !== "undefined"
-    && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const reducedMotion = prefersReducedMotion();
   const silenced = silencedUntil > Date.now();
 
-  // The flash. 2Hz — deliberately under the three-per-second threshold that
-  // makes flashing content a seizure risk.
+  // The flash. Rate lives in lib/alarm so both alarms share one number —
+  // it is a seizure-safety property, not a styling choice.
   useEffect(() => {
     if (!active || reducedMotion) { setFlashOn(false); return; }
-    const id = setInterval(() => setFlashOn((v) => !v), 500);
+    const id = setInterval(() => setFlashOn((v) => !v), ALARM_FLASH_MS);
     return () => clearInterval(id);
   }, [active, reducedMotion]);
 

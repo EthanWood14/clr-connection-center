@@ -5,8 +5,9 @@ import { useAuth } from "@/lib/auth";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, ArrowRight } from "lucide-react";
+import { EodSiren } from "@/components/eod-siren";
 
-type EodNagStage = "none" | "due" | "urgent" | "alarm" | "locked";
+type EodNagStage = "none" | "due" | "siren";
 
 interface LockStatus {
   locked: boolean;
@@ -50,24 +51,18 @@ function playNagChime() {
   } catch { /* audio is a bonus, never a requirement */ }
 }
 
-const STAGE_STYLE: Record<Exclude<EodNagStage, "none" | "locked">, { cls: string; text: string }> = {
+// One rung before the alarm, and it says exactly how long is left. A warning
+// that does not name the deadline is just a colour.
+const STAGE_STYLE: Record<"due", { cls: string; text: string }> = {
   due: {
     cls: "bg-amber-500/15 border-amber-500/50 text-amber-900 dark:text-amber-100",
-    text: "Your EOD report for today is due.",
-  },
-  urgent: {
-    cls: "bg-amber-500/30 border-amber-500 text-amber-950 dark:text-amber-50 animate-pulse",
-    text: "Your EOD report is still not in.",
-  },
-  alarm: {
-    cls: "bg-red-600 border-red-700 text-white animate-pulse",
-    text: "Submit your EOD report now — the app locks shortly.",
+    text: "Your EOD report for today is due. At 4:15 the app locks and an alarm sounds.",
   },
 };
 
 /** Pinned, undismissable, and it gets louder. */
 function EodNagBanner({ stage, chime, chimeIntervalMs, onGo }: {
-  stage: Exclude<EodNagStage, "none" | "locked">;
+  stage: "due";
   chime: boolean;
   chimeIntervalMs: number;
   onGo: () => void;
@@ -93,7 +88,7 @@ function EodNagBanner({ stage, chime, chimeIntervalMs, onGo }: {
         <AlertTriangle className="h-4 w-4 shrink-0" />
         {style.text}
       </span>
-      <Button size="sm" variant={stage === "alarm" ? "secondary" : "default"} onClick={onGo} className="gap-1.5">
+      <Button size="sm" onClick={onGo} className="gap-1.5">
         Fill it out now <ArrowRight className="h-3.5 w-3.5" />
       </Button>
     </div>
@@ -141,21 +136,31 @@ export function EodLockGate({ children }: { children: React.ReactNode }) {
   // over and a banner behind it would be pointless.
   const nagStage = today?.stage ?? "none";
   const showBanner = !authLoading && !isLoading && !!user && isClr && !outerGateActive
-    && !showOverlay && location !== "/eod-report"
-    && (nagStage === "due" || nagStage === "urgent" || nagStage === "alarm");
+    && !showOverlay && location !== "/eod-report" && nagStage === "due";
+  // TODAY's report being the thing missing is what the siren is for. Older
+  // missing reports keep the calm overlay — somebody catching up on last
+  // Tuesday does not need a siren, and would rightly ignore one that fired
+  // every time they opened the app.
+  const showSiren = showOverlay && nagStage === "siren" && !today?.submitted;
 
   return (
     <EodLockGateActive.Provider value={lockActive}>
       {showBanner && (
         <EodNagBanner
-          stage={nagStage as Exclude<EodNagStage, "none" | "locked">}
+          stage="due"
           chime={!!today?.chime}
           chimeIntervalMs={today?.chimeIntervalMs ?? 600000}
           onGo={() => navigate(`/eod-report?date=${today?.date ?? ""}`)}
         />
       )}
       <div className={showOverlay ? "pointer-events-none select-none blur-sm opacity-40 overflow-hidden h-screen" : "contents"}>{children}</div>
-      {showOverlay && <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/95 backdrop-blur-sm">
+      {showSiren && (
+        <EodSiren
+          date={today?.date ?? ""}
+          onGo={() => navigate(`/eod-report?date=${today?.date ?? ""}`)}
+        />
+      )}
+      {showOverlay && !showSiren && <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/95 backdrop-blur-sm">
       <div className="max-w-md w-full rounded-xl border-2 border-amber-500/60 bg-card shadow-2xl">
         <div className="p-6 space-y-4">
           <div className="flex items-center gap-3">
