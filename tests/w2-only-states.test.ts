@@ -74,3 +74,67 @@ test("the business-purpose note is shown for every state, not only W2 ones", () 
   const note = tip.indexOf("BUSINESS_PURPOSE_NOTE");
   assert.ok(guard > 0 && note > guard, "the general note must not be inside the W2-only branch");
 });
+
+test("every state shape is asked about ITSELF, not a hardcoded one", () => {
+  // This is the bug that shipped in 4.31.0: the shapes loop called
+  // isW2OnlyState("DC"), a constant false, so no state was ever painted and
+  // only the right-hand label chips picked up the colour. Greping for the
+  // constant could not see it, so pin the argument at each call site instead.
+  const calls = [...map.matchAll(/isW2OnlyState\(([^)]*)\)/g)].map((m) => m[1].trim());
+  const literals = calls.filter((c) => /^["']/.test(c));
+  // The DC marker is genuinely DC and is the ONLY place a literal is right.
+  assert.equal(literals.length, 1, `hardcoded state in a per-state branch: ${literals.join(", ")}`);
+  assert.equal(literals[0].replace(/["']/g, ""), "DC");
+
+  // And the shape itself -- the thing a person actually looks at -- must use
+  // the state being drawn.
+  const shape = map.slice(map.indexOf("d={US_STATE_PATHS[abbr]}"));
+  const fill = shape.slice(0, shape.indexOf("stroke="));
+  assert.match(fill, /isW2OnlyState\(abbr\)/);
+});
+
+test("the W2 colour is its own hue, not a shade of the coverage ramp", () => {
+  // --primary is navy in the light theme and gold in the dark one. Deriving the
+  // W2 colour from it would collide with the coverage ramp in one of them.
+  const hue = map.match(/const W2_HUE = "([^"]+)"/);
+  assert.ok(hue, "W2_HUE must be a literal hue");
+  assert.doesNotMatch(hue[1], /var\(/);
+  const [h] = hue[1].split(" ");
+  assert.ok(Number(h) >= 300 && Number(h) <= 350, `expected a pink hue, got ${h}`);
+});
+
+test("the label on a pink state uses the ink that tracks the theme", () => {
+  // --primary-foreground is calibrated to sit on --primary, which goes
+  // near-black in the light theme. Pink is a mid-tone at every count, so that
+  // ink measured 1.3-2.9:1 on it in both themes. --foreground is dark in the
+  // light theme and cream in the dark one, which is what the pink fill needs.
+  assert.match(map, /function labelLight\(count: number, selected: boolean, w2Only = false\)/);
+  assert.match(map, /return selected \|\| \(!w2Only && count >= 4\)/);
+  // Both label sites must actually pass the flag, or the guard is decorative.
+  const calls = [...map.matchAll(/labelLight\(([^)]*)\)/g)].map((m) => m[1].trim());
+  const uses = calls.filter((c) => !c.startsWith("count: number"));
+  assert.ok(uses.length >= 2, `expected both label sites, saw ${uses.length}`);
+  for (const c of uses) assert.match(c, /isW2OnlyState\(/, `label site ignores W2: ${c}`);
+});
+
+test("the pink never gets so solid that no ink is readable on it", () => {
+  // Alpha works in opposite directions per theme -- paler over the light page,
+  // darker over the dark one -- and that is what keeps ONE ink legible on the
+  // whole ramp. Past ~0.68 the fill converges on raw mid-tone pink in BOTH
+  // themes at once, where neither ink clears 4.5:1. Measured in the browser at
+  // 0.68: 6.8:1 light, 5.02:1 dark.
+  const ramp = map.slice(map.indexOf("if (w2Only)"), map.indexOf("if (!count) return \"hsl(var(--muted))\""));
+  const alphas = [...ramp.matchAll(/W2_HUE\} \/ ([\d.]+)\)/g)].map((m) => Number(m[1]));
+  assert.ok(alphas.length >= 3, "the pink ramp should still have steps");
+  assert.ok(Math.max(...alphas) <= 0.68, `pink ramp peaks at ${Math.max(...alphas)}, above the legible cap`);
+});
+
+test("the W2 flag is in the accessible name, not only the colour", () => {
+  // Somebody using a screen reader gets nothing at all from a fill.
+  assert.match(map, /function stateLabel\(abbr: string, count: number, name\?: string\)/);
+  assert.match(map, /isW2OnlyState\(abbr\) \? ", W2 borrowers only" : ""/);
+  assert.match(map, /loan officer\$\{count === 1 \? "" : "s"\} licensed/);
+  // Every control routes through it -- a hand-built aria-label would silently
+  // drop the flag again.
+  assert.doesNotMatch(map, /aria-label=\{`[^`]*loan officer/);
+});

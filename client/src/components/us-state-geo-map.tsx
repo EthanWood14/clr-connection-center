@@ -41,17 +41,19 @@ const RIGHT_X = US_MAP_W + 70;       // x of the label chips
 const VIEW_W = US_MAP_W + 170;       // extra room on the right for the column
 const VIEW_H = US_MAP_H + 6;
 
-// Amber, distinct from the blue coverage ramp: a W2-only state is a different
-// KIND of state, not simply a busier one, so it must not read as "more LOs".
-const W2_HUE = "38 92% 50%";
+// Pink: a W2-only state is a different KIND of state, not simply a busier one,
+// so it must not read as "more LOs". A fixed hue rather than --primary on
+// purpose — primary is navy in the light theme and gold in the dark one, so
+// anything derived from it would collide with the coverage ramp in one of them.
+const W2_HUE = "330 81% 60%";
 
 function fillFor(count: number, selected: boolean, w2Only = false): string {
   if (selected) return "hsl(var(--primary) / 0.92)";
   if (w2Only) {
-    if (!count) return `hsl(${W2_HUE} / 0.22)`;
-    if (count <= 2) return `hsl(${W2_HUE} / 0.45)`;
-    if (count <= 5) return `hsl(${W2_HUE} / 0.68)`;
-    return `hsl(${W2_HUE} / 0.85)`;
+    if (!count) return `hsl(${W2_HUE} / 0.2)`;
+    if (count <= 2) return `hsl(${W2_HUE} / 0.38)`;
+    if (count <= 5) return `hsl(${W2_HUE} / 0.54)`;
+    return `hsl(${W2_HUE} / 0.68)`;
   }
   if (!count) return "hsl(var(--muted))";
   if (count === 1) return "hsl(var(--primary) / 0.18)";
@@ -62,8 +64,18 @@ function fillFor(count: number, selected: boolean, w2Only = false): string {
 }
 
 // Whether the label sitting on a given count should be light (for dark fills).
-function labelLight(count: number, selected: boolean): boolean {
-  return selected || count >= 4;
+// W2 states are excluded: their fill is a mid-tone at every count, so the light
+// ink calibrated for --primary would sit on pink at 2.3:1.
+function labelLight(count: number, selected: boolean, w2Only = false): boolean {
+  return selected || (!w2Only && count >= 4);
+}
+
+// One accessible name for every control, so the W2 flag reaches somebody who
+// cannot see the colour at all — otherwise the fill is the only place it exists.
+function stateLabel(abbr: string, count: number, name?: string): string {
+  const who = name ?? STATE_NAMES[abbr] ?? abbr;
+  const w2 = isW2OnlyState(abbr) ? ", W2 borrowers only" : "";
+  return `${who}: ${count} loan officer${count === 1 ? "" : "s"} licensed${w2}`;
 }
 
 export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }: UsStateGeoMapProps) {
@@ -106,7 +118,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           </div>
         )}
         {isW2OnlyState(hover.abbr) && (
-          <div className="mt-1 rounded bg-amber-500/15 px-1.5 py-1 font-semibold text-amber-700 dark:text-amber-300" data-testid="w2-only-note">
+          <div className="mt-1 rounded bg-pink-500/15 px-1.5 py-1 font-semibold text-pink-700 dark:text-pink-300" data-testid="w2-only-note">
             {W2_ONLY_NOTE}
           </div>
         )}
@@ -139,9 +151,9 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               d={US_STATE_PATHS[abbr]}
               role="button"
               tabIndex={0}
-              aria-label={`${STATE_NAMES[abbr] ?? abbr}: ${count} loan officer${count === 1 ? "" : "s"} licensed`}
+              aria-label={stateLabel(abbr, count)}
               aria-pressed={selected}
-              fill={fillFor(count, selected, isW2OnlyState("DC"))}
+              fill={fillFor(count, selected, isW2OnlyState(abbr))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={selected ? 1.6 : 0.6}
               className="cursor-pointer outline-none transition-[fill] duration-150 hover:brightness-95 focus-visible:stroke-[hsl(var(--ring))] focus-visible:[stroke-width:1.8]"
@@ -167,7 +179,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               r={selected ? 5 : 4}
               role="button"
               tabIndex={0}
-              aria-label={`Washington D.C.: ${count} loan officers licensed`}
+              aria-label={stateLabel("DC", count, "Washington D.C.")}
               fill={fillFor(count, selected, isW2OnlyState("DC"))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={1}
@@ -187,7 +199,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           if (!p || p.w < 22 || p.h < 18) return null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
-          const light = labelLight(count, selected);
+          const light = labelLight(count, selected, isW2OnlyState(abbr));
           const fg = light ? "hsl(var(--primary-foreground))" : "hsl(var(--foreground))";
           return (
             <g key={`lbl-${abbr}`} className="pointer-events-none" textAnchor="middle">
@@ -205,7 +217,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           const anchor = abbr === "DC" ? DC_POS : lp ? { x: lp.x, y: lp.y } : null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
-          const light = labelLight(count, selected);
+          const light = labelLight(count, selected, isW2OnlyState(abbr));
           return (
             <g key={`rc-${abbr}`}>
               {anchor && (
@@ -220,7 +232,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               <g
                 role="button"
                 tabIndex={0}
-                aria-label={`${STATE_NAMES[abbr] ?? abbr}: ${count} loan officers licensed`}
+                aria-label={stateLabel(abbr, count)}
                 className="cursor-pointer outline-none"
                 onClick={() => select(abbr)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(abbr); } }}

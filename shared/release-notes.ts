@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.32.1",
+    headline: "W2-only states are pink on the map — and actually coloured in now.",
+    items: [
+      { text: "The eleven W2-only states are now pink instead of amber.", audience: "manager" },
+      { text: "They are also, finally, coloured on the map itself. The last release only tinted the small state tags down the right hand side — Arkansas, Georgia, Illinois, Indiana, Maryland, Mississippi, Montana, New Jersey, North Carolina, South Carolina and Vermont were left looking like every other state on the map proper. All eleven are shaded now, in both light and dark.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.32.0",
     headline: "State Lookup shows exactly how many transfers each assistant has taken.",
     items: [
