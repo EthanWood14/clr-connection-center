@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.31.0",
+    headline: "W2-only states are marked on the map, and Chris is off them for good.",
+    items: [
+      { text: "Eleven states — Arkansas, Georgia, Illinois, Indiana, Maryland, Mississippi, Montana, New Jersey, North Carolina, South Carolina and Vermont — now show in amber on the map as W2 only, with a legend so the colour explains itself. Amber rather than a darker blue on purpose: a darker blue would just look like more loan officers.", audience: "manager" },
+      { text: "Every state, not just those eleven, now carries the reminder that business purpose loans are okay everywhere — the exception people most often forget is the one that applies to all of them.", audience: "manager" },
+      { text: "Chris Redoble has been taken off the W2-only states he held (Arkansas, Maryland and North Carolina) and can no longer be added back to any of them. That block is applied wherever licensed states are saved, including the bulk import, so it cannot be worked around from another screen.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.30.0",
     headline: "Finishing a task now means signing for it.",
     items: [

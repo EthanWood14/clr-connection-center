@@ -17351,7 +17351,58 @@ ${note}` : daysLine;
     // a better callers-eye-view than total_times_worked (which only ticks on EOD).
     const callsLogged = outcomes.length;
 
-    res.json({ lo, monthlyData, totalOutcomes: outcomes.length, callsLogged, totalsByType });
+    // Who actually took this LO's transfers. Only meaningful when the loan
+    // officer has assistants; otherwise the section stays empty rather than
+    // showing a single "unassigned" row that says nothing.
+    const loaBreakdown = (() => {
+      try {
+        const db = storageExtra.getRawSqlite();
+        const assistants = db.prepare(
+          `SELECT id, full_name AS name, active FROM loan_officer_assistants WHERE lo_id=? ORDER BY full_name COLLATE NOCASE`,
+        ).all(loId) as any[];
+        if (!assistants.length) return [];
+        const counts = new Map<number, { transfers: number; last: string | null }>();
+        let unassigned = 0;
+        let lastUnassigned: string | null = null;
+        for (const o of outcomes) {
+          if ((o.outcomeType ?? o.outcome_type) !== "transfer") continue;
+          const id = Number(o.loaId ?? o.loa_id ?? 0);
+          const date = String(o.date ?? "") || null;
+          if (!id) {
+            unassigned += 1;
+            if (date && (!lastUnassigned || date > lastUnassigned)) lastUnassigned = date;
+            continue;
+          }
+          const cur = counts.get(id) ?? { transfers: 0, last: null };
+          cur.transfers += 1;
+          if (date && (!cur.last || date > cur.last)) cur.last = date;
+          counts.set(id, cur);
+        }
+        const rows = assistants.map((a: any) => ({
+          loaId: Number(a.id),
+          name: String(a.name ?? ""),
+          active: !!Number(a.active),
+          transfers: counts.get(Number(a.id))?.transfers ?? 0,
+          lastAt: counts.get(Number(a.id))?.last ?? null,
+        }));
+        // An assistant who left still holds the transfers they took, so rows for
+        // inactive assistants stay — dropping them would make the parts stop
+        // adding up to the whole.
+        for (const [id, v] of Array.from(counts.entries())) {
+          if (!rows.some((r) => r.loaId === id)) {
+            rows.push({ loaId: id, name: `LOA #${id}`, active: false, transfers: v.transfers, lastAt: v.last });
+          }
+        }
+        rows.sort((a, b) => b.transfers - a.transfers || a.name.localeCompare(b.name));
+        // The remainder, so the rows reconcile to the LO's transfer total.
+        if (unassigned > 0) {
+          rows.push({ loaId: 0, name: "No LOA recorded", active: false, transfers: unassigned, lastAt: lastUnassigned });
+        }
+        return rows;
+      } catch { return []; }
+    })();
+
+    res.json({ lo, monthlyData, totalOutcomes: outcomes.length, callsLogged, totalsByType, loaBreakdown });
   });
 
   // ── Email Settings ────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { US_STATE_PATHS, US_STATE_LABEL_POINTS, US_MAP_W, US_MAP_H } from "./us-state-paths";
 
+import { isW2OnlyState, W2_ONLY_NOTE, BUSINESS_PURPOSE_NOTE } from "@shared/w2-only-states";
+
 export interface GeoMapState {
   abbr: string;
   name: string;
@@ -39,8 +41,18 @@ const RIGHT_X = US_MAP_W + 70;       // x of the label chips
 const VIEW_W = US_MAP_W + 170;       // extra room on the right for the column
 const VIEW_H = US_MAP_H + 6;
 
-function fillFor(count: number, selected: boolean): string {
+// Amber, distinct from the blue coverage ramp: a W2-only state is a different
+// KIND of state, not simply a busier one, so it must not read as "more LOs".
+const W2_HUE = "38 92% 50%";
+
+function fillFor(count: number, selected: boolean, w2Only = false): string {
   if (selected) return "hsl(var(--primary) / 0.92)";
+  if (w2Only) {
+    if (!count) return `hsl(${W2_HUE} / 0.22)`;
+    if (count <= 2) return `hsl(${W2_HUE} / 0.45)`;
+    if (count <= 5) return `hsl(${W2_HUE} / 0.68)`;
+    return `hsl(${W2_HUE} / 0.85)`;
+  }
   if (!count) return "hsl(var(--muted))";
   if (count === 1) return "hsl(var(--primary) / 0.18)";
   if (count === 2) return "hsl(var(--primary) / 0.34)";
@@ -93,6 +105,16 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
             {names.slice(0, 6).join(", ")}{names.length > 6 ? ` +${names.length - 6} more` : ""}
           </div>
         )}
+        {isW2OnlyState(hover.abbr) && (
+          <div className="mt-1 rounded bg-amber-500/15 px-1.5 py-1 font-semibold text-amber-700 dark:text-amber-300" data-testid="w2-only-note">
+            {W2_ONLY_NOTE}
+          </div>
+        )}
+        {/* Shown on every state, W2-only or not — the exception people most
+            often forget is the one that applies everywhere. */}
+        <div className="mt-1 leading-snug text-muted-foreground" data-testid="business-purpose-note">
+          {BUSINESS_PURPOSE_NOTE}
+        </div>
       </div>
     );
   })();
@@ -119,7 +141,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               tabIndex={0}
               aria-label={`${STATE_NAMES[abbr] ?? abbr}: ${count} loan officer${count === 1 ? "" : "s"} licensed`}
               aria-pressed={selected}
-              fill={fillFor(count, selected)}
+              fill={fillFor(count, selected, isW2OnlyState("DC"))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={selected ? 1.6 : 0.6}
               className="cursor-pointer outline-none transition-[fill] duration-150 hover:brightness-95 focus-visible:stroke-[hsl(var(--ring))] focus-visible:[stroke-width:1.8]"
@@ -146,7 +168,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               role="button"
               tabIndex={0}
               aria-label={`Washington D.C.: ${count} loan officers licensed`}
-              fill={fillFor(count, selected)}
+              fill={fillFor(count, selected, isW2OnlyState("DC"))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={1}
               className="cursor-pointer outline-none focus-visible:stroke-[hsl(var(--ring))]"
@@ -206,7 +228,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               >
                 <rect
                   x={RIGHT_X - 6} y={y - 9} width={62} height={18} rx={3}
-                  fill={fillFor(count, selected)}
+                  fill={fillFor(count, selected, isW2OnlyState(abbr))}
                   stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
                   strokeWidth={selected ? 1.4 : 0.6}
                 />
@@ -222,6 +244,17 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
         })}
       </svg>
       {tooltip}
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-sm" style={{ background: "hsl(var(--primary) / 0.66)" }} />
+          Licensed coverage
+        </span>
+        <span className="flex items-center gap-1.5" data-testid="w2-only-legend">
+          <span className="inline-block h-2.5 w-4 rounded-sm" style={{ background: `hsl(${W2_HUE} / 0.68)` }} />
+          W2 only
+        </span>
+        <span>{BUSINESS_PURPOSE_NOTE}</span>
+      </div>
     </div>
   );
 }

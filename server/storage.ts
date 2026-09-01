@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
@@ -1713,7 +1714,27 @@ export class Storage implements IStorage {
       const existing = sqlite.prepare(`SELECT id FROM loan_officers WHERE id = ? AND org_id = ?`).get(id, oid);
       if (!existing) return undefined as any;
     }
-    return db.update(loanOfficers).set({ ...data, updatedAt: new Date().toISOString() }).where(eq(loanOfficers.id, id)).returning().get();
+    // A permanently-excluded loan officer can never hold a W2-only state. This
+    // sits at the storage layer on purpose: the LO editor, the CSV import and
+    // anything added later all pass through here, so the rule cannot be
+    // sidestepped by finding a different write path.
+    const cleaned = { ...data } as any;
+    if (cleaned.licensedStates !== undefined) {
+      const row = sqlite.prepare(`SELECT full_name FROM loan_officers WHERE id = ?`).get(id) as any;
+      const name = String(cleaned.fullName ?? row?.full_name ?? "");
+      let list: string[] = [];
+      try {
+        list = Array.isArray(cleaned.licensedStates)
+          ? cleaned.licensedStates.map(String)
+          : JSON.parse(String(cleaned.licensedStates ?? "[]"));
+      } catch { list = []; }
+      const { states, removed } = applyW2OnlyExclusions(name, Array.isArray(list) ? list : []);
+      if (removed.length) {
+        cleaned.licensedStates = JSON.stringify(states);
+        console.warn(`[w2-only] refused ${removed.join(",")} for "${name}" (permanently excluded)`);
+      }
+    }
+    return db.update(loanOfficers).set({ ...cleaned, updatedAt: new Date().toISOString() }).where(eq(loanOfficers.id, id)).returning().get();
   }
   archiveLoanOfficer(id: number) {
     const oid = currentOrgId();

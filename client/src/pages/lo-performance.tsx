@@ -318,6 +318,11 @@ export default function LoPerformance() {
   // New efficiency KPIs — computed from the drill-down's own data (includes
   // every CLR, consistent with the rest of this single-LO view).
   const fellThroughCount = perfData?.totalsByType?.fell_through ?? 0;
+  // Who took this LO's transfers. Empty for a loan officer with no assistants.
+  const loaBreakdown: Array<{ loaId: number; name: string; active: boolean; transfers: number; lastAt: string | null }> =
+    perfData?.loaBreakdown ?? [];
+  const loaTotal = loaBreakdown.reduce((sum, r) => sum + r.transfers, 0);
+  const loaMax = loaBreakdown.reduce((m, r) => Math.max(m, r.transfers), 0);
   const drillCPT = totalTransfers > 0 ? callsLogged / totalTransfers : null;
   const drillFTR =
     totalTransfers + fellThroughCount > 0
@@ -758,6 +763,55 @@ export default function LoPerformance() {
                   No outcome history recorded for this loan officer yet.
                 </p>
               </div>
+            )}
+
+            {loaBreakdown.length > 0 && (
+              <Card data-testid="loa-transfer-breakdown">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold">
+                    Transfers by LOA{" "}
+                    <span className="font-normal text-muted-foreground">
+                      ({loaTotal.toLocaleString()} total)
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {loaBreakdown.map((row) => (
+                    <div key={row.loaId} className="flex items-center gap-3" data-testid="loa-breakdown-row">
+                      <span className="w-40 shrink-0 truncate text-sm">
+                        {row.loaId === 0 ? (
+                          <span className="text-muted-foreground italic">{row.name}</span>
+                        ) : (
+                          <>
+                            {row.name}
+                            {/* Two assistants can share a first name, and one who
+                                has left still owns the transfers they took. */}
+                            {!row.active && (
+                              <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">inactive</span>
+                            )}
+                          </>
+                        )}
+                      </span>
+                      <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={"h-full rounded-full " + (row.loaId === 0 ? "bg-muted-foreground/40" : "bg-primary")}
+                          style={{ width: loaMax > 0 ? `${Math.round((row.transfers / loaMax) * 100)}%` : "0%" }}
+                        />
+                      </div>
+                      <span className="w-28 shrink-0 text-right text-sm tabular-nums">
+                        <strong>{row.transfers.toLocaleString()}</strong>
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          {loaTotal > 0 ? `${Math.round((row.transfers / loaTotal) * 100)}%` : ""}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-muted-foreground">
+                    Every transfer logged to this loan officer, split by the assistant recorded on it.
+                    Rows add up to the total, so any not attributed to an LOA are shown as their own line.
+                  </p>
+                </CardContent>
+              </Card>
             )}
 
             {monthlyData.length > 0 && (
