@@ -25,6 +25,7 @@ import {
   isTrainingRate,
 } from "@shared/training-comp";
 import { anthropicConfigured, requestSuggestions, recentReleaseSummary, estimateCostCents, ROUTINE_INTERVAL_DAYS, DEEP_INTERVAL_DAYS, type ReviewCycle } from "./app-review";
+import { registerAskC3 } from "./ask-c3";
 import { adjudicateLateExcuse, lateExcuseConfigured } from "./late-excuse";
 import { evaluateGeofence, isValidLatLng, DEFAULT_CHECKIN_RADIUS_M } from "./geo";
 import crypto from "crypto";
@@ -5472,6 +5473,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (ok) return next();
     return res.status(403).json({ error: portal === "lop" ? "This account is limited to the Loan Officer Portal." : "This account is limited to the LO Assistant Portal." });
   });
+
+  // Ask C3 — registered here, AFTER the /api auth guard, org-context and
+  // LAP confinement middleware, so it inherits all three.
+  registerAskC3(app);
 
   // ── Users ────────────────────────────────────────────────────────────────────
   app.get("/api/users", (req, res) => {

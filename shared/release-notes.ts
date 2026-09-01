@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.38.0",
+    headline: "Ask C3: ask questions about your data in plain English.",
+    items: [
+      { text: "A sparkle button now floats on every page. Ask things like \"who had the most transfers this month?\" or \"which check-ins were late yesterday?\" and Ask C3 reads the live data — leaderboard, outcomes, EOD reports, assignments, prospects — and answers with the numbers, showing its progress while it works.", audience: "everyone" },
+      { text: "Pick the brain to match the question: Sonnet for everyday lookups, Opus or Fable for deep analysis, Haiku for quick checks. Follow-up questions remember the conversation.", audience: "everyone" },
+      { text: "It is read-only and role-aware: CLRs see their own reports and check-ins, managers see the team, and credentials, GPS locations and IP addresses are never exposed to it at all.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.37.0",
     headline: "Four states nobody can be licensed in, marked red.",
     items: [
