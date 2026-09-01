@@ -21720,10 +21720,15 @@ ${note}` : daysLine;
     const updates: Record<string, any> = {};
     if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
     if (tagsChanged) updates.tags = tags;
-    if (lapCovered) {
-      // Leave the name and tags alone — LAP owns this borrower's workflow.
-      for (const k of Object.keys(updates)) delete updates[k];
-    }
+    // The rename and the clrtransfer tag DO still apply under LAP. They are
+    // markers, not workflow: they say who transferred the lead and that a CLR
+    // did it, which is the whole point of looking a prospect up in Bonzo. The
+    // one tag that would be a mutation is the automation trigger
+    // (clrmovehottransfers), and that is already excluded — it is only added
+    // when shouldMove is true, which lapCovered forces false. Blanket-skipping
+    // every update here repeated the same over-wide guard one level down, and
+    // is why Joy Crosett's prospect carried no clrtransfer tag and no
+    // "(Aaron I Elleine)" suffix.
     if (Object.keys(updates).length) {
       const r = await updateProspect(prospectId, updates);
       if (!r.ok) { console.error(`[bonzo-transfer] outcome=${outcomeId}: update failed: ${r.error}`); return; }
@@ -21782,7 +21787,7 @@ ${note}` : daysLine;
     if (lapCovered || advanced || disqualified) {
       try {
         await addProspectNote(prospectId, lapCovered
-          ? `CLR transfer logged in C3 — stage, owner and name left as they are because this loan officer works through the LO Assistant Portal.`
+          ? `CLR transfer logged in C3 — tagged and renamed, but the stage and owner are left as they are because this loan officer works through the LO Assistant Portal.`
           : `CLR transfer logged — stage left at "${snap.stageName}" (${disqualified ? "disqualified leads are never revived by C3" : "App Taken→Funded deals are not moved back"}).`);
       } catch { /* note is best-effort */ }
     }

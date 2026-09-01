@@ -179,7 +179,10 @@ test("an available LOA routes a transfer to LAP without a competing Bonzo update
   assert.match(sync, /hasAvailableLapAssistant/);
   assert.match(sync, /reassigned = "skipped_lap";/);
   assert.match(sync, /const shouldMove = !lapCovered &&/);
-  assert.match(sync, /for \(const k of Object\.keys\(updates\)\) delete updates\[k\];/);
+  // The rename and the clrtransfer tag are markers and DO apply; only the
+  // automation trigger would be a mutation, and shouldMove already excludes it.
+  assert.doesNotMatch(sync, /delete updates\[k\]/);
+  assert.match(sync, /if \(shouldMove && moved === "tagged" && !has\(moveTag\)\)/);
   // The note is the one thing that must still go.
   assert.match(sync, /notesToBonzoHtml\(convo/);
   assert.doesNotMatch(sync, /Bonzo skipped/);

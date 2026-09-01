@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.35.0",
+    headline: "Transfers are tagged and named in Bonzo again, including Chris’s.",
+    items: [
+      { text: "A transfer to a loan officer who has an assistant now gets the clrtransfer tag and the “(LOA I CLR)” name on the borrower in Bonzo, the same as every other transfer. Those two say who sent the lead over — they were being skipped along with everything else.", audience: "everyone" },
+      { text: "The borrower’s stage and owner are still left alone for those loan officers, because the LO Assistant Portal is where that work happens.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.34.3",
     headline: "The Bonzo note no longer repeats what you already pasted.",
     items: [
