@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.34.1",
+    headline: "Whichever box you typed the write-up into now reaches Bonzo.",
+    items: [
+      { text: "The transfer note sent to Bonzo used to carry only the Info Gathering block. Anything typed into Other Notes instead was left behind — which for most calls is where the detail actually is. Both now go.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.34.0",
     headline: "Transfers to loan officers with an assistant now leave a note in Bonzo.",
     items: [

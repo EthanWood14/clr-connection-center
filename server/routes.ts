@@ -21733,7 +21733,16 @@ ${note}` : daysLine;
     // existing note already contains the same text — CLRs still can (and some
     // will) paste manually, and the trail must not show it twice.
     let noted = "none";
-    const convo = String(o.conversation_notes ?? "").trim();
+    // Both halves of the write-up, not just the structured one. The capture
+    // block is what the form composes, but plenty of CLRs type the substance
+    // into the free-text Other Notes box instead -- Joy Crosett's entire file
+    // (email, $60k request, address, free and clear, SSDI income) was there,
+    // and her capture block held one line naming the lead source. Posting only
+    // conversation_notes silently drops whichever half the CLR actually used.
+    const convo = [
+      String(o.conversation_notes ?? "").trim(),
+      String(o.notes ?? "").trim(),
+    ].filter(Boolean).join("\n\n");
     if (convo) {
       try {
         const marker = transferNoteMarker(outcomeId);

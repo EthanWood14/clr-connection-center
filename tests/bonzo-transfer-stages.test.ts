@@ -126,7 +126,7 @@ test("transfer notes post to Bonzo once, never twice", () => {
   assert.match(sync, /duplicate_skipped/);
   assert.match(sync, /already_posted/);
   // Empty conversation notes post nothing.
-  assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
+  assert.match(sync, /String\(o\.conversation_notes \?\? ""\)\.trim\(\),/);
 });
 
 test("stage lookup pages through every pipeline, not just the first 25", () => {
@@ -192,7 +192,7 @@ test("LAP coverage suppresses every write that mutates the borrower", () => {
 test("the conversation notes are what actually reach the LO", () => {
   // The write-up is the point of the note; posting only "a transfer happened"
   // would not have answered the complaint.
-  assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
+  assert.match(sync, /String\(o\.conversation_notes \?\? ""\)\.trim\(\),/);
   // Bonzo renders notes as HTML, so newlines have to be real markup or the
   // whole write-up collapses into one run-on line.
   assert.match(sync, /notesToBonzoHtml\(convo/);
@@ -208,4 +208,13 @@ test("a LAP transfer says why nothing else moved", () => {
 test("the log says which mode ran", () => {
   // Silent skipping is how this went unnoticed; the mode has to be readable.
   assert.match(sync, /mode=\$\{lapCovered \? "notes_only_lap" : "full"\}/);
+});
+
+test("both halves of the write-up reach Bonzo, not just the structured one", () => {
+  // A CLR who types the substance into Other Notes instead of the capture
+  // fields must not have it silently dropped. Joy Crosett's whole file was in
+  // Other Notes; her capture block was one line naming the lead source.
+  assert.match(sync, /String\(o\.conversation_notes \?\? ""\)\.trim\(\),/);
+  assert.match(sync, /String\(o\.notes \?\? ""\)\.trim\(\),/);
+  assert.match(sync, /filter\(Boolean\)\.join/);
 });
