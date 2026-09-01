@@ -11924,6 +11924,9 @@ ${note}` : daysLine;
             phoneNumber: o.phoneNumber ?? o.phone_number,
             leadSource: o.leadSource ?? o.lead_source,
             conversationNotes: o.conversationNotes ?? o.conversation_notes,
+            notes: o.notes,
+            loId: Number(o.loId ?? o.lo_id ?? 0) || null,
+            transferType: o.transferType ?? o.transfer_type,
             loaId: Number(o.loaId ?? o.loa_id ?? 0) || null,
             loHasLoa: historyLoaLos.has(Number(o.loId ?? o.lo_id ?? 0)),
           })),
@@ -12461,7 +12464,7 @@ ${note}` : daysLine;
         );
         const byDay = new Map<string, CompletenessRow[]>();
         for (const o of sqlite.prepare(
-          `SELECT date, borrower_name, phone_number, lead_source, conversation_notes, loa_id, lo_id
+          `SELECT date, borrower_name, phone_number, lead_source, conversation_notes, notes, transfer_type, loa_id, lo_id
              FROM lead_outcomes
             WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
         ).all(currentOrgId() ?? 1, startDate, endDate) as any[]) {
@@ -12472,6 +12475,9 @@ ${note}` : daysLine;
             phoneNumber: o.phone_number,
             leadSource: o.lead_source,
             conversationNotes: o.conversation_notes,
+            notes: o.notes,
+            loId: Number(o.lo_id ?? 0) || null,
+            transferType: o.transfer_type,
             loaId: Number(o.loa_id ?? 0) || null,
             loHasLoa: wuLoaLos.has(Number(o.lo_id ?? 0)),
           });
@@ -12612,6 +12618,39 @@ ${note}` : daysLine;
         `).all(startDate, endDate) as any[];
         for (const r of lbText) lbTextByUser.set(r.assistant_id, Number(r.n) || 0);
       } catch { /* bulk_texter column may not exist on older DBs */ }
+      // Write-up completeness per CLR: of every field a transfer could have had
+      // filled in, what share was. One scan for the whole range.
+      const writeUpByUser = new Map<number, number | null>();
+      try {
+        const lbLoaLos = new Set<number>(
+          (sqlite.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+            .map((r: any) => Number(r.lo_id)),
+        );
+        const rowsByUser = new Map<number, CompletenessRow[]>();
+        for (const o of sqlite.prepare(
+          `SELECT assistant_id, borrower_name, phone_number, lead_source, conversation_notes,
+                  notes, transfer_type, loa_id, lo_id
+             FROM lead_outcomes
+            WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
+        ).all(currentOrgId() ?? 1, startDate, endDate) as any[]) {
+          const uid = Number(o.assistant_id);
+          const list = rowsByUser.get(uid) ?? [];
+          list.push({
+            borrowerName: o.borrower_name,
+            phoneNumber: o.phone_number,
+            leadSource: o.lead_source,
+            conversationNotes: o.conversation_notes,
+            notes: o.notes,
+            loId: Number(o.lo_id ?? 0) || null,
+            transferType: o.transfer_type,
+            loaId: Number(o.loa_id ?? 0) || null,
+            loHasLoa: lbLoaLos.has(Number(o.lo_id ?? 0)),
+          });
+          rowsByUser.set(uid, list);
+        }
+        rowsByUser.forEach((rows, uid) => writeUpByUser.set(uid, summarizeCompleteness(rows).pct));
+      } catch { /* the column is context, never a reason to fail the dashboard */ }
+
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
@@ -12646,6 +12685,9 @@ ${note}` : daysLine;
             appointmentPct,
             fellThroughPct,
             callToTransferPct,
+            // null when they logged no transfers in the range — nothing to
+            // measure is not the same as measured badly.
+            writeUpPct: writeUpByUser.has(u.id) ? writeUpByUser.get(u.id) : null,
           };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
@@ -19253,7 +19295,7 @@ ${note}` : daysLine;
             .map((r: any) => Number(r.lo_id)),
         );
         for (const o of listDb.prepare(
-          `SELECT assistant_id, borrower_name, phone_number, lead_source, conversation_notes, loa_id, lo_id
+          `SELECT assistant_id, borrower_name, phone_number, lead_source, conversation_notes, notes, transfer_type, loa_id, lo_id
              FROM lead_outcomes
             WHERE org_id=? AND outcome_type='transfer' AND date BETWEEN ? AND ?`,
         ).all(listOrgId, startDate, endDate) as any[]) {
@@ -19265,6 +19307,9 @@ ${note}` : daysLine;
             phoneNumber: o.phone_number,
             leadSource: o.lead_source,
             conversationNotes: o.conversation_notes,
+            notes: o.notes,
+            loId: Number(o.lo_id ?? 0) || null,
+            transferType: o.transfer_type,
             loaId: Number(o.loa_id ?? 0) || null,
             loHasLoa: loaLos.has(Number(o.lo_id ?? 0)),
           });
@@ -19810,6 +19855,9 @@ ${note}` : daysLine;
           phoneNumber: o.phoneNumber ?? o.phone_number,
           leadSource: o.leadSource ?? o.lead_source,
           conversationNotes: o.conversationNotes ?? o.conversation_notes,
+          notes: o.notes,
+          loId: Number(o.loId ?? o.lo_id ?? 0) || null,
+          transferType: o.transferType ?? o.transfer_type,
           loaId: Number(o.loaId ?? o.loa_id ?? 0) || null,
           loHasLoa: losWithLoa.has(Number(o.loId ?? o.lo_id ?? 0)),
         }));

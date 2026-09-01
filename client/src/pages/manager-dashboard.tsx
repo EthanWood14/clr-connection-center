@@ -245,6 +245,8 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
     { key: "ctt",          label: "C>T%",      get: r => r.callToTransferPct ?? 0, better: true,  fmt: r => r.callToTransferPct == null ? "—" : `${r.callToTransferPct}%` },
+    // Share of every field a transfer could have had filled in that was.
+    { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? 0,        better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
   ];
   const ranges = cols.map(c => { const v = list.map(c.get); return { min: Math.min(...v), max: Math.max(...v) }; });
   return (

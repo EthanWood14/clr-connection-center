@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.29.0",
+    headline: "Write-up now sits in the Transfer Scorecard, and counts the whole form.",
+    items: [
+      { text: "The Transfer Scorecard gains a Write-up figure per CLR, graded against the others like every other number there.", audience: "manager" },
+      { text: "It now measures what it says: of every box a transfer could have had filled in, how many were. That includes the qualification answers and all twenty lead-capture questions, not just a handful of headline boxes — so expect a much lower number than before. Team-wide it is about 22%, because the capture questions are rarely answered.", audience: "manager" },
+      { text: "A box that did not apply is still never counted against anyone, and somebody with no transfers in the range shows a dash instead of a zero.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.28.0",
     headline: "Write-up rate is now a line on the dashboard trend.",
     items: [
