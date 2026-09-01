@@ -9,10 +9,37 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Sparkles, Send, X, Loader2, ChevronDown } from "lucide-react";
+import { Send, X, Loader2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth";
+
+// ── The Ask C3 mark ──────────────────────────────────────────────────────────
+// A custom-drawn spark: one large concave four-point star with two satellites.
+// White glyph on the gradient tiles below; drawn inline so it needs no asset.
+function AskC3Mark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M11 2c.4 5.4 2.9 7.9 8.3 8.3-5.4.4-7.9 2.9-8.3 8.3-.4-5.4-2.9-7.9-8.3-8.3C8.1 9.9 10.6 7.4 11 2Z"
+        fill="currentColor"
+      />
+      <path
+        d="M18.6 14.6c.24 2.86 1.44 4.06 4.3 4.3-2.86.24-4.06 1.44-4.3 4.3-.24-2.86-1.44-4.06-4.3-4.3 2.86-.24 4.06-1.44 4.3-4.3Z"
+        fill="currentColor"
+        opacity=".8"
+      />
+      <path
+        d="M5.2 16.4c.17 2 1.01 2.84 3 3-2 .17-2.84 1.01-3 3-.17-2-1.01-2.84-3-3 2-.17 2.84-1.01 3-3Z"
+        fill="currentColor"
+        opacity=".55"
+      />
+    </svg>
+  );
+}
+
+// The gradient tile behind the mark — one look everywhere Ask C3 appears.
+const ASK_TILE = "bg-gradient-to-br from-violet-500 via-indigo-500 to-blue-600 text-white";
 
 // ── Stream protocol ──────────────────────────────────────────────────────────
 
@@ -327,7 +354,9 @@ export function AskC3() {
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={close} aria-hidden="true" />
       <div className="relative flex h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl sm:h-[75vh]">
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <Sparkles className="h-4 w-4 text-primary" />
+          <span className={`flex h-6 w-6 items-center justify-center rounded-lg shadow-sm ${ASK_TILE}`}>
+            <AskC3Mark className="h-4 w-4" />
+          </span>
           <div className="flex-1 font-semibold">Ask C3</div>
           <div className="relative">
             <button
@@ -373,8 +402,10 @@ export function AskC3() {
           }}
         >
           {turns.length === 0 && !pending && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-              <Sparkles className="h-8 w-8 opacity-40" />
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+              <span className={`flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg shadow-indigo-500/25 ${ASK_TILE}`}>
+                <AskC3Mark className="h-8 w-8" />
+              </span>
               <div className="text-sm font-medium text-foreground">Ask anything about C3 data</div>
               <div className="max-w-sm text-xs">
                 Transfers, appointments, the leaderboard, EOD reports, check-ins, LO performance, assignments, prospects, comp requests…
@@ -472,11 +503,13 @@ export function AskC3() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-20 right-4 z-[80] flex h-11 w-11 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 md:bottom-6 md:right-6"
+        className={`group fixed bottom-20 right-4 z-[80] flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ring-white/25 shadow-lg shadow-indigo-500/40 transition-all duration-200 hover:scale-105 hover:shadow-xl hover:shadow-indigo-500/50 active:scale-95 md:bottom-6 md:right-6 ${ASK_TILE}`}
         title="Ask C3"
         data-testid="ask-c3-launcher"
       >
-        <Sparkles className="h-5 w-5" />
+        {/* top sheen so the tile reads as glass, matching the app shell */}
+        <span className="pointer-events-none absolute inset-x-1 top-0.5 h-1/3 rounded-t-[14px] bg-gradient-to-b from-white/40 to-transparent" aria-hidden="true" />
+        <AskC3Mark className="h-6 w-6 drop-shadow-sm transition-transform duration-200 group-hover:rotate-12" />
       </button>
       {dialog}
     </>
