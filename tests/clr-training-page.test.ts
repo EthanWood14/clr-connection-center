@@ -54,7 +54,11 @@ test("Matt Lane is credited, and not only in the footer", () => {
 test("the page renders the plan rather than restating it", () => {
   // Every list item comes from the data module; no day content is hardcoded in
   // the component, or the two would drift apart.
-  assert.match(page, /TRAINING_DAYS\.filter/);
+  // The source moved from the constant to the saved document, but the rule
+  // is unchanged: the component renders whatever it is given and hardcodes
+  // none of it. `working` is the live plan, with the constant as fallback.
+  assert.match(page, /const shown = working\.filter/);
+  assert.match(page, /data\?\.days\?\.length \? data\.days : TRAINING_DAYS/);
   assert.match(page, /d\.morning\.map/);
   assert.match(page, /d\.afternoon\.map/);
   assert.match(page, /\{d\.eod\}/);

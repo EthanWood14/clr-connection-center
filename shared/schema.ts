@@ -61,6 +61,9 @@ export const users = sqliteTable("users", {
   // Grants Shotgun publishing (sending prospects into the rotation) without
   // full manager rights. Managers/admins can always publish regardless.
   canPublishShotgun: integer("can_publish_shotgun", { mode: "boolean" }).notNull().default(false),
+  // Edit the CLR training walkthrough. Its author is an assistant, so this
+  // is a grant rather than a role — see shared/training-manual.ts.
+  canEditTraining: integer("can_edit_training", { mode: "boolean" }).notNull().default(false),
   hasDismissedSample: integer("has_dismissed_sample", { mode: "boolean" }).notNull().default(false),
   // ISO timestamp of when the CLR last dismissed the pipeline-stages popup.
   // The popup re-appears 14 days after this; null/empty = never seen yet.

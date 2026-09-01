@@ -102,6 +102,10 @@ try { sqlite.exec(`ALTER TABLE users ADD COLUMN super_admin INTEGER NOT NULL DEF
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN sms_reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN can_publish_shotgun INTEGER NOT NULL DEFAULT 0`); } catch {}
+// Lets someone edit the CLR training walkthrough without being a manager.
+// Matt Lane wrote it and is an assistant; tying it to manager rights would
+// mean handing him the whole manager surface to fix a typo in his own doc.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN can_edit_training INTEGER NOT NULL DEFAULT 0`); } catch {}
   try { sqlite.exec(`ALTER TABLE users ADD COLUMN extension_key_hash TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_chat_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN mute_forum_notifications INTEGER NOT NULL DEFAULT 0`); } catch {}
@@ -688,6 +692,21 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
     answers TEXT NOT NULL DEFAULT '{}'
   )`);
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tta_user ON training_test_attempts(org_id, user_id, taken_at DESC)`); } catch {}
+
+  // The training walkthrough itself, once it stopped being a source file.
+  // Append-only: every save is a new row and the current document is simply
+  // the newest. That is the cheapest possible history, and it matters here
+  // because one person edits a document the whole team is trained from —
+  // "put back what it said on Tuesday" has to be answerable.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS training_manual_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    author_user_id INTEGER,
+    author_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`);
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tmv_current ON training_manual_versions(org_id, id DESC)`); } catch {}
 
   // Manager-assigned CLR tasks. A recurring definition keeps exactly one open
   // deadline at a time; completions preserve each finished cycle, while alerts

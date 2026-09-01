@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.40.0",
+    headline: "Matt can edit the training walkthrough himself.",
+    items: [
+      { text: "The CLR Trainer Walkthrough is Matt Lane’s plan, but it was built into the app, so fixing a typo in his own document meant asking a developer. He can now edit it on the page: an Edit button, one step per line, and Save publishes it to everyone straight away.", audience: "everyone" },
+      { text: "Every save is kept. Nothing is overwritten, so an earlier version can always be put back, and each one records who saved it and when.", audience: "manager" },
+      { text: "Admins can hand this out on the Settings user list — an “Allow training edits” button next to the Shotgun one. It grants only that; it is not manager access.", audience: "manager" },
+      { text: "Everyone else still reads it exactly as before.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.39.0",
     headline: "No EOD report by 4:15 and the alarm goes off.",
     items: [

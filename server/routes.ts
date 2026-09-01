@@ -19,6 +19,8 @@ import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
+import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
+import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
 import {
   trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
@@ -5656,6 +5658,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const PRIVILEGED = [
       "role", "isManager", "is_manager", "isClr", "is_clr",
       "canPublishShotgun", "can_publish_shotgun",
+      "canEditTraining", "can_edit_training",
       // The Chrome-extension credential — minted only by its own endpoint.
       "extensionKeyHash", "extension_key_hash",
       "excludeFromStats", "exclude_from_stats", "inDailyAssignments", "in_daily_assignments",
@@ -5708,6 +5711,128 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const next = isManager ? [...filtered, user.email] : filtered;
       storageExtra.updateEmailSettings({ manager_emails: JSON.stringify(next) } as any);
     }
+    res.json(updated);
+  });
+
+  /**
+   * The CLR training walkthrough.
+   *
+   * Readable by anyone signed in — it is the thing new starters are trained
+   * from. Writable only by whoever holds the grant, which today is its author.
+   * The document lives in training_manual_versions; until somebody saves for
+   * the first time, the seed in shared/clr-training.ts IS the document, so the
+   * page never renders empty on a fresh install.
+   */
+  app.get("/api/training-manual", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    let row: any = null;
+    try {
+      row = sqlite.prepare(
+        `SELECT id, content, author_name, created_at FROM training_manual_versions
+          WHERE org_id = ? ORDER BY id DESC LIMIT 1`,
+      ).get(orgId);
+    } catch { /* table predates this on an older install — fall through to seed */ }
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    res.json({
+      days: row ? readStoredManual(row.content) : TRAINING_DAYS,
+      authorName: row?.author_name || TRAINING_AUTHOR,
+      savedAt: row?.created_at ?? null,
+      // Never saved: the words are still the ones that shipped with the app.
+      isSeed: !row,
+      canEdit: canEditTraining(me),
+    });
+  });
+
+  app.put("/api/training-manual", requireAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!canEditTraining(me)) return res.status(403).json({ error: "You cannot edit the training plan." });
+    const parsed = parseTrainingDays(req.body?.days);
+    // Reject rather than repair: quietly saving a half-understood document
+    // would lose the author's work without telling them.
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error ?? "That does not look like a training plan." });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    const now = new Date().toISOString();
+    const info = sqlite.prepare(
+      `INSERT INTO training_manual_versions (org_id, content, author_user_id, author_name, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(orgId, JSON.stringify(parsed.days), Number(me?.id) || null, String(me?.name ?? "Unknown"), now);
+    audit({
+      userId: Number(me?.id) || 0, userName: String(me?.name ?? "Unknown"),
+      action: "update", entityType: "training_manual", entityId: Number(info.lastInsertRowid) || null,
+      entityLabel: "CLR training walkthrough",
+      details: JSON.stringify({ days: parsed.days.length, versionId: Number(info.lastInsertRowid) || null }),
+    });
+    res.json({ ok: true, days: parsed.days, authorName: String(me?.name ?? ""), savedAt: now, isSeed: false, canEdit: true });
+  });
+
+  /** Every past version, so a bad edit is recoverable rather than final. */
+  app.get("/api/training-manual/history", requireAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!canEditTraining(me)) return res.status(403).json({ error: "You cannot edit the training plan." });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    let rows: any[] = [];
+    try {
+      rows = sqlite.prepare(
+        `SELECT id, author_name, created_at, content FROM training_manual_versions
+          WHERE org_id = ? ORDER BY id DESC LIMIT 50`,
+      ).all(orgId) as any[];
+    } catch { rows = []; }
+    res.json({
+      versions: rows.map((r) => ({
+        id: r.id,
+        savedByName: r.author_name,
+        savedAt: r.created_at,
+        days: readStoredManual(r.content).length,
+      })),
+    });
+  });
+
+  /** Restore an earlier version by saving it again, so history stays append-only. */
+  app.post("/api/training-manual/restore/:id", requireAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!canEditTraining(me)) return res.status(403).json({ error: "You cannot edit the training plan." });
+    const versionId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(versionId)) return res.status(400).json({ error: "Invalid version." });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    const row = sqlite.prepare(
+      `SELECT content FROM training_manual_versions WHERE id = ? AND org_id = ?`,
+    ).get(versionId, orgId) as any;
+    if (!row) return res.status(404).json({ error: "That version is gone." });
+    const days = readStoredManual(row.content);
+    const now = new Date().toISOString();
+    sqlite.prepare(
+      `INSERT INTO training_manual_versions (org_id, content, author_user_id, author_name, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(orgId, JSON.stringify(days), Number(me?.id) || null, String(me?.name ?? "Unknown"), now);
+    audit({
+      userId: Number(me?.id) || 0, userName: String(me?.name ?? "Unknown"),
+      action: "update", entityType: "training_manual", entityId: versionId,
+      entityLabel: "CLR training walkthrough (restored)",
+      details: JSON.stringify({ restoredFrom: versionId }),
+    });
+    res.json({ ok: true, days, savedAt: now });
+  });
+
+  // Toggle training-plan edit access (admin only). Its author is an assistant,
+  // so this grants the one capability rather than manager rights.
+  app.patch("/api/users/:id/training-edit", requireAuth, (req: any, res) => {
+    if (req.session_user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid user id" });
+    const user = storage.getUserById(id) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const canEdit = !!req.body?.can_edit_training;
+    const updated = storage.updateUser(id, { canEditTraining: canEdit } as any);
+    audit({
+      userId: Number(req.session_user?.userId) || 0,
+      userName: (storage.getUserById(Number(req.session_user?.userId)) as any)?.name ?? "Admin",
+      action: "update", entityType: "user", entityId: id, entityLabel: user.name,
+      details: JSON.stringify({ canEditTraining: canEdit }),
+    });
     res.json(updated);
   });
 

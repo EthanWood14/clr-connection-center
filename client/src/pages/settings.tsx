@@ -2286,6 +2286,47 @@ function ShotgunPublishToggleButton({ user }: { user: any }) {
   );
 }
 
+// ── Training-plan edit toggle (admin only, shown inline on each user row) ──
+// The CLR walkthrough is written by an assistant. Granting the one capability
+// beats making him a manager so he can fix a typo in his own document.
+function TrainingEditToggleButton({ user }: { user: any }) {
+  const { toast } = useToast();
+  const canEdit = !!(user.canEditTraining ?? user.can_edit_training);
+  const mut = useMutation({
+    mutationFn: (next: boolean) =>
+      apiRequest("PATCH", `/api/users/${user.id}/training-edit`, { can_edit_training: next }),
+    onSuccess: async (updated: any, next) => {
+      queryClient.setQueryData<any[]>(["/api/users"], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(u => u.id === user.id ? { ...u, ...(updated ?? {}), canEditTraining: next } : u);
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: next ? `${user.name} can now edit the training plan` : `${user.name} can no longer edit the training plan`,
+        description: next
+          ? "An Edit button appears for them on the CLR Trainer Walkthrough."
+          : "They can still read it; the Edit button is gone.",
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to update training access", description: err.message, variant: "destructive" }),
+  });
+  // Admins already edit it by role — a per-user grant would be redundant.
+  if (user.role === "admin" || user.superAdmin || user.super_admin) return null;
+  return (
+    <Button
+      size="sm"
+      variant={canEdit ? "default" : "outline"}
+      className={`text-xs h-7 px-2 ${canEdit ? "bg-sky-600 hover:bg-sky-700 text-white border-sky-600" : ""}`}
+      onClick={() => mut.mutate(!canEdit)}
+      disabled={mut.isPending}
+      data-testid={`button-training-edit-${user.id}`}
+    >
+      {canEdit ? "✏️ Training" : "Allow training edits"}
+    </Button>
+  );
+}
+
 // ── Per-CLR Weekly Goals button + modal (admin only) ───────────────────────
 type GoalModel = 'manual' | 'adjustable' | 'staircase';
 
@@ -3312,6 +3353,7 @@ export default function Settings() {
                   {(u.role === 'assistant' || u.role === 'admin') && <SetGoalsButton user={u} />}
                   <ManagerToggleButton user={u} />
                   <ShotgunPublishToggleButton user={u} />
+                  <TrainingEditToggleButton user={u} />
                 </div>
               </div>
             ))
