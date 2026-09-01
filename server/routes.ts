@@ -21378,7 +21378,7 @@ ${note}` : daysLine;
     if (!token) return res.status(400).json({ error: "Bonzo API token not configured" });
     if (!prospectId || !stageName) return res.status(400).json({ error: "prospectId and stageName required" });
     try {
-      const out = await bonzoApiCall(token, "PATCH", `/prospects/${prospectId}`, { stage: stageName, pipeline_id: pipelineId });
+      const out = await bonzoApiCall(token, "PUT", `/prospects/${prospectId}`, { stage: stageName, pipeline_id: pipelineId });
       res.json({ ok: true, result: out });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -21899,7 +21899,7 @@ ${note}` : daysLine;
     };
     try {
       if (stageMap[outcome.outcomeType]) {
-        await bonzoApiCall(token, "PATCH", `/prospects/${prospect.bonzo_id}`, { stage: stageMap[outcome.outcomeType] });
+        await bonzoApiCall(token, "PUT", `/prospects/${prospect.bonzo_id}`, { stage: stageMap[outcome.outcomeType] });
       }
       let note = `C3 outcome: ${outcome.outcomeType}`;
       if (outcome.outcomeType === 'appointment' && outcome.appointmentDatetime) note += ` (${outcome.appointmentDatetime})`;

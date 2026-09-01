@@ -226,3 +226,14 @@ test("both halves of the write-up reach Bonzo, not just the structured one", () 
   assert.match(sync, /const fresh = already \? \[\] : halves\.filter/);
   assert.match(sync, /const convo = fresh\.join/);
 });
+
+test("no Bonzo prospect write uses PATCH", () => {
+  // Verified live 2026-09-01: PATCH /prospects/{id} returns 405 with
+  // "Supported methods: GET, HEAD, PUT, DELETE". Two calls used it and could
+  // only ever have failed.
+  for (const src of [routes, bonzo]) {
+    const calls = [...src.matchAll(/"PATCH", `\/prospects/g)];
+    assert.equal(calls.length, 0, "PATCH on /prospects is rejected by Bonzo");
+  }
+  assert.match(bonzo, /req\("PUT", `\/prospects\/\$\{prospectId\}`/);
+});

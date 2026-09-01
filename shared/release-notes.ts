@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.35.1",
+    headline: "Two Bonzo calls that could only ever fail.",
+    items: [
+      { text: "The admin “push stage to Bonzo” tool used a request type Bonzo rejects outright, so it always failed. Corrected.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.35.0",
     headline: "Transfers are tagged and named in Bonzo again, including Chris’s.",
     items: [
