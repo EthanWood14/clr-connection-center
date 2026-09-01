@@ -507,6 +507,8 @@ type NetworksResp = {
   allowedIps: string[];
   currentIp: string | null;
   recording: boolean;
+  enforcing?: boolean;
+  geofence?: { armed: boolean; radiusM: number; hasOffice: boolean };
 };
 
 function NetworkList({
@@ -660,6 +662,23 @@ function NetworksCard() {
                 emptyText="Every check-in came from an approved address."
                 onApprove={(ip) => save({ allowedIps: [...data.allowedIps, ip] }, `${ip} added as an office address`, ip)} />
             </div>
+
+            {/* The two rules in one sentence, because "is the location check on"
+                had no answer anywhere on any screen and the setting that looked
+                like it turned it off was reading a column nothing uses. */}
+            {data.geofence && (
+            <p className="rounded-md border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground"
+              data-testid="networks-rules">
+              On an approved address, a check-in is accepted and the location check is skipped.{" "}
+              {data.geofence?.armed
+                ? <>Anywhere else, it must be within <strong className="text-foreground">{data.geofence?.radiusM ?? 200}m</strong> of the office
+                    — and a device that will not share its location cannot check in at all.</>
+                : data.geofence?.hasOffice
+                ? <>Anywhere else is accepted too: the location check is off.</>
+                : <>Anywhere else is accepted too: no office location has been set.</>}
+              {data.enforcing && <> Unapproved addresses are refused outright.</>}
+            </p>
+            )}
 
             {/* An approved entry nothing matches is usually a typo or a network
                 that has since changed -- silent until it is pointed at. */}

@@ -141,3 +141,42 @@ test("the page says when nothing is being recorded, and can turn it on", () => {
   assert.match(page, /allowedIps: \[\.\.\.data\.allowedIps, ip\]/);
   assert.match(page, /\{isAdmin && <NetworksCard \/>\}/);
 });
+
+test("the geofence only ever applies off the office network", () => {
+  // This is the rule Ethan asked for and it was already the behaviour:
+  // checkinGeofence returns un-gated for anyone on an approved address.
+  const fence = routes.slice(routes.indexOf("function checkinGeofence"), routes.indexOf("function requestIp"));
+  assert.match(fence, /if \(!armed \|\| isOfficeNetwork\(req, cfg\)\)/);
+  // And isOfficeNetwork must not depend on the recording mode, or switching
+  // recording on or off would silently change who gets fenced.
+  const office = routes.slice(routes.indexOf("function isOfficeNetwork"), routes.indexOf("The 200m rule"));
+  assert.doesNotMatch(office, /networkMode/);
+});
+
+test("the panel states both rules, including the fence", () => {
+  // "Is the location check on" had no answer on any screen, and the setting
+  // that looked like it turned it off wrote checkin_location_mode, which
+  // nothing reads. That is how it ran armed for a week unnoticed.
+  assert.match(page, /data-testid="networks-rules"/);
+  assert.match(page, /the location check is skipped/);
+  // Optional-chained on purpose: during a rolling deploy the page is
+  // briefly newer than the server, and reading through a missing object
+  // white-screened the entire check-in page rather than dropping a line.
+  assert.match(page, /data\.geofence\?\.armed/);
+  assert.match(page, /\{data\.geofence && \(/);
+  assert.doesNotMatch(page, /data\.geofence\.(armed|radiusM|hasOffice)/);
+  assert.match(routes, /geofence: \{/);
+  assert.match(routes, /armed: cfg\.geoMode === "enforce" && cfg\.officeLat !== null/);
+});
+
+test("nothing reads checkin_location_mode, so nothing should pretend to", () => {
+  // Dead column. It exists only as an ALTER in storage.ts; a settings screen
+  // that once wrote it is gone. Left in place deliberately (dropping a column
+  // in SQLite rewrites the table) but nothing may start reading it again.
+  // Naming it in a comment is fine; READING it is not.
+  const code = routes.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /checkin_location_mode/);
+  assert.doesNotMatch(page, /locationMode/);
+  // The live flag is checkin_geo_mode, and that is what the config reads.
+  assert.match(routes, /s\?\.checkin_geo_mode === "enforce"/);
+});

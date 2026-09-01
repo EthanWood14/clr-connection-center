@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.36.1",
+    headline: "The check-in rules, written down where you can read them.",
+    items: [
+      { text: "The Networks panel now states both rules in one line: on an approved address a check-in is accepted and the location check is skipped; anywhere else it has to be within the office radius. That was already how it worked and was not written down anywhere.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.36.0",
     headline: "See which networks people check in from.",
     items: [

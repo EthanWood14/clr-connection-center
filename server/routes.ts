@@ -14512,6 +14512,24 @@ ${note}` : daysLine;
       // "off" records nothing at all, so the lists below stop moving and
       // quietly go stale. That has to be said, not inferred.
       recording: cfg.networkMode !== "off",
+      // Whether a check-in from an unapproved address is refused outright.
+      enforcing: cfg.networkMode === "enforce",
+      /**
+       * The location fall-back, reported here because it is the same question
+       * asked a second way and it is invisible everywhere else.
+       *
+       * checkinGeofence skips the fence entirely for anyone on an approved
+       * address, so this only ever applies to the rows under "Everywhere else".
+       * It has been armed and running the whole time, which was not apparent
+       * from any screen — an older settings page wrote a checkin_location_mode
+       * column that nothing has read since, so turning "location" off there
+       * changed nothing.
+       */
+      geofence: {
+        armed: cfg.geoMode === "enforce" && cfg.officeLat !== null && cfg.officeLng !== null,
+        radiusM: cfg.geoRadiusM,
+        hasOffice: cfg.officeLat !== null && cfg.officeLng !== null,
+      },
     });
   });
 
