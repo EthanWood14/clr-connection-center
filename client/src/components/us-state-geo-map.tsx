@@ -1,7 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import { US_STATE_PATHS, US_STATE_LABEL_POINTS, US_MAP_W, US_MAP_H } from "./us-state-paths";
 
-import { isW2OnlyState, W2_ONLY_NOTE, BUSINESS_PURPOSE_NOTE } from "@shared/w2-only-states";
+import {
+  isW2OnlyState, W2_ONLY_NOTE, BUSINESS_PURPOSE_NOTE,
+  isNoLicenseState, NO_LICENSE_NOTE,
+} from "@shared/w2-only-states";
 
 export interface GeoMapState {
   abbr: string;
@@ -47,7 +50,13 @@ const VIEW_H = US_MAP_H + 6;
 // anything derived from it would collide with the coverage ramp in one of them.
 const W2_HUE = "330 81% 60%";
 
-function fillFor(count: number, selected: boolean, w2Only = false): string {
+// Red, and deliberately NOT a ramp. The pink and blue ramps encode how many
+// loan officers are licensed; here the answer is always nobody, so a gradient
+// would be encoding a number that does not exist.
+const NO_LICENSE_HUE = "0 78% 52%";
+
+function fillFor(count: number, selected: boolean, w2Only = false, noLicense = false): string {
+  if (noLicense) return selected ? `hsl(${NO_LICENSE_HUE} / 0.85)` : `hsl(${NO_LICENSE_HUE} / 0.6)`;
   if (selected) return "hsl(var(--primary) / 0.92)";
   if (w2Only) {
     if (!count) return `hsl(${W2_HUE} / 0.2)`;
@@ -66,14 +75,17 @@ function fillFor(count: number, selected: boolean, w2Only = false): string {
 // Whether the label sitting on a given count should be light (for dark fills).
 // W2 states are excluded: their fill is a mid-tone at every count, so the light
 // ink calibrated for --primary would sit on pink at 2.3:1.
-function labelLight(count: number, selected: boolean, w2Only = false): boolean {
-  return selected || (!w2Only && count >= 4);
+function labelLight(count: number, selected: boolean, w2Only = false, noLicense = false): boolean {
+  return selected || (!w2Only && !noLicense && count >= 4);
 }
 
 // One accessible name for every control, so the W2 flag reaches somebody who
 // cannot see the colour at all — otherwise the fill is the only place it exists.
 function stateLabel(abbr: string, count: number, name?: string): string {
   const who = name ?? STATE_NAMES[abbr] ?? abbr;
+  // The stricter fact first and on its own: reading out a licence count
+  // for a state nobody can be licensed in would be actively misleading.
+  if (isNoLicenseState(abbr)) return `${who}: no one can be licensed here`;
   const w2 = isW2OnlyState(abbr) ? ", W2 borrowers only" : "";
   return `${who}: ${count} loan officer${count === 1 ? "" : "s"} licensed${w2}`;
 }
@@ -109,15 +121,26 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
         style={{ left: hover.x + 12, top: hover.y + 12, maxWidth: 220 }}
       >
         <div className="font-semibold text-popover-foreground">{STATE_NAMES[hover.abbr] ?? hover.abbr}</div>
-        <div className="text-muted-foreground">
-          {count === 0 ? "No LOs licensed" : `${count} LO${count === 1 ? "" : "s"} licensed`}
-        </div>
-        {names.length > 0 && (
-          <div className="mt-0.5 text-popover-foreground/80 leading-snug">
-            {names.slice(0, 6).join(", ")}{names.length > 6 ? ` +${names.length - 6} more` : ""}
+        {isNoLicenseState(hover.abbr) ? (
+          // No count and no names: nobody can hold this state, so a roster line
+          // would be stating a number that should always be zero, and any name
+          // still showing is a record to go and fix rather than a fact.
+          <div className="mt-1 rounded bg-red-500/15 px-1.5 py-1 font-semibold text-red-700 dark:text-red-300" data-testid="no-license-note">
+            {NO_LICENSE_NOTE}
           </div>
+        ) : (
+          <>
+            <div className="text-muted-foreground">
+              {count === 0 ? "No LOs licensed" : `${count} LO${count === 1 ? "" : "s"} licensed`}
+            </div>
+            {names.length > 0 && (
+              <div className="mt-0.5 text-popover-foreground/80 leading-snug">
+                {names.slice(0, 6).join(", ")}{names.length > 6 ? ` +${names.length - 6} more` : ""}
+              </div>
+            )}
+          </>
         )}
-        {isW2OnlyState(hover.abbr) && (
+        {!isNoLicenseState(hover.abbr) && isW2OnlyState(hover.abbr) && (
           <div className="mt-1 rounded bg-pink-500/15 px-1.5 py-1 font-semibold text-pink-700 dark:text-pink-300" data-testid="w2-only-note">
             {W2_ONLY_NOTE}
           </div>
@@ -153,7 +176,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               tabIndex={0}
               aria-label={stateLabel(abbr, count)}
               aria-pressed={selected}
-              fill={fillFor(count, selected, isW2OnlyState(abbr))}
+              fill={fillFor(count, selected, isW2OnlyState(abbr), isNoLicenseState(abbr))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={selected ? 1.6 : 0.6}
               className="cursor-pointer outline-none transition-[fill] duration-150 hover:brightness-95 focus-visible:stroke-[hsl(var(--ring))] focus-visible:[stroke-width:1.8]"
@@ -180,7 +203,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               role="button"
               tabIndex={0}
               aria-label={stateLabel("DC", count, "Washington D.C.")}
-              fill={fillFor(count, selected, isW2OnlyState("DC"))}
+              fill={fillFor(count, selected, isW2OnlyState("DC"), isNoLicenseState("DC"))}
               stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
               strokeWidth={1}
               className="cursor-pointer outline-none focus-visible:stroke-[hsl(var(--ring))]"
@@ -199,7 +222,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           if (!p || p.w < 22 || p.h < 18) return null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
-          const light = labelLight(count, selected, isW2OnlyState(abbr));
+          const light = labelLight(count, selected, isW2OnlyState(abbr), isNoLicenseState(abbr));
           const fg = light ? "hsl(var(--primary-foreground))" : "hsl(var(--foreground))";
           return (
             <g key={`lbl-${abbr}`} className="pointer-events-none" textAnchor="middle">
@@ -217,7 +240,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
           const anchor = abbr === "DC" ? DC_POS : lp ? { x: lp.x, y: lp.y } : null;
           const count = coverage[abbr] || 0;
           const selected = selectedAbbr === abbr;
-          const light = labelLight(count, selected, isW2OnlyState(abbr));
+          const light = labelLight(count, selected, isW2OnlyState(abbr), isNoLicenseState(abbr));
           return (
             <g key={`rc-${abbr}`}>
               {anchor && (
@@ -240,7 +263,7 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
               >
                 <rect
                   x={RIGHT_X - 6} y={y - 9} width={62} height={18} rx={3}
-                  fill={fillFor(count, selected, isW2OnlyState(abbr))}
+                  fill={fillFor(count, selected, isW2OnlyState(abbr), isNoLicenseState(abbr))}
                   stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
                   strokeWidth={selected ? 1.4 : 0.6}
                 />
@@ -264,6 +287,10 @@ export function UsStateGeoMap({ coverage, selectedAbbr, onSelect, namesByState }
         <span className="flex items-center gap-1.5" data-testid="w2-only-legend">
           <span className="inline-block h-2.5 w-4 rounded-sm" style={{ background: `hsl(${W2_HUE} / 0.68)` }} />
           W2 only
+        </span>
+        <span className="flex items-center gap-1.5" data-testid="no-license-legend">
+          <span className="inline-block h-2.5 w-4 rounded-sm" style={{ background: `hsl(${NO_LICENSE_HUE} / 0.6)` }} />
+          No licensing
         </span>
         <span>{BUSINESS_PURPOSE_NOTE}</span>
       </div>

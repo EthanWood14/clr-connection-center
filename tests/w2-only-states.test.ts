@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   W2_ONLY_STATES, isW2OnlyState, isPermanentlyExcludedFromW2Only,
   applyW2OnlyExclusions, BUSINESS_PURPOSE_NOTE, W2_ONLY_NOTE,
+  NO_LICENSE_STATES, isNoLicenseState, NO_LICENSE_NOTE,
 } from "../shared/w2-only-states";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,7 +58,7 @@ test("the block is enforced where every write path goes through", () => {
 
 test("the map paints them differently and explains why", () => {
   assert.match(map, /const W2_HUE/);
-  assert.match(map, /function fillFor\(count: number, selected: boolean, w2Only = false\)/);
+  assert.match(map, /function fillFor\(count: number, selected: boolean, w2Only = false, noLicense = false\)/);
   // Not just a darker blue — that would read as "more LOs licensed".
   assert.ok(!/w2Only.*var\(--primary\)/.test(map.slice(map.indexOf("if (w2Only)"), map.indexOf("if (!count)"))));
   assert.match(map, /data-testid="w2-only-legend"/);
@@ -108,8 +109,8 @@ test("the label on a pink state uses the ink that tracks the theme", () => {
   // near-black in the light theme. Pink is a mid-tone at every count, so that
   // ink measured 1.3-2.9:1 on it in both themes. --foreground is dark in the
   // light theme and cream in the dark one, which is what the pink fill needs.
-  assert.match(map, /function labelLight\(count: number, selected: boolean, w2Only = false\)/);
-  assert.match(map, /return selected \|\| \(!w2Only && count >= 4\)/);
+  assert.match(map, /function labelLight\(count: number, selected: boolean, w2Only = false, noLicense = false\)/);
+  assert.match(map, /return selected \|\| \(!w2Only && !noLicense && count >= 4\)/);
   // Both label sites must actually pass the flag, or the guard is decorative.
   const calls = [...map.matchAll(/labelLight\(([^)]*)\)/g)].map((m) => m[1].trim());
   const uses = calls.filter((c) => !c.startsWith("count: number"));
@@ -137,4 +138,76 @@ test("the W2 flag is in the accessible name, not only the colour", () => {
   // Every control routes through it -- a hand-built aria-label would silently
   // drop the flag again.
   assert.doesNotMatch(map, /aria-label=\{`[^`]*loan officer/);
+});
+
+test("nobody may be licensed in Hawaii, Illinois, Massachusetts or New York", () => {
+  // IL, MA and NY were already the only three states with no licensed loan
+  // officer on the roster; Hawaii joined them 1 Sep 2026.
+  assert.deepEqual([...NO_LICENSE_STATES].sort(), ["HI", "IL", "MA", "NY"]);
+  for (const s of NO_LICENSE_STATES) assert.ok(isNoLicenseState(s));
+  assert.ok(isNoLicenseState("hi"), "matching is case-insensitive");
+  assert.ok(!isNoLicenseState("CA"));
+});
+
+test("the block applies to everyone, not just the named exclusion", () => {
+  // The W2 rule is one person's; this one is the company's.
+  const anyone = applyW2OnlyExclusions("Nathan Coutino", ["CA", "HI", "TX"]);
+  assert.deepEqual(anyone.states, ["CA", "TX"]);
+  assert.deepEqual(anyone.removed, ["HI"]);
+  const alsoAnyone = applyW2OnlyExclusions("", ["NY", "MA", "AZ"]);
+  assert.deepEqual(alsoAnyone.states, ["AZ"]);
+  assert.deepEqual(alsoAnyone.removed.sort(), ["MA", "NY"]);
+});
+
+test("Illinois is on both lists and is not removed twice", () => {
+  // IL is W2-only AND no-licence. The stricter rule takes it; the looser one
+  // must not then report it a second time.
+  assert.ok(isW2OnlyState("IL") && isNoLicenseState("IL"));
+  const chris = applyW2OnlyExclusions("Christopher Redoble", ["IL", "GA", "CA"]);
+  assert.deepEqual(chris.states, ["CA"]);
+  assert.equal(chris.removed.filter((x) => x === "IL").length, 1, "IL reported once");
+  assert.deepEqual(chris.removed.sort(), ["GA", "IL"]);
+});
+
+test("someone with nothing to strip is returned untouched", () => {
+  const clean = applyW2OnlyExclusions("Nathan Coutino", ["CA", "TX"]);
+  assert.deepEqual(clean.states, ["CA", "TX"]);
+  assert.deepEqual(clean.removed, []);
+});
+
+test("a no-licence state is painted red, and red beats pink", () => {
+  assert.match(map, /const NO_LICENSE_HUE = "0 78% 52%"/);
+  // Flat, not a ramp: there is no quantity to encode when the answer is nobody.
+  assert.match(map, /if \(noLicense\) return selected \?/);
+  assert.doesNotMatch(map.slice(map.indexOf("if (noLicense)"), map.indexOf("if (selected)")), /count/);
+  // It is checked before the W2 branch, so Illinois reads as no-licence.
+  assert.ok(map.indexOf("if (noLicense)") < map.indexOf("if (w2Only)"));
+  assert.match(map, /data-testid="no-license-legend"/);
+});
+
+test("a no-licence state stops claiming coverage it cannot have", () => {
+  // A count or a name on one of these is a record to go and fix, not a fact to
+  // display next to the rule that forbids it.
+  assert.match(map, /isNoLicenseState\(hover\.abbr\) \? \(/);
+  assert.match(map, /data-testid="no-license-note"/);
+  assert.match(map, /!isNoLicenseState\(hover\.abbr\) && isW2OnlyState\(hover\.abbr\)/);
+  assert.match(NO_LICENSE_NOTE, /no one can be licensed/i);
+  // Business purpose still applies -- it needs no licence, which is the whole
+  // reason these states are not simply blank.
+  assert.match(BUSINESS_PURPOSE_NOTE, /business purpose loans are okay in all states/i);
+});
+
+test("every fill and label call knows about the no-licence flag", () => {
+  // Threading it into fillFor but not labelLight would put a light label on a
+  // mid-tone red, the same defect the pink ramp had.
+  // Line-wise: the nested isW2OnlyState(...) parens defeat a [^)]* match.
+  const lines = map.split(/\r?\n/);
+  const fills = lines.filter((l) => l.includes("fillFor(count, selected,"));
+  assert.equal(fills.length, 3, "three fill sites");
+  for (const f of fills) assert.match(f, /isNoLicenseState/);
+  const labels = lines.filter((l) => l.includes("labelLight(count, selected,"));
+  assert.equal(labels.length, 2, "two label sites");
+  for (const l of labels) assert.match(l, /isNoLicenseState/);
+  // Colour alone reaches nobody using a screen reader.
+  assert.match(map, /isNoLicenseState\(abbr\)\) return/);
 });

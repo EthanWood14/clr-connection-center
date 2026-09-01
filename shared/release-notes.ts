@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.37.0",
+    headline: "Four states nobody can be licensed in, marked red.",
+    items: [
+      { text: "Hawaii, Illinois, Massachusetts and New York now show red on the map: no one can be licensed in them. Illinois, Massachusetts and New York already had no licensed loan officer between them; Hawaii is new.", audience: "everyone" },
+      { text: "Those four no longer show a licence count or a list of names, because there should not be one. They still carry the reminder that business purpose loans are okay everywhere — that is the lending those states still allow, since it needs no licence.", audience: "everyone" },
+      { text: "Nobody can be added to them either. The block is applied wherever licensed states are saved, including the bulk import, so it cannot be worked around from another screen.", audience: "manager" },
+      { text: "Illinois was one of the eleven W2-only states. Red wins over pink there — “nobody can be licensed” makes “W2 borrowers only” beside the point.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.36.1",
     headline: "The check-in rules, written down where you can read them.",
     items: [

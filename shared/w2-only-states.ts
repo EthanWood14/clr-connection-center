@@ -33,6 +33,39 @@ export function isW2OnlyState(abbr: unknown): boolean {
   return W2_SET.has(String(abbr ?? "").trim().toUpperCase());
 }
 
+/**
+ * States nobody may be licensed in.
+ *
+ * Stricter than W2-only and it wins wherever the two overlap: Illinois is on
+ * both lists, and "nobody can be licensed here" makes "only W2 borrowers here"
+ * moot rather than contradicting it. Both lists stay honest; the map paints the
+ * stricter one.
+ *
+ * Chosen from the roster, not invented: Illinois, Massachusetts and New York
+ * were already the only three states with zero licensed loan officers, and
+ * Hawaii joins them by Ethan's instruction on 1 Sep 2026.
+ *
+ * Business purpose loans do not need the licence, which is why the note about
+ * them is the one thing these states still say.
+ */
+export const NO_LICENSE_STATES = [
+  "HI", // Hawaii
+  "IL", // Illinois
+  "MA", // Massachusetts
+  "NY", // New York
+] as const;
+
+export type NoLicenseState = (typeof NO_LICENSE_STATES)[number];
+
+const NO_LICENSE_SET = new Set<string>(NO_LICENSE_STATES);
+
+export function isNoLicenseState(abbr: unknown): boolean {
+  return NO_LICENSE_SET.has(String(abbr ?? "").trim().toUpperCase());
+}
+
+/** Shown on the states nobody may be licensed in. */
+export const NO_LICENSE_NOTE = "No one can be licensed in this state.";
+
 /** Shown against every state, W2-only or not. */
 export const BUSINESS_PURPOSE_NOTE =
   "Business purpose loans are okay in all states.";
@@ -66,9 +99,14 @@ export function applyW2OnlyExclusions(
   fullName: unknown,
   states: string[],
 ): { states: string[]; removed: string[] } {
-  if (!isPermanentlyExcludedFromW2Only(fullName)) return { states, removed: [] };
   const removed: string[] = [];
-  const kept = states.filter((s) => {
+  // Applies to everyone, so it is checked first and needs no name at all.
+  let kept = states.filter((s) => {
+    if (isNoLicenseState(s)) { removed.push(String(s).toUpperCase()); return false; }
+    return true;
+  });
+  if (!isPermanentlyExcludedFromW2Only(fullName)) return { states: kept, removed };
+  kept = kept.filter((s) => {
     if (isW2OnlyState(s)) { removed.push(String(s).toUpperCase()); return false; }
     return true;
   });
