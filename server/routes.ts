@@ -21583,14 +21583,17 @@ ${note}` : daysLine;
     const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
     if (!o || o.outcome_type !== "transfer") return;
     const lo = o.lo_id ? (storage.getLoanOfficerById(o.lo_id) as any) : null;
-    // When an LO has an active LOA, LAP is their document/workflow handoff.
-    // Do not also mutate the borrower in Bonzo; that would create two competing
-    // destinations for the same transfer. The transfer remains fully recorded
-    // in C3 and visible in LAP.
-    if (o.lo_id && storageExtra.hasAvailableLapAssistant(Number(o.org_id ?? 1), Number(o.lo_id))) {
-      console.log(`[bonzo-transfer] outcome=${outcomeId}: routed to available LAP assistant — Bonzo skipped`);
-      return;
-    }
+    // When an LO has an active LOA, LAP is their document/workflow handoff, so
+    // C3 must not also MUTATE the borrower in Bonzo — reassigning, moving the
+    // stage or renaming would create two competing destinations for one
+    // transfer, which is what this guard has always been for.
+    //
+    // Posting the note is a different act. It changes no workflow state; it
+    // only tells the LO what happened. Skipping it too meant a transfer to a
+    // LAP-covered LO left NO trace in Bonzo at all — not the write-up, not even
+    // the fact of it — which is how Joy Crosett's transfer to Christopher
+    // Redoble (7 active LOAs) vanished on 1 Sep 2026. Notes-only from here.
+    const lapCovered = !!(o.lo_id && storageExtra.hasAvailableLapAssistant(Number(o.org_id ?? 1), Number(o.lo_id)));
     const clr = o.assistant_id ? (storage.getUserById(o.assistant_id) as any) : null;
     // Prefer the prospect this outcome was already mirrored to (appointment →
     // transfer keeps its bonzo_prospect_id); else look up by phone (never create).
@@ -21658,7 +21661,9 @@ ${note}` : daysLine;
       } catch { /* learning is best-effort */ }
     }
     let reassigned = "not_needed";
-    if (bonzoUserId != null && snap.assignedTo !== bonzoUserId) {
+    if (lapCovered) {
+      reassigned = "skipped_lap";
+    } else if (bonzoUserId != null && snap.assignedTo !== bonzoUserId) {
       const r = await reassignProspect(prospectId, bonzoUserId, bonzoUserEmail);
       reassigned = !r.ok ? `failed:${r.error}` : r.verified ? `verified:${r.via}` : `unverified:${r.via}${r.error ? `:${r.error}` : ""}`;
       if (r.ok) {
@@ -21682,7 +21687,7 @@ ${note}` : daysLine;
     const advanced = isAdvancedStage(snap.stageName, stages, snap.stageId);
     const disqualified = DISQUALIFIED_STAGE_RE.test(String(snap.stageName ?? ""));
     const alreadyThere = wantStageRe.test(String(snap.stageName ?? ""));
-    const shouldMove = !advanced && !disqualified && !alreadyThere;
+    const shouldMove = !lapCovered && !advanced && !disqualified && !alreadyThere;
     let moved = "none";
     if (shouldMove) {
       // An explicit per-LO stage id wins — it pins the destination even if the
@@ -21715,6 +21720,10 @@ ${note}` : daysLine;
     const updates: Record<string, any> = {};
     if (!snap.lastName.includes(suffix)) updates.last_name = `${snap.lastName} ${suffix}`.trim();
     if (tagsChanged) updates.tags = tags;
+    if (lapCovered) {
+      // Leave the name and tags alone — LAP owns this borrower's workflow.
+      for (const k of Object.keys(updates)) delete updates[k];
+    }
     if (Object.keys(updates).length) {
       const r = await updateProspect(prospectId, updates);
       if (!r.ok) { console.error(`[bonzo-transfer] outcome=${outcomeId}: update failed: ${r.error}`); return; }
@@ -21755,14 +21764,16 @@ ${note}` : daysLine;
     }
     // Leave a note on the prospect when we deliberately did NOT move the stage,
     // so the LO can see the transfer was logged and why the stage stands.
-    if (advanced || disqualified) {
+    if (lapCovered || advanced || disqualified) {
       try {
-        await addProspectNote(prospectId, `CLR transfer logged — stage left at "${snap.stageName}" (${disqualified ? "disqualified leads are never revived by C3" : "App Taken→Funded deals are not moved back"}).`);
+        await addProspectNote(prospectId, lapCovered
+          ? `CLR transfer logged in C3 — stage, owner and name left as they are because this loan officer works through the LO Assistant Portal.`
+          : `CLR transfer logged — stage left at "${snap.stageName}" (${disqualified ? "disqualified leads are never revived by C3" : "App Taken→Funded deals are not moved back"}).`);
       } catch { /* note is best-effort */ }
     }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} disqualified=${disqualified} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} mode=${lapCovered ? "notes_only_lap" : "full"} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} disqualified=${disqualified} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag

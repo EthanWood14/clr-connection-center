@@ -170,8 +170,17 @@ test("C3 transfers can be linked exactly and duplicate LAP packages can be merge
 });
 
 test("an available LOA routes a transfer to LAP without a competing Bonzo update", () => {
+  // Still true, and still the point: LAP owns the borrower's workflow, so C3
+  // makes no competing UPDATE -- no reassign, no stage move, no rename.
+  // What changed on 1 Sep 2026 is that the note is no longer suppressed too.
+  // Skipping it left a transfer to any LO with an active assistant with no
+  // trace in Bonzo whatsoever, which is how Joy Crosett's went missing.
   const sync = routes.slice(routes.indexOf("async function syncTransferToBonzo"), routes.indexOf("app.post(\"/api/bonzo/test-transfer\""));
   assert.match(sync, /hasAvailableLapAssistant/);
-  assert.match(sync, /routed to available LAP assistant/);
-  assert.match(sync, /Bonzo skipped/);
+  assert.match(sync, /reassigned = "skipped_lap";/);
+  assert.match(sync, /const shouldMove = !lapCovered &&/);
+  assert.match(sync, /for \(const k of Object\.keys\(updates\)\) delete updates\[k\];/);
+  // The note is the one thing that must still go.
+  assert.match(sync, /notesToBonzoHtml\(convo/);
+  assert.doesNotMatch(sync, /Bonzo skipped/);
 });

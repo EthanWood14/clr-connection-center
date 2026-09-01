@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.34.0",
+    headline: "Transfers to loan officers with an assistant now leave a note in Bonzo.",
+    items: [
+      { text: "If the loan officer you transfer to has an assistant, C3 used to write nothing to Bonzo at all \u2014 not your write-up, not even the fact that the transfer happened. It now posts your conversation notes to the borrower in Bonzo, so the loan officer can see them without anyone pasting by hand.", audience: "everyone" },
+      { text: "Nothing else about the borrower is touched for those loan officers: C3 does not reassign them, move their pipeline stage, or rename them, because the LO Assistant Portal is still where that work happens. The note says so.", audience: "manager" },
+      { text: "Every one of these syncs now records which mode it ran in, so a transfer that does not reach Bonzo can be traced instead of disappearing quietly.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.33.0",
     headline: "Write-up scoring now matches what a call is actually worth.",
     items: [

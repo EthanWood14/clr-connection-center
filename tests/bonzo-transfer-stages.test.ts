@@ -66,7 +66,7 @@ test("the direct move is attempted first, the tag only as fallback", () => {
 
 test("advanced deals are still never dragged backwards", () => {
   assert.match(sync, /const advanced = isAdvancedStage\(snap\.stageName, stages, snap\.stageId\)/);
-  assert.match(sync, /const shouldMove = !advanced && !disqualified && !alreadyThere/);
+  assert.match(sync, /const shouldMove = .*!advanced && !disqualified && !alreadyThere/);
   assert.match(sync, /App Taken→Funded deals are not moved back/);
 });
 
@@ -162,10 +162,50 @@ test("a disqualified lead is never revived into Responded", () => {
     assert.ok(!re.test(name), `must NOT be blocked: ${name}`);
   }
   assert.match(routes, /const DISQUALIFIED_STAGE_RE = /);
-  assert.match(sync, /const shouldMove = !advanced && !disqualified && !alreadyThere;/);
+  assert.match(sync, /const shouldMove = .*!advanced && !disqualified && !alreadyThere;/);
   // It blocks moves; it must never be used to pick a destination.
   const target = sync.slice(sync.indexOf('let moved = "none"'), sync.indexOf("// ── 3. Rename"));
   assert.ok(!/DISQUALIFIED_STAGE_RE/.test(target), "never a move target, only a blocker");
   assert.match(sync, /disqualified are never revived|disqualified leads are never revived/,
     "the LO gets a note explaining why the stage stands");
+});
+
+test("a LAP-covered transfer still leaves a note in Bonzo", () => {
+  // The guard exists so C3 does not fight LAP over who owns the borrower's
+  // workflow. Skipping the NOTE as well meant a transfer to any LO with an
+  // active assistant left no trace in Bonzo at all -- Joy Crosett to
+  // Christopher Redoble, 1 Sep 2026. A note changes no workflow state.
+  assert.match(sync, /const lapCovered = !!\(o\.lo_id && storageExtra\.hasAvailableLapAssistant/);
+  // It must NOT be an early return any more.
+  const gate = sync.slice(sync.indexOf("lapCovered"), sync.indexOf("const clr ="));
+  assert.doesNotMatch(gate, /\breturn;/, "LAP coverage must not abort the sync");
+});
+
+test("LAP coverage suppresses every write that mutates the borrower", () => {
+  // Reassign, stage move and rename are the three that would create a second
+  // destination for the same transfer. All three stay off.
+  assert.match(sync, /if \(lapCovered\) \{\s*\r?\n\s*reassigned = "skipped_lap";/);
+  assert.match(sync, /const shouldMove = !lapCovered &&/);
+  assert.match(sync, /if \(lapCovered\) \{[\s\S]{0,200}?for \(const k of Object\.keys\(updates\)\) delete updates\[k\];/);
+});
+
+test("the conversation notes are what actually reach the LO", () => {
+  // The write-up is the point of the note; posting only "a transfer happened"
+  // would not have answered the complaint.
+  assert.match(sync, /const convo = String\(o\.conversation_notes \?\? ""\)\.trim\(\);/);
+  // Bonzo renders notes as HTML, so newlines have to be real markup or the
+  // whole write-up collapses into one run-on line.
+  assert.match(sync, /notesToBonzoHtml\(convo/);
+  // And it is deduped, so a re-run cannot post it twice.
+  assert.match(sync, /transferNoteMarker\(outcomeId\)/);
+});
+
+test("a LAP transfer says why nothing else moved", () => {
+  assert.match(sync, /if \(lapCovered \|\| advanced \|\| disqualified\)/);
+  assert.match(sync, /works through the LO Assistant Portal/);
+});
+
+test("the log says which mode ran", () => {
+  // Silent skipping is how this went unnoticed; the mode has to be readable.
+  assert.match(sync, /mode=\$\{lapCovered \? "notes_only_lap" : "full"\}/);
 });
