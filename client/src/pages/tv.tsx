@@ -44,6 +44,7 @@ interface Person {
   appointmentsToday: number; appointmentsWeek: number; goalTransfersWeekly: number; goalAppointmentsWeekly: number;
   lastTransferAt?: string | null; lastCallAt?: string | null;
 }
+interface Aside { name: string; today: number; week: number }
 interface Milestone { id: string; kind: string; headline: string; detail: string; weight: 1 | 2 | 3 }
 interface Tip { day: number; half: "morning" | "afternoon" | "eod"; text: string; author: string }
 interface Feed {
@@ -53,6 +54,7 @@ interface Feed {
     team: { transfersToday: number; transfersWeek: number; appointmentsToday: number; fellThroughToday: number; missedToday: number };
   };
   events: TvEvent[]; recent: TvEvent[]; milestones: Milestone[]; tip: Tip | null;
+  aside?: Aside[];
 }
 
 type Moment =
@@ -702,6 +704,7 @@ export default function TvBoard() {
   }, [deck.length]);
 
   const people = data?.scorecard.people ?? [];
+  const aside = data?.aside ?? [];
   const team = data?.scorecard.team ?? { transfersToday: 0, transfersWeek: 0, appointmentsToday: 0, fellThroughToday: 0, missedToday: 0 };
   const teamGoal = useMemo(() => people.reduce((n, p) => n + p.goalTransfersWeekly, 0), [people]);
 
@@ -857,6 +860,23 @@ export default function TvBoard() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* Off the ranking, in the corner. Someone flagged out of the stats is
+          kept out of the chart on purpose, but the team total still counts
+          them — so the wall names the difference instead of leaving two
+          numbers that do not add up. */}
+      {!!aside.length && !current && (
+        <div className="pointer-events-none absolute bottom-16 right-10 z-20 max-w-[26vw] rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4 text-right backdrop-blur-sm" data-testid="tv-aside">
+          <div className="text-[clamp(0.8rem,1vw,1rem)] font-semibold uppercase tracking-[0.25em] text-white/35">Not ranked</div>
+          {aside.slice(0, 3).map((a) => (
+            <div key={a.name} className="mt-2 flex items-baseline justify-end gap-3">
+              <span className="truncate text-[clamp(1.1rem,1.6vw,1.7rem)] font-bold text-white/70" title={a.name}>{a.name}</span>
+              <span className="text-[clamp(1.6rem,2.4vw,2.6rem)] font-black leading-none text-amber-300/80">{a.today}</span>
+              <span className="text-[clamp(0.8rem,1vw,1rem)] text-white/35">today</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── progress dots: which page, and how long until the next ── */}
       <footer className="relative z-10 flex h-10 items-center justify-center gap-3" aria-hidden="true">

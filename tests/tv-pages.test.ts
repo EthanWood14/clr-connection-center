@@ -245,10 +245,15 @@ test("the CallSync update path writes the delta columns", () => {
   assert.match(body, /<> callsync_agent_activity_daily\.active_seconds/);
 });
 
-test("EOD is anchored to the previous business day and carries no note text", () => {
+test("EOD is anchored to today, and carries no note text", () => {
   const body = pagesRoute();
-  assert.match(body, /previousBusinessDay\(w\.today\)/);
   const eod = body.slice(body.indexOf('section("eod"'), body.indexOf('section("phoneTime"'));
+  // Today, deliberately. The deadline is 4pm the NEXT business day, so this
+  // board is empty for most of the day — which is why the deck only gives it
+  // the wall between 3.30 and 6pm, while people are filing. In that window
+  // "who still owes one" is the useful question and yesterday's answer is not.
+  assert.match(eod, /const forDate = w\.today;/);
+  assert.doesNotMatch(eod, /previousBusinessDay/);
   assert.ok(!/\be\.notes\b/.test(eod), "report notes name borrowers and never reach the wall");
 });
 

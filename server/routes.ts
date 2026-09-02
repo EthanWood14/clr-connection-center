@@ -20035,18 +20035,28 @@ ${note}` : daysLine;
     // ── scorecard ────────────────────────────────────────────────────────
     const clrs = sqlite.prepare(
       `SELECT id, name, goal_transfers_weekly, goal_appointments_weekly
-         FROM users u
-        WHERE u.org_id=? AND u.is_clr=1 AND u.is_active=1 AND u.archived_at IS NULL
-          AND (COALESCE(u.exclude_from_stats,0)=0 OR EXISTS (
-            -- Someone flagged out of the stats still belongs on the wall the
-            -- moment they put work on the board. Elleine is the case: top
-            -- producer, flagged out, and her absence made the team total
-            -- disagree with every name listed under it.
-                SELECT 1 FROM lead_outcomes o
-                 WHERE o.assistant_id=u.id AND o.org_id=u.org_id
-                   AND o.outcome_type='transfer' AND o.date >= ?
-              ))`,
-    ).all(orgId, monthStart) as any[];
+         FROM users
+        WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
+          AND archived_at IS NULL`,
+    ).all(orgId) as any[];
+
+    // Off the ranking, but not off the wall. Someone flagged out of the stats
+    // is deliberately absent from the chart — ranking them against people on
+    // different work is what the flag exists to prevent — yet the team total
+    // still counts them, so the board has to say who the difference is or its
+    // own arithmetic looks broken. Elleine is the whole reason: top producer,
+    // flagged out. She gets the corner, not a bar.
+    const aside = sqlite.prepare(
+      `SELECT u.name AS name,
+              SUM(CASE WHEN o.date = ?  THEN 1 ELSE 0 END) AS today,
+              SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS week
+         FROM lead_outcomes o JOIN users u ON u.id = o.assistant_id
+        WHERE o.org_id=? AND o.outcome_type='transfer' AND o.date >= ?
+          AND COALESCE(u.exclude_from_stats,0)=1
+        GROUP BY u.id
+        HAVING today > 0 OR week > 0
+        ORDER BY today DESC, week DESC`,
+    ).all(today, weekStart, orgId, weekStart) as any[];
     const ids = clrs.map((c) => Number(c.id));
     const counts = new Map<string, number>();
     if (ids.length) {
@@ -20170,6 +20180,9 @@ ${note}` : daysLine;
       version: APP_VERSION,
       now: new Date().toISOString(),
       today, weekStart, cursor,
+      // Named separately so the board can give them a corner rather than a
+      // place in the ranking. See `aside` above.
+      aside: aside.map((r) => ({ name: String(r.name ?? ""), today: Number(r.today) || 0, week: Number(r.week) || 0 })),
       scorecard: {
         people: people.map(({ bestDayBefore, ...p }) => p),
         team: {
@@ -20234,19 +20247,11 @@ ${note}` : daysLine;
       let roster: Array<{ id: number; name: string }> = [];
       try {
         roster = (sqlite.prepare(
-          `SELECT id, name FROM users u
-            WHERE u.org_id=? AND u.is_clr=1 AND u.is_active=1 AND u.archived_at IS NULL
-              AND (COALESCE(u.exclude_from_stats,0)=0 OR EXISTS (
-            -- Someone flagged out of the stats still belongs on the wall the
-            -- moment they put work on the board. Elleine is the case: top
-            -- producer, flagged out, and her absence made the team total
-            -- disagree with every name listed under it.
-                    SELECT 1 FROM lead_outcomes o
-                     WHERE o.assistant_id=u.id AND o.org_id=u.org_id
-                       AND o.outcome_type='transfer' AND o.date >= ?
-                  ))
+          `SELECT id, name FROM users
+            WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
+              AND archived_at IS NULL
             ORDER BY name COLLATE NOCASE ASC`,
-        ).all(orgId, w.monthStart) as any[]).map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
+        ).all(orgId) as any[]).map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
       } catch (e: any) {
         console.error("[tv-pages] roster failed:", e?.message ?? e);
       }
@@ -20432,11 +20437,12 @@ ${note}` : daysLine;
 
       // ── EOD reports, for the PREVIOUS business day ───────────────────────
       section("eod", () => {
-        // Not today. The deadline is 4pm the next business day, so during the
-        // working day there are legitimately zero reports for today — a board
-        // anchored to today would show "0 submitted" every morning and be
-        // reporting the deadline rather than the team.
-        const forDate = previousBusinessDay(w.today);
+        // TODAY, on purpose. The deadline is 4pm the NEXT business day, so
+        // for most of the day this board would be empty — which is why the
+        // deck only gives it the wall between 3.30 and 6pm, when people are
+        // actually filing. In that window "who still owes one" is the useful
+        // question, and yesterday's answer is not.
+        const forDate = w.today;
         // eod_reports has no org_id either; again the users join is the scope.
         const rows = sqlite.prepare(
           `SELECT e.assistant_id AS id, e.submitted_at AS at

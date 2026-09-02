@@ -64,7 +64,26 @@ export function whenLabel(iso: string | null | undefined, tz = "America/Los_Ange
   // Shape first. V8's legacy date parser is lenient enough to read "garbage"
   // as a real date, which would put a fake time on the wall.
   if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) return clean(s, 40) || null;
-  const d = new Date(s.length <= 16 ? `${s}:00` : s);
+  // A stamp with no zone is a WALL CLOCK: an appointment typed as 14:30 means
+  // half two in the office, whatever the server thinks the time is. Handing
+  // that string to new Date() reads it in the SERVER's zone — and the server
+  // runs in UTC, so a 2:30 PM appointment came out on the wall as 7:30 AM.
+  // Read the digits and render them; only convert when a zone is actually
+  // present.
+  const naive = !/(Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  if (naive) {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    if (!m) return clean(s, 40) || null;
+    const [, y, mo, day, hh, mm] = m;
+    const h24 = Number(hh);
+    if (!Number.isFinite(h24) || h24 > 23 || Number(mm) > 59) return clean(s, 40) || null;
+    // Noon UTC so the weekday can never slide across a date boundary.
+    const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" })
+      .format(new Date(`${y}-${mo}-${day}T12:00:00Z`));
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${weekday} ${h12}:${mm} ${h24 < 12 ? "AM" : "PM"}`;
+  }
+  const d = new Date(s);
   if (isNaN(d.getTime())) return clean(s, 40) || null;
   try {
     return new Intl.DateTimeFormat("en-US", {

@@ -449,3 +449,26 @@ test("board data is unpacked into what each page actually takes", () => {
   assert.doesNotMatch(page, /team=\{board\?\.writeUps\?\.team\}/);
   assert.doesNotMatch(page, /submitted=\{board\?\.eod\?\.submitted \?\? \[\]\}/);
 });
+
+test("an appointment time is the clock the office typed, whatever zone the server is in", () => {
+  // Live bug. appointment_datetime has no timezone — "14:30" means half two
+  // in the office. Passing it to new Date() reads it in the SERVER's zone,
+  // and the server runs in UTC, so 2:30 PM appointments were on the wall as
+  // 7:30 AM. Naive stamps are now rendered from their own digits.
+  const tzs = ["UTC", "America/New_York", "Asia/Manila", "America/Los_Angeles"];
+  const original = process.env.TZ;
+  try {
+    for (const tz of tzs) {
+      process.env.TZ = tz;
+      assert.match(String(whenLabel("2026-09-03T14:30")), /Thu 2:30 PM/, tz);
+      assert.match(String(whenLabel("2026-09-03T09:05")), /Thu 9:05 AM/, tz);
+      assert.match(String(whenLabel("2026-09-03T00:15")), /Thu 12:15 AM/, tz);
+      assert.match(String(whenLabel("2026-09-03T12:00")), /Thu 12:00 PM/, tz);
+    }
+  } finally { process.env.TZ = original; }
+  // A stamp that DOES carry a zone is still converted to the office's time.
+  assert.match(String(whenLabel("2026-09-03T21:30:00.000Z")), /2:30\s?PM/);
+  // Nonsense is still shown as-is rather than invented.
+  assert.equal(whenLabel("garbage"), "garbage");
+  assert.equal(whenLabel("2026-09-03T99:99"), "2026-09-03T99:99");
+});

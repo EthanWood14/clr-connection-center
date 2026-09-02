@@ -21,8 +21,8 @@
  *  2. A total that counts people the list does not is said out loud, and a
  *     plurality of blanks is never dressed up as a category.
  */
-import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy } from "lucide-react";
 
@@ -79,6 +79,98 @@ const COLS = "grid grid-cols-[4rem_1fr_12rem] items-center gap-6";
 const COLS_WIDE = "grid grid-cols-[4rem_1fr_15rem] items-center gap-6";
 const GOLD_BAR = "bg-gradient-to-r from-amber-400 to-yellow-300";
 const COOL_BAR = "bg-gradient-to-r from-sky-500 to-cyan-400";
+
+// ── the pan ─────────────────────────────────────────────────────────────────
+/**
+ * How long each page's pan takes, in seconds — one entry per page, matched to
+ * that page's dwell in tv.tsx's DECK.
+ *
+ * They have to be written down here rather than passed in, because these pages
+ * are handed data and nothing else; the deck is not theirs to know about. So
+ * this table is the coupling, in one place, named after the thing it mirrors.
+ * If a dwell moves in DECK, move its twin here.
+ *
+ * The duration IS the dwell, the same as the scorecard's: the keyframes reach
+ * the bottom of the list at 56% and hold it to 74%, so the whole list has been
+ * read well inside the page's time on screen, and only the tail of the glide
+ * back to the top is clipped by the page turning over.
+ */
+const PAN_SECONDS = {
+  transfers: 12,   // transfersWeek / transfersMonth, both 12_000
+  writeup: 12,
+  assignments: 12,
+  eod: 12,
+  phoneTime: 11,
+  leadSource: 11,
+  onPhoneNow: 9,
+  starved: 13,
+} as const;
+
+/** The clipping box a panned list lives in, as a flex child. */
+const PAN_BOX = "min-h-0 flex-1 overflow-hidden";
+
+/**
+ * Pan a list that does not fit instead of cutting it off.
+ *
+ * The whole list slides up over the page's dwell and comes back, using the
+ * board-wide `tv-pan` keyframes tv.tsx defines once on the root — this file
+ * must not declare a second copy of them.
+ *
+ * The distance is MEASURED, not worked out from a row height. Half the lists
+ * on this wall wrap — the assignment chips, the two EOD name columns, the roll
+ * call — so "rows times a row height" is not a number that exists for them,
+ * and the ones with uniform rows are sized in clamp() units that change with
+ * the screen. What is true of all of them is how much taller the content is
+ * than the box holding it, so that is what gets asked, and the pan is exactly
+ * that far: the last name lands on the bottom edge, never short of it and
+ * never into empty space below it.
+ *
+ * Put `ref` on a clipping box (PAN_BOX as a flex child) and `style` on the one
+ * list inside it. A list that fits gets no animation at all, and neither does
+ * anything under reduced motion — there the first screenful simply sits still,
+ * which is why `overflowing` stays true either way: it drives the quiet count
+ * line, and a reader who is not being panned needs it more, not less.
+ */
+function usePan(seconds: number, reduced: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [over, setOver] = useState(0);
+  // Deliberately no dependency list. The board polls every thirty seconds and
+  // a list can grow under a page that is already up, so this re-measures after
+  // every render; it settles immediately because the answer does not change
+  // unless the layout does.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const next = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (Math.abs(next - over) > 1) setOver(next);
+  });
+  const panning = over > 1 && !reduced;
+  return {
+    ref,
+    /** True when the list is taller than its box, panning or not. */
+    overflowing: over > 1,
+    style: panning
+      ? ({
+          animation: `tv-pan ${seconds}s ease-in-out 1.2s both`,
+          "--tv-pan": `-${Math.round(over)}px`,
+        } as CSSProperties)
+      : undefined,
+  };
+}
+
+/**
+ * "13 on the board" — the line under a list that is panning.
+ *
+ * Quiet on purpose. It is not a statistic, it is the answer to "is that all of
+ * them?", which is the question a moving list puts in a reader's head.
+ */
+function PanCount({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-2 shrink-0 text-center text-[clamp(0.85rem,1.1vw,1.1rem)] text-white/30" data-testid="tv-pan-count">
+      {children}
+    </p>
+  );
+}
 
 /** The pill opposite a page title — a leader, or a team figure. */
 function HeaderPill({ tone = "cool", icon, children }: { tone?: "gold" | "cool"; icon?: ReactNode; children: ReactNode }) {
@@ -212,6 +304,7 @@ export function TransfersPage({ window: win, people, team, excluded, reduced }: 
   excluded: TvExcluded[];
   reduced: boolean;
 }) {
+  const pan = usePan(PAN_SECONDS.transfers, reduced);
   const leader = people[0];
   const max = Math.max(1, leader?.count ?? 1);
   const hidden = (excluded ?? []).filter((e) => e && e.name);
@@ -236,17 +329,20 @@ export function TransfersPage({ window: win, people, team, excluded, reduced }: 
         )}
       </div>
 
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {people.slice(0, 8).map((p, i) => (
-          <MeterRow
-            key={p.id} rank={i + 1} name={p.name} reduced={reduced}
-            gold={i === 0 && p.count > 0}
-            meterPct={(p.count / max) * 100}
-            value={<CountUp value={p.count} className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black" />}
-          />
-        ))}
-        {!people.length && <li className={EMPTY}>Nobody has transferred {WINDOW_SUFFIX[win]} yet.</li>}
-      </motion.ul>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-4" style={pan.style}>
+          {people.map((p, i) => (
+            <MeterRow
+              key={p.id} rank={i + 1} name={p.name} reduced={reduced}
+              gold={i === 0 && p.count > 0}
+              meterPct={(p.count / max) * 100}
+              value={<CountUp value={p.count} className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black" />}
+            />
+          ))}
+          {!people.length && <li className={EMPTY}>Nobody has transferred {WINDOW_SUFFIX[win]} yet.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{people.length} on the board</PanCount>}
 
       <motion.div
         initial={{ opacity: 0, y: reduced ? 0 : 18 }} animate={{ opacity: 1, y: 0 }}
@@ -288,37 +384,44 @@ export function WriteUpPage({ people, team, reduced }: {
   team: number | null;
   reduced: boolean;
 }) {
+  const pan = usePan(PAN_SECONDS.writeup, reduced);
   return (
     <div className={PAGE} data-testid="tv-page-writeup">
       <div className="mb-8 flex items-end justify-between gap-8">
         <div className="min-w-0">
           <Eyebrow>This week</Eyebrow>
-          <h2 className={TITLE}>Write-up complete</h2>
+          {/* Titled for the people at the top of it, not the people at the
+              bottom. Same number either way, but "write-up complete" reads as
+              a compliance score on a wall the whole floor sees. */}
+          <h2 className={TITLE}>Most thorough transfers</h2>
         </div>
         <HeaderPill icon={<ClipboardCheck className="h-8 w-8 shrink-0" />}>
           Team&nbsp;<span className="font-black text-white">{team == null ? "—" : `${Math.round(team)}%`}</span>
         </HeaderPill>
       </div>
 
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {people.slice(0, 8).map((p, i) => {
-          const scored = p.pct != null;
-          const pct = scored ? Math.round(p.pct as number) : 0;
-          return (
-            <MeterRow
-              key={p.id} rank={i + 1} name={p.name} reduced={reduced}
-              gold={i === 0 && scored}
-              meterPct={scored ? pct : 0}
-              right={scored ? `${p.transfers} ${p.transfers === 1 ? "transfer" : "transfers"}` : undefined}
-              note={scored ? undefined : "no transfers this week"}
-              value={scored
-                ? <span className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black"><CountUp value={pct} />%</span>
-                : <span className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black text-white/25">—</span>}
-            />
-          );
-        })}
-        {!people.length && <li className={EMPTY}>No write-ups to score this week.</li>}
-      </motion.ul>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-4" style={pan.style}>
+          {people.map((p, i) => {
+            const scored = p.pct != null;
+            const pct = scored ? Math.round(p.pct as number) : 0;
+            return (
+              <MeterRow
+                key={p.id} rank={i + 1} name={p.name} reduced={reduced}
+                gold={i === 0 && scored}
+                meterPct={scored ? pct : 0}
+                right={scored ? `${p.transfers} ${p.transfers === 1 ? "transfer" : "transfers"}` : undefined}
+                note={scored ? undefined : "no transfers this week"}
+                value={scored
+                  ? <span className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black"><CountUp value={pct} />%</span>
+                  : <span className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black text-white/25">—</span>}
+              />
+            );
+          })}
+          {!people.length && <li className={EMPTY}>No write-ups to score this week.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{people.length} on the board</PanCount>}
     </div>
   );
 }
@@ -339,7 +442,12 @@ export function AssignmentsPage({ people, reduced }: {
   people: TvAssignmentRow[];
   reduced: boolean;
 }) {
+  // Per ROW, not per page: a CLR with nine LOs still gets one line of chips and
+  // a "+5 more", because the row already says "9 loan officers" beside the name
+  // and a row three chip-lines tall would push the CLR under it off the screen.
+  // The page-level cut is the one that has gone — every CLR is rendered now.
   const SHOWN = 4;
+  const pan = usePan(PAN_SECONDS.assignments, reduced);
   return (
     <div className={PAGE} data-testid="tv-page-assignments">
       <div className="mb-8 flex items-end justify-between gap-8">
@@ -350,33 +458,36 @@ export function AssignmentsPage({ people, reduced }: {
         <HeaderPill icon={<ClipboardList className="h-8 w-8 shrink-0" />}>Who each CLR has today</HeaderPill>
       </div>
 
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {people.slice(0, 7).map((p, i) => {
-          const los = p.los ?? [];
-          const extra = los.length - SHOWN;
-          return (
-            <motion.li
-              key={p.id} variants={rise(reduced)}
-              className="grid grid-cols-[4rem_18rem_1fr] items-center gap-6 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4"
-              data-testid="tv-row"
-            >
-              <span className="text-[clamp(1.6rem,2.6vw,2.8rem)] font-black text-white/35">{i + 1}</span>
-              <div className="min-w-0">
-                <p className="truncate text-[clamp(1.6rem,2.6vw,2.8rem)] font-bold leading-tight" title={p.name}>{p.name}</p>
-                <p className="text-[clamp(1rem,1.3vw,1.3rem)] text-white/40">
-                  {los.length} {los.length === 1 ? "loan officer" : "loan officers"}
-                </p>
-              </div>
-              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2.5">
-                {los.slice(0, SHOWN).map((lo, j) => <NameChip key={`${lo}-${j}`} name={lo} />)}
-                {extra > 0 && <NameChip name={`+${extra} more`} tone="quiet" />}
-                {!los.length && <span className="text-[clamp(1.1rem,1.6vw,1.6rem)] text-white/35">nobody assigned yet</span>}
-              </div>
-            </motion.li>
-          );
-        })}
-        {!people.length && <li className={EMPTY}>No assignments have been dealt today.</li>}
-      </motion.ul>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-4" style={pan.style}>
+          {people.map((p, i) => {
+            const los = p.los ?? [];
+            const extra = los.length - SHOWN;
+            return (
+              <motion.li
+                key={p.id} variants={rise(reduced)}
+                className="grid grid-cols-[4rem_18rem_1fr] items-center gap-6 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4"
+                data-testid="tv-row"
+              >
+                <span className="text-[clamp(1.6rem,2.6vw,2.8rem)] font-black text-white/35">{i + 1}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-[clamp(1.6rem,2.6vw,2.8rem)] font-bold leading-tight" title={p.name}>{p.name}</p>
+                  <p className="text-[clamp(1rem,1.3vw,1.3rem)] text-white/40">
+                    {los.length} {los.length === 1 ? "loan officer" : "loan officers"}
+                  </p>
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2.5">
+                  {los.slice(0, SHOWN).map((lo, j) => <NameChip key={`${lo}-${j}`} name={lo} />)}
+                  {extra > 0 && <NameChip name={`+${extra} more`} tone="quiet" />}
+                  {!los.length && <span className="text-[clamp(1.1rem,1.6vw,1.6rem)] text-white/35">nobody assigned yet</span>}
+                </div>
+              </motion.li>
+            );
+          })}
+          {!people.length && <li className={EMPTY}>No assignments have been dealt today.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{people.length} CLRs on the board</PanCount>}
     </div>
   );
 }
@@ -398,6 +509,11 @@ export function EodPage({ forDate, submitted, missing, reduced }: {
   reduced: boolean;
 }) {
   const total = submitted.length + missing.length;
+  // Two lists on one page, panned independently: a day where twelve of thirteen
+  // are still outstanding is exactly the day the outstanding column is too long,
+  // and holding them in step would drag the short one for no reason.
+  const inPan = usePan(PAN_SECONDS.eod, reduced);
+  const outPan = usePan(PAN_SECONDS.eod, reduced);
   return (
     <div className={PAGE} data-testid="tv-page-eod">
       <div className="mb-8 flex items-end justify-between gap-8">
@@ -418,10 +534,13 @@ export function EodPage({ forDate, submitted, missing, reduced }: {
             <Eyebrow>Submitted</Eyebrow>
             <CountUp value={submitted.length} className="text-[clamp(1.8rem,2.8vw,3rem)] font-black leading-none text-emerald-300" />
           </div>
-          <div className="mt-5 flex min-h-0 flex-1 flex-wrap content-start gap-3 overflow-hidden" data-testid="tv-eod-submitted">
-            {submitted.map((n, i) => <NameChip key={`${n}-${i}`} name={n} tone="live" />)}
-            {!submitted.length && <p className={EMPTY}>Nobody has filed one yet.</p>}
+          <div ref={inPan.ref} className="mt-5 min-h-0 flex-1 overflow-hidden">
+            <div className="flex flex-wrap content-start gap-3" style={inPan.style} data-testid="tv-eod-submitted">
+              {submitted.map((n, i) => <NameChip key={`${n}-${i}`} name={n} tone="live" />)}
+              {!submitted.length && <p className={EMPTY}>Nobody has filed one yet.</p>}
+            </div>
           </div>
+          {inPan.overflowing && <PanCount>{submitted.length} in all</PanCount>}
         </motion.section>
 
         <motion.section variants={rise(reduced)} className="flex min-h-0 flex-col rounded-3xl border border-white/10 bg-white/[0.04] p-8">
@@ -429,10 +548,13 @@ export function EodPage({ forDate, submitted, missing, reduced }: {
             <Eyebrow>Still outstanding</Eyebrow>
             <CountUp value={missing.length} className="text-[clamp(1.8rem,2.8vw,3rem)] font-black leading-none text-amber-300" />
           </div>
-          <div className="mt-5 flex min-h-0 flex-1 flex-wrap content-start gap-3 overflow-hidden" data-testid="tv-eod-missing">
-            {missing.map((n, i) => <NameChip key={`${n}-${i}`} name={n} tone="quiet" />)}
-            {!missing.length && <p className={EMPTY}>{total ? "Everyone is in." : "Nobody was on the board that day."}</p>}
+          <div ref={outPan.ref} className="mt-5 min-h-0 flex-1 overflow-hidden">
+            <div className="flex flex-wrap content-start gap-3" style={outPan.style} data-testid="tv-eod-missing">
+              {missing.map((n, i) => <NameChip key={`${n}-${i}`} name={n} tone="quiet" />)}
+              {!missing.length && <p className={EMPTY}>{total ? "Everyone is in." : "Nobody was on the board that day."}</p>}
+            </div>
           </div>
+          {outPan.overflowing && <PanCount>{missing.length} in all</PanCount>}
         </motion.section>
       </motion.div>
     </div>
@@ -455,6 +577,7 @@ export function PhoneTimePage({ people, teamSeconds, reduced }: {
   teamSeconds: number;
   reduced: boolean;
 }) {
+  const pan = usePan(PAN_SECONDS.phoneTime, reduced);
   const max = Math.max(1, ...people.map((p) => Number(p.seconds) || 0));
   return (
     <div className={PAGE} data-testid="tv-page-phone-time">
@@ -469,24 +592,27 @@ export function PhoneTimePage({ people, teamSeconds, reduced }: {
         </HeaderPill>
       </div>
 
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {people.slice(0, 8).map((p, i) => {
-          const secs = Number(p.seconds) || 0;
-          return (
-            <MeterRow
-              key={p.id} rank={i + 1} name={p.name} reduced={reduced} cols={COLS_WIDE}
-              gold={i === 0 && secs > 0}
-              meterPct={(secs / max) * 100}
-              value={
-                <span className={`whitespace-nowrap text-[clamp(1.9rem,3vw,3.2rem)] font-black ${secs > 0 ? "" : "text-white/25"}`}>
-                  {hoursMinutes(secs)}
-                </span>
-              }
-            />
-          );
-        })}
-        {!people.length && <li className={EMPTY}>No dialer time recorded today.</li>}
-      </motion.ul>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-4" style={pan.style}>
+          {people.map((p, i) => {
+            const secs = Number(p.seconds) || 0;
+            return (
+              <MeterRow
+                key={p.id} rank={i + 1} name={p.name} reduced={reduced} cols={COLS_WIDE}
+                gold={i === 0 && secs > 0}
+                meterPct={(secs / max) * 100}
+                value={
+                  <span className={`whitespace-nowrap text-[clamp(1.9rem,3vw,3.2rem)] font-black ${secs > 0 ? "" : "text-white/25"}`}>
+                    {hoursMinutes(secs)}
+                  </span>
+                }
+              />
+            );
+          })}
+          {!people.length && <li className={EMPTY}>No dialer time recorded today.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{people.length} on the board</PanCount>}
     </div>
   );
 }
@@ -512,6 +638,7 @@ export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced 
   fromDate?: string | null;
   reduced: boolean;
 }) {
+  const pan = usePan(PAN_SECONDS.leadSource, reduced);
   const cov = Math.max(0, Math.min(1, Number(coverage) || 0));
   const known = rows.reduce((n, r) => n + (Number(r.count) || 0), 0);
   const max = Math.max(1, ...rows.map((r) => Number(r.count) || 0));
@@ -533,22 +660,25 @@ export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced 
         </HeaderPill>
       </div>
 
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {rows.slice(0, 7).map((r, i) => {
-          const n = Number(r.count) || 0;
-          const share = known ? Math.round((n / known) * 100) : 0;
-          return (
-            <MeterRow
-              key={`${r.source}-${i}`} rank={i + 1} name={r.source} reduced={reduced}
-              gold={i === 0 && n > 0}
-              meterPct={(n / max) * 100}
-              right={`${share}%${thin ? " of sourced" : ""}`}
-              value={<CountUp value={n} className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black" />}
-            />
-          );
-        })}
-        {!rows.length && <li className={EMPTY}>No transfers carry a lead source {WINDOW_SUFFIX[win]}.</li>}
-      </motion.ul>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-4" style={pan.style}>
+          {rows.map((r, i) => {
+            const n = Number(r.count) || 0;
+            const share = known ? Math.round((n / known) * 100) : 0;
+            return (
+              <MeterRow
+                key={`${r.source}-${i}`} rank={i + 1} name={r.source} reduced={reduced}
+                gold={i === 0 && n > 0}
+                meterPct={(n / max) * 100}
+                right={`${share}%${thin ? " of sourced" : ""}`}
+                value={<CountUp value={n} className="text-[clamp(2.6rem,4.4vw,4.8rem)] font-black" />}
+              />
+            );
+          })}
+          {!rows.length && <li className={EMPTY}>No transfers carry a lead source {WINDOW_SUFFIX[win]}.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{rows.length} sources in all</PanCount>}
 
       {thin && (
         <motion.p
@@ -580,6 +710,7 @@ export function OnPhoneNowPage({ people, count, reduced }: {
   count: number;
   reduced: boolean;
 }) {
+  const pan = usePan(PAN_SECONDS.onPhoneNow, reduced);
   return (
     <div className={PAGE} data-testid="tv-page-on-phone-now">
       <div className="mb-8 flex items-end justify-between gap-8">
@@ -599,18 +730,21 @@ export function OnPhoneNowPage({ people, count, reduced }: {
         </motion.div>
       </div>
 
-      <motion.div variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-wrap content-start gap-4 overflow-hidden">
-        {people.slice(0, 18).map((p) => (
-          <motion.span key={p.id} variants={rise(reduced)} className="max-w-full" data-testid="tv-row">
-            <NameChip name={p.name} tone="live" />
-          </motion.span>
-        ))}
-        {!people.length && (
-          <motion.p variants={rise(reduced)} className={EMPTY}>
-            Nobody has been active on CallTools in the last 15 minutes.
-          </motion.p>
-        )}
-      </motion.div>
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.div variants={stagger} initial="hidden" animate="show" className="flex flex-wrap content-start gap-4" style={pan.style}>
+          {people.map((p) => (
+            <motion.span key={p.id} variants={rise(reduced)} className="max-w-full" data-testid="tv-row">
+              <NameChip name={p.name} tone="live" />
+            </motion.span>
+          ))}
+          {!people.length && (
+            <motion.p variants={rise(reduced)} className={EMPTY}>
+              Nobody has been active on CallTools in the last 15 minutes.
+            </motion.p>
+          )}
+        </motion.div>
+      </div>
+      {pan.overflowing && <PanCount>{people.length} in all</PanCount>}
     </div>
   );
 }
@@ -720,9 +854,10 @@ function StarvedRow({ rank, person, flagged, reduced }: {
  * best-fed loan officer at the head of a starvation list. priority_tier is not
  * in it either — all seventeen active LOs sit at tier 2, so it ranks nobody.
  *
- * Every active LO fits, in two columns, with the LOAs in their own panel beside
- * them: a different population on a different scale (23–57 against 6–294), and
- * one list of both would flatter the top of it and bury the bottom.
+ * Every active LO is on it, in two columns that pan together when they do not
+ * fit, with the LOAs in their own panel beside them: a different population on
+ * a different scale (23–57 against 6–294), and one list of both would flatter
+ * the top of it and bury the bottom.
  */
 export function StarvedPage({ days, los, loas, reduced }: {
   days: number;
@@ -731,20 +866,16 @@ export function StarvedPage({ days, los, loas, reduced }: {
   reduced: boolean;
 }) {
   const win = Math.max(1, Math.round(Number(days) || 14));
-  // Nine rows a column is what 1080p holds without going under the 1rem floor,
-  // so eighteen names fit — one spare on the seventeen active loan officers.
-  const MAX_LOS = 18, MAX_LOAS = 10;
-  const all = los ?? [];
-  // The cut comes off the best-fed end, which is the right end to lose. The one
-  // row that may never be cut is a flagged one: dropping Christopher Redoble —
-  // flagged, and 294 transfers deep — would silently delete the exact signal
-  // this page was asked to make unmistakable. Both halves are already ascending,
-  // so re-joining them keeps the rank honest.
-  const overflowFlags = all.slice(MAX_LOS).filter((p) => p.needsTransfers);
-  const ranked = all.length <= MAX_LOS
-    ? all
-    : [...all.slice(0, MAX_LOS - overflowFlags.length), ...overflowFlags];
-  const assistants = (loas ?? []).slice(0, MAX_LOAS);
+  const loPan = usePan(PAN_SECONDS.starved, reduced);
+  const loaPan = usePan(PAN_SECONDS.starved, reduced);
+  // Nothing is cut. About eight rows a column is what 1080p holds without going
+  // under the 1rem floor — sixteen names against seventeen active loan officers
+  // — so the columns pan instead of stopping. That also retires the rule that
+  // used to haul a flagged row up out of the cut: there is no cut to be under,
+  // and Christopher Redoble keeps his place near the bottom on 294 with the
+  // flag on it, which is where the ranking honestly puts him.
+  const ranked = los ?? [];
+  const assistants = loas ?? [];
   // Down the left column, then the right — so the top-left name is the hungriest
   // one, which is where the room looks first.
   const half = Math.ceil(ranked.length / 2);
@@ -774,20 +905,27 @@ export function StarvedPage({ days, los, loas, reduced }: {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr_23rem] gap-7 overflow-hidden">
-        {columns.map((col, c) => (
-          <motion.ul
-            key={c} variants={stagger} initial="hidden" animate="show"
-            className="flex min-h-0 flex-col content-start gap-2 overflow-hidden"
-          >
-            {col.map((p, i) => (
-              <StarvedRow
-                key={`${p.name}-${c}-${i}`} rank={c * half + i + 1} person={p}
-                flagged={!!p.needsTransfers} reduced={reduced}
-              />
+        {/* Both columns share one clipping box, so they pan as one. They are a
+            single ranked list wrapped into two, and sliding them at their own
+            rates would read as two lists that disagree with each other. */}
+        <div ref={loPan.ref} className="col-span-2 min-h-0 overflow-hidden">
+          <div className="grid grid-cols-2 gap-7" style={loPan.style}>
+            {columns.map((col, c) => (
+              <motion.ul
+                key={c} variants={stagger} initial="hidden" animate="show"
+                className="flex flex-col content-start gap-2"
+              >
+                {col.map((p, i) => (
+                  <StarvedRow
+                    key={`${p.name}-${c}-${i}`} rank={c * half + i + 1} person={p}
+                    flagged={!!p.needsTransfers} reduced={reduced}
+                  />
+                ))}
+                {c === 0 && !ranked.length && <li className={EMPTY}>No active loan officers to rank.</li>}
+              </motion.ul>
             ))}
-            {c === 0 && !ranked.length && <li className={EMPTY}>No active loan officers to rank.</li>}
-          </motion.ul>
-        ))}
+          </div>
+        </div>
 
         <motion.section
           variants={stagger} initial="hidden" animate="show"
@@ -799,14 +937,18 @@ export function StarvedPage({ days, los, loas, reduced }: {
               <CountUp value={assistants.length} />
             </span>
           </div>
-          <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden" data-testid="tv-starved-loas">
-            {assistants.map((p, i) => (
-              <StarvedRow key={`${p.name}-${i}`} rank={i + 1} person={p} flagged={false} reduced={reduced} />
-            ))}
-            {!assistants.length && <li className={EMPTY}>No active LOAs right now.</li>}
-          </ul>
+          <div ref={loaPan.ref} className="min-h-0 flex-1 overflow-hidden">
+            <ul className="flex flex-col gap-2" style={loaPan.style} data-testid="tv-starved-loas">
+              {assistants.map((p, i) => (
+                <StarvedRow key={`${p.name}-${i}`} rank={i + 1} person={p} flagged={false} reduced={reduced} />
+              ))}
+              {!assistants.length && <li className={EMPTY}>No active LOAs right now.</li>}
+            </ul>
+          </div>
+          {loaPan.overflowing && <PanCount>{assistants.length} in all</PanCount>}
         </motion.section>
       </div>
+      {loPan.overflowing && <PanCount>{ranked.length} loan officers on the board</PanCount>}
 
       {least.length > 0 && (
         <motion.p

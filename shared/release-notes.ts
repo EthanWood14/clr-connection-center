@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.54.0",
+    headline: "Appointment times were seven hours out.",
+    items: [
+      { text: "Appointment times on the office TV were showing seven hours early. They are stored as the time somebody typed, with no timezone, and the board was reading them as if they were UTC. A 2:30 appointment was going up as 7:30 in the morning.", audience: "everyone" },
+      { text: "Anyone kept out of the stats now sits in the bottom right corner with their count for the day, instead of in the rankings. The chart stays a like-for-like comparison and the team total still adds up.", audience: "manager" },
+      { text: "The end-of-day board shows today rather than yesterday. It only takes the wall between 3.30 and 6pm, which is when people are filing, so who still owes one is the useful question.", audience: "manager" },
+      { text: "The write-up page is now titled Most thorough transfers, for the people at the top of it.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.53.0",
     headline: "The whole leaderboard, and tap to skip.",
     items: [
