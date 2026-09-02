@@ -20029,14 +20029,24 @@ ${note}` : daysLine;
     const dow = t.getUTCDay();
     const monday = new Date(t); monday.setUTCDate(t.getUTCDate() - ((dow + 6) % 7));
     const weekStart = monday.toISOString().slice(0, 10);
+    // Only used to decide who belongs on the board, not to count anything.
+    const monthStart = `${today.slice(0, 7)}-01`;
 
     // ── scorecard ────────────────────────────────────────────────────────
     const clrs = sqlite.prepare(
       `SELECT id, name, goal_transfers_weekly, goal_appointments_weekly
-         FROM users
-        WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
-          AND archived_at IS NULL`,
-    ).all(orgId) as any[];
+         FROM users u
+        WHERE u.org_id=? AND u.is_clr=1 AND u.is_active=1 AND u.archived_at IS NULL
+          AND (COALESCE(u.exclude_from_stats,0)=0 OR EXISTS (
+            -- Someone flagged out of the stats still belongs on the wall the
+            -- moment they put work on the board. Elleine is the case: top
+            -- producer, flagged out, and her absence made the team total
+            -- disagree with every name listed under it.
+                SELECT 1 FROM lead_outcomes o
+                 WHERE o.assistant_id=u.id AND o.org_id=u.org_id
+                   AND o.outcome_type='transfer' AND o.date >= ?
+              ))`,
+    ).all(orgId, monthStart) as any[];
     const ids = clrs.map((c) => Number(c.id));
     const counts = new Map<string, number>();
     if (ids.length) {
@@ -20224,11 +20234,19 @@ ${note}` : daysLine;
       let roster: Array<{ id: number; name: string }> = [];
       try {
         roster = (sqlite.prepare(
-          `SELECT id, name FROM users
-            WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
-              AND archived_at IS NULL
+          `SELECT id, name FROM users u
+            WHERE u.org_id=? AND u.is_clr=1 AND u.is_active=1 AND u.archived_at IS NULL
+              AND (COALESCE(u.exclude_from_stats,0)=0 OR EXISTS (
+            -- Someone flagged out of the stats still belongs on the wall the
+            -- moment they put work on the board. Elleine is the case: top
+            -- producer, flagged out, and her absence made the team total
+            -- disagree with every name listed under it.
+                    SELECT 1 FROM lead_outcomes o
+                     WHERE o.assistant_id=u.id AND o.org_id=u.org_id
+                       AND o.outcome_type='transfer' AND o.date >= ?
+                  ))
             ORDER BY name COLLATE NOCASE ASC`,
-        ).all(orgId) as any[]).map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
+        ).all(orgId, w.monthStart) as any[]).map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
       } catch (e: any) {
         console.error("[tv-pages] roster failed:", e?.message ?? e);
       }

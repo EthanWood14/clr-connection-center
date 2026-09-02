@@ -269,8 +269,30 @@ function SinceLabel({ what, at, now }: { what: string; at: string | null | undef
   );
 }
 
-function ScorecardPage({ people, reduced, now }: { people: Person[]; reduced: boolean; now: number }) {
-  const leader = people[0];
+/**
+ * Everyone who is actually here, and a slow pan when they do not fit.
+ *
+ * About six rows fit a 1080p screen, and the floor is thirteen people, so the
+ * list used to stop at eight and the bottom of the board was invisible. It now
+ * pans: the whole list slides up over the dwell and comes back, slowly enough
+ * to read. Anyone who has done nothing today AND has not checked in is left
+ * off entirely — an empty row for someone on holiday is just noise.
+ */
+function ScorecardPage({ people, reduced, now, checkins, dwellMs }: {
+  people: Person[]; reduced: boolean; now: number;
+  checkins?: Record<string, boolean>;
+  dwellMs: number;
+}) {
+  const here = people.filter((p) => {
+    const busy = p.transfersToday > 0 || p.appointmentsToday > 0;
+    // Missing check-in data must never hide anybody: default to showing them.
+    const checked = checkins ? checkins[p.name] !== false : true;
+    return busy || checked;
+  });
+  const list = here.length ? here : people;
+  const VISIBLE = 6;
+  const overflow = Math.max(0, list.length - VISIBLE);
+  const leader = list[0];
   const max = Math.max(1, leader?.transfersToday ?? 1);
   return (
     <div className="flex h-full flex-col px-16 py-10" data-testid="tv-page-scorecard">
@@ -286,8 +308,17 @@ function ScorecardPage({ people, reduced, now }: { people: Person[]; reduced: bo
           </motion.div>
         )}
       </div>
-      <motion.ul variants={stagger} initial="hidden" animate="show" className="flex min-h-0 flex-1 flex-col justify-start gap-4 overflow-hidden">
-        {people.slice(0, 8).map((p, i) => {
+      <div className="min-h-0 flex-1 overflow-hidden">
+      <motion.ul
+        variants={stagger} initial="hidden" animate="show"
+        className="flex flex-col justify-start gap-4"
+        style={overflow > 0 && !reduced ? {
+          // One pass down and back inside the dwell, with a beat at each end.
+          animation: `tv-pan ${dwellMs / 1000}s ease-in-out 1.2s both`,
+          ["--tv-pan" as any]: `-${overflow * 7.6}rem`,
+        } : undefined}
+      >
+        {list.map((p, i) => {
           const pct = Math.round((p.transfersToday / max) * 100);
           const gold = i === 0 && p.transfersToday > 0;
           return (
@@ -319,8 +350,14 @@ function ScorecardPage({ people, reduced, now }: { people: Person[]; reduced: bo
             </motion.li>
           );
         })}
-        {!people.length && <li className="text-white/50">No CLRs on the board.</li>}
+        {!list.length && <li className="text-white/50">No CLRs on the board.</li>}
       </motion.ul>
+      </div>
+      {overflow > 0 && (
+        <p className="mt-2 shrink-0 text-center text-[clamp(0.85rem,1.1vw,1.1rem)] text-white/30">
+          {list.length} on the board
+        </p>
+      )}
     </div>
   );
 }
@@ -657,6 +694,12 @@ export default function TvBoard() {
     return () => clearTimeout(id);
   }, [slot, current]);
   const page = (deck[slot] ?? deck[0]).id;
+  const dwellMs = (deck[slot] ?? deck[0]).dwellMs;
+  /** Tap or click anywhere to skip to the next page. */
+  const advance = useCallback(() => {
+    setSlot((v) => (v + 1) % deck.length);
+    setDealt((d) => d + 1);
+  }, [deck.length]);
 
   const people = data?.scorecard.people ?? [];
   const team = data?.scorecard.team ?? { transfersToday: 0, transfersWeek: 0, appointmentsToday: 0, fellThroughToday: 0, missedToday: 0 };
@@ -668,7 +711,21 @@ export default function TvBoard() {
   if (!token) return <div className="flex h-screen items-center justify-center bg-[#0B1220] text-white/70">No display link.</div>;
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#0B1220] text-white [font-variant-numeric:tabular-nums]" data-testid="tv-board">
+    <div
+      className="relative h-screen w-screen overflow-hidden bg-[#0B1220] text-white [font-variant-numeric:tabular-nums]"
+      data-testid="tv-board"
+      onClick={advance}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") advance(); }}
+      title="Click for the next page"
+    >
+      {/* The scorecard pans when more people are on the board than fit. */}
+      <style>{`@keyframes tv-pan {
+        0%, 14%   { transform: translateY(0); }
+        56%, 74%  { transform: translateY(var(--tv-pan)); }
+        100%      { transform: translateY(0); }
+      }`}</style>
       {/* Ambient glow. Slow, not a flash. */}
       {!reduced && (
         <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -697,14 +754,25 @@ export default function TvBoard() {
 
       {/* ── the deck ── */}
       <main className="relative z-10 h-[calc(100vh-6rem-2.5rem)]">
-        <AnimatePresence mode="wait" initial={false}>
+        {/* Not mode="wait". That holds the incoming page until the outgoing
+            one reports its exit finished, and an exit that never finishes
+            wedges the board — which has already happened twice on this screen.
+            The pages are absolutely positioned, so they simply cross. */}
+        <AnimatePresence initial={false}>
           <motion.div
             key={`${page}-${dealt}`}
             className="absolute inset-0"
             variants={slide(reduced)} initial="enter" animate="center" exit="exit"
             data-testid="tv-page" data-page={page}
           >
-            {page === "scorecard" && <ScorecardPage people={people} reduced={reduced} now={now.getTime()} />}
+            {page === "scorecard" && (
+              <ScorecardPage
+                people={people} reduced={reduced} now={now.getTime()} dwellMs={dwellMs}
+                checkins={board?.checkins?.people
+                  ? Object.fromEntries(board.checkins.people.map((c: any) => [c.name, !!c.checkedIn || !!c.excused]))
+                  : undefined}
+              />
+            )}
             {page === "team"      && <TeamPage team={team} teamGoal={teamGoal} reduced={reduced} />}
             {page === "latest"    && <LatestPage recent={data?.recent ?? []} now={now} reduced={reduced} />}
             {page === "tip"       && <TipPage tip={data?.tip ?? null} reduced={reduced} />}
@@ -728,7 +796,7 @@ export default function TvBoard() {
               <WriteUpPage
                 reduced={reduced}
                 people={(board?.writeUps?.people ?? []).map((p: any, i: number) => ({ id: i, name: p.name, pct: p.pct, transfers: p.transfers }))}
-                team={board?.writeUps?.team ?? { pct: null, transfers: 0 }}
+                team={board?.writeUps?.team?.pct ?? null}
               />
             )}
             {page === "assignments" && (
@@ -743,8 +811,11 @@ export default function TvBoard() {
               <EodPage
                 reduced={reduced}
                 forDate={board?.eod?.forDate ?? ""}
-                submitted={board?.eod?.submitted ?? []}
-                missing={board?.eod?.missing ?? []}
+                // The server sends rows, the page wants names. Passing the
+                // rows straight through rendered an object as a React child,
+                // which is error #31 and a blank screen.
+                submitted={(board?.eod?.submitted ?? []).map((r: any) => (typeof r === "string" ? r : r.name))}
+                missing={(board?.eod?.missing ?? []).map((r: any) => (typeof r === "string" ? r : r.name))}
               />
             )}
             {page === "phoneTime" && (

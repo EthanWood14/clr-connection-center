@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.53.0",
+    headline: "The whole leaderboard, and tap to skip.",
+    items: [
+      { text: "The office TV now shows everyone on the leaderboard instead of stopping at eight, panning slowly down the list and back when there are more people than fit. Anyone with no activity today who also has not checked in is left off, so a holiday is not an empty row.", audience: "everyone" },
+      { text: "Click or tap the screen to skip to the next page.", audience: "everyone" },
+      { text: "Elleine now appears on the board with everyone else. Anyone kept out of the stats still shows up the moment they put work on the board, so the team total and the names under it finally agree.", audience: "manager" },
+      { text: "Fixed two pages that could show an error instead of their content, and made a page change no longer wait on the outgoing page finishing its animation.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.52.1",
     headline: "The loan officers who need transfers most.",
     items: [

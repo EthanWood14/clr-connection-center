@@ -218,7 +218,13 @@ test("pages rotate like signage, and pause under a moment", () => {
   // And the deck does not turn under a moment.
   const deck = page.slice(page.indexOf("const [slot, setSlot]"), page.indexOf("const page = (deck[slot]"));
   assert.match(deck, /if \(current\) return;/);
-  assert.match(page, /AnimatePresence mode="wait"/, "one page leaves before the next arrives");
+  // Deliberately NOT mode="wait": it holds the incoming page until the
+  // outgoing one reports its exit done, and a stalled exit wedges the board.
+  assert.doesNotMatch(page, /AnimatePresence mode="wait"/);
+  assert.match(page, /<AnimatePresence initial=\{false\}>/);
+  // Clicking or tapping anywhere skips on.
+  assert.match(page, /onClick=\{advance\}/);
+  assert.match(page, /const advance = useCallback/);
 });
 
 test("the EOD board and the assignment list take turns by the clock", () => {
@@ -430,4 +436,16 @@ test("every page in the deck has something to render", () => {
   for (const id of new Set(ids)) {
     assert.match(page, new RegExp(`page === "${id}"`), `${id} is in the deck with no renderer`);
   }
+});
+
+test("board data is unpacked into what each page actually takes", () => {
+  // React error #31, twice: the board payload is untyped (`useQuery<any>`), so
+  // handing a page an object where it wanted a string or a number type-checks
+  // fine and then blanks the screen at runtime. These are the two that bit.
+  assert.match(page, /submitted=\{\(board\?\.eod\?\.submitted \?\? \[\]\)\.map/);
+  assert.match(page, /missing=\{\(board\?\.eod\?\.missing \?\? \[\]\)\.map/);
+  assert.match(page, /team=\{board\?\.writeUps\?\.team\?\.pct \?\? null\}/);
+  // Nothing may hand a page a bare section object.
+  assert.doesNotMatch(page, /team=\{board\?\.writeUps\?\.team\}/);
+  assert.doesNotMatch(page, /submitted=\{board\?\.eod\?\.submitted \?\? \[\]\}/);
 });
