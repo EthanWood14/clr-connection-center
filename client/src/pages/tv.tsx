@@ -53,14 +53,12 @@ type Moment =
   | { type: "milestone"; key: string; milestone: Milestone };
 
 const POLL_MS = 10_000;
-/** How long a moment takes to fade off once its hold ends. */
-const FADE_MS = 300;
 const TIP_MS = 45_000;
 const PLAYED_KEY = "c3:tv:played";
 
 /** How long each kind holds the screen. A transfer earns the longest beat. */
 const HOLD_MS: Record<Kind | "milestone", number> = {
-  transfer: 8000, appointment: 7500, rescheduled: 7500, fell_through: 6500, missed_appointment: 7000, milestone: 10000,
+  transfer: 9500, appointment: 8000, rescheduled: 8000, fell_through: 8500, missed_appointment: 7500, milestone: 10500,
 };
 
 const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeof ArrowRightLeft; confetti: boolean }> = {
@@ -339,7 +337,7 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // ── the moment overlay ──────────────────────────────────────────────────────
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
-function MomentOverlay({ moment, reduced, leaving }: { moment: Moment; reduced: boolean; leaving: boolean }) {
+function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
   const isMilestone = moment.type === "milestone";
   const kind = isMilestone ? "milestone" : moment.event.kind;
   const strikeLike = kind === "transfer" || kind === "milestone";
@@ -351,10 +349,10 @@ function MomentOverlay({ moment, reduced, leaving }: { moment: Moment; reduced: 
     <motion.div
       key={moment.key}
       className="absolute inset-0 z-30"
-      initial={{ opacity: 0 }} animate={{ opacity: leaving ? 0 : 1 }} transition={{ duration: FADE_MS / 1000 }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}
       data-testid={`tv-moment-${kind}`}
     >
-      <motion.div className={`absolute inset-0 bg-gradient-to-br ${hue}`} initial={{ opacity: 0 }} animate={{ opacity: leaving ? 0 : 0.14 }} />
+      <motion.div className={`absolute inset-0 bg-gradient-to-br ${hue}`} initial={{ opacity: 0 }} animate={{ opacity: 0.14 }} />
       <div className="absolute inset-0 bg-[#0B1220]/90" />
       {strikeLike && !reduced && <Confetti running dramatic />}
       <HypeScene kind={kind} headline={headline} who={who} detail={detail} reduced={reduced} />
@@ -409,7 +407,6 @@ export default function TvBoard() {
   // ── moments ───────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<Moment[]>([]);
   const [current, setCurrent] = useState<Moment | null>(null);
-  const [leaving, setLeaving] = useState(false);
   const played = useRef<Set<string>>(new Set());
   useEffect(() => {
     try { const raw = localStorage.getItem(PLAYED_KEY); if (raw) played.current = new Set(JSON.parse(raw)); } catch { /* fresh TV */ }
@@ -465,17 +462,21 @@ export default function TvBoard() {
     SOUND[head.type === "milestone" ? "milestone" : head.event.kind]();
   }, [current, queue, remember]);
 
-  // The fade-out is run by hand, not by AnimatePresence. Under presence the
-  // overlay was left in the DOM at opacity 0 after its last exit — some
-  // descendant never reported its exit done — with the pages rotating under
-  // it. Seen live, twice, with two different scenes. So: hold, fade the
-  // wrapper to zero through state, then unmount it synchronously.
+  // A moment holds, then unmounts. One timer, one piece of state, no exit
+  // animation of any kind — because both fancier versions wedged.
+  //
+  // Under AnimatePresence the overlay was left in the DOM at opacity 0 after
+  // its exit, twice, because some descendant never reported its exit done.
+  // Replacing that with a hand-run fade (a `leaving` flag driving opacity,
+  // then an unmount 300ms later) moved the bug rather than fixing it: a moment
+  // could mount while the flag was still set from the previous one and play
+  // its entire scene invisibly, at opacity 0, with the deck paused behind it.
+  // Seen live on the rescheduled scene. A hard cut cannot do either.
   useEffect(() => {
     if (!current) return;
     const hold = current.type === "milestone" ? HOLD_MS.milestone : HOLD_MS[current.event.kind];
-    const fade = setTimeout(() => setLeaving(true), hold);
-    const done = setTimeout(() => { setLeaving(false); setCurrent(null); }, hold + FADE_MS);
-    return () => { clearTimeout(fade); clearTimeout(done); };
+    const done = setTimeout(() => setCurrent(null), hold);
+    return () => clearTimeout(done);
   }, [current]);
 
   // ── the deck ──────────────────────────────────────────────────────────
@@ -560,7 +561,7 @@ export default function TvBoard() {
         ))}
       </footer>
 
-      {current && <MomentOverlay moment={current} reduced={reduced} leaving={leaving} />}
+      {current && <MomentOverlay moment={current} reduced={reduced} />}
     </div>
   );
 }

@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.47.0",
+    headline: "The TV moments become a cartoon.",
+    items: [
+      { text: "The office TV moments are now full cartoon gags. Everything lands on one shared floor line, the giant word behaves like a character rather than a label, and every one of them holds dead still for a beat before one last thing happens.", audience: "everyone" },
+      { text: "A transfer drops in, cracks the floor, and gets an ACME anvil dropped on it, which it then presses back off. A booked meeting gets stamped onto a calendar page, and the stamp comes back down a second later and topples over. A moved meeting slips on a banana peel, slides clean off the screen, and gets hauled back by a vaudeville hook.", audience: "everyone" },
+      { text: "The two rough ones stay kind. A fall-through swaggers in like a win, then drops through a hole in the floor and climbs back out with a hat on and a tumbleweed rolling past. A no-show passes straight through an empty chair while an alarm clock walks in and knocks the chair over anyway. The joke is always on the furniture, never on the person.", audience: "everyone" },
+      { text: "Under all of it, a very small line of text in a very flat voice.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.46.0",
     headline: "The Bonzo shotgun button stops vanishing without a word.",
     items: [

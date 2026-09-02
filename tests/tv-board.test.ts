@@ -257,24 +257,28 @@ test("the hype screen is safe for a wall the whole floor faces", () => {
 });
 
 test("the holds fit the choreography, and the crash lands with the word", () => {
-  assert.match(page, /transfer: 8000, appointment: 7500, rescheduled: 7500, fell_through: 6500, missed_appointment: 7000, milestone: 10000/);
+  assert.match(page, /transfer: 9500, appointment: 8000, rescheduled: 8000, fell_through: 8500, missed_appointment: 7500, milestone: 10500/);
   for (const k of ["transfer", "appointment", "rescheduled", "fell_through", "missed_appointment", "milestone"]) {
     assert.match(page, new RegExp(`${k}:\\s+\\(\\) => \\{ crash\\(\\{ delayMs: HYPE_IMPACT_MS\\.${k}`), `${k} sound must key off the impact time`);
   }
 });
 
-test("the moment overlay fades out by hand, never under AnimatePresence", () => {
-  // Seen live, twice, with two different scenes: under presence the overlay
-  // was left in the DOM at opacity 0 after its last exit, some descendant
-  // never having reported its exit done, with the pages rotating under it.
-  // A hold, a fade through state, and a synchronous unmount cannot hang.
+test("a moment holds and then hard-cuts, with no exit animation anywhere", () => {
+  // Two different wedges, both seen live. Under AnimatePresence the overlay
+  // stayed in the DOM at opacity 0 after its exit, because some descendant
+  // never reported its exit done. Replacing that with a hand-run fade — a
+  // `leaving` flag driving opacity, unmounting 300ms later — moved the bug:
+  // a moment could mount while the flag was still set and play its whole
+  // scene invisibly with the deck paused behind it. A hard cut cannot do
+  // either, so there is exactly one timer and no leaving state.
   assert.doesNotMatch(page, /<AnimatePresence>\{current/);
-  assert.match(page, /\{current && <MomentOverlay moment=\{current\} reduced=\{reduced\} leaving=\{leaving\} \/>\}/);
-  assert.match(page, /const fade = setTimeout\(\(\) => setLeaving\(true\), hold\);/);
-  assert.match(page, /setTimeout\(\(\) => \{ setLeaving\(false\); setCurrent\(null\); \}, hold \+ FADE_MS\)/);
+  assert.doesNotMatch(page, /setLeaving|leaving=\{/, "no fade-out state may come back");
+  assert.doesNotMatch(page, /FADE_MS/);
+  assert.match(page, /\{current && <MomentOverlay moment=\{current\} reduced=\{reduced\} \/>\}/);
+  assert.match(page, /const done = setTimeout\(\(\) => setCurrent\(null\), hold\);/);
   const overlay = page.slice(page.indexOf("function MomentOverlay"), page.indexOf("// ── the page"));
   assert.doesNotMatch(overlay, /exit=/, "nothing in the overlay may depend on presence");
-  assert.match(overlay, /animate=\{\{ opacity: leaving \? 0 : 1 \}\}/);
+  assert.match(overlay, /animate=\{\{ opacity: 1 \}\}/);
 });
 
 test("?demo=1 plays one of every moment, and never touches the feed's cursor", () => {
