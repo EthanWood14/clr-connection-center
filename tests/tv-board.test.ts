@@ -319,3 +319,37 @@ test("the tip page shows standalone quotes, not raw manual lines", async () => {
   // And the route serves them.
   assert.match(routes, /const quote = pickQuote\(Number\(req\.query\.tip\) \|\| 0\)/);
 });
+
+// ── one CLR passing another ─────────────────────────────────────────────────
+test("an overtake is worked out between polls and plays its own race scene", () => {
+  // The feed is stateless, so a CHANGE between two polls cannot come from the
+  // server — the board holds the previous standings and compares.
+  assert.match(page, /const prevStandings = useRef<RankRow\[\] \| null>\(null\);/);
+  assert.match(page, /detectOvertakes\(prevStandings\.current, standings, data\.today\)/);
+  assert.match(page, /prevStandings\.current = standings;/);
+  // It goes through the same played-set as every other moment, so a pass that
+  // is still true on the next poll cannot play twice.
+  const enqueue = page.slice(page.indexOf("cursorRef.current = data.cursor;"), page.indexOf("}, [data]);"));
+  assert.match(enqueue, /!played\.current\.has\(o\.key\)/);
+  // Its own scene, its own hold, its own sound.
+  assert.match(page, /<RaceScene passerName=\{o\.passerName\} passedName=\{o\.passedName\} count=\{o\.count\} reduced=\{reduced\} \/>/);
+  assert.match(page, /overtake: 8500,/);
+  assert.match(page, /overtake:\s+\(\) => \{ crash\(/);
+  // The union stays exhaustive: nothing may assume a moment is an event.
+  assert.doesNotMatch(page, /m\.type === "milestone" \? "milestone" : m\.event\.kind/);
+});
+
+test("the race scene never mocks the person who got passed", () => {
+  const race = readFileSync(join(root, "client/src/components/tv/race.tsx"), "utf8");
+  // Both drivers are colleagues watching this on the wall. Comments are
+  // stripped first: the file explains IN a comment why neither car reads as a
+  // loser, and that sentence should not trip its own guard.
+  const code = race.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(code, /\b(crash|explode|blow up|loser|beaten|wreck|spin out)\b/i);
+  // Same house rules as the hype screens: CSS keyframes, nothing downloaded,
+  // and a still frame under reduced motion.
+  assert.match(race, /@keyframes race-/);
+  assert.match(race, /useReducedMotion/);
+  assert.doesNotMatch(race, /<img|src=|fetch\(/);
+  assert.doesNotMatch(race, /repeat: Infinity/);
+});

@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
+import { RaceScene } from "@/components/tv/race";
+import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
 
 // ── types (mirror server/tv-board.ts) ───────────────────────────────────────
@@ -50,15 +52,18 @@ interface Feed {
 
 type Moment =
   | { type: "event"; key: string; event: TvEvent }
-  | { type: "milestone"; key: string; milestone: Milestone };
+  | { type: "milestone"; key: string; milestone: Milestone }
+  | { type: "overtake"; key: string; overtake: Overtake };
 
 const POLL_MS = 10_000;
 const TIP_MS = 45_000;
 const PLAYED_KEY = "c3:tv:played";
 
 /** How long each kind holds the screen. A transfer earns the longest beat. */
-const HOLD_MS: Record<Kind | "milestone", number> = {
+const HOLD_MS: Record<Kind | "milestone" | "overtake", number> = {
   transfer: 9500, appointment: 8000, rescheduled: 8000, fell_through: 8500, missed_appointment: 7500, milestone: 10500,
+  // The race runs its own ~7s beat and settles by 6.6s.
+  overtake: 8500,
 };
 
 const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeof ArrowRightLeft; confetti: boolean }> = {
@@ -126,7 +131,7 @@ function crash(opts: { delayMs: number; level: number; len: number; low?: boolea
   } catch { /* audio is a bonus */ }
 }
 
-const SOUND: Record<Kind | "milestone", () => void> = {
+const SOUND: Record<Kind | "milestone" | "overtake", () => void> = {
   // Timed to the choreography in tv/hype.tsx: the crash lands when the word
   // does, and the fanfare follows it.
   transfer:           () => { crash({ delayMs: HYPE_IMPACT_MS.transfer, level: 0.5, len: 0.45 }); setTimeout(() => tone([523.25, 659.25, 783.99, 1046.5]), HYPE_IMPACT_MS.transfer + 120); },
@@ -135,6 +140,9 @@ const SOUND: Record<Kind | "milestone", () => void> = {
   fell_through:       () => { crash({ delayMs: HYPE_IMPACT_MS.fell_through, level: 0.3, len: 0.35 }); setTimeout(() => tone([330, 262], { type: "sine", gap: 0.18, level: 0.09, len: 0.5 }), 2400); crash({ delayMs: 2900, level: 0.35, len: 0.6, low: true }); },
   missed_appointment: () => { crash({ delayMs: HYPE_IMPACT_MS.missed_appointment, level: 0.35, len: 0.4 }); setTimeout(() => tone([392, 311], { type: "sine", gap: 0.16, level: 0.1, len: 0.5 }), HYPE_IMPACT_MS.missed_appointment + 400); },
   milestone:          () => { crash({ delayMs: HYPE_IMPACT_MS.milestone, level: 0.55, len: 0.5 }); setTimeout(() => tone([523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98], { gap: 0.08, level: 0.16, len: 0.7 }), HYPE_IMPACT_MS.milestone + 150); },
+  // An engine going past, then the flag: noise swelling as the car closes,
+  // and a two-note horn as it crosses at about 4.8s.
+  overtake:           () => { crash({ delayMs: 600, level: 0.16, len: 1.9, low: true }); crash({ delayMs: 3000, level: 0.3, len: 1.6, low: true }); setTimeout(() => tone([659.25, 880], { gap: 0.13, level: 0.13, len: 0.5 }), 4800); },
 };
 
 // ── small pieces ────────────────────────────────────────────────────────────
@@ -338,6 +346,22 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
 function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
+  // The race is its own scene rather than a hype screen: it is about two
+  // people on the board, not one thing that happened.
+  if (moment.type === "overtake") {
+    const o = moment.overtake;
+    return (
+      <motion.div
+        key={moment.key}
+        className="absolute inset-0 z-30"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}
+        data-testid="tv-moment-overtake"
+      >
+        <div className="absolute inset-0 bg-[#0B1220]/90" />
+        <RaceScene passerName={o.passerName} passedName={o.passedName} count={o.count} reduced={reduced} />
+      </motion.div>
+    );
+  }
   const isMilestone = moment.type === "milestone";
   const kind = isMilestone ? "milestone" : moment.event.kind;
   const strikeLike = kind === "transfer" || kind === "milestone";
@@ -407,6 +431,8 @@ export default function TvBoard() {
   // ── moments ───────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<Moment[]>([]);
   const [current, setCurrent] = useState<Moment | null>(null);
+  /** Last poll's standings, for spotting one CLR passing another. */
+  const prevStandings = useRef<RankRow[] | null>(null);
   const played = useRef<Set<string>>(new Set());
   useEffect(() => {
     try { const raw = localStorage.getItem(PLAYED_KEY); if (raw) played.current = new Set(JSON.parse(raw)); } catch { /* fresh TV */ }
@@ -424,6 +450,15 @@ export default function TvBoard() {
     const next: Moment[] = [];
     for (const ev of data.events) if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
     for (const m of data.milestones) if (!played.current.has(m.id)) next.push({ type: "milestone", key: m.id, milestone: m });
+    // Someone climbing past someone else on the scorecard. Worked out here
+    // rather than on the server because it is a change BETWEEN two polls, and
+    // the feed is stateless. The first poll after a load has no previous
+    // standing to compare against and stays quiet, like events do.
+    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday }));
+    for (const o of detectOvertakes(prevStandings.current, standings, data.today)) {
+      if (!played.current.has(o.key)) next.push({ type: "overtake", key: o.key, overtake: o });
+    }
+    prevStandings.current = standings;
     if (next.length) setQueue((q) => {
       const have = new Set(q.map((x) => x.key));
       return [...q, ...next.filter((x) => !have.has(x.key))];
@@ -447,10 +482,11 @@ export default function TvBoard() {
       ev("fell_through", "Kevin Ostrowski", null),
       ev("missed_appointment", "Priya Natarajan", "No answer"),
       { type: "milestone", key: `demo-${stamp}-milestone`, milestone: { id: "demo", kind: "team-day", headline: "25 transfers today", detail: "The whole floor. Keep going.", weight: 3 } },
+      { type: "overtake", key: `demo-${stamp}-overtake`, overtake: { key: "demo", passerId: 0, passerName: "Jordon Chang", passedName: "Cristopher Bermudez", count: 8, rank: 2 } },
     ];
     // ?demo=1 plays the whole reel; ?demo=transfer plays that one on repeat,
     // which is the only sane way to build or judge a single animation.
-    const one = reel.filter((m) => (m.type === "milestone" ? "milestone" : m.event.kind) === demo);
+    const one = reel.filter((m) => (m.type === "event" ? m.event.kind : m.type) === demo);
     if (!one.length) { setQueue(reel); return; }
     const loop = Array.from({ length: 40 }, (_, i) => {
       const m = one[0];
@@ -471,7 +507,7 @@ export default function TvBoard() {
     setQueue(rest);
     setCurrent(head);
     remember(head.key);
-    SOUND[head.type === "milestone" ? "milestone" : head.event.kind]();
+    SOUND[head.type === "milestone" ? "milestone" : head.type === "overtake" ? "overtake" : head.event.kind]();
   }, [current, queue, remember]);
 
   // A moment holds, then unmounts. One timer, one piece of state, no exit
@@ -486,7 +522,9 @@ export default function TvBoard() {
   // Seen live on the rescheduled scene. A hard cut cannot do either.
   useEffect(() => {
     if (!current) return;
-    const hold = current.type === "milestone" ? HOLD_MS.milestone : HOLD_MS[current.event.kind];
+    const hold = current.type === "milestone" ? HOLD_MS.milestone
+      : current.type === "overtake" ? HOLD_MS.overtake
+      : HOLD_MS[current.event.kind];
     const done = setTimeout(() => setCurrent(null), hold);
     return () => clearTimeout(done);
   }, [current]);

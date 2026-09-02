@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.49.0",
+    headline: "Pass someone on the board and the race is on.",
+    items: [
+      { text: "When one CLR moves ahead of another on the board, two race cars come on and the one climbing takes the lead as the chequered flag waves. Nobody is mocked: both cars stay in the race, and the one that got passed says nice one.", audience: "everyone" },
+      { text: "It only fires on a real move. Somebody rising because the person above them was corrected downward does not count, ties never count, and the first transfer of the morning does not race past everyone still on zero.", audience: "manager" },
+      { text: "Weekly transfer targets are set for the whole team, so the scorecard bars now fill against a real number instead of reading no goal.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.48.0",
     headline: "You can actually see the cartoon now.",
     items: [
