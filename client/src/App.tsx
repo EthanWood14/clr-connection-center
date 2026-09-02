@@ -37,6 +37,7 @@ const Directory = lazy(() => import("@/pages/directory"));
 const Assignments = lazy(() => import("@/pages/assignments"));
 const Outcomes = lazy(() => import("@/pages/outcomes"));
 const LoPriorityLink = lazy(() => import("@/pages/lo-priority-link"));
+const TvBoard = lazy(() => import("@/pages/tv"));
 const Leaderboard = lazy(() => import("@/pages/leaderboard"));
 const TeamStats = lazy(() => import("@/pages/team-stats"));
 const Settings = lazy(() => import("@/pages/settings"));
@@ -471,6 +472,8 @@ export default function App() {
               <Route path="/portal/:code" component={Portal} />
               {/* Public share link: sets LO priority, needs no C3 login. */}
               <Route path="/lo-priority/:token" component={LoPriorityLink} />
+              {/* Office TV wallboard: read-only, keyed by a display token, no login. */}
+              <Route path="/tv/:token" component={TvBoard} />
               <Route path="/lap" nest>
                 <LapApp product="lap" />
               </Route>

@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.43.0",
+    headline: "An office TV that plays the day like a signage loop.",
+    items: [
+      { text: "New: a wallboard for a TV. Full-screen pages rotate on their own — today’s scorecard, the team total, what just happened, and a line from the training plan — sliding in and out the way a lobby screen does. No login: an admin makes a display link in Settings and opens it on any TV browser or streaming stick.", audience: "manager" },
+      { text: "It reacts, strike-screen style. A transfer slams TRANSFER! onto the wall letter by letter with rays, shockwaves, a shake and a gold storm, then the borrower’s name. A meeting set thuds on like an ink stamp; a meeting moved skids in while a clock whips to the new time. A fall-through lands, wobbles, and collapses letter by letter; a no-show shudders while an alarm clock rings and question marks rain. Milestones — 10, 25, 50 transfers in a day, a weekly goal hit, a personal best — get fireworks.", audience: "everyone" },
+      { text: "Moments queue and never talk over each other, each plays once per screen, and the board reloads itself whenever C3 updates so it is never behind the app.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.42.0",
     headline: "Transfers per workday — the fair rate.",
     items: [

@@ -2506,6 +2506,24 @@ function runNewMigrations() {
   )`);
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lo_priority_links_token ON lo_priority_links(token)`);
 
+  // The office TV. A screen cannot log in, so it gets its own revocable token,
+  // the same shape as the LO priority link. No expiry by default: a wallboard
+  // that silently went blank one Tuesday because a week had passed is worse
+  // than one an admin has to remember to revoke.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_display_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    token TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_by INTEGER,
+    created_by_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    revoked_at TEXT,
+    last_used_at TEXT,
+    use_count INTEGER NOT NULL DEFAULT 0
+  )`);
+  sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_display_links_token ON tv_display_links(token)`);
+
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss
   // their own, or it would just be a notification they close.

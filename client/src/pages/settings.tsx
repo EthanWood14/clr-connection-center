@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { copyToClipboard } from "@/lib/utils";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -714,6 +715,67 @@ function AllHandsSummons() {
             </Button>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Office TV display links (manager/admin) ────────────────────────────────
+// A TV cannot log in. Each screen gets its own revocable link to the
+// wallboard; revoke it here if a screen goes missing.
+function TvDisplayLinks() {
+  const { toast } = useToast();
+  const [label, setLabel] = useState("");
+  const { data, refetch } = useQuery<{ links: Array<{ id: number; label: string; token: string; createdByName: string; createdAt: string; revokedAt: string | null; lastUsedAt: string | null; useCount: number }> }>({
+    queryKey: ["/api/tv-links"],
+    queryFn: () => apiRequest("GET", "/api/tv-links"),
+  });
+  const create = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/tv-links", { label }),
+    onSuccess: async () => { setLabel(""); await refetch(); toast({ title: "Display link created", description: "Open it on the TV and it stays live until you revoke it." }); },
+    onError: (e: Error) => toast({ title: "Could not create link", description: e.message, variant: "destructive" }),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/tv-links/${id}`),
+    onSuccess: async () => { await refetch(); toast({ title: "Link revoked", description: "That screen will show nothing on its next refresh." }); },
+    onError: (e: Error) => toast({ title: "Could not revoke", description: e.message, variant: "destructive" }),
+  });
+  const urlFor = (token: string) => `${window.location.origin}/#/tv/${token}`;
+  const live = (data?.links ?? []).filter((l) => !l.revokedAt);
+  return (
+    <Card data-testid="tv-display-links">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Office TV</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          A wallboard of today's transfers, meetings, misses and milestones, with a training tip. Open the link on any TV browser or stick; it needs no login and reloads itself on every C3 update.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[14rem] flex-1">
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Which screen</label>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Sales floor TV" className="h-8 text-sm" data-testid="tv-link-label" />
+          </div>
+          <Button size="sm" onClick={() => create.mutate()} disabled={create.isPending} data-testid="tv-link-create">
+            {create.isPending ? "Creating…" : "New display link"}
+          </Button>
+        </div>
+        {live.length === 0 && <p className="text-xs text-muted-foreground">No live display links yet.</p>}
+        {live.map((l) => (
+          <div key={l.id} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm" data-testid={`tv-link-${l.id}`}>
+            <span className="font-medium">{l.label || "Office TV"}</span>
+            <span className="text-xs text-muted-foreground">
+              · by {l.createdByName || "—"} · {l.useCount} refreshes{l.lastUsedAt ? ` · last ${String(l.lastUsedAt).slice(0, 10)}` : ""}
+            </span>
+            <code className="ml-auto max-w-[22rem] truncate rounded bg-muted px-2 py-0.5 text-[11px]">{urlFor(l.token)}</code>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={async () => { const ok = await copyToClipboard(urlFor(l.token)); toast({ title: ok ? "Link copied" : "Copy failed" }); }}>
+              Copy
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => revoke.mutate(l.id)} disabled={revoke.isPending} data-testid={`tv-link-revoke-${l.id}`}>
+              Revoke
+            </Button>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );
@@ -3309,6 +3371,7 @@ export default function Settings() {
     <div className="space-y-6">
       <AllHandsSummons />
       <LoPriorityLinks />
+      <TvDisplayLinks />
       <EmailReportsCard />
     </div>
   );

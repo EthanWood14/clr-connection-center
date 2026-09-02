@@ -20,6 +20,7 @@ import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buc
 import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
+import { classifyOutcome, detectMilestones, flattenTips, pickTip, type PersonStats } from "./tv-board";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
 import {
@@ -5436,6 +5437,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // revocable, expiring token inside the handler before touching anything,
     // and the link can only move priority tiers.
     if (req.path.startsWith("/lo-priority/")) return next();
+    // Office TV wallboard — a screen cannot log in. Read-only, its own
+    // revocable token, resolved inside the handler before anything is read.
+    if (req.path.startsWith("/tv/")) return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -19769,6 +19773,207 @@ ${note}` : daysLine;
   // a daily trend, and the operational extras (hours, attendance, comp).
   // Dated manager notes on a CLR. Commentary, never a metric: no aggregate on
   // this page reads clr_notes, so writing one cannot move a number or a bar.
+
+  // ── Office TV wallboard ──────────────────────────────────────────────────
+  // A screen on the wall polls one endpoint every ten seconds and gets
+  // everything it shows in one payload: the scorecard, whatever happened since
+  // its last poll (to animate), the moments worth celebrating, and a piece of
+  // training advice. Read-only, keyed by a revocable token an admin makes.
+  function tvLink(token: string): any | null {
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(String(token ?? ""))) return null;
+    try {
+      const row = storageExtra.getRawSqlite().prepare(
+        `SELECT * FROM tv_display_links WHERE token=? AND revoked_at IS NULL`,
+      ).get(String(token)) as any;
+      return row ?? null;
+    } catch { return null; }
+  }
+
+  app.get("/api/tv-links", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const rows = storageExtra.getRawSqlite().prepare(
+      `SELECT id, label, created_by_name, created_at, revoked_at, last_used_at, use_count, token
+         FROM tv_display_links WHERE org_id=? ORDER BY id DESC`,
+    ).all(orgId) as any[];
+    res.json({ links: rows.map((r) => ({
+      id: r.id, label: r.label, createdByName: r.created_by_name, createdAt: r.created_at,
+      revokedAt: r.revoked_at, lastUsedAt: r.last_used_at, useCount: r.use_count,
+      // The token is the whole secret; only the person who can revoke it sees it.
+      token: r.token,
+    })) });
+  });
+
+  app.post("/api/tv-links", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(actorId) as any;
+    const label = String(req.body?.label ?? "").trim().slice(0, 120) || "Office TV";
+    const token = crypto.randomBytes(24).toString("base64url");
+    const nowIso = new Date().toISOString();
+    const info = storageExtra.getRawSqlite().prepare(
+      `INSERT INTO tv_display_links (org_id, token, label, created_by, created_by_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(orgId, token, label, actorId, String(me?.name ?? ""), nowIso);
+    audit({
+      userId: actorId, userName: me?.name ?? "Manager", action: "create",
+      entityType: "tv_display_link", entityId: Number(info.lastInsertRowid),
+      entityLabel: `Created a TV display link (${label})`,
+    });
+    res.json({ id: Number(info.lastInsertRowid), token, label });
+  });
+
+  app.delete("/api/tv-links/:id", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid link" });
+    const actorId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(actorId) as any;
+    const r = storageExtra.getRawSqlite().prepare(
+      `UPDATE tv_display_links SET revoked_at=? WHERE id=? AND org_id=? AND revoked_at IS NULL`,
+    ).run(new Date().toISOString(), id, orgId);
+    if (!r.changes) return res.status(404).json({ error: "Link not found or already revoked" });
+    audit({
+      userId: actorId, userName: me?.name ?? "Manager", action: "delete",
+      entityType: "tv_display_link", entityId: id, entityLabel: "Revoked a TV display link",
+    });
+    res.json({ ok: true });
+  });
+
+  app.get("/api/tv/:token/feed", (req: any, res) => {
+    const link = tvLink(req.params.token);
+    if (!link) return res.status(404).json({ error: "This display link is no longer active." });
+    const orgId = Number(link.org_id) || 1;
+    const sqlite = storageExtra.getRawSqlite();
+    try {
+      sqlite.prepare(`UPDATE tv_display_links SET use_count=use_count+1, last_used_at=? WHERE id=?`)
+        .run(new Date().toISOString(), link.id);
+    } catch { /* bookkeeping only */ }
+
+    const tz = BUSINESS_DAY_DEFAULT_TZ;
+    const today = businessTodayInTz(tz);
+    // Monday of this week, in the office's calendar.
+    const t = new Date(`${today}T12:00:00Z`);
+    const dow = t.getUTCDay();
+    const monday = new Date(t); monday.setUTCDate(t.getUTCDate() - ((dow + 6) % 7));
+    const weekStart = monday.toISOString().slice(0, 10);
+
+    // ── scorecard ────────────────────────────────────────────────────────
+    const clrs = sqlite.prepare(
+      `SELECT id, name, goal_transfers_weekly, goal_appointments_weekly
+         FROM users
+        WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
+          AND archived_at IS NULL`,
+    ).all(orgId) as any[];
+    const ids = clrs.map((c) => Number(c.id));
+    const counts = new Map<string, number>();
+    if (ids.length) {
+      const rows = sqlite.prepare(
+        `SELECT assistant_id, outcome_type,
+                SUM(CASE WHEN date = ? THEN 1 ELSE 0 END) AS today,
+                SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS week
+           FROM lead_outcomes
+          WHERE org_id=? AND date >= ? AND outcome_type IN ('transfer','appointment')
+            AND assistant_id IN (${ids.map(() => "?").join(",")})
+          GROUP BY assistant_id, outcome_type`,
+      ).all(today, weekStart, orgId, weekStart, ...ids) as any[];
+      for (const r of rows) {
+        counts.set(`${r.assistant_id}:${r.outcome_type}:today`, Number(r.today) || 0);
+        counts.set(`${r.assistant_id}:${r.outcome_type}:week`, Number(r.week) || 0);
+      }
+    }
+    // Best day before today, per person — the bar a personal best has to clear.
+    const best = new Map<number, number>();
+    try {
+      const rows = sqlite.prepare(
+        `SELECT assistant_id, MAX(c) AS best FROM (
+           SELECT assistant_id, date, COUNT(*) AS c FROM lead_outcomes
+            WHERE org_id=? AND outcome_type='transfer' AND date < ?
+            GROUP BY assistant_id, date
+         ) GROUP BY assistant_id`,
+      ).all(orgId, today) as any[];
+      for (const r of rows) best.set(Number(r.assistant_id), Number(r.best) || 0);
+    } catch { /* an empty history is a fine history */ }
+
+    const people: PersonStats[] = clrs.map((c) => ({
+      id: Number(c.id),
+      name: String(c.name ?? ""),
+      transfersToday: counts.get(`${c.id}:transfer:today`) ?? 0,
+      transfersWeek: counts.get(`${c.id}:transfer:week`) ?? 0,
+      appointmentsToday: counts.get(`${c.id}:appointment:today`) ?? 0,
+      appointmentsWeek: counts.get(`${c.id}:appointment:week`) ?? 0,
+      goalTransfersWeekly: Number(c.goal_transfers_weekly) || 0,
+      goalAppointmentsWeekly: Number(c.goal_appointments_weekly) || 0,
+      bestDayBefore: best.get(Number(c.id)) ?? 0,
+    })).sort((a, b) => b.transfersToday - a.transfersToday || b.transfersWeek - a.transfersWeek || a.name.localeCompare(b.name));
+
+    const teamRow = sqlite.prepare(
+      `SELECT
+         SUM(CASE WHEN outcome_type='transfer'    AND date=? THEN 1 ELSE 0 END) AS transfersToday,
+         SUM(CASE WHEN outcome_type='transfer'    AND date>=? THEN 1 ELSE 0 END) AS transfersWeek,
+         SUM(CASE WHEN outcome_type='appointment' AND date=? THEN 1 ELSE 0 END) AS appointmentsToday,
+         SUM(CASE WHEN outcome_type='fell_through' AND date=? AND COALESCE(missed_reason,'')='' THEN 1 ELSE 0 END) AS fellThroughToday,
+         SUM(CASE WHEN outcome_type='fell_through' AND date=? AND COALESCE(missed_reason,'')<>'' THEN 1 ELSE 0 END) AS missedToday
+       FROM lead_outcomes WHERE org_id=? AND date >= ?`,
+    ).get(today, weekStart, today, today, today, orgId, weekStart) as any;
+
+    // ── events since the TV last asked ───────────────────────────────────
+    const since = typeof req.query.since === "string" && /^\d{4}-\d{2}-\d{2}T/.test(req.query.since) ? req.query.since : null;
+    const eventSql = `
+      SELECT o.id, o.outcome_type, o.transfer_type, o.borrower_name, o.appointment_datetime,
+             o.reschedule_datetime, o.rescheduled, o.missed_reason, o.created_at, o.updated_at,
+             u.name AS assistant_name, lo.full_name AS lo_name,
+             COALESCE(o.updated_at, o.created_at) AS stamp
+        FROM lead_outcomes o
+        LEFT JOIN users u ON u.id = o.assistant_id
+        LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+       WHERE o.org_id = ? AND o.outcome_type IN ('transfer','appointment','fell_through')`;
+    let events: ReturnType<typeof classifyOutcome>[] = [];
+    let cursor = since;
+    if (since) {
+      const rows = sqlite.prepare(`${eventSql} AND COALESCE(o.updated_at, o.created_at) > ? ORDER BY stamp ASC LIMIT 40`)
+        .all(orgId, since) as any[];
+      events = rows.map(classifyOutcome).filter(Boolean);
+      if (rows.length) cursor = String(rows[rows.length - 1].stamp);
+    } else {
+      // First poll: no replaying history at the TV on boot. Start the cursor
+      // at the newest thing that exists.
+      const last = sqlite.prepare(`SELECT MAX(COALESCE(updated_at, created_at)) AS m FROM lead_outcomes WHERE org_id=?`).get(orgId) as any;
+      cursor = String(last?.m || new Date().toISOString());
+    }
+    const recent = (sqlite.prepare(`${eventSql} AND o.date >= ? ORDER BY stamp DESC LIMIT 10`)
+      .all(orgId, weekStart) as any[]).map(classifyOutcome).filter(Boolean);
+
+    // ── milestones + a tip ───────────────────────────────────────────────
+    const milestones = detectMilestones({ today, weekStart, people });
+    let days = TRAINING_DAYS;
+    let author = TRAINING_AUTHOR;
+    try {
+      const row = sqlite.prepare(`SELECT content, author_name FROM training_manual_versions WHERE org_id=? ORDER BY id DESC LIMIT 1`).get(orgId) as any;
+      if (row) { days = readStoredManual(row.content); author = row.author_name || author; }
+    } catch { /* seed */ }
+    const tip = pickTip(Number(req.query.tip) || 0, flattenTips(days, author));
+
+    res.json({
+      version: APP_VERSION,
+      now: new Date().toISOString(),
+      today, weekStart, cursor,
+      scorecard: {
+        people: people.map(({ bestDayBefore, ...p }) => p),
+        team: {
+          transfersToday: Number(teamRow?.transfersToday) || 0,
+          transfersWeek: Number(teamRow?.transfersWeek) || 0,
+          appointmentsToday: Number(teamRow?.appointmentsToday) || 0,
+          fellThroughToday: Number(teamRow?.fellThroughToday) || 0,
+          missedToday: Number(teamRow?.missedToday) || 0,
+        },
+      },
+      events, recent, milestones, tip,
+    });
+  });
+
   // ── LO priority share link ───────────────────────────────────────────────
   // Hands someone outside C3 the ability to set which loan officers are
   // prioritised. That is lead routing, so: its own token, an expiry, a revoke

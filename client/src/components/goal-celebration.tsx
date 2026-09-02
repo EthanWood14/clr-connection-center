@@ -55,7 +55,7 @@ function spawnBurst(
   }
 }
 
-function Confetti({ running, dramatic = false }: { running: boolean; dramatic?: boolean }) {
+export function Confetti({ running, dramatic = false }: { running: boolean; dramatic?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const particlesRef = useRef<Particle[]>([]);
