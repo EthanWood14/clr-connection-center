@@ -38,6 +38,7 @@ interface TvEvent { id: string; kind: Kind; at: string; borrower: string; who: s
 interface Person {
   id: number; name: string; transfersToday: number; transfersWeek: number;
   appointmentsToday: number; appointmentsWeek: number; goalTransfersWeekly: number; goalAppointmentsWeekly: number;
+  lastTransferAt?: string | null; lastCallAt?: string | null;
 }
 interface Milestone { id: string; kind: string; headline: string; detail: string; weight: 1 | 2 | 3 }
 interface Tip { day: number; half: "morning" | "afternoon" | "eod"; text: string; author: string }
@@ -56,6 +57,26 @@ type Moment =
   | { type: "overtake"; key: string; overtake: Overtake };
 
 const POLL_MS = 10_000;
+
+/**
+ * "2h 14m", "6m", "just now" — how long since something last happened.
+ *
+ * Deliberately plain. It is a wall the whole floor reads, so a quiet stretch
+ * says so without shouting: the number goes dim-amber once someone has been
+ * quiet a while rather than red, because this is information, not a telling-off.
+ */
+function since(iso: string | null | undefined, now: number): { label: string; quiet: boolean } | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.floor((now - t) / 60_000));
+  if (mins < 1) return { label: "just now", quiet: false };
+  if (mins < 60) return { label: `${mins}m`, quiet: mins >= 45 };
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return { label: m ? `${h}h ${m}m` : `${h}h`, quiet: true };
+  const d = Math.floor(h / 24);
+  return { label: d === 1 ? "1 day" : `${d} days`, quiet: true };
+}
 const TIP_MS = 45_000;
 const PLAYED_KEY = "c3:tv:played";
 
@@ -197,7 +218,18 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ── pages ───────────────────────────────────────────────────────────────────
-function ScorecardPage({ people, reduced }: { people: Person[]; reduced: boolean }) {
+/** "transfer 2h 14m" — dim once it has been quiet a while, never alarming. */
+function SinceLabel({ what, at, now }: { what: string; at: string | null | undefined; now: number }) {
+  const s = since(at, now);
+  if (!s) return <span className="text-white/25">no {what} yet</span>;
+  return (
+    <span className={s.quiet ? "text-amber-300/70" : "text-white/45"}>
+      {what} <span className="font-semibold">{s.label}</span>
+    </span>
+  );
+}
+
+function ScorecardPage({ people, reduced, now }: { people: Person[]; reduced: boolean; now: number }) {
   const leader = people[0];
   const max = Math.max(1, leader?.transfersToday ?? 1);
   return (
@@ -232,6 +264,12 @@ function ScorecardPage({ people, reduced }: { people: Person[]; reduced: boolean
                     initial={{ width: 0 }} animate={{ width: `${pct}%` }}
                     transition={{ type: "spring", stiffness: 90, damping: 20, delay: 0.25 + i * 0.07 }}
                   />
+                </div>
+                {/* How long since each of them last happened. Under the bar so
+                    it reads as a footnote to the row, not as a score. */}
+                <div className="mt-1.5 flex gap-5 text-[clamp(0.85rem,1.15vw,1.15rem)] leading-none" data-testid={`tv-since-${p.id}`}>
+                  <SinceLabel what="transfer" at={p.lastTransferAt} now={now} />
+                  <SinceLabel what="call" at={p.lastCallAt} now={now} />
                 </div>
               </div>
               <CountUp value={p.transfersToday} className="text-right text-[clamp(2.6rem,4.4vw,4.8rem)] font-black leading-none" />
@@ -587,7 +625,7 @@ export default function TvBoard() {
             variants={slide(reduced)} initial="enter" animate="center" exit="exit"
             data-testid="tv-page" data-page={page}
           >
-            {page === "scorecard" && <ScorecardPage people={people} reduced={reduced} />}
+            {page === "scorecard" && <ScorecardPage people={people} reduced={reduced} now={now.getTime()} />}
             {page === "team"      && <TeamPage team={team} teamGoal={teamGoal} reduced={reduced} />}
             {page === "latest"    && <LatestPage recent={data?.recent ?? []} now={now} reduced={reduced} />}
             {page === "tip"       && <TipPage tip={data?.tip ?? null} reduced={reduced} />}

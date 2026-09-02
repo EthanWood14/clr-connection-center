@@ -133,6 +133,9 @@ export interface PersonStats {
   appointmentsWeek: number;
   goalTransfersWeekly: number;
   goalAppointmentsWeekly: number;
+  /** ISO stamps, or null when it has never happened. */
+  lastTransferAt?: string | null;
+  lastCallAt?: string | null;
   /** Their best single day before today, for the personal-best check. */
   bestDayBefore: number;
 }

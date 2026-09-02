@@ -20024,6 +20024,30 @@ ${note}` : daysLine;
         counts.set(`${r.assistant_id}:${r.outcome_type}:week`, Number(r.week) || 0);
       }
     }
+    // When each person last logged a transfer, and when they were last on a
+    // call. Calls come from CallTools (callsync_activity_events carries a
+    // per-call occurred_at); Dialpad only syncs a daily total, so it cannot
+    // answer "how long since" and is deliberately not mixed in here.
+    const lastTransfer = new Map<number, string>();
+    const lastCall = new Map<number, string>();
+    if (ids.length) {
+      const holes = ids.map(() => "?").join(",");
+      try {
+        for (const r of sqlite.prepare(
+          `SELECT assistant_id, MAX(created_at) AS at FROM lead_outcomes
+            WHERE org_id=? AND outcome_type='transfer' AND assistant_id IN (${holes})
+            GROUP BY assistant_id`,
+        ).all(orgId, ...ids) as any[]) if (r.at) lastTransfer.set(Number(r.assistant_id), String(r.at));
+      } catch { /* no history is fine */ }
+      try {
+        for (const r of sqlite.prepare(
+          `SELECT assistant_id, MAX(occurred_at) AS at FROM callsync_activity_events
+            WHERE org_id=? AND assistant_id IN (${holes})
+            GROUP BY assistant_id`,
+        ).all(orgId, ...ids) as any[]) if (r.at) lastCall.set(Number(r.assistant_id), String(r.at));
+      } catch { /* CallTools may not be wired in every org */ }
+    }
+
     // Best day before today, per person — the bar a personal best has to clear.
     const best = new Map<number, number>();
     try {
@@ -20047,6 +20071,8 @@ ${note}` : daysLine;
       goalTransfersWeekly: Number(c.goal_transfers_weekly) || 0,
       goalAppointmentsWeekly: Number(c.goal_appointments_weekly) || 0,
       bestDayBefore: best.get(Number(c.id)) ?? 0,
+      lastTransferAt: lastTransfer.get(Number(c.id)) ?? null,
+      lastCallAt: lastCall.get(Number(c.id)) ?? null,
     })).sort((a, b) => b.transfersToday - a.transfersToday || b.transfersWeek - a.transfersWeek || a.name.localeCompare(b.name));
 
     const teamRow = sqlite.prepare(

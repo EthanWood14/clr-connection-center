@@ -353,3 +353,28 @@ test("the race scene never mocks the person who got passed", () => {
   assert.doesNotMatch(race, /<img|src=|fetch\(/);
   assert.doesNotMatch(race, /repeat: Infinity/);
 });
+
+// ── how long since ──────────────────────────────────────────────────────────
+test("the scorecard says how long since each person's last transfer and call", () => {
+  // Calls come from CallTools, which stores a per-call occurred_at. Dialpad
+  // only syncs a daily total, so it cannot answer "how long since" and must
+  // not be mixed in — a stale daily number would read as a fresh call.
+  assert.match(routes, /MAX\(created_at\) AS at FROM lead_outcomes/);
+  assert.match(routes, /MAX\(occurred_at\) AS at FROM callsync_activity_events/);
+  assert.doesNotMatch(
+    routes.slice(routes.indexOf("const lastTransfer = new Map"), routes.indexOf("const best = new Map")),
+    /dialpad/i,
+    "Dialpad has no per-call time and must not feed the since-line",
+  );
+  assert.match(routes, /lastTransferAt: lastTransfer\.get\(Number\(c\.id\)\) \?\? null/);
+  assert.match(routes, /lastCallAt: lastCall\.get\(Number\(c\.id\)\) \?\? null/);
+  // The label ages between polls off the clock the header already runs.
+  assert.match(page, /<SinceLabel what="transfer" at=\{p\.lastTransferAt\} now=\{now\} \/>/);
+  assert.match(page, /<SinceLabel what="call" at=\{p\.lastCallAt\} now=\{now\} \/>/);
+  assert.match(page, /now=\{now\.getTime\(\)\}/);
+  // A missing stamp says so rather than rendering a wrong duration.
+  assert.match(page, /no \{what\} yet/);
+  // Quiet reads amber, never red: this is information, not a telling-off.
+  assert.match(page, /s\.quiet \? "text-amber-300\/70"/);
+  assert.doesNotMatch(page.slice(page.indexOf("function SinceLabel"), page.indexOf("function ScorecardPage")), /red-/);
+});

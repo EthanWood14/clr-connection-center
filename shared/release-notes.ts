@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.50.0",
+    headline: "How long since, on every row.",
+    items: [
+      { text: "Each row on the office TV scorecard now shows how long since that person last transferred and how long since they were last on a call. It goes a dim amber once someone has been quiet for a while, so a stretch of silence is visible without being shouted about.", audience: "everyone" },
+      { text: "Call times come from CallTools, which records every call. Dialpad only sends a daily total, so it cannot say how long ago the last one was and is left out rather than showing a stale number as if it were fresh.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.49.0",
     headline: "Pass someone on the board and the race is on.",
     items: [
