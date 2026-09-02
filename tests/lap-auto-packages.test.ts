@@ -23,7 +23,11 @@ test("new Redoble transfers auto-flow into LAP packages", () => {
   // Reuses the manual route's building blocks — never a second insert path.
   assert.match(flow, /storageExtra\.createLapResultPackage\(/);
   assert.match(flow, /storageExtra\.linkLapTransferToPackage\(/);
-  assert.match(flow, /buildAuditRows\(transfers, packages\)/);
+  // One transfer at a time against a growing universe: matching the whole
+  // batch up front let two same-borrower transfers in one pass each create a
+  // package, because the second never saw the first one's.
+  assert.match(flow, /buildAuditRows\(\[transfer\], packages\)/);
+  assert.match(flow, /packages\.push\(\{/);
 });
 
 test("auto-link only reuses a RECENT same-borrower package", () => {

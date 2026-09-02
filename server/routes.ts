@@ -15866,8 +15866,22 @@ ${note}` : daysLine;
   // logging, shotgun results, the CallSync webhook, appointment flips — without
   // hooking six call sites, and NOT EXISTS on the durable link table makes
   // every pass idempotent.
-  const LAP_AUTO_PACKAGE_EPOCH = "2026-08-26T00:00:00"; // transfers logged before the feature stay manual
-  function autoFlowLapTransfers(orgId: number): number {
+  const LAP_AUTO_PACKAGE_EPOCH = "2026-08-26T00:00:00"; // the minute cron only looks at transfers logged since the feature shipped
+  type AutoFlowOpts = {
+    /** Only transfers logged at/after this stamp; null means no lower bound (the history pass). */
+    sinceCreatedAt: string | null;
+    /** Only transfers logged BEFORE this stamp. The history pass sets it to the
+     *  epoch so the two passes partition the transfers between them instead of
+     *  overlapping: without it, a transfer logged while the history pass is
+     *  running would be filed silently (notify: false) and the minute cron
+     *  would then skip it as already linked, so the LOA never got its bell. */
+    untilCreatedAt?: string;
+    /** Ring the portal bell per created package. Off for history: 1,300 bells for months-old transfers would bury the real ones. */
+    notify: boolean;
+    /** Stop after this many transfers are filed, so a long pass can breathe between chunks. */
+    maxRows?: number;
+  };
+  function autoFlowLapTransfers(orgId: number, opts: AutoFlowOpts = { sinceCreatedAt: LAP_AUTO_PACKAGE_EPOCH, notify: true }): number {
     const sqlite = storageExtra.getRawSqlite();
     // Same eligibility as the manual transfer-audit route: Redoble by name, or
     // any LO with an available LAP assistant.
@@ -15875,7 +15889,14 @@ ${note}` : daysLine;
       `SELECT id, full_name FROM loan_officers WHERE org_id=? AND internal_status='active'`,
     ).all(orgId) as any[]).filter((lo) =>
       /\bredoble\b/i.test(String(lo.full_name ?? "")) || storageExtra.hasAvailableLapAssistant(orgId, Number(lo.id)));
-    let created = 0;
+    // Transfers actually filed (a package created, or linked to one). Rows that
+    // throw are not counted, which is what lets the chunked history pass stop
+    // instead of retrying a permanently failing row for ever.
+    let filed = 0;
+    // Bound params in the order the SQL above interpolates them.
+    const bounds: string[] = [];
+    if (opts.sinceCreatedAt) bounds.push(opts.sinceCreatedAt);
+    if (opts.untilCreatedAt) bounds.push(opts.untilCreatedAt);
     for (const lo of eligibleLos) {
       const transfers = (sqlite.prepare(
         `SELECT o.id, o.date, o.borrower_name, u.name AS clr_name, l.full_name AS loa_name
@@ -15883,11 +15904,12 @@ ${note}` : daysLine;
            LEFT JOIN users u ON u.id = o.assistant_id
            LEFT JOIN loan_officer_assistants l ON l.id = o.loa_id
           WHERE o.org_id=? AND o.lo_id=? AND o.outcome_type='transfer'
-            AND o.created_at >= ?
+            ${opts.sinceCreatedAt ? "AND o.created_at >= ?" : ""}
+            ${opts.untilCreatedAt ? "AND o.created_at < ?" : ""}
             AND NOT EXISTS (SELECT 1 FROM lap_result_transfer_links t
                              WHERE t.org_id=o.org_id AND t.outcome_id=o.id)
           ORDER BY o.date ASC, o.id ASC`,
-      ).all(orgId, lo.id, LAP_AUTO_PACKAGE_EPOCH) as any[]).map((r): TransferRow => ({
+      ).all(orgId, lo.id, ...bounds) as any[]).map((r): TransferRow => ({
         outcomeId: Number(r.id), date: String(r.date), borrowerName: String(r.borrower_name ?? ""),
         clrName: r.clr_name ?? null, loaName: r.loa_name ?? null,
       }));
@@ -15906,8 +15928,16 @@ ${note}` : daysLine;
         linkedOutcomeIds: String(r.linked_outcome_ids ?? "").split(",").filter(Boolean).map(Number),
       }));
       const actorUserId = lapSharedUserId(orgId);
-      for (const row of buildAuditRows(transfers, packages)) {
+      // One transfer at a time, against a universe that grows as packages are
+      // created, so two transfers for the same borrower in one pass land on one
+      // package. Matching the whole batch up front missed that: the second
+      // transfer never saw the package the first one had just created. Rare
+      // for the minute cron, guaranteed for a history pass over months.
+      for (const transfer of transfers) {
+        if (opts.maxRows && filed >= opts.maxRows) break;
         try {
+          const [row] = buildAuditRows([transfer], packages);
+          if (!row) continue;
           // Auto-link only a RECENT same-borrower package. The audit suggests
           // the closest-in-time package with no bound, which is right for a
           // human to confirm — but silently attaching a new transfer to a
@@ -15918,6 +15948,8 @@ ${note}` : daysLine;
             : Infinity;
           if (row.matchType === "suggested" && row.packageId && gapDays <= 7) {
             storageExtra.linkLapTransferToPackage({ orgId, outcomeId: row.outcomeId, packageId: row.packageId, actorUserId });
+            if (suggested) (suggested.linkedOutcomeIds ??= []).push(row.outcomeId);
+            filed += 1;
           } else {
             const pkg = storageExtra.createLapResultPackage({
               orgId, actorUserId,
@@ -15928,7 +15960,12 @@ ${note}` : daysLine;
               resultDate: row.date,
             });
             storageExtra.linkLapTransferToPackage({ orgId, outcomeId: row.outcomeId, packageId: pkg.id, actorUserId });
-            created += 1;
+            packages.push({
+              packageId: pkg.id, borrowerName: row.borrowerName || "Unnamed borrower",
+              resultDate: row.date, documentTypes: [], linkedOutcomeIds: [row.outcomeId],
+            });
+            filed += 1;
+            if (!opts.notify) continue;
             // Bell entry on the portal (the client already routes 'lap_result'
             // to /results). The shared gate account is how every device polls;
             // individually-linked portal users are included for when they exist.
@@ -15945,11 +15982,12 @@ ${note}` : daysLine;
             }
           }
         } catch (error) {
-          console.error(`LAP auto-flow failed for outcome ${row.outcomeId}:`, error);
+          console.error(`LAP auto-flow failed for outcome ${transfer.outcomeId}:`, error);
         }
       }
+      if (opts.maxRows && filed >= opts.maxRows) break;
     }
-    return created;
+    return filed;
   }
   // LAP is WCL's single-org feature (same reasoning as the NMLS cron): run for
   // org 1 only, which also keeps the demo org's read-only world untouched.
@@ -15961,6 +15999,54 @@ ${note}` : daysLine;
     try { runWithOrg({ orgId: 1, superAdmin: false }, () => autoFlowLapTransfers(1)); }
     catch (error) { console.error("LAP transfer auto-flow boot error:", error); }
   }, 10_000);
+
+  // ── One-time history pass ──────────────────────────────────────────────────
+  // "All the history of transfers that have been transferred in C3 all time to
+  // LAP with the dates they were transferred" (2026-09-02). Every transfer
+  // logged before the epoch gets its package once, dated by the transfer and
+  // without a bell. Guarded by the same migrations_applied ledger the storage
+  // one-shots use, so a redeploy never repeats it; NOT EXISTS on the link
+  // table keeps even a repeat harmless. Runs before the cron's boot pass.
+  const LAP_HISTORY_BACKFILL_KEY = "lap_transfer_history_backfill_v1";
+  const LAP_HISTORY_CHUNK = 40;
+  function backfillLapTransferHistoryOnce(): void {
+    const sqlite = storageExtra.getRawSqlite();
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS migrations_applied (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
+    if (sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name=?`).get(LAP_HISTORY_BACKFILL_KEY)) return;
+    const started = Date.now();
+    let filed = 0;
+    // In chunks, with a breath between them. Every package write is its own
+    // synchronous transaction: 1,316 of them back to back blocked the event
+    // loop for 18 seconds in rehearsal, and on a live boot that is 18 seconds
+    // of a frozen portal for whoever is on it. A chunk is a fraction of a
+    // second, and the NOT EXISTS guard means each one simply resumes where the
+    // last stopped — including after a crash, since the key is only written
+    // when a pass comes back with nothing left to file.
+    const step = () => {
+      let filedNow = 0;
+      try {
+        runWithOrg({ orgId: 1, superAdmin: false }, () => {
+          filedNow = autoFlowLapTransfers(1, { sinceCreatedAt: null, untilCreatedAt: LAP_AUTO_PACKAGE_EPOCH, notify: false, maxRows: LAP_HISTORY_CHUNK });
+        });
+      } catch (error) {
+        console.error("LAP history backfill chunk failed:", error);
+        return; // key stays unset: the next boot picks up the rest
+      }
+      filed += filedNow;
+      if (filedNow > 0) {
+        const next = setTimeout(step, 150);
+        if (typeof (next as any).unref === "function") (next as any).unref();
+        return;
+      }
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run(LAP_HISTORY_BACKFILL_KEY, new Date().toISOString());
+      console.log(`[lap-backfill] ${LAP_HISTORY_BACKFILL_KEY}: ${filed} historical transfers filed into LAP in ${Date.now() - started}ms`);
+    };
+    step();
+  }
+  setTimeout(() => {
+    try { backfillLapTransferHistoryOnce(); }
+    catch (error) { console.error("LAP history backfill error:", error); }
+  }, 5_000);
 
   // LOA names for the portal's "connected leads" dropdown. LOAs are name rows
   // in loan_officer_assistants — not portal accounts — and the connection to a

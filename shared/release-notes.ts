@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.45.0",
+    headline: "The whole transfer history lands in LAP, dated as it happened.",
+    items: [
+      { text: "Every C3 transfer to Chris Redoble since the start of records is now in the LAP portal as a package, dated by the day it was transferred, with the transfer linked. Nothing rings the bell for these; they simply appear in Results and Lead Notes in date order.", audience: "lap" },
+      { text: "Repeat borrowers who transferred again within a week share one package instead of getting a second one. That now holds for new transfers too.", audience: "lap" },
+      { text: "The dashboard totals count the whole history from now on, so the all-time and needs-attention numbers jump once.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.44.0",
     headline: "Lead notes get their own page, and Chris gets every one.",
     items: [
