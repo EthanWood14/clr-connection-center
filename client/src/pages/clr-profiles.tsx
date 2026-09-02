@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight, ClipboardCheck} from "lucide-react";
+import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight, ClipboardCheck, TrendingUp } from "lucide-react";
 
 export const PERIODS = [
   { value: "week", label: "This week" },
@@ -44,6 +44,7 @@ type Row = {
   startDate: string | null; createdAt: string | null; tenureDays: number | null; startDateIsEstimate: boolean;
   metrics: { calls: number; transfers: number; appointments: number; transferRate: number };
   completeness?: { pct: number | null; transfers: number; complete: number };
+  workdayRate?: { workingDays: number; transfers: number; ratePerWorkingDay: number | null; trainingDays: number; trainerDays: number; graduated: boolean } | null;
 };
 
 // What to show as "started": the real start date, else fall back to when the
@@ -125,10 +126,19 @@ export default function ClrProfiles() {
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 group-hover:text-primary" />
               </div>
 
-              <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t">
+              <div className="grid grid-cols-5 gap-2 mt-3 pt-3 border-t">
                 <div>
                   <p className="text-lg font-bold tabular-nums leading-none">{c.metrics.transfers}</p>
                   <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><PhoneForwarded className="w-2.5 h-2.5" /> Transfers</p>
+                </div>
+                <div>
+                  {/* Lifetime rate over NORMAL workdays only (training and
+                      trainer days excluded) — em dash while in training or
+                      under the minimum days. */}
+                  <p className="text-lg font-bold tabular-nums leading-none" data-testid="clr-list-workday-rate">
+                    {c.workdayRate?.ratePerWorkingDay ?? "\u2014"}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><TrendingUp className="w-2.5 h-2.5" /> T/workday</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold tabular-nums leading-none">{c.metrics.calls.toLocaleString()}</p>

@@ -66,6 +66,8 @@ type Resp = {
     peerCount: number;
     thin: boolean;
     minDays: number;
+    workdayRate?: { workingDays: number; transfers: number; ratePerWorkingDay: number | null; trainingDays: number; trainerDays: number; graduated: boolean } | null;
+    workdayRateMinDays?: number;
   };
   clr: {
     userId: number; name: string; email: string; role: string; isManager: boolean;
@@ -423,9 +425,19 @@ export default function ClrProfile() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                   <Stat icon={PhoneForwarded} label="Transfers (all time)" value={data.lifetime.totals.transfers.toLocaleString()}
                         sub={`${data.lifetime.rates.transfersPerDay} per active day`} />
+                  {/* The fair rate: only normal working days count — the first
+                      20 training days and any trainer days are excluded from
+                      both sides of the division. */}
+                  <Stat icon={TrendingUp} label="Transfers / workday"
+                        value={data.lifetime.workdayRate?.ratePerWorkingDay ?? "\u2014"}
+                        sub={data.lifetime.workdayRate
+                          ? (data.lifetime.workdayRate.graduated
+                            ? `${data.lifetime.workdayRate.workingDays} workdays \u00b7 excl. ${data.lifetime.workdayRate.trainingDays} training${data.lifetime.workdayRate.trainerDays ? ` + ${data.lifetime.workdayRate.trainerDays} trainer` : ""} days`
+                            : "still in training")
+                          : "no data"} />
                   <Stat icon={CalendarCheck} label="Appointments" value={data.lifetime.totals.appointments.toLocaleString()}
                         sub={`${data.lifetime.rates.appointmentsPerDay} per active day`} />
                   <Stat icon={PhoneCall} label="Calls" value={data.lifetime.totals.calls.toLocaleString()}

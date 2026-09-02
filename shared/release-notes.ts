@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.42.0",
+    headline: "Transfers per workday — the fair rate.",
+    items: [
+      { text: "CLR profiles now show transfers per normal working day: the first 20 training days and any days spent training someone else are left out of the math on both sides, so a trainer or a new hire is never measured against days they could not have been on the phones.", audience: "manager" },
+      { text: "The rate shows a dash instead of a misleading number while someone is still in training or has fewer than five qualifying workdays.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.41.0",
     headline: "Ask C3 learned averages and trends.",
     items: [

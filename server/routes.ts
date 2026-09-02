@@ -47,6 +47,7 @@ import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } f
 import { notesToBonzoHtml, transferNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
+import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate } from "./clr-workday-rate";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz } from "./business-day";
@@ -19624,6 +19625,77 @@ ${note}` : daysLine;
     return map.get(Number(userId)) ?? clrTrainingStatus(0);
   }
 
+  /**
+   * Transfers per NORMAL working day, per CLR: active weekdays minus the
+   * 20-workday training clock minus trainer days (dates on live/paid
+   * training comp requests). Same active-day union as the training clock;
+   * the formula itself lives in server/clr-workday-rate.ts.
+   */
+  function clrWorkdayRatesByUser(orgId: number): Map<number, ClrWorkdayRate> {
+    const sqlite = storageExtra.getRawSqlite();
+    const activeDateRows = sqlite.prepare(
+      `SELECT DISTINCT assistant_id, d FROM (
+         SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
+         UNION
+         SELECT assistant_id, log_date AS d FROM daily_call_logs WHERE org_id=? AND calls_made > 0
+         UNION
+         SELECT assistant_id, activity_date AS d FROM callsync_activity_events WHERE org_id=?
+         UNION
+         SELECT assistant_id, report_date AS d FROM eod_reports
+          WHERE (calls_made > 0 OR messages_sent > 0 OR additional_conversations > 0
+             OR calltools_conversations > 0 OR calltools_active_seconds > 0
+             OR dialpad_calls > 0 OR transfers > 0 OR appointments > 0)
+            AND assistant_id IN (SELECT id FROM users WHERE org_id=?)
+         UNION
+         SELECT user_id AS assistant_id, stat_date AS d FROM dialpad_daily_stats
+          WHERE org_id=? AND calls > 0 AND user_id IS NOT NULL
+         UNION
+         SELECT user_id AS assistant_id, date AS d FROM morning_checkins WHERE org_id=?
+         UNION
+         SELECT user_id AS assistant_id, date(clock_in) AS d FROM time_clock_entries WHERE org_id=?
+       )
+       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')`,
+    ).all(orgId, orgId, orgId, orgId, orgId, orgId, orgId) as any[];
+    const activeByUser = new Map<number, string[]>();
+    for (const row of activeDateRows) {
+      const id = Number(row.assistant_id);
+      if (!Number.isFinite(id)) continue;
+      (activeByUser.get(id) ?? activeByUser.set(id, []).get(id)!).push(String(row.d));
+    }
+    const transferRows = sqlite.prepare(
+      `SELECT assistant_id, date FROM lead_outcomes WHERE org_id=? AND outcome_type='transfer'`,
+    ).all(orgId) as any[];
+    const transfersByUser = new Map<number, string[]>();
+    for (const row of transferRows) {
+      const id = Number(row.assistant_id);
+      if (!Number.isFinite(id)) continue;
+      (transfersByUser.get(id) ?? transfersByUser.set(id, []).get(id)!).push(String(row.date));
+    }
+    // Same live/paid predicate as compClaimedTrainingDates, org-wide in one pass.
+    const trainerRows = sqlite.prepare(
+      `SELECT user_id, training_dates FROM comp_requests
+        WHERE org_id=? AND training_dates IS NOT NULL
+          AND (status NOT IN ('draft','denied') OR is_paid=1 OR is_received=1)`,
+    ).all(orgId) as any[];
+    const trainerByUser = new Map<number, Set<string>>();
+    for (const row of trainerRows) {
+      const id = Number(row.user_id);
+      if (!Number.isFinite(id)) continue;
+      const set = trainerByUser.get(id) ?? trainerByUser.set(id, new Set()).get(id)!;
+      try { for (const d of JSON.parse(row.training_dates)) if (typeof d === "string") set.add(d); } catch { /* malformed row claims nothing */ }
+    }
+    const out = new Map<number, ClrWorkdayRate>();
+    for (const u of clrRoster()) {
+      const id = Number(u.id);
+      out.set(id, transfersPerWorkingDay({
+        activeDates: activeByUser.get(id) ?? [],
+        trainerDates: trainerByUser.get(id) ?? new Set(),
+        transferDates: transfersByUser.get(id) ?? [],
+      }));
+    }
+    return out;
+  }
+
   app.get("/api/clr-profiles", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const period = (req.query.period as string) || "month";
@@ -19631,6 +19703,7 @@ ${note}` : daysLine;
     try {
       const listOrgId = Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1;
       const trainingByUser = clrTrainingByUser(listOrgId);
+      const workdayRates = clrWorkdayRatesByUser(listOrgId);
 
       // Transfer write-up completeness for everyone, in ONE scan rather than a
       // query per CLR — this endpoint already loops the roster.
@@ -19679,6 +19752,7 @@ ${note}` : daysLine;
           createdAt: u.createdAt ?? u.created_at ?? null,
           tenureDays: clrTenureDays(u.startDate ?? u.start_date ?? null, u.createdAt ?? u.created_at ?? null),
           startDateIsEstimate: !(u.startDate ?? u.start_date),
+          workdayRate: workdayRates.get(Number(u.id)) ?? null,
           metrics: m,
         };
       });
@@ -20289,6 +20363,10 @@ ${note}` : daysLine;
             thin: comparisonIsThin(mine),
             minDays: MIN_DAYS_FOR_COMPARISON,
             trainingWorkdayThreshold: CLR_TRAINING_WORKDAY_THRESHOLD,
+            // Transfers per NORMAL working day: active weekdays minus the
+            // training clock minus trainer days. Null under MIN days.
+            workdayRate: clrWorkdayRatesByUser(orgId).get(userId) ?? null,
+            workdayRateMinDays: MIN_WORKING_DAYS_FOR_RATE,
           };
         })(),
         // Whole weeks in the window — the client scales WEEKLY goals by this so
