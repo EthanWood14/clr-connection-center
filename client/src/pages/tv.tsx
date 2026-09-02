@@ -325,7 +325,7 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
           <>
             <blockquote className="text-[clamp(1.8rem,3.1vw,3.4rem)] font-medium leading-snug text-white [text-wrap:balance]">“{tip.text}”</blockquote>
             <p className="mt-8 text-[clamp(1.1rem,1.7vw,1.7rem)] text-white/50">
-              Day {tip.day} · {tip.half === "eod" ? "by end of day" : tip.half} · {tip.author}
+              {tip.day > 0 ? `Day ${tip.day} · ${tip.half === "eod" ? "by end of day" : tip.half} · ` : ""}{tip.author}
             </p>
           </>
         ) : <p className="text-white/50">No training plan yet.</p>}
@@ -434,19 +434,31 @@ export default function TvBoard() {
   // checked without waiting for the floor to make something happen. Keys are
   // unique per load, so it replays every time the page opens.
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has("demo")) return;
+    const demo = new URLSearchParams(window.location.search).get("demo");
+    if (!demo) return;
     const stamp = Date.now();
     const at = new Date().toISOString();
     const ev = (kind: Kind, borrower: string, detail: string | null): Moment =>
       ({ type: "event", key: `demo-${stamp}-${kind}`, event: { id: `demo-${kind}`, kind, at, borrower, who: "Demo", lo: "Alex Thompson", detail } });
-    setQueue([
+    const reel: Moment[] = [
       ev("transfer", "Maria Delgado", "to Alex Thompson"),
       ev("appointment", "Dana Whitfield", "Today 2:30 PM"),
       ev("rescheduled", "Tomas Reyes", "Moved to Tue 4:15 PM"),
       ev("fell_through", "Kevin Ostrowski", null),
       ev("missed_appointment", "Priya Natarajan", "No answer"),
       { type: "milestone", key: `demo-${stamp}-milestone`, milestone: { id: "demo", kind: "team-day", headline: "25 transfers today", detail: "The whole floor. Keep going.", weight: 3 } },
-    ]);
+    ];
+    // ?demo=1 plays the whole reel; ?demo=transfer plays that one on repeat,
+    // which is the only sane way to build or judge a single animation.
+    const one = reel.filter((m) => (m.type === "milestone" ? "milestone" : m.event.kind) === demo);
+    if (!one.length) { setQueue(reel); return; }
+    const loop = Array.from({ length: 40 }, (_, i) => {
+      const m = one[0];
+      return m.type === "milestone"
+        ? { ...m, key: `${m.key}-${i}` }
+        : { ...m, key: `${m.key}-${i}` };
+    });
+    setQueue(loop);
   }, []);
 
   // Two effects on purpose. Dequeuing changes both `current` and `queue`,

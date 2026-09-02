@@ -85,6 +85,22 @@ const LOOK: Record<HypeKind, Look> = {
 
 const STILL: Transition = { duration: 0.3 };
 
+/**
+ * Props are drawn in these, never in the palette's ink.
+ *
+ * The first cut used `look.ink` — the darkest brown or red in each palette —
+ * for anvils, dust, ladders and tumbleweeds, on a near-black backdrop. Every
+ * one of them was invisible on screen while looking perfectly correct in the
+ * code. A prop has to be a light shape with a dark outline to read from
+ * across a room, which is the opposite of the way the type is built.
+ */
+const PROP = {
+  body: "#D6D3D1",   // the mass of a thing
+  dark: "#44403C",   // its shaded face
+  line: "#0C0A09",   // the outline that separates it from the glow
+  dust: "#E7E5E4",   // dust and smoke, always lighter than the floor
+} as const;
+
 /** Deterministic noise, so a scene looks the same every time it plays. */
 function rnd(seed: number) {
   const x = Math.sin(seed * 9301 + 49297) * 233280;
@@ -130,14 +146,14 @@ function Rays({ look, reduced }: { look: Look; reduced: boolean }) {
 function Ground({ look, cracked = 0, at = 0, reduced }: { look: Look; cracked?: number; at?: number; reduced: boolean }) {
   return (
     <div className="absolute inset-x-0" style={{ top: `${FLOOR}%` }}>
-      <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${look.ink}, ${look.deep}, ${look.ink}, transparent)`, opacity: 0.85 }} />
+      <div className="h-[4px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${look.deep}, ${look.main}, ${look.deep}, transparent)`, opacity: 0.9 }} />
       {cracked > 0 && !reduced && (
         <svg viewBox="0 0 1920 120" preserveAspectRatio="none" className="absolute inset-x-0 top-0 h-[9vh] w-full">
           {Array.from({ length: cracked }, (_, i) => (
             <motion.path
               key={i}
               d={`M${820 + i * 140} 0 L${790 + i * 150} 46 L${840 + i * 150} 74 L${800 + i * 150} 120`}
-              fill="none" stroke={look.ink} strokeWidth="7" strokeLinejoin="round" opacity={0.75}
+              fill="none" stroke={look.main} strokeWidth="8" strokeLinejoin="round" opacity={0.9}
               initial={{ pathLength: 0 }} animate={{ pathLength: 1 }}
               transition={{ delay: at, duration: 0.18, ease: "circOut" }}
             />
@@ -163,9 +179,9 @@ function Dust({ look, at, x = 50, count = 8, reduced, seed = 1 }: {
           <motion.div
             key={i}
             className="absolute rounded-full"
-            style={{ left: `${x}%`, top: `${FLOOR}%`, width: size, height: size, background: look.ink, opacity: 0.5 }}
-            initial={{ x: 0, y: 0, scale: 0, opacity: 0.55 }}
-            animate={{ x: dist, y: -20 - rnd(seed + i + 80) * 60, scale: [0, 1.6, 2.2], opacity: [0.55, 0.3, 0] }}
+            style={{ left: `${x}%`, top: `${FLOOR}%`, width: size, height: size, background: PROP.dust }}
+            initial={{ x: 0, y: 0, scale: 0, opacity: 0.6 }}
+            animate={{ x: dist, y: -20 - rnd(seed + i + 80) * 60, scale: [0, 1.6, 2.2], opacity: [0.6, 0.3, 0] }}
             transition={{ delay: at, duration: 0.35 + rnd(seed + i + 120) * 0.25, ease: "circOut" }}
           />
         );
@@ -327,114 +343,116 @@ function Speed({ look, at, reduced, vertical = true, x = 50 }: { look: Look; at:
 // ── ACME props ──────────────────────────────────────────────────────────────
 
 /** The anvil. Stencilled, because of course it is. */
+/**
+ * Props run on CSS animations, not on framer.
+ *
+ * Framer kept setting a prop's opening transform and then never running its
+ * keyframes: the anvil, the stamp, the chair and the alarm clock all sat
+ * frozen on frame one while the code read as correct, and single easings,
+ * plain pixel units and restructured keyframes all changed nothing. CSS
+ * animations are declarative and always run, the ray spin in this file has
+ * used one from the start, and on a wall display that runs unattended for
+ * months, "always runs" is the property that matters most.
+ */
+const anim = (name: string, seconds: number, delay: number, ease = "linear"): CSSProperties =>
+  ({ animation: `${name} ${seconds}s ${ease} ${delay}s both` });
+
+/** The anvil. Falls on the word, sits there, then loses and tips away. */
 function Anvil({ at, reduced }: { at: number; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute left-1/2 z-20"
-      style={{ top: `${FLOOR - 30}%`, width: "20vh", height: "16vh", marginLeft: "-10vh" }}
-      initial={{ y: "-160vh", rotate: -8, opacity: 1 }}
-      animate={{ y: ["-160vh", "0vh", "0vh", "0vh", "26vh"], rotate: [-8, 0, 0, 6, 64], x: [0, 0, 0, 30, 420], opacity: [1, 1, 1, 1, 0] }}
-      transition={{ delay: at, duration: 2.6, times: [0, 0.13, 0.42, 0.62, 1], ease: ["circIn", "linear", "easeIn", "circIn"] }}
+      style={{ top: `${FLOOR - 34}%`, width: "34vh", height: "27vh", marginLeft: "-17vh", ...anim("hype-anvil", 2.8, at) }}
     >
       <svg viewBox="0 0 200 160" className="h-full w-full">
-        <path d="M20 44 L180 44 L166 74 L52 74 L52 96 L150 96 L150 120 L44 120 L44 140 L156 140 L156 156 L34 156 L34 120 Z" fill="#171717" stroke="#000" strokeWidth="4" />
-        <path d="M180 44 L198 58 L166 74 Z" fill="#171717" stroke="#000" strokeWidth="4" />
-        <text x="96" y="66" textAnchor="middle" fill="#fafafa" fontSize="20" fontWeight="800" fontFamily="system-ui" letterSpacing="2">ACME</text>
+        <path d="M20 44 L180 44 L166 74 L52 74 L52 96 L150 96 L150 120 L44 120 L44 140 L156 140 L156 156 L34 156 L34 120 Z" fill={PROP.body} stroke={PROP.line} strokeWidth="6" strokeLinejoin="round" />
+        <path d="M180 44 L198 58 L166 74 Z" fill={PROP.body} stroke={PROP.line} strokeWidth="6" strokeLinejoin="round" />
+        <path d="M20 44 L180 44 L166 74 L52 74 Z" fill={PROP.dark} opacity="0.35" />
+        <text x="100" y="66" textAnchor="middle" fill={PROP.line} fontSize="24" fontWeight="900" fontFamily="system-ui" letterSpacing="3">ACME</text>
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The portable hole: a flat black ellipse that is, regrettably, load-bearing. */
+/** The portable hole: flat black, with a rim so it reads against a dark room. */
 function Hole({ at, reduced }: { at: number; reduced: boolean }) {
   return (
-    <motion.div
+    <div
       className="absolute left-1/2"
-      style={{ top: `${FLOOR - 2}%`, width: "46vw", height: "7vh", marginLeft: "-23vw", background: "#000", borderRadius: "50%" }}
-      initial={reduced ? false : { scale: 0, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={reduced ? STILL : { delay: at, duration: 0.5, ease: "easeOut" }}
+      style={{
+        top: `${FLOOR - 2}%`, width: "46vw", height: "8vh", marginLeft: "-23vw",
+        background: "#000", borderRadius: "50%", border: `4px solid ${PROP.body}`, boxShadow: `0 0 26px ${PROP.line}`,
+        ...(reduced ? {} : anim("hype-hole", 0.5, at, "ease-out")),
+      }}
     />
   );
 }
 
-/** The stepladder that comes back up out of the hole. */
-function Ladder({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
+/** The stepladder that comes up out of the hole so the word can climb out. */
+function Ladder({ at, reduced }: { at: number; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute left-1/2"
-      style={{ top: `${FLOOR - 26}%`, width: "16vh", height: "26vh", marginLeft: "-8vh" }}
-      initial={{ y: "30vh", opacity: 0, rotate: -14 }}
-      animate={{ y: "0vh", opacity: [0, 1, 1, 0], rotate: 0 }}
-      transition={{ delay: at, duration: 2.2, times: [0, 0.25, 0.75, 1], ease: "backOut" }}
+      style={{ top: `${FLOOR - 26}%`, width: "16vh", height: "26vh", marginLeft: "-8vh", ...anim("hype-ladder", 2.4, at, "ease-out") }}
     >
       <svg viewBox="0 0 120 200" className="h-full w-full">
-        <path d="M30 200 L46 10 M90 200 L74 10" stroke={look.ink} strokeWidth="9" strokeLinecap="round" fill="none" />
-        {[60, 105, 150].map((y) => <path key={y} d={`M${34 + (200 - y) * 0.06} ${y} L${86 - (200 - y) * 0.06} ${y}`} stroke={look.ink} strokeWidth="7" strokeLinecap="round" />)}
+        <path d="M30 200 L46 10 M90 200 L74 10" stroke={PROP.body} strokeWidth="11" strokeLinecap="round" fill="none" />
+        {[60, 105, 150].map((y) => <path key={y} d={`M${34 + (200 - y) * 0.06} ${y} L${86 - (200 - y) * 0.06} ${y}`} stroke={PROP.body} strokeWidth="9" strokeLinecap="round" />)}
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
 /** A tumbleweed. Nothing says "well, that happened" like one of these. */
-function Tumbleweed({ at, look, reduced, duration = 3 }: { at: number; look: Look; reduced: boolean; duration?: number }) {
+function Tumbleweed({ at, reduced, duration = 3.4 }: { at: number; reduced: boolean; duration?: number }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute"
-      style={{ top: `${FLOOR - 7}%`, width: "7vh", height: "7vh", left: 0 }}
-      initial={{ x: "-12vw", rotate: 0, opacity: 0 }}
-      animate={{ x: "112vw", rotate: 1080, opacity: [0, 0.75, 0.75, 0] }}
-      transition={{ delay: at, duration, ease: "linear", times: [0, 0.08, 0.9, 1] }}
+      style={{ top: `${FLOOR - 7}%`, left: 0, width: "8vh", height: "8vh", ...anim("hype-tumble", duration, at) }}
     >
       <svg viewBox="0 0 100 100" className="h-full w-full">
         {Array.from({ length: 9 }, (_, i) => {
           const a = (i / 9) * Math.PI * 2;
-          return <path key={i} d={`M50 50 L${50 + Math.cos(a) * 44} ${50 + Math.sin(a) * 44} M${50 + Math.cos(a) * 22} ${50 + Math.sin(a) * 22} L${50 + Math.cos(a + 0.8) * 40} ${50 + Math.sin(a + 0.8) * 40}`} stroke={look.ink} strokeWidth="4" fill="none" opacity="0.9" />;
+          return <path key={i} d={`M50 50 L${50 + Math.cos(a) * 44} ${50 + Math.sin(a) * 44} M${50 + Math.cos(a) * 22} ${50 + Math.sin(a) * 22} L${50 + Math.cos(a + 0.8) * 40} ${50 + Math.sin(a + 0.8) * 40}`} stroke="#A8A29E" strokeWidth="5" fill="none" opacity="0.95" />;
         })}
-        <circle cx="50" cy="50" r="44" fill="none" stroke={look.ink} strokeWidth="3" opacity="0.5" />
+        <circle cx="50" cy="50" r="44" fill="none" stroke="#A8A29E" strokeWidth="4" opacity="0.6" />
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The office chair nobody sat in. Deliberately generic: no desk, no nameplate. */
-function Chair({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
+/** The chair nobody sat in. Deliberately generic: no desk, no nameplate. */
+function Chair({ at, reduced }: { at: number; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute"
-      style={{ left: "14%", top: `${FLOOR - 26}%`, width: "22vh", height: "26vh" }}
-      initial={{ x: "-60vw", rotate: 0, opacity: 1 }}
-      animate={{ x: [`-60vw`, "0vw", "0vw", "0vw"], rotate: [0, 720, 760, 862], y: [0, 0, 0, 30] }}
-      transition={{ delay: at, duration: 2.4, times: [0, 0.22, 0.5, 0.72], ease: ["circOut", "linear", "backIn"] }}
+      style={{ left: "12%", top: `${FLOOR - 26}%`, width: "24vh", height: "26vh", transformOrigin: "50% 100%", ...anim("hype-chair", 2.6, at) }}
     >
       <svg viewBox="0 0 140 180" className="h-full w-full">
-        <rect x="34" y="8" width="72" height="72" rx="12" fill={look.deep} stroke={look.ink} strokeWidth="5" />
-        <rect x="26" y="84" width="88" height="20" rx="9" fill={look.main} stroke={look.ink} strokeWidth="5" />
-        <path d="M70 104 L70 140" stroke={look.ink} strokeWidth="8" />
-        <path d="M70 140 L26 166 M70 140 L114 166 M70 140 L70 172" stroke={look.ink} strokeWidth="7" strokeLinecap="round" />
+        <rect x="34" y="8" width="72" height="72" rx="12" fill={PROP.dark} stroke={PROP.body} strokeWidth="6" />
+        <rect x="26" y="84" width="88" height="20" rx="9" fill={PROP.body} stroke={PROP.line} strokeWidth="4" />
+        <path d="M70 104 L70 140" stroke={PROP.body} strokeWidth="9" />
+        <path d="M70 140 L26 166 M70 140 L114 166 M70 140 L70 172" stroke={PROP.body} strokeWidth="8" strokeLinecap="round" />
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
 /**
  * The alarm clock that walks in and knocks the chair over. The bell hammer is
- * the only fast repeat in the file: a small element moving side to side at
- * about 2.5 per second. Positional, never a luminance flash.
+ * the only fast repeat in the file: a small shape moving side to side about
+ * two and a half times a second. Positional, never a luminance flash.
  */
 function AlarmClock({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
-      className="absolute"
-      style={{ left: "4%", top: `${FLOOR - 22}%`, width: "22vh", height: "22vh" }}
-      initial={{ y: "-70vh", opacity: 1, rotate: 0 }}
-      animate={{ y: ["-70vh", "0vh", "0vh", "0vh", "2vh"], x: [0, 0, "6vw", "16vw", "16vw"], rotate: [0, 0, -10, 10, 96] }}
-      transition={{ delay: at, duration: 1.9, times: [0, 0.2, 0.5, 0.78, 1], ease: ["circIn", "easeInOut", "easeInOut", "backIn"] }}
+    <div
+      className="absolute z-10"
+      style={{ left: "2%", top: `${FLOOR - 24}%`, width: "24vh", height: "24vh", transformOrigin: "50% 100%", ...anim("hype-clock", 2.2, at, "ease-in-out") }}
     >
       <svg viewBox="-60 -60 120 120" className="h-full w-full">
         <path d="M-46 -34 L-28 -50 M46 -34 L28 -50" stroke={look.main} strokeWidth="9" strokeLinecap="round" />
@@ -443,34 +461,24 @@ function AlarmClock({ at, look, reduced }: { at: number; look: Look; reduced: bo
         <line x1="0" y1="0" x2="0" y2="-26" stroke="#fff" strokeWidth="6" strokeLinecap="round" transform="rotate(300)" />
         <line x1="0" y1="0" x2="0" y2="-32" stroke={look.main} strokeWidth="5" strokeLinecap="round" transform="rotate(75)" />
         <circle r="4" fill={look.main} />
-        {/* the hammer: 2.5 shakes a second, positional only */}
-        {/* Moved as a transform, not by animating the cx attribute: framer
-            cannot read an SVG attribute's starting value off the DOM and the
-            console filled with "cx: Expected length, undefined". */}
-        <motion.g
-          animate={{ x: [-8, 8, -8] }}
-          transition={{ delay: at + 0.4, duration: 0.4, repeat: 3, ease: "easeInOut" }}
-        >
-          <circle cx="0" cy="-52" r="7" fill={look.main} />
-        </motion.g>
+        <g style={anim("hype-hammer", 0.4, at + 0.35, "ease-in-out")}>
+          <circle cx="0" cy="-52" r="8" fill={look.main} />
+        </g>
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The banana peel. It does not need to do anything. It just needs to be there. */
+/** The banana peel. It does not need to do anything. It needs to be there. */
 function Peel({ at, reduced }: { at: number; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
-      className="absolute text-[9vh]"
-      style={{ top: `${FLOOR - 9}%` }}
-      initial={{ x: "-14vw", rotate: 0, opacity: 1 }}
-      animate={{ x: ["-14vw", "46vw", "46vw", "128vw"], rotate: [0, 380, 380, 1400], y: [0, 0, 0, -140] }}
-      transition={{ delay: at, duration: 1.5, times: [0, 0.2, 0.42, 1], ease: ["circOut", "linear", "circOut"] }}
+    <div
+      className="absolute text-[10vh] leading-none"
+      style={{ top: `${FLOOR - 10}%`, left: 0, ...anim("hype-peel", 1.6, at) }}
     >
       🍌
-    </motion.div>
+    </div>
   );
 }
 
@@ -478,89 +486,71 @@ function Peel({ at, reduced }: { at: number; reduced: boolean }) {
 function Hook({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute z-20"
-      style={{ right: 0, top: `${FLOOR - 34}%`, width: "60vw", height: "22vh" }}
-      initial={{ x: "70vw" }}
-      animate={{ x: ["70vw", "-6vw", "-6vw", "70vw"] }}
-      transition={{ delay: at, duration: 1.5, times: [0, 0.35, 0.6, 1], ease: "easeInOut" }}
+      style={{ right: 0, top: `${FLOOR - 30}%`, width: "62vw", height: "22vh", ...anim("hype-hook", 1.6, at, "ease-in-out") }}
     >
       <svg viewBox="0 0 600 200" className="h-full w-full" preserveAspectRatio="none">
-        <path d="M600 60 L120 60" stroke={look.main} strokeWidth="16" strokeLinecap="round" />
-        <path d="M120 60 a54 54 0 1 0 -54 54" fill="none" stroke={look.main} strokeWidth="16" strokeLinecap="round" />
-        {Array.from({ length: 9 }, (_, i) => <rect key={i} x={140 + i * 50} y="52" width="24" height="16" fill={look.ink} opacity="0.55" />)}
+        <path d="M600 60 L120 60" stroke={PROP.body} strokeWidth="18" strokeLinecap="round" />
+        <path d="M120 60 a54 54 0 1 0 -54 54" fill="none" stroke={PROP.body} strokeWidth="18" strokeLinecap="round" />
+        {Array.from({ length: 9 }, (_, i) => <rect key={i} x={140 + i * 50} y="51" width="26" height="18" fill={look.deep} opacity="0.8" />)}
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The calendar page that is about to get stamped. */
+/** The calendar page that is about to get stamped. It has no idea. */
 function CalendarPage({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
-      className="absolute left-1/2 top-[26%]"
-      style={{ width: "34vh", height: "30vh", marginLeft: "-17vh" }}
-      initial={{ x: "70vw", rotate: 240, opacity: 1 }}
-      animate={{ x: 0, rotate: 0, scaleX: [1, 1, 1.2, 1], scaleY: [1, 1, 0.86, 1] }}
-      transition={{ delay: at, duration: 0.9, ease: "circOut", scaleX: { delay: at + 0.5, duration: 0.4 }, scaleY: { delay: at + 0.5, duration: 0.4 } }}
+    <div
+      className="absolute left-1/2"
+      style={{ top: `${FLOOR - 40}%`, width: "36vh", height: "32vh", marginLeft: "-18vh", ...anim("hype-calendar", 1.1, at, "cubic-bezier(.1,.8,.3,1)") }}
     >
       <svg viewBox="0 0 200 180" className="h-full w-full">
-        <rect x="8" y="16" width="184" height="156" rx="10" fill="#fafaf9" stroke={look.ink} strokeWidth="5" />
+        <rect x="8" y="16" width="184" height="156" rx="10" fill="#FAFAF9" stroke={PROP.line} strokeWidth="6" />
         <rect x="8" y="16" width="184" height="34" rx="10" fill={look.deep} />
-        <path d="M52 8 L52 30 M148 8 L148 30" stroke={look.ink} strokeWidth="9" strokeLinecap="round" />
+        <path d="M52 8 L52 30 M148 8 L148 30" stroke={PROP.line} strokeWidth="9" strokeLinecap="round" />
         {Array.from({ length: 4 }, (_, r) => Array.from({ length: 5 }, (_, c) => (
-          <rect key={`${r}-${c}`} x={26 + c * 32} y={62 + r * 26} width="20" height="16" rx="3" fill={look.ink} opacity="0.16" />
+          <rect key={`${r}-${c}`} x={26 + c * 32} y={62 + r * 26} width="20" height="16" rx="3" fill={PROP.line} opacity="0.16" />
         )))}
-        <circle cx="122" cy="114" r="17" fill="none" stroke="#dc2626" strokeWidth="5" />
+        <circle cx="122" cy="114" r="17" fill="none" stroke="#DC2626" strokeWidth="5" />
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The rubber stamp on its ACME coil. Comes down hard, leaves, comes back. */
+/** The stamp on its ACME coil: down hard, gone — then it remembers gravity. */
 function StampRig({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute left-1/2 z-20"
-      style={{ top: "-34vh", width: "26vh", height: "44vh", marginLeft: "-13vh" }}
-      initial={{ y: "0vh", opacity: 1 }}
-      animate={{
-        // down hard, rocket back up, a beat of nothing, then it remembers gravity
-        y: ["0vh", "56vh", "56vh", "-40vh", "-40vh", "44vh", "46vh"],
-        x: ["0vw", "0vw", "0vw", "0vw", "-18vw", "-18vw", "-18vw"],
-        rotate: [0, 0, 0, 0, 0, 0, 84],
-      }}
-      transition={{ delay: at - 0.35, duration: 3.1, times: [0, 0.11, 0.16, 0.3, 0.52, 0.66, 0.86], ease: ["circIn", "linear", "circOut", "linear", "circIn", "backIn"] }}
+      style={{ top: "-46vh", width: "28vh", height: "46vh", marginLeft: "-14vh", transformOrigin: "50% 100%", ...anim("hype-stamp", 3.2, at - 0.35) }}
     >
       <svg viewBox="0 0 130 220" className="h-full w-full">
-        <rect x="46" y="0" width="38" height="52" rx="14" fill={look.ink} />
-        <path d="M65 52 L65 84" stroke={look.ink} strokeWidth="10" />
-        {/* coil */}
-        <path d="M65 84 l-24 12 l48 14 l-48 14 l48 14 l-48 14 l24 12" fill="none" stroke={look.main} strokeWidth="7" strokeLinecap="round" />
-        <rect x="18" y="166" width="94" height="26" rx="7" fill={look.ink} />
-        <rect x="26" y="192" width="78" height="16" rx="5" fill={look.deep} />
+        <rect x="46" y="0" width="38" height="52" rx="14" fill={PROP.body} stroke={PROP.line} strokeWidth="4" />
+        <path d="M65 52 L65 84" stroke={PROP.body} strokeWidth="11" />
+        <path d="M65 84 l-24 12 l48 14 l-48 14 l48 14 l-48 14 l24 12" fill="none" stroke={PROP.body} strokeWidth="8" strokeLinecap="round" />
+        <rect x="18" y="166" width="94" height="26" rx="7" fill={PROP.body} stroke={PROP.line} strokeWidth="4" />
+        <rect x="26" y="192" width="78" height="16" rx="5" fill={look.main} stroke={PROP.line} strokeWidth="3" />
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
-/** The rocket that carries the milestone off, and then loses control. */
+/** The rocket that carries the milestone off, and later loses control. */
 function Rocket({ at, reduced, corkscrew = false }: { at: number; reduced: boolean; corkscrew?: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
-      className="absolute text-[16vh]"
-      style={corkscrew ? { left: "-14vw", top: "8%" } : { left: "44%", top: `${FLOOR - 10}%` }}
-      initial={corkscrew ? { x: 0, y: 0, rotate: 20, opacity: 1 } : { y: "0vh", rotate: -20, opacity: 1 }}
-      animate={corkscrew
-        ? { x: "128vw", y: ["0vh", "36vh", "8vh", "58vh"], rotate: [20, 380, 700, 1080] }
-        : { y: ["0vh", "-6vh", "-130vh"], rotate: [-20, -14, -8] }}
-      transition={{ delay: at, duration: corkscrew ? 1.5 : 0.9, ease: corkscrew ? "linear" : "circIn" }}
+    <div
+      className="absolute text-[18vh] leading-none"
+      style={corkscrew
+        ? { left: 0, top: "6%", ...anim("hype-rocket-cork", 1.6, at) }
+        : { left: "42%", top: `${FLOOR - 14}%`, ...anim("hype-rocket-up", 1.0, at, "cubic-bezier(.6,0,1,.4)") }}
     >
       🚀
-    </motion.div>
+    </div>
   );
 }
 
@@ -568,26 +558,19 @@ function Rocket({ at, reduced, corkscrew = false }: { at: number; reduced: boole
 function Crate({ at, look, reduced }: { at: number; look: Look; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute left-1/2 z-20"
-      style={{ top: `${FLOOR - 34}%`, width: "20vh", height: "17vh", marginLeft: "-10vh" }}
-      initial={{ y: "-140vh", rotate: -10, opacity: 1 }}
-      animate={{ y: ["-140vh", "0vh", "0vh", "0vh"], rotate: [-10, 0, 0, 0], scaleY: [1, 1, 0.8, 1] }}
-      transition={{ delay: at, duration: 1.3, times: [0, 0.55, 0.62, 0.72], ease: ["circIn", "easeOut", "backOut"] }}
+      style={{ top: `${FLOOR - 32}%`, width: "22vh", height: "19vh", marginLeft: "-11vh", ...anim("hype-crate", 1.4, at) }}
     >
       <svg viewBox="0 0 200 170" className="h-full w-full">
-        <motion.g
-          initial={{ rotate: 0 }} animate={{ rotate: -104 }}
-          transition={{ delay: at + 1.1, duration: 0.32, ease: "backOut" }}
-          style={{ transformOrigin: "14px 34px" }}
-        >
-          <rect x="6" y="14" width="188" height="26" rx="5" fill={look.deep} stroke={look.ink} strokeWidth="5" />
-        </motion.g>
-        <rect x="14" y="40" width="172" height="120" rx="6" fill="#a16207" stroke={look.ink} strokeWidth="5" />
-        <path d="M14 70 L186 70 M14 130 L186 130" stroke={look.ink} strokeWidth="5" opacity="0.6" />
-        <text x="100" y="112" textAnchor="middle" fill="#fef3c7" fontSize="30" fontWeight="800" fontFamily="system-ui" letterSpacing="3">ACME</text>
+        <g style={{ transformOrigin: "14px 34px", ...anim("hype-lid", 0.34, at + 1.15, "cubic-bezier(.2,1.4,.4,1)") }}>
+          <rect x="6" y="14" width="188" height="26" rx="5" fill="#B45309" stroke={PROP.line} strokeWidth="5" />
+        </g>
+        <rect x="14" y="40" width="172" height="120" rx="6" fill="#D97706" stroke={PROP.line} strokeWidth="5" />
+        <path d="M14 70 L186 70 M14 130 L186 130" stroke={PROP.line} strokeWidth="5" opacity="0.5" />
+        <text x="100" y="112" textAnchor="middle" fill="#FEF3C7" fontSize="30" fontWeight="800" fontFamily="system-ui" letterSpacing="3">ACME</text>
       </svg>
-    </motion.div>
+    </div>
   );
 }
 
@@ -595,12 +578,13 @@ function Crate({ at, look, reduced }: { at: number; look: Look; reduced: boolean
 function Shadow({ at, reduced }: { at: number; reduced: boolean }) {
   if (reduced) return null;
   return (
-    <motion.div
+    <div
       className="absolute left-1/2"
-      style={{ top: `${FLOOR - 2}%`, width: "50vw", height: "6vh", marginLeft: "-25vw", background: "#000", borderRadius: "50%", filter: "blur(10px)" }}
-      initial={{ scale: 0.02, opacity: 0 }}
-      animate={{ scale: [0.02, 1, 0], opacity: [0, 0.5, 0] }}
-      transition={{ delay: 0, duration: at + 0.15, times: [0, 0.92, 1], ease: "circIn" }}
+      style={{
+        top: `${FLOOR - 3}%`, width: "52vw", height: "7vh", marginLeft: "-26vw",
+        background: "#000", borderRadius: "50%", filter: "blur(10px)", outline: `3px solid ${PROP.line}`,
+        ...anim("hype-shadow", at + 0.15, 0, "cubic-bezier(.6,0,1,.4)"),
+      }}
     />
   );
 }
@@ -611,19 +595,13 @@ function Stars({ at, reduced }: { at: number; reduced: boolean }) {
   return (
     <>
       {[0, 1, 2].map((i) => (
-        <motion.div
+        <div
           key={i}
-          className="absolute left-1/2 top-[36%] text-[6vh]"
-          initial={{ opacity: 0 }}
-          animate={{
-            opacity: [0, 1, 1, 0],
-            x: [0, 130, 0, -130, 0].map((v) => v + i * 20),
-            y: [0, -30, -60, -30, 0],
-          }}
-          transition={{ delay: at + i * 0.18, duration: 2.6, ease: "linear", times: [0, 0.15, 0.5, 1] }}
+          className="absolute left-1/2 text-[7vh] leading-none"
+          style={{ top: "30%", marginLeft: `${(i - 1) * 3}vh`, ...anim("hype-star", 2.8, at + i * 0.18) }}
         >
           💫
-        </motion.div>
+        </div>
       ))}
     </>
   );
@@ -635,28 +613,22 @@ function Drift({ look, at, reduced, count = 12 }: { look: Look; at: number; redu
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <motion.div
+        <div
           key={i}
-          className="absolute top-0 font-black"
-          style={{ left: `${5 + rnd(i + 300) * 90}%`, fontSize: `${3 + rnd(i + 400) * 4}vw`, color: i % 3 === 0 ? "#fff" : look.main, opacity: 0.8 }}
-          initial={{ y: "-20vh", opacity: 0, rotate: -10 }}
-          animate={{ y: "110vh", opacity: [0, 0.8, 0.8, 0], rotate: [-10, 10, -10], x: [0, 30, -30, 0] }}
-          transition={{ delay: at + rnd(i + 600) * 1.8, duration: 4.5 + rnd(i + 700) * 2, ease: "linear" }}
+          className="absolute top-0 font-black leading-none"
+          style={{
+            left: `${5 + rnd(i + 300) * 90}%`, fontSize: `${3 + rnd(i + 400) * 4}vw`,
+            color: i % 3 === 0 ? "#fff" : look.main,
+            ...anim("hype-drift", 4.5 + rnd(i + 700) * 2, at + rnd(i + 600) * 1.8),
+          }}
         >
           ?
-        </motion.div>
+        </div>
       ))}
     </>
   );
 }
 
-// ── the six gags ────────────────────────────────────────────────────────────
-
-/**
- * Puts the word's feet on the floor line. Height, not bottom padding: a
- * percentage padding resolves against the container's WIDTH, so on a 16:9 TV
- * the word floated halfway up the screen and nothing looked like it landed.
- */
 function Stage({ children }: { children: ReactNode }) {
   return <div className="absolute inset-x-0 top-0 flex items-end justify-center" style={{ height: `${FLOOR}%` }}>{children}</div>;
 }
@@ -784,7 +756,7 @@ function Bit({ kind, look, at, reduced, headline, who, detail }: {
           <Dust look={look} at={at} reduced={reduced} count={8} seed={53} />
           <Kicker kind={kind} look={look} reduced={reduced} />
           <Hole at={at + 0.5} reduced={reduced} />
-          <Ladder at={2.9} look={look} reduced={reduced} />
+          <Ladder at={2.9} reduced={reduced} />
           <Stage>
             <motion.div
               className="whitespace-nowrap font-black italic uppercase"
@@ -813,7 +785,7 @@ function Bit({ kind, look, at, reduced, headline, who, detail }: {
             animate={{ scale: [0, 2.4, 3.2], opacity: [0, 0.55, 0] }}
             transition={reduced ? STILL : { delay: 2.35, duration: 0.6 }}
           />
-          <Tumbleweed at={4.4} look={look} reduced={reduced} />
+          <Tumbleweed at={4.4} reduced={reduced} />
           {caption()}
         </>
       );
@@ -825,7 +797,7 @@ function Bit({ kind, look, at, reduced, headline, who, detail }: {
       return (
         <>
           <Ground look={look} reduced={reduced} />
-          <Chair at={0.05} look={look} reduced={reduced} />
+          <Chair at={0.05} reduced={reduced} />
           <AlarmClock at={at + 0.35} look={look} reduced={reduced} />
           <Speed look={look} at={at} reduced={reduced} />
           <Kicker kind={kind} look={look} reduced={reduced} />
@@ -851,7 +823,7 @@ function Bit({ kind, look, at, reduced, headline, who, detail }: {
           </Stage>
           <Dust look={look} at={at + 1.5} reduced={reduced} count={6} x={26} seed={71} />
           <Drift look={look} at={at + 1.5} reduced={reduced} />
-          <Tumbleweed at={at + 2.4} look={look} reduced={reduced} duration={3.4} />
+          <Tumbleweed at={at + 2.4} reduced={reduced} duration={3.4} />
           {caption()}
         </>
       );
@@ -915,6 +887,115 @@ export function HypeScene({ kind, headline, who, detail, reduced: reducedProp }:
     <div className="absolute inset-0 overflow-hidden select-none" data-testid={`hype-${kind}`}>
       <style>{`
         @keyframes hype-spin { to { transform: rotate(360deg); } }
+        @keyframes hype-anvil {
+          0%   { transform: translate(0, -140vh) rotate(-8deg); opacity: 1; }
+          14%  { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+          46%  { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+          66%  { transform: translate(3vw, 0) rotate(8deg); opacity: 1; }
+          100% { transform: translate(42vw, 26vh) rotate(70deg); opacity: 0; }
+        }
+        @keyframes hype-hole {
+          from { transform: scale(0); opacity: 0; }
+          to   { transform: scale(1); opacity: 1; }
+        }
+        @keyframes hype-ladder {
+          0%   { transform: translateY(30vh) rotate(-14deg); opacity: 0; }
+          22%  { transform: translateY(0) rotate(0deg); opacity: 1; }
+          78%  { transform: translateY(0) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(26vh) rotate(6deg); opacity: 0; }
+        }
+        @keyframes hype-tumble {
+          0%   { transform: translateX(-14vw) rotate(0deg); opacity: 0; }
+          8%   { opacity: 0.85; }
+          90%  { opacity: 0.85; }
+          100% { transform: translateX(112vw) rotate(1080deg); opacity: 0; }
+        }
+        @keyframes hype-chair {
+          0%   { transform: translateX(-70vw) rotate(0deg); }
+          24%  { transform: translateX(0) rotate(720deg); }
+          52%  { transform: translateX(0) rotate(742deg); }
+          70%  { transform: translateX(6vw) rotate(760deg); }
+          100% { transform: translateX(9vw) translateY(4vh) rotate(838deg); }
+        }
+        @keyframes hype-clock {
+          0%   { transform: translate(0, -80vh) rotate(0deg); }
+          22%  { transform: translate(0, 0) rotate(0deg); }
+          46%  { transform: translate(7vw, 0) rotate(-12deg); }
+          72%  { transform: translate(15vw, 0) rotate(12deg); }
+          86%  { transform: translate(16vw, 0) rotate(0deg); }
+          100% { transform: translate(16vw, 3vh) rotate(96deg); }
+        }
+        @keyframes hype-hammer {
+          0%   { transform: translateX(-9px); }
+          50%  { transform: translateX(9px); }
+          100% { transform: translateX(-9px); }
+        }
+        @keyframes hype-peel {
+          0%   { transform: translate(-14vw, 0) rotate(0deg); }
+          20%  { transform: translate(44vw, 0) rotate(380deg); }
+          44%  { transform: translate(44vw, 0) rotate(380deg); }
+          100% { transform: translate(126vw, -18vh) rotate(1400deg); }
+        }
+        @keyframes hype-hook {
+          0%   { transform: translateX(72vw); }
+          34%  { transform: translateX(-6vw); }
+          58%  { transform: translateX(-6vw); }
+          100% { transform: translateX(72vw); }
+        }
+        @keyframes hype-calendar {
+          0%   { transform: translateX(72vw) rotate(240deg); }
+          70%  { transform: translateX(0) rotate(0deg) scale(1, 1); }
+          82%  { transform: translateX(0) rotate(0deg) scale(1.18, 0.86); }
+          100% { transform: translateX(0) rotate(0deg) scale(1, 1); }
+        }
+        @keyframes hype-stamp {
+          0%   { transform: translate(0, 0) rotate(0deg); }
+          11%  { transform: translate(0, 58vh) rotate(0deg); }
+          17%  { transform: translate(0, 58vh) rotate(0deg); }
+          30%  { transform: translate(0, -46vh) rotate(0deg); }
+          52%  { transform: translate(-20vw, -46vh) rotate(0deg); }
+          66%  { transform: translate(-20vw, 44vh) rotate(0deg); }
+          78%  { transform: translate(-20vw, 46vh) rotate(28deg); }
+          100% { transform: translate(-20vw, 47vh) rotate(88deg); }
+        }
+        @keyframes hype-rocket-up {
+          0%   { transform: translateY(0) rotate(-20deg); }
+          18%  { transform: translateY(-7vh) rotate(-14deg); }
+          100% { transform: translateY(-135vh) rotate(-8deg); }
+        }
+        @keyframes hype-rocket-cork {
+          0%   { transform: translate(-16vw, 0) rotate(20deg); }
+          100% { transform: translate(130vw, 52vh) rotate(1080deg); }
+        }
+        @keyframes hype-crate {
+          0%   { transform: translateY(-140vh) rotate(-10deg) scaleY(1); }
+          56%  { transform: translateY(0) rotate(0deg) scaleY(1); }
+          64%  { transform: translateY(0) rotate(0deg) scaleY(0.78); }
+          74%  { transform: translateY(0) rotate(0deg) scaleY(1.04); }
+          100% { transform: translateY(0) rotate(0deg) scaleY(1); }
+        }
+        @keyframes hype-lid {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(-104deg); }
+        }
+        @keyframes hype-shadow {
+          0%   { transform: scale(0.02); opacity: 0; }
+          92%  { transform: scale(1); opacity: 0.5; }
+          100% { transform: scale(1.1); opacity: 0; }
+        }
+        @keyframes hype-star {
+          0%   { transform: translate(0, 0); opacity: 0; }
+          15%  { transform: translate(13vw, -3vh); opacity: 1; }
+          50%  { transform: translate(0, -6vh); opacity: 1; }
+          75%  { transform: translate(-13vw, -3vh); opacity: 1; }
+          100% { transform: translate(0, 0); opacity: 0; }
+        }
+        @keyframes hype-drift {
+          0%   { transform: translate(0, -20vh) rotate(-10deg); opacity: 0; }
+          10%  { opacity: 0.8; }
+          88%  { opacity: 0.8; }
+          100% { transform: translate(2vw, 112vh) rotate(10deg); opacity: 0; }
+        }
       `}</style>
       <Rays look={look} reduced={reduced} />
       {/* The impact shake: motion, never a flash. */}

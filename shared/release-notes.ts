@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.48.0",
+    headline: "You can actually see the cartoon now.",
+    items: [
+      { text: "The cartoon props on the TV are actually visible now. They were drawn in the darkest colour of each palette on a near-black screen, so the anvil, the dust, the hole, the ladder, the chair and the tumbleweed were all technically playing and none of them could be seen. Everything is now a light shape with a dark outline, sized to read from across the floor.", audience: "everyone" },
+      { text: "The training quote between animations is now one of fifty lines written to stand on their own. The board used to quote the manual directly, which meant lines that referred to a session you were not in.", audience: "everyone" },
+      { text: "Anyone with a display link can preview a single animation by putting its name after the demo switch in the address, instead of waiting for the whole reel to come round.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.47.0",
     headline: "The TV moments become a cartoon.",
     items: [

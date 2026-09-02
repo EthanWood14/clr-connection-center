@@ -22,6 +22,7 @@ import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@sha
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
 import { classifyOutcome, detectMilestones, flattenTips, pickTip, type PersonStats } from "./tv-board";
+import { pickQuote } from "@shared/tv-quotes";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
 import {
@@ -20093,7 +20094,11 @@ ${note}` : daysLine;
       const row = sqlite.prepare(`SELECT content, author_name FROM training_manual_versions WHERE org_id=? ORDER BY id DESC LIMIT 1`).get(orgId) as any;
       if (row) { days = readStoredManual(row.content); author = row.author_name || author; }
     } catch { /* seed */ }
-    const tip = pickTip(Number(req.query.tip) || 0, flattenTips(days, author));
+    // Standalone quotes, not raw manual lines: a line like "run the four steps
+    // from this morning" means nothing on a wall with no morning session in
+    // sight. flattenTips stays for the manual-backed view elsewhere.
+    const quote = pickQuote(Number(req.query.tip) || 0);
+    const tip = quote ? { day: 0, half: "morning" as const, text: quote.text, author } : pickTip(0, flattenTips(days, author));
 
     res.json({
       version: APP_VERSION,

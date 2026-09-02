@@ -281,12 +281,41 @@ test("a moment holds and then hard-cuts, with no exit animation anywhere", () =>
   assert.match(overlay, /animate=\{\{ opacity: 1 \}\}/);
 });
 
-test("?demo=1 plays one of every moment, and never touches the feed's cursor", () => {
-  // So a screen can be checked from Settings without waiting for the floor.
-  const demo = page.slice(page.indexOf('has("demo")'), page.indexOf("}, []);", page.indexOf('has("demo")')));
+test("?demo=1 plays one of every moment, and ?demo=<kind> loops just that one", () => {
+  // So a screen can be checked from Settings without waiting for the floor,
+  // and so a single animation can be built without sitting through the reel.
+  const from = page.indexOf('get("demo")');
+  assert.ok(from >= 0, "the demo switch must read the kind from the query");
+  const demo = page.slice(from, page.indexOf("}, []);", from));
+  assert.match(demo, /const one = reel\.filter/);
+  assert.match(demo, /setQueue\(loop\)/);
   for (const k of ["transfer", "appointment", "rescheduled", "fell_through", "missed_appointment"]) {
     assert.match(demo, new RegExp(`ev\\("${k}", `), `${k} must be in the demo reel`);
   }
   assert.match(demo, /type: "milestone", key: `demo-\$\{stamp\}-milestone`/);
   assert.doesNotMatch(demo, /cursorRef|remember\(/);
+});
+
+// ── the wall quotes ─────────────────────────────────────────────────────────
+test("the tip page shows standalone quotes, not raw manual lines", async () => {
+  // A manual line like "run the four steps from this morning" means nothing on
+  // a wall with no morning session in sight, so the board quotes a set written
+  // to stand alone.
+  const { TV_QUOTES, pickQuote } = await import("../shared/tv-quotes");
+  assert.equal(TV_QUOTES.length, 50);
+  for (const q of TV_QUOTES) {
+    assert.ok(q.text.length > 20 && q.text.length < 160, `awkward length: ${q.text}`);
+    assert.ok(!/^\s|\s$/.test(q.text), `padded: ${q.text}`);
+    // Nothing may lean on the manual being open beside it.
+    assert.doesNotMatch(q.text, /\b(this morning|yesterday|last week|as we (covered|said)|see day \d|step \d)\b/i, q.text);
+    // No motivational-poster voice.
+    assert.doesNotMatch(q.text, /!|\b(crush|grind it|hustle|beast|warrior|no excuses)\b/i, q.text);
+  }
+  assert.equal(new Set(TV_QUOTES.map((q) => q.text)).size, 50, "no duplicates");
+  // Deterministic, and it walks the whole list rather than clustering.
+  assert.equal(pickQuote(7)?.text, pickQuote(7)?.text);
+  const walked = new Set(Array.from({ length: 50 }, (_, i) => pickQuote(i)?.text));
+  assert.equal(walked.size, 50, "every quote must be reachable");
+  // And the route serves them.
+  assert.match(routes, /const quote = pickQuote\(Number\(req\.query\.tip\) \|\| 0\)/);
 });
