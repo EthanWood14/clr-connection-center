@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.51.0",
+    headline: "Cartoon out, month to date in.",
+    items: [
+      { text: "The cartoon is gone from the office TV. No more anvil landing on the word, no banana peel, no alarm clock. A moment is now the big word, the colour, one clean hit and the names underneath.", audience: "everyone" },
+      { text: "The Transfer Scorecard on the manager dashboard has a month to date view. It runs from the 1st and grows through the month, so it is labelled for what it is rather than pretending to be a fixed window.", audience: "manager" },
+      { text: "The time since each person last transferred or was last on a call now spells itself out on the TV, reading last transfer 38m ago rather than just transfer 38m.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.50.0",
     headline: "How long since, on every row.",
     items: [

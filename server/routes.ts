@@ -12588,7 +12588,7 @@ ${note}` : daysLine;
 
     // ── Range-aware section data ──
     // Computes everything that needs a range selector, for a given window.
-    type RangeKey = "week" | "today" | "3d" | "7d" | "14d" | "30d" | "90d" | "3mo" | "all";
+    type RangeKey = "week" | "today" | "3d" | "7d" | "14d" | "30d" | "90d" | "mtd" | "3mo" | "all";
     const rangeWindows: Record<RangeKey, { startDate: string; endDate: string; days: number; label: string }> = (() => {
       const today = new Date(todayStr + "T00:00:00");
       const minus = (days: number) => { const d = new Date(today); d.setDate(d.getDate() - days); return fmtD(d); };
@@ -13062,7 +13062,7 @@ ${note}` : daysLine;
     }
 
     const byRange: Record<string, any> = {};
-    for (const key of ["week", "today", "3d", "7d", "14d", "30d", "90d", "3mo", "all"] as const) {
+    for (const key of ["week", "today", "3d", "7d", "14d", "30d", "90d", "mtd", "3mo", "all"] as const) {
       const w = rangeWindows[key];
       byRange[key] = { window: w, ...computeRange(w.startDate, w.endDate, w.days) };
     }

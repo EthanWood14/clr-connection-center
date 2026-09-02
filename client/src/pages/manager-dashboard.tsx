@@ -44,7 +44,7 @@ const RANGE_OPTIONS: { key: RangeKey; label: string; short: string }[] = [
   { key: "all",  short: "All",  label: "All time" },
 ];
 
-type ScorecardRange = "today" | "3d" | "7d" | "14d" | "30d" | "90d";
+type ScorecardRange = "today" | "3d" | "7d" | "14d" | "30d" | "90d" | "mtd";
 const SCORECARD_OPTIONS: { key: ScorecardRange; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "3d", label: "3 days" },
@@ -52,6 +52,10 @@ const SCORECARD_OPTIONS: { key: ScorecardRange; label: string }[] = [
   { key: "14d", label: "14 days" },
   { key: "30d", label: "30 days" },
   { key: "90d", label: "90 days" },
+  // Sits at the end rather than beside the rolling windows: it answers a
+  // different question ("how is the month going") and its length changes
+  // day by day.
+  { key: "mtd", label: "MTD" },
 ];
 
 type PipelineRange = "1d" | "3d" | "7d";

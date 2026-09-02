@@ -221,10 +221,12 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 /** "transfer 2h 14m" — dim once it has been quiet a while, never alarming. */
 function SinceLabel({ what, at, now }: { what: string; at: string | null | undefined; now: number }) {
   const s = since(at, now);
-  if (!s) return <span className="text-white/25">no {what} yet</span>;
+  if (!s) return <span className="text-white/25">no {what} yet today</span>;
+  // Spelled out. "transfer 38m" made a reader work out what the number meant;
+  // from across a room, on a screen you glance at, it has to say it.
   return (
     <span className={s.quiet ? "text-amber-300/70" : "text-white/45"}>
-      {what} <span className="font-semibold">{s.label}</span>
+      last {what} <span className="font-semibold">{s.label}</span>{s.label === "just now" ? "" : " ago"}
     </span>
   );
 }

@@ -217,18 +217,26 @@ test("pages rotate like signage, and pause under a moment", () => {
 });
 const hype = readFileSync(join(root, "client/src/components/tv/hype.tsx"), "utf8");
 
-test("every moment is a hype screen, and every kind has its own bit", () => {
-  // Ethan: not a lane -- "unhinged animated stuff", the energy of a strike
-  // screen. Each kind must choreograph differently, with its own word and
-  // its own impact time for the sound to land on.
+test("every moment is one big word, with no cartoon left in it", () => {
+  // It was briefly an ACME cartoon — an anvil landing on the word, a banana
+  // peel, a portable hole, an alarm clock knocking a chair over. Asked for,
+  // built, then asked to be removed. This keeps it removed: what a moment
+  // shows is type, colour and one clean hit.
   assert.match(page, /<HypeScene kind=\{kind\}/);
   for (const k of ["transfer", "appointment", "rescheduled", "fell_through", "missed_appointment", "milestone"]) {
-    assert.match(hype, new RegExp(`case "${k}":`), `${k} needs its own bit`);
     assert.match(hype, new RegExp(`\\b${k}: "[A-Z !\\-]+"`), `${k} needs its own word`);
     assert.match(hype, new RegExp(`\\b${k}: \\d+`), `${k} needs an impact time`);
   }
-  assert.match(hype, /TRANSFER!/); assert.match(hype, /BOOKED!/); assert.match(hype, /MOVED!/);
+  assert.match(hype, /TRANSFER!/); assert.match(hype, /BOOKED!/); assert.match(hype, /MOVED/);
   assert.match(hype, /FELL THROUGH/); assert.match(hype, /NO-SHOW/); assert.match(hype, /MILESTONE!/);
+  // No props, and none of their choreography. Comments are stripped first:
+  // the file's header explains what used to be there and why it went, and
+  // that history should not trip its own guard.
+  const hypeCode = hype.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const gone of ["Anvil", "Hole", "Ladder", "Tumbleweed", "Chair", "AlarmClock", "Peel", "Hook", "CalendarPage", "StampRig", "Rocket", "Crate", "ACME"]) {
+    assert.doesNotMatch(hypeCode, new RegExp(`\\b${gone}\\b`), `${gone} should be gone`);
+  }
+  assert.doesNotMatch(hype, /@keyframes hype-(anvil|peel|chair|clock|stamp|crate|hook|tumble|ladder|rocket)/);
 });
 
 test("the hype screen cannot wedge the overlay open", () => {
@@ -373,7 +381,9 @@ test("the scorecard says how long since each person's last transfer and call", (
   assert.match(page, /<SinceLabel what="call" at=\{p\.lastCallAt\} now=\{now\} \/>/);
   assert.match(page, /now=\{now\.getTime\(\)\}/);
   // A missing stamp says so rather than rendering a wrong duration.
-  assert.match(page, /no \{what\} yet/);
+  assert.match(page, /no \{what\} yet today/);
+  // Spelled out, not terse: "last transfer 38m ago", not "transfer 38m".
+  assert.match(page, /last \{what\} <span className="font-semibold">\{s\.label\}<\/span>/);
   // Quiet reads amber, never red: this is information, not a telling-off.
   assert.match(page, /s\.quiet \? "text-amber-300\/70"/);
   assert.doesNotMatch(page.slice(page.indexOf("function SinceLabel"), page.indexOf("function ScorecardPage")), /red-/);
