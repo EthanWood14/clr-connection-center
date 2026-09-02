@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.41.0",
+    headline: "Ask C3 learned averages and trends.",
+    items: [
+      { text: "Ask things like \"what’s the average transfers per CLR this month?\" or \"is Maria trending up?\" — Ask C3 now computes per-person and team averages, medians, per-day rates, transfers per 100 calls, and week-by-week trends itself, so the numbers are exact rather than estimated.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.40.0",
     headline: "Matt can edit the training walkthrough himself.",
     items: [

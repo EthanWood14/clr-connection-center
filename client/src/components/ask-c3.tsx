@@ -408,7 +408,7 @@ export function AskC3() {
               </span>
               <div className="text-sm font-medium text-foreground">Ask anything about C3 data</div>
               <div className="max-w-sm text-xs">
-                Transfers, appointments, the leaderboard, EOD reports, check-ins, LO performance, assignments, prospects, comp requests…
+                Transfers, appointments, team averages, weekly trends, the leaderboard, EOD reports, check-ins, LO performance, assignments, prospects, comp requests…
               </div>
             </div>
           )}
@@ -478,7 +478,7 @@ export function AskC3() {
                 void submit();
               }
             }}
-            placeholder="e.g. Who has the most transfers this month?"
+            placeholder="e.g. What's the average transfers per CLR this month?"
             className="max-h-32 min-h-[2.5rem] flex-1 resize-none"
             rows={1}
             data-testid="ask-c3-input"

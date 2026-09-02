@@ -34,6 +34,18 @@ async function main() {
     const badDate = await executeTool(user, "get_dashboard_stats", { start_date: "nope", end_date: "2026-04-30" });
     console.log("[tool] bad date ->", JSON.stringify(badDate));
 
+    // 1b. Computed-metrics tools (no API spend) — sample data lives in org 2.
+    await runWithOrg({ orgId: 2, superAdmin: false } as any, async () => {
+      const org2Mgr = { ...user, orgId: 2 };
+      const metrics = await executeTool(org2Mgr, "get_team_metrics", { start_date: "2026-04-01", end_date: "2026-04-30" }) as any;
+      console.log("[tool] team metrics: clrs:", metrics?.team?.clrCount, "| avg transfers/CLR:", metrics?.team?.avgTransfersPerClr,
+        "| total transfers:", metrics?.team?.totalTransfers, "| perClr sample:", JSON.stringify(metrics?.perClr?.[0] ?? null));
+      if (!metrics?.team || metrics.team.totalTransfers < 1) throw new Error("team metrics returned no transfers for org 2 sample data");
+      const trends = await executeTool(org2Mgr, "get_clr_trends", { weeks: 4 }) as any;
+      console.log("[tool] trends weeks:", trends?.weeks?.length, "| last week:", JSON.stringify(trends?.weeks?.[trends.weeks.length - 1] ?? null));
+      if (!Array.isArray(trends?.weeks) || trends.weeks.length !== 4) throw new Error("trends did not return 4 weekly buckets");
+    });
+
     // 2. Live multi-hop agent run (Sonnet, adaptive thinking, tool_choice any)
     const abort = new AbortController();
     const events: string[] = [];

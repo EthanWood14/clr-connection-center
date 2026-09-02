@@ -191,6 +191,16 @@ const TOOLS: ToolDef[] = [
     input_schema: { type: "object", properties: { from: dateProp, to: dateProp }, required: ["from", "to"] },
   },
   {
+    name: "get_team_metrics",
+    description: "COMPUTED analytics for a date range — use this for any question about averages, rates, or comparing a CLR to the team. Per CLR: transfers, appointments, calls, active days, transfers per active day, calls per active day, transfers per 100 calls. Team: averages and medians per CLR, totals. Prefer this over hand-computing from raw rows.",
+    input_schema: { type: "object", properties: { start_date: dateProp, end_date: dateProp }, required: ["start_date", "end_date"] },
+  },
+  {
+    name: "get_clr_trends",
+    description: "Weekly trend series (transfers, appointments, fell-through, calls) for the whole team or one CLR (assistant_id), covering the last N weeks (default 8, max 26). Use for improvement, decline, and momentum questions.",
+    input_schema: { type: "object", properties: { assistant_id: { type: "number" }, weeks: { type: "number", description: "How many weeks back (2-26, default 8)" } }, required: [] },
+  },
+  {
     name: "list_comp_requests",
     description: "Comp/expense requests: description, category, amount, status, paid flag. Non-managers see only their own requests.",
     input_schema: { type: "object", properties: { status: { type: "string", description: "pending | approved | denied" } }, required: [] },
@@ -306,6 +316,141 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         .filter((row) => orgUserIds.has(Number(row.assistant_id ?? row.assistantId)));
       return scrub(rows);
     }
+    case "get_team_metrics": {
+      const start = dateArg(arg.start_date);
+      const end = dateArg(arg.end_date);
+      if (!start || !end) return { error: "start_date and end_date must be YYYY-MM-DD" };
+      const outcomes = storage.getLeadOutcomes({ startDate: start, endDate: end } as any) as any[];
+      const orgIds = orgUserIdSet();
+      const calls = (getCallStatsByRange(start, end) as any[])
+        .filter((row) => orgIds.has(Number(row.assistant_id ?? row.assistantId)));
+      const usersById = new Map<number, any>((storage.getUsers() as any[]).map((u) => [Number(u.id), u]));
+
+      const statsByClr = new Map<number, { transfers: number; appointments: number; fellThrough: number; total: number; days: Set<string> }>();
+      for (const row of outcomes) {
+        const id = Number(row.assistant_id ?? row.assistantId);
+        if (!id) continue;
+        let entry = statsByClr.get(id);
+        if (!entry) { entry = { transfers: 0, appointments: 0, fellThrough: 0, total: 0, days: new Set() }; statsByClr.set(id, entry); }
+        entry.total++;
+        entry.days.add(String(row.date));
+        const type = String(row.outcome_type ?? row.outcomeType ?? "");
+        if (type === "transfer") entry.transfers++;
+        else if (type === "appointment") entry.appointments++;
+        else if (type === "fell_through") entry.fellThrough++;
+      }
+      const callsByClr = new Map<number, any>(calls.map((row) => [Number(row.assistant_id ?? row.assistantId), row]));
+
+      // Rows = the CLR roster UNION anyone with activity in the range, so a
+      // role quirk or a departed user never silently drops from the math.
+      const ids = new Set<number>([...statsByClr.keys(), ...callsByClr.keys()]);
+      for (const [id, u] of usersById) {
+        const active = !!(u.isActive ?? u.is_active);
+        const portal = String(u.portal ?? "").toLowerCase();
+        const clrLike = String(u.role ?? "") === "assistant" || !!(u.isClr ?? u.is_clr);
+        if (active && clrLike && portal !== "lap" && portal !== "lop") ids.add(id);
+      }
+
+      const perClr = [...ids].map((id) => {
+        const u = usersById.get(id);
+        const stat = statsByClr.get(id);
+        const call = callsByClr.get(id);
+        const callsMade = Number(call?.total_calls ?? call?.totalCalls ?? 0);
+        const transfers = stat?.transfers ?? 0;
+        const appointments = stat?.appointments ?? 0;
+        const activeDays = stat?.days.size ?? 0;
+        return {
+          userId: id,
+          name: String(u?.name ?? `User #${id}`),
+          transfers,
+          appointments,
+          fellThrough: stat?.fellThrough ?? 0,
+          totalOutcomes: stat?.total ?? 0,
+          callsMade,
+          contactsReached: Number(call?.total_contacts ?? call?.totalContacts ?? 0),
+          activeDays,
+          transfersPerActiveDay: activeDays ? Number((transfers / activeDays).toFixed(2)) : 0,
+          appointmentsPerActiveDay: activeDays ? Number((appointments / activeDays).toFixed(2)) : 0,
+          callsPerActiveDay: activeDays ? Number((callsMade / activeDays).toFixed(1)) : 0,
+          transfersPer100Calls: callsMade ? Number(((transfers * 100) / callsMade).toFixed(2)) : null,
+        };
+      }).sort((a, b) => b.transfers - a.transfers);
+
+      const active = perClr.filter((row) => row.totalOutcomes > 0 || row.callsMade > 0);
+      const avg = (values: number[]) => (values.length ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2)) : 0);
+      const median = (values: number[]) => {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2));
+      };
+      const rated = active.filter((row) => row.transfersPer100Calls != null);
+      return scrub({
+        start,
+        end,
+        perClr,
+        team: {
+          clrCount: perClr.length,
+          activeClrCount: active.length,
+          totalTransfers: perClr.reduce((sum, row) => sum + row.transfers, 0),
+          totalAppointments: perClr.reduce((sum, row) => sum + row.appointments, 0),
+          totalCalls: perClr.reduce((sum, row) => sum + row.callsMade, 0),
+          avgTransfersPerClr: avg(active.map((row) => row.transfers)),
+          medianTransfersPerClr: median(active.map((row) => row.transfers)),
+          avgAppointmentsPerClr: avg(active.map((row) => row.appointments)),
+          avgCallsPerClr: avg(active.map((row) => row.callsMade)),
+          avgTransfersPerActiveDay: avg(active.filter((row) => row.activeDays > 0).map((row) => row.transfersPerActiveDay)),
+          avgTransfersPer100Calls: avg(rated.map((row) => row.transfersPer100Calls as number)),
+        },
+        note: "Team averages include only CLRs with activity in the range; active days count days with at least one logged outcome.",
+      });
+    }
+    case "get_clr_trends": {
+      const weeks = Math.max(2, Math.min(Number(arg.weeks) || 8, 26));
+      const assistantId = Number(arg.assistant_id) || undefined;
+      const today = todayInTz(user.timezone);
+      const anchor = new Date(`${today}T00:00:00Z`);
+      const dow = (anchor.getUTCDay() + 6) % 7; // 0 = Monday
+      const thisMonday = new Date(anchor);
+      thisMonday.setUTCDate(anchor.getUTCDate() - dow);
+      const startDate = new Date(thisMonday);
+      startDate.setUTCDate(thisMonday.getUTCDate() - 7 * (weeks - 1));
+      const start = startDate.toISOString().slice(0, 10);
+
+      const weekOf = (dateStr: string): string => {
+        const d = new Date(`${dateStr}T00:00:00Z`);
+        if (!Number.isFinite(d.getTime())) return "";
+        const wd = (d.getUTCDay() + 6) % 7;
+        d.setUTCDate(d.getUTCDate() - wd);
+        return d.toISOString().slice(0, 10);
+      };
+      const buckets = new Map<string, { transfers: number; appointments: number; fellThrough: number; outcomes: number; calls: number }>();
+      for (let i = 0; i < weeks; i++) {
+        const week = new Date(startDate);
+        week.setUTCDate(startDate.getUTCDate() + 7 * i);
+        buckets.set(week.toISOString().slice(0, 10), { transfers: 0, appointments: 0, fellThrough: 0, outcomes: 0, calls: 0 });
+      }
+      const outcomes = storage.getLeadOutcomes({ startDate: start, endDate: today, assistantId } as any) as any[];
+      for (const row of outcomes) {
+        const bucket = buckets.get(weekOf(String(row.date)));
+        if (!bucket) continue;
+        bucket.outcomes++;
+        const type = String(row.outcome_type ?? row.outcomeType ?? "");
+        if (type === "transfer") bucket.transfers++;
+        else if (type === "appointment") bucket.appointments++;
+        else if (type === "fell_through") bucket.fellThrough++;
+      }
+      const callLogs = (storage.getCallLogsByRange(start, today) as any[])
+        .filter((row) => !assistantId || Number(row.assistantId ?? row.assistant_id) === assistantId);
+      for (const row of callLogs) {
+        const bucket = buckets.get(weekOf(String(row.logDate ?? row.log_date)));
+        if (bucket) bucket.calls += Number(row.callsMade ?? row.calls_made ?? 0);
+      }
+      return scrub({
+        assistantId: assistantId ?? null,
+        weeks: [...buckets.entries()].map(([weekStart, values]) => ({ weekStart, ...values })),
+      });
+    }
     case "list_comp_requests": {
       const sqlite = getRawSqlite();
       const status = typeof arg.status === "string" && arg.status.trim() ? arg.status.trim() : null;
@@ -348,6 +493,7 @@ function buildSystemPrompt(user: AskUser): string {
     `- You cannot change any data. If asked to modify something, explain where in C3 to do it.\n` +
     `- Amounts in tool results named *_cents are integer cents — divide by 100 and present as dollars.\n` +
     `- "Transfers" and "appointments" are rows in lead outcomes; a transfer is a live handoff of a borrower call to a loan officer (LO). CLRs are the callers; LOs are the loan officers they transfer to.\n` +
+    `- For averages, rates, per-CLR comparisons, or trends, call get_team_metrics or get_clr_trends — they compute the math server-side. Never hand-compute an average from raw rows when a computed tool covers it.\n` +
     `- FORMAT for scanning. Open with one plain sentence stating the headline result. When the answer covers three or more people or rows, present them as a markdown table whose columns fit the question — never a long run of bullets. Use short bullets for 1-2 items. Bold each key name or number. Never write paragraph walls.\n` +
     `- Be concise and specific. If the data is thin, say so.`
   );
