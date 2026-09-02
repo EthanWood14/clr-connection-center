@@ -771,6 +771,9 @@ function TvDisplayLinks() {
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={async () => { const ok = await copyToClipboard(urlFor(l.token)); toast({ title: ok ? "Link copied" : "Copy failed" }); }}>
               Copy
             </Button>
+            <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+              <a href={`${window.location.origin}/?demo=1#/tv/${l.token}`} target="_blank" rel="noreferrer" data-testid={`tv-link-preview-${l.id}`}>Preview</a>
+            </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" onClick={() => revoke.mutate(l.id)} disabled={revoke.isPending} data-testid={`tv-link-revoke-${l.id}`}>
               Revoke
             </Button>

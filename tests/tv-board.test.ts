@@ -276,3 +276,13 @@ test("the moment overlay fades out by hand, never under AnimatePresence", () => 
   assert.doesNotMatch(overlay, /exit=/, "nothing in the overlay may depend on presence");
   assert.match(overlay, /animate=\{\{ opacity: leaving \? 0 : 1 \}\}/);
 });
+
+test("?demo=1 plays one of every moment, and never touches the feed's cursor", () => {
+  // So a screen can be checked from Settings without waiting for the floor.
+  const demo = page.slice(page.indexOf('has("demo")'), page.indexOf("}, []);", page.indexOf('has("demo")')));
+  for (const k of ["transfer", "appointment", "rescheduled", "fell_through", "missed_appointment"]) {
+    assert.match(demo, new RegExp(`ev\\("${k}", `), `${k} must be in the demo reel`);
+  }
+  assert.match(demo, /type: "milestone", key: `demo-\$\{stamp\}-milestone`/);
+  assert.doesNotMatch(demo, /cursorRef|remember\(/);
+});

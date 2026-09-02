@@ -433,6 +433,25 @@ export default function TvBoard() {
     });
   }, [data]);
 
+  // ?demo=1 plays one of every moment with sample names, so a screen can be
+  // checked without waiting for the floor to make something happen. Keys are
+  // unique per load, so it replays every time the page opens.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("demo")) return;
+    const stamp = Date.now();
+    const at = new Date().toISOString();
+    const ev = (kind: Kind, borrower: string, detail: string | null): Moment =>
+      ({ type: "event", key: `demo-${stamp}-${kind}`, event: { id: `demo-${kind}`, kind, at, borrower, who: "Demo", lo: "Alex Thompson", detail } });
+    setQueue([
+      ev("transfer", "Maria Delgado", "to Alex Thompson"),
+      ev("appointment", "Dana Whitfield", "Today 2:30 PM"),
+      ev("rescheduled", "Tomas Reyes", "Moved to Tue 4:15 PM"),
+      ev("fell_through", "Kevin Ostrowski", null),
+      ev("missed_appointment", "Priya Natarajan", "No answer"),
+      { type: "milestone", key: `demo-${stamp}-milestone`, milestone: { id: "demo", kind: "team-day", headline: "25 transfers today", detail: "The whole floor. Keep going.", weight: 3 } },
+    ]);
+  }, []);
+
   // Two effects on purpose. Dequeuing changes both `current` and `queue`,
   // which re-runs whatever effect depends on them -- and if that same effect
   // owned the hold timer, its cleanup would cancel the timer the instant it

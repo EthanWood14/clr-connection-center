@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.43.1",
+    headline: "Preview the TV reel on demand.",
+    items: [
+      { text: "Each Office TV link in Settings now has a Preview button. It opens the wallboard and plays one of every moment with sample names — a transfer, a meeting set, a meeting moved, a fall-through, a no-show, and a milestone — so a new screen can be checked without waiting for the floor. Adding ?demo=1 in front of the # in any display link does the same.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.43.0",
     headline: "An office TV that plays the day like a signage loop.",
     items: [
