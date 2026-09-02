@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.52.1",
+    headline: "The loan officers who need transfers most.",
+    items: [
+      { text: "A new page on the office TV ranks every active loan officer by how few transfers they have had in the last fortnight, with the ones flagged as needing work marked clearly. Loan officer assistants are listed beside them. Flagged people are highlighted but not moved to the top, so the list still answers the question it asks.", audience: "everyone" },
+      { text: "Fixed a page that could show up blank: one slot had made it onto the rotation without anything to draw it.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.52.0",
     headline: "Seven new pages on the wall, and fairer month numbers.",
     items: [

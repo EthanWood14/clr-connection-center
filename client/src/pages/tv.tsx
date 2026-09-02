@@ -31,6 +31,7 @@ import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
 import {
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
+  StarvedPage,
 } from "@/components/tv/pages";
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
@@ -765,6 +766,14 @@ export default function TvBoard() {
                 />
               );
             })()}
+            {page === "starved" && (
+              <StarvedPage
+                reduced={reduced}
+                days={board?.starved?.days ?? 14}
+                los={board?.starved?.los ?? []}
+                loas={board?.starved?.loas ?? []}
+              />
+            )}
             {page === "onPhoneNow" && (
               <OnPhoneNowPage
                 reduced={reduced}

@@ -419,3 +419,15 @@ test("the scorecard says how long since each person's last transfer and call", (
   assert.match(page, /s\.quiet \? "text-amber-300\/70"/);
   assert.doesNotMatch(page.slice(page.indexOf("function SinceLabel"), page.indexOf("function ScorecardPage")), /red-/);
 });
+
+test("every page in the deck has something to render", () => {
+  // Shipped once without this: the starved slot was in the deck and its data
+  // existed, so it was kept — but nothing rendered it, and the wall went blank
+  // for thirteen seconds every cycle.
+  const deckSrc = page.slice(page.indexOf("const DECK: Slot[] = ["), page.indexOf("// ── sound"));
+  const ids = [...deckSrc.matchAll(/\{ id: "(\w+)",/g)].map((m) => m[1]);
+  assert.ok(ids.length >= 12, "the deck should have grown");
+  for (const id of new Set(ids)) {
+    assert.match(page, new RegExp(`page === "${id}"`), `${id} is in the deck with no renderer`);
+  }
+});
