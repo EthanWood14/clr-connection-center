@@ -140,7 +140,9 @@ test("extension manifest is MV3 with the traffic hook and C3 host access", () =>
   const hook = manifest.content_scripts.find((c: any) => c.world === "MAIN");
   assert.equal(hook.run_at, "document_start", "the fetch/XHR hook must land before Bonzo's app boots");
   const hookSrc = readFileSync(join(root, "chrome-extension/page-hook.js"), "utf8");
-  assert.match(hookSrc, /\/api\(\?:\\\/v3\)\?\\\/prospects/);
+  // Any API version, and prospect-scoped sub-paths too. Pinning this to v3
+  // exactly meant one Bonzo change left the button hidden with nothing said.
+  assert.match(hookSrc, /\/api\(\?:\\\/v\\d\+\)\?\\\/prospects/);
   const content = readFileSync(join(root, "chrome-extension/content.js"), "utf8");
   assert.match(content, /c3shotgun\.publish/);
   // Wrong-prospect protection: announces must be checked against the URL id,

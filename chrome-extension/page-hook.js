@@ -10,8 +10,12 @@
   if (window.__c3ShotgunHooked) return;
   window.__c3ShotgunHooked = true;
 
-  // Detail fetch only — /prospects/123, not /prospects?search= or /prospects/123/notes.
-  const DETAIL_RE = /\/api(?:\/v3)?\/prospects\/(\d+)(?:\?.*)?$/;
+  // Any prospect-scoped GET names the prospect on screen: /prospects/123, and
+  // also /prospects/123/notes and a future /api/v4. It must NOT match a list
+  // (/prospects?search=), which carries no id in the path. Pinning this to
+  // exactly /api/v3/prospects/123 was too tight — one Bonzo change and the
+  // button silently never appeared, with nothing on screen to say why.
+  const DETAIL_RE = /\/api(?:\/v\d+)?\/prospects\/(\d+)(?:[/?#]|$)/;
 
   let last = null;
 

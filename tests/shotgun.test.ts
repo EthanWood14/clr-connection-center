@@ -237,3 +237,59 @@ test("an offer is heard, not just seen", () => {
   assert.match(alert, /880/, "A5 — a pleasant two-note chime, not an alarm");
   assert.match(alert, /setInterval\(\(\) => playShotgunChime\(audioRef\), 2_500\)/, "gentle repeat while the offer is up");
 });
+
+// ── The extension has to say why it is doing nothing ────────────────────────
+// Reported from the office: "there's no orange button". The button hid itself
+// whenever it could not name a prospect, so a Bonzo change and a broken
+// install looked identical — nothing on screen either way.
+const extContent = readFileSync(join(root, "chrome-extension/content.js"), "utf8");
+const extHook = readFileSync(join(root, "chrome-extension/page-hook.js"), "utf8");
+const extPopupHtml = readFileSync(join(root, "chrome-extension/popup.html"), "utf8");
+const extPopupJs = readFileSync(join(root, "chrome-extension/popup.js"), "utf8");
+
+test("the shotgun button is never invisible, and reports what it saw", () => {
+  // It always renders: armed when a prospect is named, dimmed otherwise.
+  assert.match(extContent, /btn\.style\.display = "inline-flex";/);
+  assert.doesNotMatch(extContent, /btn\.style\.display = current \?/);
+  assert.match(extContent, /Open a Bonzo prospect/);
+  // And it leaves a breadcrumb the popup can read.
+  assert.match(extContent, /c3Seen:/);
+  assert.match(extPopupJs, /c3Seen/);
+  assert.match(extPopupHtml, /id="seen"/);
+});
+
+test("prospect detection survives a Bonzo version bump, without guessing ids", () => {
+  const urlPatterns = [/\/prospects?\/(\d+)/i, /[?&#]prospect(?:_?id)?=(\d+)/i];
+  const urlId = (href: string) => {
+    for (const re of urlPatterns) { const m = href.match(re); if (m) return Number(m[1]); }
+    return null;
+  };
+  const detail = /\/api(?:\/v\d+)?\/prospects\/(\d+)(?:[/?#]|$)/;
+
+  // The source must carry these exact matchers.
+  assert.match(extContent, /\/\\\/prospects\?\\\/\(\\d\+\)\/i/);
+  assert.match(extHook, /\/api\(\?:\\\/v\\d\+\)\?\\\/prospects\\\/\(\\d\+\)/);
+
+  // Pages that name a prospect arm the button.
+  assert.equal(urlId("https://platform.getbonzo.com/prospects/142346728"), 142346728);
+  assert.equal(urlId("https://platform.getbonzo.com/#/prospects/555"), 555);
+  assert.equal(urlId("https://platform.getbonzo.com/dashboard?prospect_id=777"), 777);
+  // Pages that do not, must not — publishing a guessed id sends the wrong
+  // human into the rotation, which is worse than showing no button.
+  assert.equal(urlId("https://platform.getbonzo.com/prospects"), null);
+  assert.equal(urlId("https://platform.getbonzo.com/campaigns/12"), null);
+
+  // Any prospect-scoped GET names the prospect; a list does not.
+  for (const u of ["/api/v3/prospects/123", "/api/prospects/123", "/api/v4/prospects/123", "/api/v3/prospects/123/notes", "/api/v3/prospects/123?x=1"]) {
+    assert.equal(u.match(detail)?.[1], "123", u);
+  }
+  assert.equal("/api/v3/prospects?search=bob".match(detail), null);
+});
+
+test("the popup tells the truth about the extension key", () => {
+  // C3's session cookie is SameSite=strict in production, so it never travels
+  // to an extension request: the key is required, not "optional".
+  assert.doesNotMatch(extPopupHtml, /Extension key \(optional\)/);
+  assert.match(extPopupHtml, /does not travel here/);
+  assert.match(routes, /sameSite: isProduction \? "strict" : "lax"/);
+});

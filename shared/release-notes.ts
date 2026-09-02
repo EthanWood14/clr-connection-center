@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.46.0",
+    headline: "The Bonzo shotgun button stops vanishing without a word.",
+    items: [
+      { text: "The Bonzo shotgun button no longer disappears. It now always shows itself, greyed out and reading ‘Open a Bonzo prospect’ when you are on a list or a dashboard, so you can tell at a glance that the extension is alive and working.", audience: "everyone" },
+      { text: "It also recognises more of the addresses Bonzo uses for a prospect, so a change on their side stops making the button vanish with nothing to explain it.", audience: "everyone" },
+      { text: "The extension popup now shows which prospect it can see on your Bonzo tab, and says plainly that the extension key is needed rather than optional. C3 keeps your login locked to its own tabs, so the key is what lets the button talk to C3.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.45.0",
     headline: "The whole transfer history lands in LAP, dated as it happened.",
     items: [

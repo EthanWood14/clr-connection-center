@@ -14,9 +14,26 @@
   let revertTimer = null;
   let fireSeq = 0; // stale callbacks/timeouts from superseded clicks are ignored
 
+  // Only patterns that NAME a prospect count. Deliberately not widened to bare
+  // ?id= style params: a wrong guess here would publish the wrong human into
+  // the rotation, which is far worse than showing no button.
+  const URL_PATTERNS = [/\/prospects?\/(\d+)/i, /[?&#]prospect(?:_?id)?=(\d+)/i];
   const urlProspectId = () => {
-    const m = location.href.match(/\/prospects\/(\d+)/);
-    return m ? Number(m[1]) : null;
+    for (const re of URL_PATTERNS) {
+      const m = location.href.match(re);
+      if (m) return Number(m[1]);
+    }
+    return null;
+  };
+
+  // What this tab can see, for the popup to show. An extension that fails by
+  // rendering nothing is undiagnosable — this is how it says why.
+  const reportSeen = () => {
+    try {
+      chrome.storage.local.set({
+        c3Seen: { href: location.href, id: current ? current.id : null, from: current ? current.from || "url" : null, at: Date.now() },
+      });
+    } catch {}
   };
 
   const btn = document.createElement("button");
@@ -47,9 +64,22 @@
     btn.style.background = "linear-gradient(180deg,#f97316,#ea580c)";
     btn.style.boxShadow = "0 6px 20px rgba(234,88,12,.45)";
     const who = firstName();
-    btn.textContent = who ? `⚡ Shotgun · ${who}` : "⚡ Shotgun this prospect";
-    btn.style.display = current ? "inline-flex" : "none";
-    btn.onclick = fire;
+    if (current) {
+      btn.textContent = who ? `⚡ Shotgun · ${who}` : "⚡ Shotgun this prospect";
+      btn.style.opacity = "1";
+      btn.style.cursor = "pointer";
+      btn.onclick = fire;
+    } else {
+      // Never hide outright. A button that renders nothing when it cannot find
+      // a prospect is indistinguishable from a broken install — which is
+      // exactly how this failed in the office.
+      btn.textContent = "⚡ Open a Bonzo prospect";
+      btn.style.opacity = "0.45";
+      btn.style.cursor = "default";
+      btn.onclick = null;
+    }
+    btn.style.display = "inline-flex";
+    reportSeen();
   };
 
   const showResult = (ok, text, { openC3 = false, ms = 7000 } = {}) => {

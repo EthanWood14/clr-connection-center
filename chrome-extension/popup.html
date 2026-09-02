@@ -25,8 +25,9 @@
   <h1><span class="bolt">⚡</span> C3 Shotgun</h1>
   <p class="muted">Open a prospect in Bonzo, then click the orange button.</p>
   <div id="status" class="wait">Checking connection…</div>
-  <label for="key">Extension key (optional)</label>
-  <p class="hint">Only needed if the status above says you're not connected while you ARE logged in to C3. Get a key on C3's Shotgun page → "Get my key".</p>
+  <div id="seen" class="hint"></div>
+  <label for="key">Extension key</label>
+  <p class="hint">Needed on nearly every setup: C3's login cookie is locked to C3's own tabs, so it does not travel here. Get one on C3's Shotgun page → "Get my key", then paste it below.</p>
   <div class="row">
     <input id="key" type="password" placeholder="c3sk_…" autocomplete="off" />
     <button id="save">Save</button>

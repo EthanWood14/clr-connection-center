@@ -33,6 +33,23 @@ chrome.storage.local.get("c3Key").then((stored) => {
   if (stored.c3Key) keyEl.value = String(stored.c3Key);
 });
 
+// What the Bonzo tab last saw. Turns "the button never showed up" from a
+// mystery into one line the person reading it can act on.
+const seenEl = document.getElementById("seen");
+chrome.storage.local.get("c3Seen").then((stored) => {
+  const seen = stored && stored.c3Seen;
+  if (!seenEl) return;
+  if (!seen) {
+    seenEl.textContent = "No Bonzo tab seen yet. Open a prospect in Bonzo, then reopen this popup.";
+    return;
+  }
+  const age = Math.max(0, Math.round((Date.now() - Number(seen.at || 0)) / 1000));
+  const when = age < 90 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+  seenEl.textContent = seen.id
+    ? `Prospect ${seen.id} detected (${when}).`
+    : `On a Bonzo page ${when}, but no prospect id in the address. Open a single prospect, not a list.`;
+});
+
 document.getElementById("save").addEventListener("click", () => {
   chrome.storage.local.set({ c3Key: keyEl.value.trim() }).then(() => {
     savedEl.style.display = "block";
