@@ -15,6 +15,7 @@ import { LapSharedGate } from "./lap-shared-gate";
 import LapLogin from "@/pages/lap-login";
 import LapDashboard from "@/pages/lap-dashboard";
 import LapResults from "@/pages/lap-results";
+import LapLeadNotes from "@/pages/lap-lead-notes";
 import LapLoProfiles from "@/pages/lap-lo-profiles";
 import LapInstall from "@/pages/lap-install";
 import LapResources from "@/pages/lap-resources";
@@ -45,6 +46,7 @@ const LAP_TITLES: Record<string, string> = {
   "/": "Home",
   "/results": "Input Results",
   "/input-results": "Input Results",
+  "/notes": "Lead Notes",
   "/check-ins": "Check-In",
   "/my-schedule": "Weekly Schedule",
   "/forum": "Forum",
@@ -63,6 +65,7 @@ function lapTitle(location: string, product: PortalProduct = "lap") {
   const exact = LAP_TITLES[location];
   if (exact) return `${exact} · ${label}`;
   if (location.startsWith("/results/")) return `Result Package · ${label}`;
+  if (location.startsWith("/notes/")) return `Lead Notes · ${label}`;
   if (location.startsWith("/lo-profiles/")) return `LO Profile · ${label}`;
   return `${label} · ${productFullName(product)}`;
 }
@@ -128,6 +131,8 @@ function LapRouter() {
       <Route path="/results/:resultId" component={LapResults} />
       <Route path="/results" component={LapResults} />
       <Route path="/input-results" component={LapResults} />
+      <Route path="/notes/:resultId" component={LapLeadNotes} />
+      <Route path="/notes" component={LapLeadNotes} />
       <Route path="/check-ins" component={CheckIns} />
       <Route path="/my-schedule" component={WeeklySchedule} />
       <Route path="/forum" component={LapForum} />

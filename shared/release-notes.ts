@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.44.0",
+    headline: "Lead notes get their own page, and Chris gets every one.",
+    items: [
+      { text: "Lead Notes is now its own page in the LAP portal, in the sidebar and the phone bar. Search the borrower, pick the package, fill in the note. The same thread still shows on the package under Input Results.", audience: "lap" },
+      { text: "Every LOA lead note is emailed to Chris Redoble as well as the loan officer. Notes posted within the same half-minute arrive as one email that carries all of them, so nothing is dropped. The address lives in the LAP email settings as the lead notes recipient.", audience: "manager" },
+      { text: "An untouched template can no longer be posted: the Post button waits until at least one line is filled in, and the server refuses a blank one too.", audience: "lap" },
+      { text: "Opening a different package now clears a half-written note instead of carrying it over to the next borrower.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.43.1",
     headline: "Preview the TV reel on demand.",
     items: [

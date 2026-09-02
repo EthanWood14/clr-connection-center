@@ -2376,6 +2376,18 @@ function runNewMigrations() {
       sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
     }
   }
+  // Who is copied on every LOA lead note, per portal, on top of the loan
+  // officer. The column default seeds Chris exactly once, when the column is
+  // first added. Admins can blank it from the portal email settings afterwards,
+  // so nothing here may rewrite it on boot — a blanked address must stay blank.
+  for (const [col, def] of [
+    ['lap_notes_recipient', "'credoble@westcapitallending.com'"],
+    ['lop_notes_recipient', "''"],
+  ] as const) {
+    if (!emailCols.find(c => c.name === col)) {
+      sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ${def}`);
+    }
+  }
   for (const col of ['lap_send_welcome', 'lop_send_welcome']) {
     if (!emailCols.find(c => c.name === col)) {
       sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 1`);

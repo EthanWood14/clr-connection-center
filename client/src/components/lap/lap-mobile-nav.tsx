@@ -1,10 +1,11 @@
-import { FileInput, Home, Menu, MessageCircle, Timer } from "lucide-react";
+import { FileInput, Home, Menu, MessageCircle, NotebookPen, Timer } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useSidebar } from "@/components/ui/sidebar";
 
 const items = [
   { title: "Home", href: "/", icon: Home },
   { title: "Results", href: "/results", icon: FileInput },
+  { title: "Notes", href: "/notes", icon: NotebookPen },
   { title: "Clock", href: "/time-clock", icon: Timer },
   { title: "Chat", href: "/chat", icon: MessageCircle },
 ];

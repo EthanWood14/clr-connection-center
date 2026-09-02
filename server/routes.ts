@@ -8,6 +8,7 @@ import { notesBetween } from "@shared/release-notes";
 import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
 import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
+import { isUntouchedLoaNote } from "@shared/lap-note-template";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
@@ -42,6 +43,7 @@ import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProces
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
 import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-stats";
+import { foldLapNoteBatch, type LapNoteBatchEntry } from "./lap-note-batch";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
@@ -6685,7 +6687,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   /** The sender identity a portal's mail goes out under. */
-  function portalEmailIdentity(portal: "lap" | "lop"): { fromName: string; replyTo?: string; sendWelcome: boolean; filesRecipient: string } {
+  function portalEmailIdentity(portal: "lap" | "lop"): { fromName: string; replyTo?: string; sendWelcome: boolean; filesRecipient: string; notesRecipient: string } {
     const s = storageExtra.getEmailSettings() as any;
     const label = portal.toUpperCase();
     return {
@@ -6693,6 +6695,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       replyTo: String(s[`${portal}_reply_to`] || "").trim() || undefined,
       sendWelcome: s[`${portal}_send_welcome`] == null ? true : !!s[`${portal}_send_welcome`],
       filesRecipient: String(s[`${portal}_files_recipient`] || "").trim(),
+      notesRecipient: String(s[`${portal}_notes_recipient`] || "").trim(),
     };
   }
 
@@ -6795,7 +6798,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const portal = String(req.params.portal || "").toLowerCase();
     if (portal !== "lap" && portal !== "lop") return res.status(400).json({ error: "Unknown portal." });
     const id = portalEmailIdentity(portal);
-    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient });
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient, notesRecipient: id.notesRecipient });
   });
   app.patch("/api/portal-email-settings/:portal", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
@@ -6807,16 +6810,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       sendWelcome: z.boolean().optional(),
       // Where submitted result documents are emailed. Empty switches it off.
       filesRecipient: z.union([z.string().trim().email(), z.literal("")]).optional(),
+      // Who is copied on every LOA lead note, on top of the loan officer. Empty = LO only.
+      notesRecipient: z.union([z.string().trim().email(), z.literal("")]).optional(),
     }).strict().safeParse(req.body ?? {});
-    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fromName, replyTo, sendWelcome and/or filesRecipient." });
+    if (!parsed.success) return res.status(400).json({ error: "Provide a valid fromName, replyTo, sendWelcome, filesRecipient and/or notesRecipient." });
     const patch: any = {};
     if (parsed.data.fromName !== undefined) patch[`${portal}FromName`] = parsed.data.fromName;
     if (parsed.data.replyTo !== undefined) patch[`${portal}ReplyTo`] = parsed.data.replyTo;
     if (parsed.data.sendWelcome !== undefined) patch[`${portal}SendWelcome`] = parsed.data.sendWelcome ? 1 : 0;
     if (parsed.data.filesRecipient !== undefined) patch[`${portal}FilesRecipient`] = parsed.data.filesRecipient;
+    if (parsed.data.notesRecipient !== undefined) patch[`${portal}NotesRecipient`] = parsed.data.notesRecipient;
     storageExtra.updateEmailSettings(patch);
     const id = portalEmailIdentity(portal);
-    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient });
+    res.json({ portal, fromName: id.fromName, replyTo: id.replyTo ?? "", sendWelcome: id.sendWelcome, filesRecipient: id.filesRecipient, notesRecipient: id.notesRecipient });
   });
   // Proves the portal's identity works before it is used on a real person.
   app.post("/api/portal-email-settings/:portal/test", requireAuth, async (req: any, res) => {
@@ -15971,6 +15977,16 @@ ${note}` : daysLine;
     res.json({ loas });
   });
 
+  // Where the portal's LOA-note emails go (the notes recipient from the portal
+  // email settings), so the composer can show the real address instead of a
+  // hardcoded name. "" when unset. Under /api/lap/ so confined LAP sessions
+  // may read it.
+  app.get("/api/lap/notes-recipient", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    res.json({ recipient: portalEmailIdentity("lap").notesRecipient });
+  });
+
   app.get("/api/lap/results", requireAuth, (req: any, res) => {
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
@@ -16243,7 +16259,12 @@ ${note}` : daysLine;
   // LOAs post structured lead notes (the composer pre-fills their template);
   // the loan officer answers with Remarks / Notes / Opportunities. Both live on
   // the package so the whole story stays with the lead.
-  function notifyLapPackageNote(orgId: number, packageId: number, kind: "loa" | "lo", authorName: string, noteBody: string) {
+  // LOA notes posted inside one email delay window are folded into a single
+  // email rather than the earlier ones being dropped by the cancel-and-requeue
+  // debounce. Keyed by the queued email's cancel key; an entry is dropped once
+  // its email has had time to go out.
+  const pendingLapNoteBatches = new Map<string, LapNoteBatchEntry[]>();
+  function notifyLapPackageNote(orgId: number, packageId: number, kind: "loa" | "lo", authorName: string, body: string) {
     const pkg = storageExtra.getLapResultPackage(orgId, packageId) as any;
     const borrower = String(pkg?.borrowerName ?? "a borrower");
     const recipients = new Set<number>([lapSharedUserId(orgId)]);
@@ -16260,16 +16281,37 @@ ${note}` : daysLine;
         isRead: false,
       });
     }
-    // Email the loan officer their LOA's notes (never their own remarks back).
-    // Debounced per package so a quick edit-and-repost collapses to one email.
-    if (kind !== "loa" || !pkg?.loanOfficerId) return;
-    const lo = storage.getLoanOfficerById(Number(pkg.loanOfficerId)) as any;
-    const to = String(lo?.email ?? "").trim();
-    if (!to.includes("@")) return;
+    // Email the LOA's notes to the package's loan officer and to the notes
+    // recipient from the portal email settings (never LO remarks back).
+    if (kind !== "loa") return;
     const identity = portalEmailIdentity("lap");
+    const lo = pkg?.loanOfficerId ? (storage.getLoanOfficerById(Number(pkg.loanOfficerId)) as any) : null;
+    const seen = new Set<string>();
+    const to: string[] = [];
+    for (const candidate of [String(lo?.email ?? ""), identity.notesRecipient]) {
+      const addr = candidate.trim();
+      if (!addr.includes("@") || seen.has(addr.toLowerCase())) continue;
+      seen.add(addr.toLowerCase());
+      to.push(addr);
+    }
+    if (!to.length) return;
+    // Re-queue one email carrying every note whose email has not gone out yet,
+    // so a second note posted during the delay does not drop the first.
+    // Membership used to be decided by note age (younger than the delay window
+    // plus 5s), but every re-queue restarts the window: notes at 0s, 29s and
+    // 36s evicted the first before any email had been sent, and a note landing
+    // just after a dispatch re-sent the one that had already gone out. Whether
+    // cancelPendingEmails() actually cancelled something is the real signal
+    // that the prior batch is still unsent (see server/lap-note-batch.ts).
     const cancelKey = `lap-notes:${orgId}:${packageId}`;
-    cancelPendingEmails(cancelKey);
-    const subject = `LOA notes — ${borrower}`;
+    const now = Date.now();
+    const cancelled = cancelPendingEmails(cancelKey);
+    const batch = foldLapNoteBatch(pendingLapNoteBatches.get(cancelKey), cancelled, { authorName, body, at: now });
+    pendingLapNoteBatches.set(cancelKey, batch);
+    const subject = `LOA notes — ${borrower}${batch.length > 1 ? ` (${batch.length} notes)` : ""}`;
+    const packageUrl = `${PORTAL_APP_URL}/#/lap/results/${packageId}`;
+    const noteBlocks = batch.map(({ authorName: author, body: noteBody }) =>
+      `<p><strong>${escapeHtml(author)}</strong> added notes on <strong>${escapeHtml(borrower)}</strong>:</p><p>${escapeHtml(noteBody).replace(/\n/g, "<br/>")}</p>`);
     void sendEmail({
       to,
       fromName: identity.fromName,
@@ -16277,11 +16319,19 @@ ${note}` : daysLine;
       subject,
       html: buildEmail({
         subject,
-        preheader: `${authorName} added lead notes`,
-        body: `<p><strong>${escapeHtml(authorName)}</strong> added notes on <strong>${escapeHtml(borrower)}</strong>:</p><p>${escapeHtml(noteBody).replace(/\n/g, "<br/>")}</p>`,
+        preheader: batch.length > 1 ? `${batch.length} lead notes added` : `${authorName} added lead notes`,
+        body: `${noteBlocks.join(`<hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0"/>`)}<p><a href="${packageUrl}" style="color:#991b35">Open the package in the LAP portal</a></p>`,
         portal: "lap",
       }),
-    }, { cancelKey });
+    }, { cancelKey }).catch((err) => console.error("[lap-notes] email failed", err));
+    // Forget the batch once its email has had time to go out, so the map does
+    // not keep one entry per package forever. Identity-checked: a later
+    // re-queue replaces the entry with a new array, and this timer must not
+    // evict that one.
+    const evict = setTimeout(() => {
+      if (pendingLapNoteBatches.get(cancelKey) === batch) pendingLapNoteBatches.delete(cancelKey);
+    }, EMAIL_SEND_DELAY_MS + 1_000);
+    if (typeof (evict as any).unref === "function") (evict as any).unref();
   }
 
   app.get("/api/lap/results/:id/notes", requireAuth, (req: any, res) => {
@@ -16323,6 +16373,9 @@ ${note}` : daysLine;
         authorName = String(ctx.user?.name ?? "Loan officer");
       } else {
         body = String(req.body?.body ?? "").trim();
+        // The composer pre-fills the template and every LOA note is emailed out,
+        // so a note that is still nothing but the template is refused.
+        if (isUntouchedLoaNote(body)) return res.status(400).json({ error: "Fill in at least one line of the note before posting." });
         // The shared gate signs every device in as one account, so the composer
         // names the LOA from the directory; staff fall back to their own name.
         const loaId = req.body?.loaId == null ? null : lapPositiveRouteId(req.body.loaId);

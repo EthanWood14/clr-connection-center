@@ -11,6 +11,7 @@ import {
   MapPin,
   MessageCircle,
   MessagesSquare,
+  NotebookPen,
   PanelLeftClose,
   Plane,
   Settings,
@@ -48,6 +49,7 @@ type NavItem = {
 const workflowItems: NavItem[] = [
   { title: "Home", href: "/", icon: Home },
   { title: "Input Results", href: "/results", icon: FileInput },
+  { title: "Lead Notes", href: "/notes", icon: NotebookPen },
 ];
 
 const personalItems: NavItem[] = [

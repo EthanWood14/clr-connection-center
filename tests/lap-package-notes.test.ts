@@ -8,6 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 const page = readFileSync(join(root, "client/src/pages/lap-results.tsx"), "utf8");
+const thread = readFileSync(join(root, "client/src/components/lap/package-notes-thread.tsx"), "utf8");
 
 test("package notes are durable, org-scoped, and follow merges", () => {
   assert.match(storage, /CREATE TABLE IF NOT EXISTS lap_package_notes/);
@@ -41,8 +42,10 @@ test("an LOA note rings the portal bell and emails the loan officer, debounced",
   assert.match(notify, /type: "lap_result"/);
   assert.match(notify, /portal: "lap"/);
   assert.match(notify, /lapSharedUserId\(orgId\)/);
-  // Email goes to the package's LO — for LOA notes only, never remarks echoed back.
-  assert.match(notify, /if \(kind !== "loa" \|\| !pkg\?\.loanOfficerId\) return;/);
+  // Email goes out for LOA notes only, never remarks echoed back. The LO is one
+  // recipient and the portal's notes recipient is the other, so a package with
+  // no LO no longer short-circuits here (tests/lap-lead-notes.test.ts covers it).
+  assert.match(notify, /if \(kind !== "loa"\) return;/);
   assert.match(notify, /getLoanOfficerById\(Number\(pkg\.loanOfficerId\)\)/);
   assert.match(notify, /cancelPendingEmails\(cancelKey\)/);
   assert.match(notify, /`lap-notes:\$\{orgId\}:\$\{packageId\}`/);
@@ -50,10 +53,17 @@ test("an LOA note rings the portal bell and emails the loan officer, debounced",
   assert.match(notify, /escapeHtml\(noteBody\)/);
 });
 
-test("the package view shows the thread with both composers", () => {
-  assert.match(page, /data-testid="lap-package-notes"/);
-  assert.match(page, /LOA_NOTE_TEMPLATE/);
-  assert.match(page, /data-testid="lap-note-loa"/, "the LOA picks their name from the directory");
-  assert.match(page, /data-testid="lap-lo-remarks"/);
-  assert.match(page, /PackageNotesThread result=\{result\} isLoSide=\{isAdmin\}/);
+test("the shared thread carries both composers, and the package view mounts it keyed", () => {
+  assert.match(thread, /data-testid="lap-package-notes"/);
+  assert.match(thread, /LOA_NOTE_TEMPLATE/);
+  assert.match(thread, /data-testid="lap-note-loa"/, "the LOA picks their name from the directory");
+  assert.match(thread, /data-testid="lap-lo-remarks"/);
+  // The composer keeps its draft in useState with no reset effect, so without
+  // key={result.id} a note half-written for one borrower would still be in the
+  // box after switching to the next one.
+  assert.match(page, /<PackageNotesThread key=\{result\.id\} result=\{result\} isLoSide=\{isLoSide\} isAdmin=\{isAdmin\} \/>/);
+  // Every LOA note emails out, so the bare template cannot be posted from the UI.
+  assert.match(thread, /const untouched = isUntouchedLoaNote\(noteBody\)/);
+  assert.match(thread, /disabled=\{postNote\.isPending \|\| !loaId \|\| !noteBody\.trim\(\) \|\| untouched\}/);
+  assert.match(thread, /data-testid="lap-note-untouched"/);
 });
