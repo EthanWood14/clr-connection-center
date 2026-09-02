@@ -146,7 +146,9 @@ test("consecutive seeds do not linger in day one", () => {
 // ── wiring ──────────────────────────────────────────────────────────────────
 test("the TV has no session and can only read", () => {
   assert.match(routes, /if \(req\.path\.startsWith\("\/tv\/"\)\) return next\(\);/);
-  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf("// ── LO priority share link"));
+  // Cut at the /pages route, not at the next section: the board pages are a
+  // separate endpoint on purpose, and their queries are not the fast feed's.
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
   assert.match(feed, /tvLink\(req\.params\.token\)/);
   // The revocation check is in the helper every TV route resolves through.
   const helper = routes.slice(routes.indexOf("function tvLink("), routes.indexOf('app.get("/api/tv-links"'));
@@ -160,7 +162,9 @@ test("the TV has no session and can only read", () => {
 });
 
 test("events come from an updated_at cursor, so a miss can animate", () => {
-  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf("// ── LO priority share link"));
+  // Cut at the /pages route, not at the next section: the board pages are a
+  // separate endpoint on purpose, and their queries are not the fast feed's.
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
   assert.match(feed, /COALESCE\(o\.updated_at, o\.created_at\) > \?/);
   // First poll: no replaying history at the TV on boot.
   assert.match(feed, /First poll: no replaying history/);
@@ -204,16 +208,43 @@ test("the moment queue cannot deadlock, and cannot lose moments on reload", () =
 });
 
 test("pages rotate like signage, and pause under a moment", () => {
-  assert.match(page, /const DECK: Array<\{ id: PageId; dwellMs: number \}> = \[/);
+  assert.match(page, /const DECK: Slot\[\] = \[/);
   for (const id of ["scorecard", "team", "latest", "tip"]) assert.match(page, new RegExp(`data-testid="tv-page-${id}"`));
-  // The scorecard is what people look up for: it comes round most often.
-  assert.equal((page.match(/\{ id: "scorecard"/g) ?? []).length, 2);
+  // The scorecard is what people look up for: it comes round most often, and
+  // that has to survive the deck growing to a dozen slots.
+  assert.equal((page.match(/\{ id: "scorecard",/g) ?? []).length, 2);
   // A repeated page must re-enter fresh, so bars grow and numbers count again.
   assert.match(page, /key=\{`\$\{page\}-\$\{dealt\}`\}/);
   // And the deck does not turn under a moment.
-  const deck = page.slice(page.indexOf("const [slot, setSlot]"), page.indexOf("const page = DECK[slot].id;"));
+  const deck = page.slice(page.indexOf("const [slot, setSlot]"), page.indexOf("const page = (deck[slot]"));
   assert.match(deck, /if \(current\) return;/);
   assert.match(page, /AnimatePresence mode="wait"/, "one page leaves before the next arrives");
+});
+
+test("the EOD board and the assignment list take turns by the clock", () => {
+  // The EOD deadline is 4pm the NEXT business day, so before the afternoon
+  // there are legitimately zero reports for today and that board is empty.
+  // It gets the wall from 3:30 to 6pm; the assignment list holds the rest of
+  // the day, when it is still something a person can act on.
+  assert.match(page, /const EOD_FROM = 15 \* 60 \+ 30, EOD_TO = 18 \* 60;/);
+  assert.match(page, /\{ id: "assignments",\s+dwellMs: [\d_]+, when: \(m\) => !inEodWindow\(m\) \}/);
+  assert.match(page, /\{ id: "eod",\s+dwellMs: [\d_]+, when: inEodWindow \}/);
+  const inWindow = (m: number) => m >= 15 * 60 + 30 && m < 18 * 60;
+  assert.equal(inWindow(15 * 60 + 29), false, "3:29pm is too early");
+  assert.equal(inWindow(15 * 60 + 30), true);
+  assert.equal(inWindow(17 * 60 + 59), true);
+  assert.equal(inWindow(18 * 60), false, "6pm is the end of it");
+  // A page whose section is missing is dropped rather than shown blank, and
+  // the deck can never end up empty.
+  assert.match(page, /return allowed\.length \? allowed : DECK\.filter/);
+});
+
+test("the board pages come from their own endpoint, on their own clock", () => {
+  // A query that throws in the heavy payload must never be able to stop a
+  // transfer being celebrated, so it does not ride the moment feed.
+  assert.match(page, /const PAGES_POLL_MS = 30_000;/);
+  assert.match(page, /queryKey: \[`\/api\/tv\/\$\{token\}\/pages`\]/);
+  assert.match(routes, /app\.get\("\/api\/tv\/:token\/pages"/);
 });
 const hype = readFileSync(join(root, "client/src/components/tv/hype.tsx"), "utf8");
 

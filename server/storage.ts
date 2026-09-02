@@ -3321,6 +3321,14 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   try { sqlite.exec(`UPDATE callsync_agent_activity_daily
     SET last_observed_seconds=active_seconds
     WHERE last_observed_seconds=0 AND active_seconds>0`); } catch {}
+  // observed_at is a FEED heartbeat, not activity: every row written by a poll
+  // carries the same stamp, including agents with zero active seconds. These
+  // two columns record the only thing that means somebody was working — the
+  // moment active_seconds actually went UP, and what it was before. The TV
+  // board's "active in the last 15 minutes" reads seconds_changed_at; nothing
+  // may read observed_at for that question.
+  try { sqlite.exec(`ALTER TABLE callsync_agent_activity_daily ADD COLUMN prev_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { sqlite.exec(`ALTER TABLE callsync_agent_activity_daily ADD COLUMN seconds_changed_at TEXT`); } catch {}
   // Reconstruct earlier same-day sessions from stored CallTools observations.
   // A lower raw value than the preceding observation is a reconnect/reset, so
   // it starts a new additive segment. Existing daily rows win, making this

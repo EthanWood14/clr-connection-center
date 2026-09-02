@@ -22,6 +22,11 @@ import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@sha
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
 import { classifyOutcome, detectMilestones, flattenTips, pickTip, type PersonStats } from "./tv-board";
+import {
+  tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
+  starvedWindowStart, orderStarved,
+  LEAD_SOURCE_TRUSTED_FROM, ACTIVE_WINDOW_LABEL, ACTIVE_WINDOW_SECONDS, STARVED_WINDOW_DAYS,
+} from "./tv-pages";
 import { pickQuote } from "@shared/tv-quotes";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
@@ -73,7 +78,7 @@ import {
   isSharedOverdueAppointment,
   sharedOverdueAppointmentPatch,
 } from "./appointment-permissions";
-import { buildTransferScorecardWindows } from "./manager-scorecard";
+import { buildTransferScorecardWindows, priorMonthToDate } from "./manager-scorecard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
@@ -12473,17 +12478,20 @@ ${note}` : daysLine;
     // ── Prior-period stats for week/month deltas ──
     const priorWeekStart = new Date(week.startDate + "T00:00:00"); priorWeekStart.setDate(priorWeekStart.getDate() - 7);
     const priorWeekEnd = new Date(week.endDate + "T00:00:00"); priorWeekEnd.setDate(priorWeekEnd.getDate() - 7);
-    const priorMonthStart = new Date(month.startDate + "T00:00:00"); priorMonthStart.setMonth(priorMonthStart.getMonth() - 1);
-    const priorMonthEnd = new Date(month.startDate + "T00:00:00"); priorMonthEnd.setDate(priorMonthEnd.getDate() - 1);
+    // The previous month measured to the SAME day of the month, not in full:
+    // comparing two days of September against all thirty-one of August made
+    // every month-over-month number look like a collapse until the very end
+    // of the month.
+    const priorMonth = priorMonthToDate(month.endDate);
     const fmtD = (d: Date) => d.toISOString().split("T")[0];
     const priorWeekStats = storage.getDashboardStats(fmtD(priorWeekStart), fmtD(priorWeekEnd), undefined, reqTz);
-    const priorMonthStats = storage.getDashboardStats(fmtD(priorMonthStart), fmtD(priorMonthEnd), undefined, reqTz);
+    const priorMonthStats = storage.getDashboardStats(priorMonth.startDate, priorMonth.endDate, undefined, reqTz);
     const callActivity = {
       today: callSyncActivitySummary(todayStr, todayStr, undefined, excludedIds),
       week: callSyncActivitySummary(week.startDate, week.endDate, undefined, excludedIds),
       month: callSyncActivitySummary(month.startDate, month.endDate, undefined, excludedIds),
       priorWeek: callSyncActivitySummary(fmtD(priorWeekStart), fmtD(priorWeekEnd), undefined, excludedIds),
-      priorMonth: callSyncActivitySummary(fmtD(priorMonthStart), fmtD(priorMonthEnd), undefined, excludedIds),
+      priorMonth: callSyncActivitySummary(priorMonth.startDate, priorMonth.endDate, undefined, excludedIds),
     };
     const monthCallActivityByUser = callSyncActivityByUser(month.startDate, month.endDate);
 
@@ -16795,6 +16803,21 @@ ${note}` : daysLine;
     return `${part("year")}-${part("month")}-${part("day")}`;
   }
 
+  // The accumulated daily total this poll produces. Written out once and reused
+  // three times below, because prev_seconds and seconds_changed_at have to ask
+  // "did this poll actually move the number?" — and in SQLite every right-hand
+  // side of an UPDATE SET sees the row as it was BEFORE the statement, so
+  // comparing this expression against the stored active_seconds is exactly that
+  // question. Duplicating it by hand would let the two drift apart.
+  const CALLSYNC_NEXT_ACTIVE_SECONDS = `CASE
+                WHEN excluded.observed_at <= callsync_agent_activity_daily.observed_at
+                  THEN callsync_agent_activity_daily.active_seconds
+                WHEN excluded.last_observed_seconds >= callsync_agent_activity_daily.last_observed_seconds
+                  THEN callsync_agent_activity_daily.active_seconds
+                    + excluded.last_observed_seconds - callsync_agent_activity_daily.last_observed_seconds
+                ELSE callsync_agent_activity_daily.active_seconds + excluded.last_observed_seconds
+              END`;
+
   app.post("/api/webhook/callsync", (req, res) => {
     const token = leadvaultReportingToken();
     if (!token) {
@@ -16833,26 +16856,33 @@ ${note}` : daysLine;
         if (normalized.eventType === "calltools.agent_activity") {
           const observedAt = normalized.startedAt ?? now;
           db.prepare(`INSERT INTO callsync_agent_activity_daily
-            (org_id, assistant_id, activity_date, active_seconds, last_observed_seconds, observed_at)
-            VALUES (?,?,?,?,?,?)
+            (org_id, assistant_id, activity_date, active_seconds, last_observed_seconds, observed_at,
+             prev_seconds, seconds_changed_at)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(org_id, assistant_id, activity_date) DO UPDATE SET
-              active_seconds=CASE
-                WHEN excluded.observed_at <= callsync_agent_activity_daily.observed_at
-                  THEN callsync_agent_activity_daily.active_seconds
-                WHEN excluded.last_observed_seconds >= callsync_agent_activity_daily.last_observed_seconds
-                  THEN callsync_agent_activity_daily.active_seconds
-                    + excluded.last_observed_seconds - callsync_agent_activity_daily.last_observed_seconds
-                ELSE callsync_agent_activity_daily.active_seconds + excluded.last_observed_seconds
-              END,
+              active_seconds=${CALLSYNC_NEXT_ACTIVE_SECONDS},
               last_observed_seconds=CASE
                 WHEN excluded.observed_at > callsync_agent_activity_daily.observed_at
                   THEN excluded.last_observed_seconds
                 ELSE callsync_agent_activity_daily.last_observed_seconds
               END,
-              observed_at=MAX(callsync_agent_activity_daily.observed_at, excluded.observed_at)`
+              observed_at=MAX(callsync_agent_activity_daily.observed_at, excluded.observed_at),
+              prev_seconds=CASE
+                WHEN (${CALLSYNC_NEXT_ACTIVE_SECONDS}) <> callsync_agent_activity_daily.active_seconds
+                  THEN callsync_agent_activity_daily.active_seconds
+                ELSE callsync_agent_activity_daily.prev_seconds
+              END,
+              seconds_changed_at=CASE
+                WHEN (${CALLSYNC_NEXT_ACTIVE_SECONDS}) <> callsync_agent_activity_daily.active_seconds
+                  THEN excluded.observed_at
+                ELSE callsync_agent_activity_daily.seconds_changed_at
+              END`
           ).run(
             orgId, matched.id, date, normalized.activeSeconds,
             normalized.activeSeconds, observedAt,
+            // A first row for the day came from nothing; it only counts as a
+            // change if there is actually something on it.
+            0, normalized.activeSeconds > 0 ? observedAt : null,
           );
           activityRecorded = true;
           action = "updated_agent_activity";
@@ -20141,6 +20171,423 @@ ${note}` : daysLine;
         },
       },
       events, recent, milestones, tip,
+    });
+  });
+
+  /**
+   * The board pages — a SECOND endpoint for the same TV.
+   *
+   * The feed above is the moment pipeline: it is polled every ten seconds and
+   * everything that animates on the wall depends on it. The slower pages
+   * (write-up quality, assignments, EOD, phone time, lead sources, presence,
+   * check-ins) touch far more tables, so they get their own route. A broken
+   * query in here can cost a page; it can never cost the celebrations.
+   *
+   * Same token, same guard exception (`/api/*` lets `/tv/` through). The whole
+   * body is wrapped, and each section is wrapped again on its own: a section
+   * that throws is simply ABSENT from the payload — never a 500, never a zero
+   * pretending to be a fact. `failed` names them so a blank page can be told
+   * apart from a quiet one.
+   */
+  app.get("/api/tv/:token/pages", (req: any, res) => {
+    const link = tvLink(req.params.token);
+    if (!link) return res.status(404).json({ error: "This display link is no longer active." });
+    const orgId = Number(link.org_id) || 1;
+
+    const sections: Record<string, any> = {};
+    const failed: string[] = [];
+    const section = (name: string, build: () => any) => {
+      try {
+        const value = build();
+        if (value !== undefined) sections[name] = value;
+      } catch (e: any) {
+        failed.push(name);
+        console.error(`[tv-pages] ${name} failed:`, e?.message ?? e);
+      }
+    };
+
+    let windows = { today: "", weekStart: "", monthStart: "", from: "" };
+    try {
+      const sqlite = storageExtra.getRawSqlite();
+      const tz = BUSINESS_DAY_DEFAULT_TZ;
+      windows = tvPageWindows(businessTodayInTz(tz));
+      const w = windows;
+      // The feed already counts this TV's polls; counting them twice would
+      // double every link's use_count. Only the liveness stamp is touched.
+      try {
+        sqlite.prepare(`UPDATE tv_display_links SET last_used_at=? WHERE id=?`)
+          .run(new Date().toISOString(), link.id);
+      } catch { /* bookkeeping only */ }
+
+      // The roster, filtered EXACTLY as the fast feed filters it, so the two
+      // endpoints can never disagree about who is on the wall.
+      let roster: Array<{ id: number; name: string }> = [];
+      try {
+        roster = (sqlite.prepare(
+          `SELECT id, name FROM users
+            WHERE org_id=? AND is_clr=1 AND is_active=1 AND COALESCE(exclude_from_stats,0)=0
+              AND archived_at IS NULL
+            ORDER BY name COLLATE NOCASE ASC`,
+        ).all(orgId) as any[]).map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
+      } catch (e: any) {
+        console.error("[tv-pages] roster failed:", e?.message ?? e);
+      }
+      const rosterIds = new Set(roster.map((p) => p.id));
+
+      // ── transfers: three windows, per person and for the team ────────────
+      section("transfers", () => {
+        const rows = sqlite.prepare(
+          `SELECT o.assistant_id AS id, u.name AS name,
+                  SUM(CASE WHEN o.date = ?  THEN 1 ELSE 0 END) AS today,
+                  SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS week,
+                  SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS month
+             FROM lead_outcomes o LEFT JOIN users u ON u.id = o.assistant_id
+            WHERE o.org_id = ? AND o.outcome_type = 'transfer' AND o.date >= ?
+            GROUP BY o.assistant_id`,
+        ).all(w.today, w.weekStart, w.monthStart, orgId, w.from) as any[];
+        const counts = (r: any) => ({
+          today: Number(r?.today) || 0, week: Number(r?.week) || 0, month: Number(r?.month) || 0,
+        });
+        const byId = new Map<number, any>(rows.map((r) => [Number(r.id), r]));
+        const people = roster
+          .map((p) => ({ name: p.name, ...counts(byId.get(p.id)) }))
+          .sort((a, b) => b.today - a.today || b.week - a.week || a.name.localeCompare(b.name));
+        // Who is in the team total but not in the names under it.
+        //
+        // Elleine Asuncion is why this field exists: she is the top producer
+        // and carries exclude_from_stats=1, so on 2 Sep the team had 12 more
+        // transfers today than every name on the board added up to. A wall that
+        // cannot explain its own arithmetic looks broken. Anyone off the roster
+        // for any reason is listed, so the two numbers always reconcile.
+        const excluded = rows
+          .filter((r) => !rosterIds.has(Number(r.id)))
+          .map((r) => ({ name: String(r.name ?? "Someone off the roster"), ...counts(r) }))
+          .filter((r) => r.today > 0 || r.week > 0 || r.month > 0)
+          .sort((a, b) => b.month - a.month || b.week - a.week);
+        const team = sqlite.prepare(
+          `SELECT SUM(CASE WHEN date = ?  THEN 1 ELSE 0 END) AS today,
+                  SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS week,
+                  SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS month
+             FROM lead_outcomes
+            WHERE org_id = ? AND outcome_type = 'transfer' AND date >= ?`,
+        ).get(w.today, w.weekStart, w.monthStart, orgId, w.from) as any;
+        return {
+          windows: { today: w.today, weekStart: w.weekStart, monthStart: w.monthStart },
+          people, excluded, team: counts(team),
+        };
+      });
+
+      // ── who the floor owes work to ───────────────────────────────────────
+      section("starved", () => {
+        const from = starvedWindowStart(w.today);
+        // A LEFT JOIN, and the join carries no date test.
+        //
+        // Both halves of that matter. An inner join would delete precisely the
+        // people this page exists to name — a loan officer who received NOTHING
+        // in a fortnight is the single most important row here, and he has no
+        // lead_outcomes rows to be joined to. And keeping the window out of the
+        // ON clause lets MAX(o.date) reach back past it, so a zero can still say
+        // "42 days ago" instead of shrugging.
+        const los = (sqlite.prepare(
+          `SELECT lo.full_name AS name,
+                  COALESCE(lo.needs_transfers, 0) AS flagged,
+                  SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS transfers,
+                  MAX(o.date) AS lastAt
+             FROM loan_officers lo
+             LEFT JOIN lead_outcomes o
+               ON o.lo_id = lo.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
+            WHERE lo.org_id = ? AND lo.internal_status = 'active'
+            GROUP BY lo.id, lo.full_name, lo.needs_transfers`,
+        ).all(from, orgId) as any[]).map((r) => ({
+          name: String(r.name ?? ""),
+          transfers: Number(r.transfers) || 0,
+          lastAt: r.lastAt ? String(r.lastAt) : null,
+          needsTransfers: !!Number(r.flagged),
+        }));
+        // active=1 only. Of the twelve LOA rows on prod, five are switched off
+        // and have taken zero transfers ever — leaving them in would park five
+        // ex-assistants permanently at the head of a list whose entire job is
+        // saying who to send the next one to.
+        //
+        // loan_officer_assistants carries no org_id of its own; the parent loan
+        // officer is the org scope, exactly as the write-up section reads it.
+        const loas = (sqlite.prepare(
+          `SELECT a.full_name AS name,
+                  SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS transfers,
+                  MAX(o.date) AS lastAt
+             FROM loan_officer_assistants a
+             JOIN loan_officers lo ON lo.id = a.lo_id
+             LEFT JOIN lead_outcomes o
+               ON o.loa_id = a.id AND o.org_id = ? AND o.outcome_type = 'transfer'
+            WHERE a.active = 1 AND lo.org_id = ?
+            GROUP BY a.id, a.full_name`,
+        ).all(from, orgId, orgId) as any[]).map((r) => ({
+          name: String(r.name ?? ""),
+          transfers: Number(r.transfers) || 0,
+          lastAt: r.lastAt ? String(r.lastAt) : null,
+        }));
+        // Ranked by fewest received and nothing else — see compareStarved for
+        // why the flag and the tier are both kept out of the ordering.
+        return { days: STARVED_WINDOW_DAYS, from, los: orderStarved(los), loas: orderStarved(loas) };
+      });
+
+      // ── write-up completeness, this week ─────────────────────────────────
+      section("writeUps", () => {
+        // An LOA is only expected where the loan officer has one; scoring it
+        // everywhere drags the whole number from 84% to 43% for no reason.
+        const loaLos = new Set<number>(
+          (sqlite.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+            .map((r: any) => Number(r.lo_id)),
+        );
+        const byUser = new Map<number, CompletenessRow[]>();
+        const all: CompletenessRow[] = [];
+        for (const o of sqlite.prepare(
+          `SELECT assistant_id, borrower_name, phone_number, lead_source, conversation_notes,
+                  notes, transfer_type, loa_id, lo_id
+             FROM lead_outcomes
+            WHERE org_id=? AND outcome_type='transfer' AND date BETWEEN ? AND ?`,
+        ).all(orgId, w.weekStart, w.today) as any[]) {
+          const row: CompletenessRow = {
+            borrowerName: o.borrower_name,
+            phoneNumber: o.phone_number,
+            leadSource: o.lead_source,
+            conversationNotes: o.conversation_notes,
+            notes: o.notes,
+            loId: Number(o.lo_id ?? 0) || null,
+            transferType: o.transfer_type,
+            loaId: Number(o.loa_id ?? 0) || null,
+            loHasLoa: loaLos.has(Number(o.lo_id ?? 0)),
+          };
+          all.push(row);
+          const uid = Number(o.assistant_id);
+          if (!Number.isFinite(uid)) continue;
+          const list = byUser.get(uid) ?? [];
+          list.push(row);
+          byUser.set(uid, list);
+        }
+        // Everyone on the roster appears, including people with nothing to
+        // score. summarizeCompleteness gives them pct null, which the page
+        // shows as a dash — a 0% would read as bad work rather than no work.
+        const people = roster.map((p) => {
+          const s = summarizeCompleteness(byUser.get(p.id) ?? []);
+          return { name: p.name, pct: s.pct, transfers: s.transfers };
+        }).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || a.name.localeCompare(b.name));
+        const team = summarizeCompleteness(all);
+        return {
+          weekStart: w.weekStart, endDate: w.today,
+          people, team: { pct: team.pct, transfers: team.transfers },
+        };
+      });
+
+      // ── today's assignments ──────────────────────────────────────────────
+      section("assignments", () => {
+        // daily_assignments has no org_id; the users join is the org scope.
+        const rows = sqlite.prepare(
+          `SELECT u.id AS uid, u.name AS name, a.assistant_rank AS rank,
+                  a.status AS status, lo.full_name AS loName
+             FROM daily_assignments a
+             JOIN users u ON u.id = a.assistant_id
+             LEFT JOIN loan_officers lo ON lo.id = a.lo_id
+            WHERE a.assignment_date = ? AND u.org_id = ?
+            ORDER BY u.name COLLATE NOCASE ASC, a.assistant_rank ASC`,
+        ).all(w.today, orgId) as any[];
+        const byPerson = new Map<number, { name: string; los: any[] }>();
+        for (const r of rows) {
+          const uid = Number(r.uid);
+          const entry = byPerson.get(uid) ?? { name: String(r.name ?? ""), los: [] };
+          entry.los.push({
+            rank: Number(r.rank) || 0,
+            loName: String(r.loName ?? "Unknown loan officer"),
+            status: String(r.status ?? ""),
+          });
+          byPerson.set(uid, entry);
+        }
+        return {
+          date: w.today,
+          people: Array.from(byPerson.values()),
+          // Carried, not charted. Rows sit at 'recommended' until the EOD
+          // report marks them worked, so through the whole working day this
+          // column says nothing about who has called whom.
+          statusMeaning: "Assignments stay 'recommended' until the EOD report is filed. This is not progress.",
+        };
+      });
+
+      // ── EOD reports, for the PREVIOUS business day ───────────────────────
+      section("eod", () => {
+        // Not today. The deadline is 4pm the next business day, so during the
+        // working day there are legitimately zero reports for today — a board
+        // anchored to today would show "0 submitted" every morning and be
+        // reporting the deadline rather than the team.
+        const forDate = previousBusinessDay(w.today);
+        // eod_reports has no org_id either; again the users join is the scope.
+        const rows = sqlite.prepare(
+          `SELECT e.assistant_id AS id, e.submitted_at AS at
+             FROM eod_reports e JOIN users u ON u.id = e.assistant_id
+            WHERE e.report_date = ? AND u.org_id = ?`,
+        ).all(forDate, orgId) as any[];
+        const at = new Map<number, string | null>(rows.map((r) => [Number(r.id), r.at ? String(r.at) : null]));
+        const submitted: Array<{ name: string; at: string | null }> = [];
+        const missing: Array<{ name: string }> = [];
+        // Expected = the roster. submitted + missing therefore always equals
+        // the roster, so the wall never shows a count nobody can account for.
+        for (const p of roster) {
+          if (at.has(p.id)) submitted.push({ name: p.name, at: at.get(p.id) ?? null });
+          else missing.push({ name: p.name });
+        }
+        // Deliberately no note text: EOD notes name borrowers, and this is a
+        // screen on a wall.
+        return { forDate, submitted, missing };
+      });
+
+      // ── phone time today ─────────────────────────────────────────────────
+      section("phoneTime", () => {
+        // callsync_agent_activity_daily is the authoritative daily total. It is
+        // NOT a sum of callsync_activity_events: CallTools reports active_time
+        // as a cumulative session counter, so adding the events double-counts
+        // every poll.
+        const rows = sqlite.prepare(
+          `SELECT assistant_id AS id, COALESCE(active_seconds,0) AS seconds
+             FROM callsync_agent_activity_daily
+            WHERE org_id = ? AND activity_date = ?`,
+        ).all(orgId, w.today) as any[];
+        const byId = new Map<number, number>(rows.map((r) => [Number(r.id), Number(r.seconds) || 0]));
+        const people = roster
+          .map((p) => ({ name: p.name, seconds: byId.get(p.id) ?? 0 }))
+          .sort((a, b) => b.seconds - a.seconds || a.name.localeCompare(b.name));
+        const teamSeconds = rows.reduce((n, r) => n + (Number(r.seconds) || 0), 0);
+        return { date: w.today, people, teamSeconds };
+      });
+
+      // ── lead sources ─────────────────────────────────────────────────────
+      section("leadSources", () => {
+        const rows = sqlite.prepare(
+          `SELECT COALESCE(NULLIF(TRIM(lead_source), ''), '') AS source,
+                  SUM(CASE WHEN date = ?  THEN 1 ELSE 0 END) AS today,
+                  SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS week,
+                  SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS month
+             FROM lead_outcomes
+            WHERE org_id = ? AND outcome_type = 'transfer' AND date >= ?
+            GROUP BY source`,
+        ).all(w.today, w.weekStart, w.monthStart, orgId, w.from) as any[];
+        const build = (key: "today" | "week" | "month", startDate: string) => {
+          let total = 0;
+          let withSource = 0;
+          const sources: Array<{ source: string; count: number }> = [];
+          for (const r of rows) {
+            const n = Number(r[key]) || 0;
+            if (!n) continue;
+            total += n;
+            const name = String(r.source ?? "");
+            if (!name) continue;
+            withSource += n;
+            sources.push({ source: name, count: n });
+          }
+          sources.sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
+          return { startDate, ...leadSourceCoverage(total, withSource), sources: sources.slice(0, 8) };
+        };
+        return {
+          // Lead source was rolled out on this date. Measured on prod 2 Sep:
+          // 1 of 1,951 transfers before it carry a source, 792 of 957 after.
+          // Charting the earlier months would put "blank" at the top of the
+          // board as though it were where the business comes from.
+          fromDate: LEAD_SOURCE_TRUSTED_FROM,
+          windows: {
+            today: build("today", w.today),
+            week: build("week", w.weekStart),
+            month: build("month", w.monthStart),
+          },
+        };
+      });
+
+      // ── who is active right now ──────────────────────────────────────────
+      section("onPhoneNow", () => {
+        const nowMs = Date.now();
+        // observed_at is a feed heartbeat — on prod every row for the day
+        // carries the identical stamp, people with zero seconds included — so
+        // it is not read here. seconds_changed_at is written only when the
+        // active-seconds total actually moved.
+        const changed = new Map<number, string | null>();
+        for (const r of sqlite.prepare(
+          `SELECT assistant_id AS id, seconds_changed_at AS at
+             FROM callsync_agent_activity_daily
+            WHERE org_id = ? AND activity_date >= ?`,
+        ).all(orgId, addIsoDays(w.today, -1)) as any[]) {
+          const id = Number(r.id);
+          const at = r.at ? String(r.at) : null;
+          if (!at) continue;
+          const prior = changed.get(id);
+          if (!prior || at > prior) changed.set(id, at);
+        }
+        // The second signal: a real per-call event. Yesterday is included so a
+        // late-evening shift is not cut off by the date boundary.
+        const lastEvent = new Map<number, string | null>();
+        for (const r of sqlite.prepare(
+          `SELECT assistant_id AS id, MAX(occurred_at) AS at
+             FROM callsync_activity_events
+            WHERE org_id = ? AND activity_date >= ?
+            GROUP BY assistant_id`,
+        ).all(orgId, addIsoDays(w.today, -1)) as any[]) {
+          lastEvent.set(Number(r.id), r.at ? String(r.at) : null);
+        }
+        const people = roster.map((p) => ({
+          name: p.name,
+          activeAgo: activeAgoSeconds({
+            nowMs,
+            secondsChangedAt: changed.get(p.id) ?? null,
+            lastEventAt: lastEvent.get(p.id) ?? null,
+          }),
+        }));
+        return {
+          // Never "logged in" and never "on a call": CallTools sends no
+          // presence signal at all, so this is the honest claim and the only
+          // one the data supports.
+          label: ACTIVE_WINDOW_LABEL,
+          windowSeconds: ACTIVE_WINDOW_SECONDS,
+          count: activeCount(people),
+          people,
+        };
+      });
+
+      // ── check-ins ────────────────────────────────────────────────────────
+      section("checkins", () => {
+        // Check-ins use the PLAIN local calendar date, deliberately not the 7pm
+        // business rollover — mixing the two files evening entries under
+        // tomorrow. buildCheckinBoard reads storage.getUsers(), which is scoped
+        // by the org context, so this link's org has to be the one in force.
+        const date = checkinToday(BUSINESS_DAY_DEFAULT_TZ);
+        const board = runWithOrg({ orgId, superAdmin: false }, () => buildCheckinBoard(orgId, date));
+        const byId = new Map<number, any>((board.clrs as any[]).map((c) => [Number(c.userId), c]));
+        // Row-absence is not a no-show. Someone whose shift starts at 12:30 has
+        // not missed anything at 9am, and someone scheduled off or on approved
+        // time off has nothing to miss at all — which is exactly what
+        // scheduledOff / absenceExcused / startPassed encode.
+        const people = roster.map((p) => {
+          const c = byId.get(p.id);
+          return {
+            name: p.name,
+            checkedIn: !!c?.checkin,
+            excused: !!(c?.scheduledOff || c?.absenceExcused),
+            startPassed: !!c?.startPassed,
+          };
+        });
+        return { date, people };
+      });
+    } catch (e: any) {
+      // Nothing above may 500 this route. A wall showing fewer pages beats a
+      // wall showing an error.
+      console.error("[tv-pages] payload failed:", e?.message ?? e);
+    }
+
+    res.json({
+      version: APP_VERSION,
+      now: new Date().toISOString(),
+      today: windows.today,
+      weekStart: windows.weekStart,
+      monthStart: windows.monthStart,
+      // Named so the page can say "this section is down" instead of drawing an
+      // empty chart that looks like a quiet day.
+      failed,
+      ...sections,
     });
   });
 

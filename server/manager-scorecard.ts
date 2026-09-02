@@ -60,3 +60,26 @@ export function buildTransferScorecardWindows(
   };
   return rolling;
 }
+
+/**
+ * The same stretch of the previous month, for an honest month-over-month
+ * comparison.
+ *
+ * The dashboard used to measure this month to TODAY and the previous month in
+ * FULL, so on the 2nd it read two days against thirty-one and every metric
+ * looked catastrophic. This returns the 1st through the same day number, and
+ * clamps when the previous month is shorter — comparing the 31st of a 31-day
+ * month against the 30th is the closest honest answer available.
+ */
+export function priorMonthToDate(today: string): { startDate: string; endDate: string } {
+  const [y, m, d] = today.split("-").map(Number);
+  const prevYear = m === 1 ? y - 1 : y;
+  const prevMonth = m === 1 ? 12 : m - 1;
+  const daysInPrev = new Date(Date.UTC(prevYear, prevMonth, 0)).getUTCDate();
+  const day = Math.min(d, daysInPrev);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    startDate: `${prevYear}-${pad(prevMonth)}-01`,
+    endDate: `${prevYear}-${pad(prevMonth)}-${pad(day)}`,
+  };
+}

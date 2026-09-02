@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.52.0",
+    headline: "Seven new pages on the wall, and fairer month numbers.",
+    items: [
+      { text: "The office TV gains seven pages: transfers for the week and the month, write-up percentage per person, today’s assigned loan officers, the end-of-day board, time on the phone, lead sources, and who has been active on CallTools in the last fifteen minutes.", audience: "everyone" },
+      { text: "The end-of-day board only takes the wall between 3.30 and 6pm, when reports are actually being filed. The assignment list holds the rest of the day. A page whose data is missing is dropped rather than shown blank.", audience: "manager" },
+      { text: "The transfer pages now explain their own arithmetic. The team total counts people the name list leaves out, so a quiet line names them and their count instead of leaving two numbers that do not add up.", audience: "manager" },
+      { text: "Month-over-month figures on the dashboard compare the same stretch of the previous month. They used to measure this month so far against the previous month in full, so early in a month every number looked like a collapse.", audience: "manager" },
+      { text: "The month-to-date scorecard shows the pace each person is on for the full month, badged at 75, 100, 150 and 200.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.51.0",
     headline: "Cartoon out, month to date in.",
     items: [

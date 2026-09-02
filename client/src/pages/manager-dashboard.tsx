@@ -226,8 +226,29 @@ function heatColor(value: number, min: number, max: number, higherIsBetter: bool
   return `hsl(${hue}, 78%, 88%)`;
 }
 
+/**
+ * Month-to-date pace: what this month ends at if the rest of it looks like the
+ * part already run. Only meaningful on the MTD window, and only once a couple
+ * of days have passed — on the 1st a single transfer projects to thirty.
+ */
+const PACE_TIERS = [
+  { at: 200, label: "200", color: "#D4A017", text: "#3F2D00" },  // gold
+  { at: 150, label: "150", color: "#2F6FED", text: "#FFFFFF" },  // blue
+  { at: 100, label: "100", color: "#1F9D55", text: "#FFFFFF" },  // green
+  { at: 75,  label: "75",  color: "#D64545", text: "#FFFFFF" },  // red
+];
+
+function paceTier(projected: number) {
+  return PACE_TIERS.find(t => projected >= t.at) ?? null;
+}
+
 // Weekly Scorecard — last-7-days per-CLR snapshot as a color-graded table.
-function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: string }) {
+function TransferScorecard({ rows, rangeLabel, pace }: {
+  rows: any[];
+  rangeLabel: string;
+  /** Present only on the month-to-date window. */
+  pace?: { daysElapsed: number; daysInMonth: number };
+}) {
   // Transfers, then appointments, then calls. Appointments break a transfer tie
   // because they are the same kind of work as a transfer — a booked appointment
   // is a result, whereas call count only says who dialled more to get there.
@@ -253,6 +274,8 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? 0,        better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
   ];
   const ranges = cols.map(c => { const v = list.map(c.get); return { min: Math.min(...v), max: Math.max(...v) }; });
+  const project = (r: any) =>
+    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   return (
     <Card>
       <CardContent className="p-0 overflow-x-auto">
@@ -262,6 +285,7 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
               <th className="text-left px-3 py-2 font-medium w-8">#</th>
               <th className="text-left px-3 py-2 font-medium">CLR</th>
               {cols.map(c => <th key={c.key} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
+              {pace && <th className="text-center px-3 py-2 font-medium whitespace-nowrap">Pace</th>}
             </tr>
           </thead>
           <tbody>
@@ -283,6 +307,28 @@ function TransferScorecard({ rows, rangeLabel }: { rows: any[]; rangeLabel: stri
                     {c.fmt(r)}
                   </td>
                 ))}
+                {pace && (() => {
+                  const projected = project(r);
+                  const tier = projected == null ? null : paceTier(projected);
+                  return (
+                    <td className="px-3 py-2 text-center tabular-nums font-semibold whitespace-nowrap">
+                      {projected == null ? "—" : (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-muted-foreground">{projected}</span>
+                          {tier && (
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[11px] font-bold"
+                              style={{ backgroundColor: tier.color, color: tier.text }}
+                              title={`On pace for ${tier.label}+ transfers this month`}
+                            >
+                              {tier.label}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </td>
+                  );
+                })()}
               </tr>
             ))}
           </tbody>
@@ -785,14 +831,33 @@ export default function ManagerDashboard() {
         >
           Transfer Scorecard — {byRange[scorecardRange]?.window?.label ?? ""}
         </SectionTitle>
+        {scorecardRange === "mtd" && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Pace projects the whole month from what has happened so far:</span>
+            {[...PACE_TIERS].reverse().map(t => (
+              <span key={t.at} className="rounded px-1.5 py-0.5 font-bold" style={{ backgroundColor: t.color, color: t.text }}>
+                {t.label}+
+              </span>
+            ))}
+          </div>
+        )}
         <TransferScorecard
+          pace={scorecardRange === "mtd" ? (() => {
+            const w = byRange.mtd?.window;
+            if (!w?.endDate) return undefined;
+            const [y, m] = w.endDate.split("-").map(Number);
+            // Day 0 of the NEXT month is the last day of this one.
+            return { daysElapsed: w.days ?? 0, daysInMonth: new Date(Date.UTC(y, m, 0)).getUTCDate() };
+          })() : undefined}
           rows={byRange[scorecardRange]?.leaderboard ?? []}
           rangeLabel={byRange[scorecardRange]?.window?.label ?? SCORECARD_OPTIONS.find(option => option.key === scorecardRange)?.label ?? "selected"}
         />
         <p className="text-[11px] text-muted-foreground mt-2">
           {scorecardRange === "today"
             ? "Today only, and still filling in as the day goes on."
-            : "Includes today and the selected number of previous calendar days."}
+            : scorecardRange === "mtd"
+              ? "From the 1st of the month to today, so it grows as the month goes on. Pace projects the whole month at the rate so far — treat it lightly in the first few days."
+              : "Includes today and the selected number of previous calendar days."}
           {" "}Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
         </p>
       </div>

@@ -29,6 +29,9 @@ import {
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
+import {
+  TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
+} from "@/components/tv/pages";
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
 
@@ -57,6 +60,12 @@ type Moment =
   | { type: "overtake"; key: string; overtake: Overtake };
 
 const POLL_MS = 10_000;
+/**
+ * The board pages come from their own endpoint, polled far less often than the
+ * moment feed. Two reasons: this payload is much heavier, and a query that
+ * throws in here must never be able to stop a transfer from being celebrated.
+ */
+const PAGES_POLL_MS = 30_000;
 
 /**
  * "2h 14m", "6m", "just now" — how long since something last happened.
@@ -98,13 +107,41 @@ const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeo
 // ── the deck ────────────────────────────────────────────────────────────────
 // Order and dwell. The scorecard is what people look up for, so it stays
 // longest and comes round most often.
-type PageId = "scorecard" | "team" | "latest" | "tip";
-const DECK: Array<{ id: PageId; dwellMs: number }> = [
-  { id: "scorecard", dwellMs: 14_000 },
-  { id: "team",      dwellMs: 10_000 },
-  { id: "latest",    dwellMs: 11_000 },
-  { id: "scorecard", dwellMs: 14_000 },
-  { id: "tip",       dwellMs: 12_000 },
+type PageId =
+  | "scorecard" | "team" | "latest" | "tip"
+  | "transfersWeek" | "transfersMonth" | "writeup" | "assignments" | "eod"
+  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved";
+
+/**
+ * The deck, and when each page is allowed on it.
+ *
+ * `when` gates a page by the office clock. Two pages are deliberately opposite
+ * each other: the EOD board only earns the wall between 3:30 and 6pm, when
+ * reports are actually being filed (the deadline is 4pm the NEXT business day,
+ * so before 3:30 it is a board of nothing), and the assignment list holds the
+ * rest of the day, when it is still something anyone can act on.
+ *
+ * The scorecard keeps two slots so it still comes round roughly twice a cycle,
+ * which is what the floor actually looks up for.
+ */
+type Slot = { id: PageId; dwellMs: number; when?: (mins: number) => boolean };
+const EOD_FROM = 15 * 60 + 30, EOD_TO = 18 * 60;
+const inEodWindow = (mins: number) => mins >= EOD_FROM && mins < EOD_TO;
+const DECK: Slot[] = [
+  { id: "scorecard",      dwellMs: 14_000 },
+  { id: "onPhoneNow",     dwellMs: 9_000 },
+  { id: "team",           dwellMs: 10_000 },
+  { id: "latest",         dwellMs: 11_000 },
+  { id: "transfersWeek",  dwellMs: 12_000 },
+  { id: "assignments",    dwellMs: 12_000, when: (m) => !inEodWindow(m) },
+  { id: "eod",            dwellMs: 12_000, when: inEodWindow },
+  { id: "scorecard",      dwellMs: 14_000 },
+  { id: "phoneTime",      dwellMs: 11_000 },
+  { id: "writeup",        dwellMs: 12_000 },
+  { id: "leadSource",     dwellMs: 11_000 },
+  { id: "starved",        dwellMs: 13_000 },
+  { id: "transfersMonth", dwellMs: 12_000 },
+  { id: "tip",            dwellMs: 12_000 },
 ];
 
 // ── sound ───────────────────────────────────────────────────────────────────
@@ -572,14 +609,53 @@ export default function TvBoard() {
   // ── the deck ──────────────────────────────────────────────────────────
   // Advances on its own clock; pauses while a moment is up so the page under
   // it does not change out from beneath the card.
+  // The heavier board data, on its own endpoint and its own clock.
+  const { data: board } = useQuery<any>({
+    queryKey: [`/api/tv/${token}/pages`],
+    queryFn: async () => {
+      const res = await fetch(`/api/tv/${token}/pages`);
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
+    enabled: !!token,
+    refetchInterval: PAGES_POLL_MS,
+    staleTime: PAGES_POLL_MS,
+  });
+
+  // Which slots are allowed on the wall right now. A page whose data is
+  // missing — its section failed, or the endpoint has not answered yet — is
+  // dropped rather than shown empty, so a broken query costs a slot instead of
+  // putting a blank screen in front of the floor.
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const deck = useMemo(() => {
+    const has = (id: PageId) => {
+      switch (id) {
+        case "transfersWeek": case "transfersMonth": return !!board?.transfers;
+        case "writeup":      return !!board?.writeUps;
+        case "assignments":  return !!board?.assignments?.people?.length;
+        case "eod":          return !!board?.eod;
+        case "phoneTime":    return !!board?.phoneTime;
+        case "leadSource":   return !!board?.leadSources;
+        case "onPhoneNow":   return !!board?.onPhoneNow;
+        case "starved":      return !!board?.starved;
+        default:             return true;
+      }
+    };
+    const allowed = DECK.filter((d) => (!d.when || d.when(nowMins)) && has(d.id));
+    // Never leave the wall with nothing to show.
+    return allowed.length ? allowed : DECK.filter((d) => !d.when && has(d.id));
+    // Re-deal only when the hour band or the available sections change, not on
+    // every minute tick, or the deck would reshuffle under the viewer.
+  }, [board, Math.floor(nowMins / 30)]);
+
   const [slot, setSlot] = useState(0);
   const [dealt, setDealt] = useState(0); // bumps on every advance so a repeated page re-enters fresh
   useEffect(() => {
     if (current) return;
-    const id = setTimeout(() => { setSlot((s) => (s + 1) % DECK.length); setDealt((d) => d + 1); }, DECK[slot].dwellMs);
+    const id = setTimeout(() => { setSlot((s) => (s + 1) % deck.length); setDealt((d) => d + 1); }, (deck[slot] ?? deck[0]).dwellMs);
     return () => clearTimeout(id);
   }, [slot, current]);
-  const page = DECK[slot].id;
+  const page = (deck[slot] ?? deck[0]).id;
 
   const people = data?.scorecard.people ?? [];
   const team = data?.scorecard.team ?? { transfersToday: 0, transfersWeek: 0, appointmentsToday: 0, fellThroughToday: 0, missedToday: 0 };
@@ -631,13 +707,80 @@ export default function TvBoard() {
             {page === "team"      && <TeamPage team={team} teamGoal={teamGoal} reduced={reduced} />}
             {page === "latest"    && <LatestPage recent={data?.recent ?? []} now={now} reduced={reduced} />}
             {page === "tip"       && <TipPage tip={data?.tip ?? null} reduced={reduced} />}
+            {page === "transfersWeek" && (
+              <TransfersPage
+                window="week" reduced={reduced}
+                people={(board?.transfers?.people ?? []).map((p: any) => ({ id: p.id, name: p.name, count: p.week }))}
+                team={board?.transfers?.team?.week ?? 0}
+                excluded={(board?.transfers?.excluded ?? []).map((e: any) => ({ name: e.name, count: e.week }))}
+              />
+            )}
+            {page === "transfersMonth" && (
+              <TransfersPage
+                window="month" reduced={reduced}
+                people={(board?.transfers?.people ?? []).map((p: any) => ({ id: p.id, name: p.name, count: p.month }))}
+                team={board?.transfers?.team?.month ?? 0}
+                excluded={(board?.transfers?.excluded ?? []).map((e: any) => ({ name: e.name, count: e.month }))}
+              />
+            )}
+            {page === "writeup" && (
+              <WriteUpPage
+                reduced={reduced}
+                people={(board?.writeUps?.people ?? []).map((p: any, i: number) => ({ id: i, name: p.name, pct: p.pct, transfers: p.transfers }))}
+                team={board?.writeUps?.team ?? { pct: null, transfers: 0 }}
+              />
+            )}
+            {page === "assignments" && (
+              <AssignmentsPage
+                reduced={reduced}
+                people={(board?.assignments?.people ?? []).map((p: any, i: number) => ({
+                  id: p.id ?? i, name: p.name, los: (p.los ?? []).map((l: any) => (typeof l === "string" ? l : l.loName ?? l.name ?? "")),
+                }))}
+              />
+            )}
+            {page === "eod" && (
+              <EodPage
+                reduced={reduced}
+                forDate={board?.eod?.forDate ?? ""}
+                submitted={board?.eod?.submitted ?? []}
+                missing={board?.eod?.missing ?? []}
+              />
+            )}
+            {page === "phoneTime" && (
+              <PhoneTimePage
+                reduced={reduced}
+                people={(board?.phoneTime?.people ?? []).map((p: any, i: number) => ({ id: p.id ?? i, name: p.name, seconds: p.seconds }))}
+                teamSeconds={board?.phoneTime?.teamSeconds ?? 0}
+              />
+            )}
+            {page === "leadSource" && (() => {
+              const wnd = board?.leadSources?.windows?.week;
+              return (
+                <LeadSourcePage
+                  window="week" reduced={reduced}
+                  rows={(wnd?.sources ?? []).map((r: any) => ({ source: r.source, count: r.count }))}
+                  // The page wants a fraction; the server reports a percentage.
+                  coverage={wnd?.pct == null ? 1 : wnd.pct / 100}
+                  fromDate={board?.leadSources?.fromDate ?? ""}
+                />
+              );
+            })()}
+            {page === "onPhoneNow" && (
+              <OnPhoneNowPage
+                reduced={reduced}
+                count={board?.onPhoneNow?.count ?? 0}
+                people={(board?.onPhoneNow?.people ?? [])
+                  .filter((p: any) => p.activeAgo != null)
+                  .map((p: any, i: number) => ({ id: i, name: p.name }))}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* ── progress dots: which page, and how long until the next ── */}
       <footer className="relative z-10 flex h-10 items-center justify-center gap-3" aria-hidden="true">
-        {DECK.map((d, i) => (
+        {deck.map((d, i) => (
           <span key={i} className="relative h-2 w-10 overflow-hidden rounded-full bg-white/15">
             {i === slot && !current && (
               <motion.span
