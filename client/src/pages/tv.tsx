@@ -20,7 +20,7 @@
  *  - It reloads itself when C3 deploys, so it is never a week behind the app.
  *  - The bottom tenth of the screen is a STRIP, not an overlay. The deck is
  *    given the box above it and nothing floats on top of a page. See the
- *    block comment above NotRankedZone for why, and for how it is laid out.
+ *    block comment above NewLeadZone for why, and for how it is laid out.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -48,7 +48,6 @@ interface Person {
   appointmentsToday: number; appointmentsWeek: number; goalTransfersWeekly: number; goalAppointmentsWeekly: number;
   lastTransferAt?: string | null; lastCallAt?: string | null;
 }
-interface Aside { name: string; today: number; week: number }
 /** A lead that just landed in LeadVault. Transient — see server/tv-leads.ts. */
 interface NewLead { id: number; name: string; source: string | null; at: string }
 interface Milestone { id: string; kind: string; headline: string; detail: string; weight: 1 | 2 | 3 }
@@ -71,7 +70,6 @@ interface Feed {
     team: { transfersToday: number; transfersWeek: number; appointmentsToday: number; fellThroughToday: number; missedToday: number };
   };
   events: TvEvent[]; recent: TvEvent[]; milestones: Milestone[]; tip: Tip | null;
-  aside?: Aside[];
   newLeads?: NewLead[];
 }
 
@@ -551,35 +549,36 @@ function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }
 /**
  * The band along the bottom of the wall.
  *
- * Ethan's ask, in his words: the not-ranked people and LeadVault's new leads go
- * "in the bottom like 10% of the screen", in small text, "not overlaying
- * anything". Both of those used to float ON TOP of whatever page was up — a
- * card pinned to the bottom-right corner and a notice sliding up over the deck
- * — so this is the opposite of that. It is a row in the page's own flow, and
- * <main> above it is given a box that is shorter by exactly this much. Nothing
- * in here is absolutely positioned, and nothing in here sits over the deck.
+ * Ethan's ask, in his words: LeadVault's new leads go "in the bottom like 10%
+ * of the screen", in small text, "not overlaying anything". It used to slide up
+ * OVER whatever page was up, so this is the opposite of that. It is a row in
+ * the page's own flow, and <main> above it is given a box that is shorter by
+ * exactly this much. Nothing in here is absolutely positioned, and nothing in
+ * here sits over the deck.
  *
- * One row, three zones, read across:
+ * One row, read across:
  *
- *   NOT RANKED · TODAY      |  ● ● ● ● ●  |      NEW IN LEADVAULT
- *   Elleine Asuncion 4 +3  |   the deck    |  Maria Alvarez · Facebook
+ *   NEW IN LEADVAULT                                        |  ● ● ● ● ●
+ *   Maria Alvarez · Facebook · +2 more                        |   the deck
  *
- * The two lists take an end each and the deck's progress dots hold the middle.
- * That is what keeps the row balanced with zero, one or several of either: each
- * end is a flex-1 column with its own alignment, so neither end can drag the
- * other across the screen, and the dots stay dead centre whatever is beside
- * them. Both zones are the same two-line stack — a micro-label over a single
- * line of content, at the same two type sizes — so their labels sit on one
- * baseline and their content on another. Hairline rules separate the three.
+ * The strip used to carry a second zone at the other end — the CLRs the chart
+ * leaves out — with the deck's dots holding the middle. Ethan asked for it to
+ * go, so what is left is not a half-empty version of that layout: the notice
+ * takes the whole width from the left edge and the deck's dots close the row on
+ * the right, which is how a footer is normally read — what happened on one
+ * side, where you are on the other. One hairline between them, and no mirrored
+ * gap where the other zone used to be.
  *
  * The height is fixed and the lead zone always renders its content line, full
  * or empty. A strip that grew when a lead landed would jog the whole board
- * every time LeadVault fired, so the space is reserved rather than made.
+ * every time LeadVault fired, so the space is reserved rather than made — and
+ * it is the same two-line stack, at the same two type sizes, as before, so
+ * removing the other zone did not move the row by a pixel.
  *
  * It is a footer, and it is sized like one: the type bottoms out around a rem,
- * the labels are white/30, and the only colour in it is the amber of a count
- * and the emerald of an arrival. Under a moment the overlay covers it along
- * with everything else — a celebration owns the whole screen, deliberately.
+ * the labels are white/30, and the only colour in it is the emerald of an
+ * arrival. Under a moment the overlay covers it along with everything else — a
+ * celebration owns the whole screen, deliberately.
  */
 const STRIP_LABEL = "text-[clamp(0.7rem,0.85vw,0.92rem)] font-semibold uppercase tracking-[0.28em] text-white/30";
 const STRIP_LINE = "mt-1.5 flex items-baseline gap-4 text-[clamp(0.95rem,1.25vw,1.3rem)] leading-none";
@@ -588,37 +587,6 @@ const STRIP_QUIET = "truncate text-white/25";
 /** The hairline between two zones. */
 function StripRule() {
   return <span className="my-4 w-px shrink-0 self-stretch bg-white/10" aria-hidden="true" />;
-}
-
-/**
- * Who the chart leaves out.
- *
- * Someone flagged out of the stats is kept off the ranking on purpose, but the
- * team total still counts them — so the wall names the difference instead of
- * leaving two numbers that do not add up. Empty is a designed state, not a gap:
- * the label stays and the line says so in words.
- */
-function NotRankedZone({ aside }: { aside: Aside[] }) {
-  // Two, then a count. Three fitted the corner card this replaces; here the
-  // zone shares a row with fourteen progress dots and the lead notice, and
-  // three full names truncated to "Elleine Asu…" — which names nobody.
-  const shown = aside.slice(0, 2);
-  const more = aside.length - shown.length;
-  return (
-    <div className="flex min-w-0 flex-1 flex-col justify-center" data-testid="tv-aside">
-      <div className={STRIP_LABEL}>Not ranked · today</div>
-      <div className={STRIP_LINE}>
-        {shown.map((a) => (
-          <span key={a.name} className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate font-semibold text-white/65" title={a.name}>{a.name}</span>
-            <span className="shrink-0 font-black text-amber-300/80">{a.today}</span>
-          </span>
-        ))}
-        {more > 0 && <span className="shrink-0 text-white/30">+{more} more</span>}
-        {!aside.length && <span className={STRIP_QUIET}>everyone today is on the board</span>}
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -640,16 +608,16 @@ function NewLeadZone({ notice, up, reduced }: {
 }) {
   return (
     <div
-      className="flex min-w-0 flex-1 flex-col justify-center text-right"
+      className="flex min-w-0 flex-1 flex-col justify-center"
       data-testid="tv-new-lead"
       data-up={up ? "1" : "0"}
     >
       <div className={STRIP_LABEL}>New in LeadVault</div>
-      <div className={`${STRIP_LINE} justify-end`}>
+      <div className={STRIP_LINE}>
         {notice ? (
           <motion.span
             key={notice.lead.id}
-            className={`flex min-w-0 items-baseline justify-end gap-3 transition-colors duration-700 ${up ? "text-emerald-200" : "text-white/45"}`}
+            className={`flex min-w-0 items-baseline gap-3 transition-colors duration-700 ${up ? "text-emerald-200" : "text-white/45"}`}
             initial={{ opacity: 0, y: reduced ? 0 : 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={reduced ? { duration: 0.25 } : { type: "spring", stiffness: 210, damping: 26 }}
@@ -902,7 +870,6 @@ export default function TvBoard() {
   }, [deck.length]);
 
   const people = data?.scorecard.people ?? [];
-  const aside = data?.aside ?? [];
   const team = data?.scorecard.team ?? { transfersToday: 0, transfersWeek: 0, appointmentsToday: 0, fellThroughToday: 0, missedToday: 0 };
   const teamGoal = useMemo(() => people.reduce((n, p) => n + p.goalTransfersWeekly, 0), [people]);
 
@@ -1038,7 +1005,12 @@ export default function TvBoard() {
                   rows={(wnd?.sources ?? []).map((r: any) => ({ source: r.source, count: r.count }))}
                   // The page wants a fraction; the server reports a percentage.
                   coverage={wnd?.pct == null ? 1 : wnd.pct / 100}
-                  fromDate={board?.leadSources?.fromDate ?? ""}
+                  // The dates these counts actually cover, and whether
+                  // lead_source's rollout is what moved the start. One period
+                  // on the eyebrow, never a window name beside a second date.
+                  startDate={wnd?.startDate ?? ""}
+                  endDate={wnd?.endDate ?? board?.today ?? ""}
+                  clipped={!!wnd?.clipped}
                 />
               );
             })()}
@@ -1084,17 +1056,17 @@ export default function TvBoard() {
         </AnimatePresence>
       </main>
 
-      {/* ── the bottom strip: who is off the chart, where the deck is, and
-             what just landed. One row in the page's own flow, ten percent of
-             the screen, over nothing — see NotRankedZone above. ── */}
+      {/* ── the bottom strip: what just landed, and where the deck is. One row
+             in the page's own flow, ten percent of the screen, over nothing —
+             see NewLeadZone above. ── */}
       <footer
         className="relative z-10 flex h-[10vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] px-10"
         data-testid="tv-strip"
       >
-        <NotRankedZone aside={aside} />
+        <NewLeadZone notice={leadNotice} up={leadUp} reduced={reduced} />
         <StripRule />
-        {/* Progress dots: which page, and how long until the next. Dead centre,
-            which is also what holds the two zones either side of it balanced. */}
+        {/* Progress dots: which page, and how long until the next. They close
+            the row on the right, the way page numbers close a footer. */}
         <div className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress">
           {deck.map((d, i) => (
             <span key={i} className="relative h-2 w-10 overflow-hidden rounded-full bg-white/15">
@@ -1109,8 +1081,6 @@ export default function TvBoard() {
             </span>
           ))}
         </div>
-        <StripRule />
-        <NewLeadZone notice={leadNotice} up={leadUp} reduced={reduced} />
       </footer>
 
       {current && <MomentOverlay moment={current} reduced={reduced} />}

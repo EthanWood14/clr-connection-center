@@ -153,6 +153,59 @@ export function capturedLabels(blob: unknown): Set<string> {
   return found;
 }
 
+/**
+ * The separator composeLeadCaptureNotes puts between an answer and the words
+ * it rides after it — its own `withNotes` writes "Military: Yes — Navy, 6
+ * years" with exactly this, and the investment question appends its routing
+ * hint the same way.
+ */
+const ANSWER_TAIL = " — ";
+
+/** The qualification question the transfer-placement rule keys off. */
+export const INVESTMENT_PROPERTY_LABEL = "Investment/2nd Home";
+
+/**
+ * The Yes/No a qualification marker carries, or null when the app wrote none.
+ *
+ * This is capturedLabels' parse, deliberately: the label is matched at the
+ * START of a line, the value is what follows the colon, and the value is
+ * compared against the one thing composeLeadCaptureNotes is allowed to have
+ * written. Anything else fails closed.
+ *
+ * The one addition is the tail split, because the composer rides extra words
+ * on this particular answer — "Investment/2nd Home: Yes — give to LOA Justin,
+ * Mateo, or John". The answer is the head; the tail is prose and is never read.
+ *
+ * Strict equality, and not a search for a word, because a rule hangs off this.
+ * A note reading "not an investment property" makes the OPPOSITE claim, and a
+ * CLR's pasted free text reaches this parser for real — the Shotgun result path
+ * stores a raw note straight into conversation_notes. So only "Yes" is Yes and
+ * only "No" is No; a description, a blank, and a missing line are all null.
+ */
+export function qualAnswer(blob: unknown, label: string): "yes" | "no" | null {
+  const prefix = `${String(label ?? "")}:`;
+  for (const raw of String(blob ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith(prefix)) continue;
+    const answer = line.slice(prefix.length).split(ANSWER_TAIL)[0].trim().toLowerCase();
+    if (answer === "yes" || answer === "no") return answer;
+  }
+  return null;
+}
+
+/**
+ * Did the app record this transfer as an investment property or second home?
+ *
+ * Fail closed in every direction: a No, a sentence describing one, a note that
+ * merely mentions the word, and a missing answer are all false. Only an
+ * app-composed Yes is true, because the only thing this answer is used for is
+ * constraining where a transfer was allowed to go, and an invented constraint
+ * would change somebody's score for a rule that never bound them.
+ */
+export function isInvestmentProperty(blob: unknown): boolean {
+  return qualAnswer(blob, INVESTMENT_PROPERTY_LABEL) === "yes";
+}
+
 export interface CompletenessField {
   key: string;
   label: string;

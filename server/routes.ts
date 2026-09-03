@@ -18,7 +18,7 @@ import cron from "node-cron";
 import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
-import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
+import { summarizeCompleteness, isInvestmentProperty, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
 import {
@@ -30,9 +30,15 @@ import { recordNewLead, newLeadsSince } from "./tv-leads";
 import {
   tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
   starvedWindowStart, orderStarved, selectUpcomingAppointments,
+  orderByRecentlyActive, orderAssignmentPeople,
   LEAD_SOURCE_TRUSTED_FROM, ACTIVE_WINDOW_LABEL, ACTIVE_WINDOW_SECONDS, STARVED_WINDOW_DAYS,
   UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE,
 } from "./tv-pages";
+import {
+  scoreTransferPriority, investmentPropertyKeys, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
+  MIN_SCORED_TRANSFERS,
+  type RecipientRow as PlacementRecipient, type TransferRow as PlacementTransfer,
+} from "./transfer-priority";
 import { pickQuote } from "@shared/tv-quotes";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
@@ -12511,6 +12517,25 @@ ${note}` : daysLine;
   // Returns team-wide stats, leaderboard, EOD report status grid, pipeline
   // (today's transfers / overdue appointments / overdue NMLS), and a 30-day trend
   // for the manager dashboard route. Replaces the regular CLR home for admins.
+
+  /**
+   * The placement scan's memo, keyed by org and window.
+   *
+   * One dashboard request builds TEN windows, and the widest of them ("All
+   * time") reads every transfer the company has ever logged and rebuilds the
+   * floor for every day of it. That work is identical for every manager and
+   * changes only when a transfer is logged, so it is done once a minute rather
+   * than once a page load. Two minutes is short enough that a CLR watching
+   * their own number after a transfer sees it move within a coffee refill, and
+   * long enough that a room full of open dashboards costs one scan.
+   *
+   * Keyed on the window's own dates, so the ten windows never share an entry
+   * and yesterday's "Today" cannot be served as today's.
+   */
+  const PLACEMENT_CACHE_TTL_MS = 2 * 60 * 1000;
+  type PlacementCell = { pct: number | null; scored: number; ranked: boolean };
+  const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell> }>();
+
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
     const me = sess?.userId ? (storage.getUserById(sess.userId) as any) : null;
@@ -13064,6 +13089,172 @@ ${note}` : daysLine;
         rowsByUser.forEach((rows, uid) => writeUpByUser.set(uid, summarizeCompleteness(rows).pct));
       } catch { /* the column is context, never a reason to fail the dashboard */ }
 
+      // Transfer placement per CLR: not a second count of transfers, but where
+      // each one was PUT. Judged against the floor as it stood on the morning
+      // of the transfer, so feeding the same starved loan officer all fortnight
+      // keeps paying instead of quietly becoming a penalty. Every rule lives in
+      // server/transfer-priority.ts; this only feeds it rows.
+      const placementByUser = new Map<number, PlacementCell>();
+      const placementOrg = currentOrgId() ?? 1;
+      const placementKey = `${placementOrg}|${startDate}|${endDate}`;
+      const placementHit = placementCache.get(placementKey);
+      const placementFresh = !!placementHit && Date.now() - placementHit.at < PLACEMENT_CACHE_TTL_MS;
+      if (placementHit && placementFresh) {
+        placementHit.rows.forEach((v, k) => placementByUser.set(k, v));
+      } else try {
+        // THE RECIPIENTS ARE COUNTED OVER A RUN-UP AS WELL AS THE RANGE, and
+        // that is the one thing about this query that is load-bearing.
+        //
+        // The stat rebuilds each morning's floor by subtracting the range's own
+        // transfers from each recipient's count. Count them over the range
+        // alone and the subtraction takes everything: every loan officer starts
+        // the window on nothing, the floor is flat, and the busiest desk in the
+        // building scores the same as the emptiest. On the default "Today"
+        // window that made a table in which every CLR read 100%.
+        //
+        // So the count reaches a fortnight further back than the rows being
+        // scored — the same fortnight the TV's Starved page measures, via
+        // starvedWindowStart — and what survives the subtraction is the load
+        // each recipient was already carrying when the window opened. The rows
+        // being SCORED are still this range and only this range; nothing
+        // outside it is judged, and nobody is scored twice.
+        //
+        // What this run-up is NOT is a rolling fortnight, and the gap is wider
+        // than the sentence that used to sit here admitted.
+        //
+        // The module's snapshot adds the range's own transfers on top of that
+        // opening load and never ages any of them back out. So the fortnight is
+        // exact on ONE range: "Today", where the range is a single day and the
+        // load a transfer is judged against is precisely the fortnight the TV's
+        // Starved page counts. On every other range it is that fortnight PLUS
+        // the whole range — pick 90 days and a desk is judged on about a
+        // hundred days of accumulated work; pick "All time" and it is
+        // everything that desk has ever taken. Over a long range that is the
+        // honest question rather than a flaw ("who has been fed the most", and
+        // the ranking stays monotone in it either way), but it does mean the
+        // Placed column and the wall's Starved page can name different people
+        // as starved, and nobody reading the column could have known that.
+        //
+        // So it is said where it can be seen instead of only here: the Placed
+        // column's own tooltip spells the difference out — see the placement
+        // column in client/src/pages/manager-dashboard.tsx. Making the two
+        // agree on every range would need the run-up broken out day by day and
+        // aged back out again, not handed over as one total.
+        const placementFrom = starvedWindowStart(startDate);
+        // `receiving` is what keeps the seeded demo rows and the "Unknown LO
+        // (Recovered)" placeholder out of the full-credit band without naming
+        // anybody: a real MAX(o.date) means somebody has actually transferred
+        // there. The join carries no date test, so that stays a question about
+        // all time while the counted column is the range plus its run-up.
+        const placementLos = (sqlite.prepare(
+          `SELECT lo.id AS id, lo.full_name AS name,
+                  COALESCE(lo.needs_transfers, 0) AS flagged,
+                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
+                  MAX(o.date) AS lastAt
+             FROM loan_officers lo
+             LEFT JOIN lead_outcomes o
+               ON o.lo_id = lo.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
+            WHERE lo.org_id = ? AND lo.internal_status = 'active'
+            GROUP BY lo.id, lo.full_name, lo.needs_transfers`,
+        ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+          id: Number(r.id),
+          kind: "lo",
+          name: String(r.name ?? ""),
+          transfers: Number(r.transfers) || 0,
+          lastAt: r.lastAt ? String(r.lastAt) : null,
+          needsTransfers: !!Number(r.flagged),
+          receiving: !!r.lastAt,
+        }));
+        // loan_officer_assistants carries no org_id of its own; the parent loan
+        // officer is the org scope, exactly as the starved page reads it.
+        const placementLoas = (sqlite.prepare(
+          `SELECT a.id AS id, a.full_name AS name,
+                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
+                  MAX(o.date) AS lastAt
+             FROM loan_officer_assistants a
+             JOIN loan_officers lo ON lo.id = a.lo_id
+             LEFT JOIN lead_outcomes o
+               ON o.loa_id = a.id AND o.org_id = ? AND o.outcome_type = 'transfer'
+            WHERE a.active = 1 AND lo.org_id = ?
+            GROUP BY a.id, a.full_name`,
+        ).all(placementFrom, endDate, placementOrg, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+          id: Number(r.id),
+          kind: "loa",
+          name: String(r.name ?? ""),
+          transfers: Number(r.transfers) || 0,
+          lastAt: r.lastAt ? String(r.lastAt) : null,
+          receiving: !!r.lastAt,
+        }));
+        const placementRecipients = [...placementLos, ...placementLoas];
+        // The compliance rule, resolved from the ROSTER by name and never from
+        // stored text. An empty list means nobody on the roster answers to
+        // those names, and an empty list constrains nothing.
+        const investmentKeys = INVESTMENT_PROPERTY_INPUT_AVAILABLE
+          ? investmentPropertyKeys(placementRecipients)
+          : [];
+        // EVERY transfer in the range, deliberately including the CLRs the
+        // scorecard leaves out. The stat rebuilds each morning's floor by
+        // walking the received counts above backwards through these rows —
+        // hand it a filtered subset and every recipient looks like they began
+        // the range busier than they were. Excluded CLRs still never surface:
+        // the leaderboard below only ever reads this map by the ids it is
+        // already showing.
+        //
+        // The range, and NOT the run-up. Only what happened inside the window a
+        // manager selected is judged; the run-up exists to reconstruct the
+        // floor those transfers landed on, not to be scored a second time.
+        const placementRows = (sqlite.prepare(
+          `SELECT assistant_id, lo_id, loa_id, date, conversation_notes
+             FROM lead_outcomes
+            WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
+        ).all(placementOrg, startDate, endDate) as any[]).map((o: any): PlacementTransfer => ({
+          // A transfer with no CLR on it still put a lead on somebody's desk,
+          // so it counts toward the floor. It just names nobody, and the stat
+          // drops it rather than invent a person.
+          clrId: o.assistant_id == null ? "" : Number(o.assistant_id),
+          loId: o.lo_id == null ? null : Number(o.lo_id),
+          loaId: o.loa_id == null ? null : Number(o.loa_id),
+          at: o.date ? String(o.date) : null,
+          // Compliance, not a choice. An investment property was only ever
+          // allowed to reach those three assistants, so it is judged against
+          // them alone rather than marked down for landing on the busiest.
+          // isInvestmentProperty reads the answer the app composed itself and
+          // fails closed on everything else — a sentence that merely mentions
+          // the word leaves the transfer unconstrained.
+          constrainedTo: investmentKeys.length && isInvestmentProperty(o.conversation_notes)
+            ? investmentKeys
+            : null,
+        }));
+        // The roster, so a CLR who transferred nobody gets a null rather than
+        // dropping off the column entirely.
+        for (const s of scoreTransferPriority(placementRows, placementRecipients, {
+          roster: countedClrs.map((u: any) => ({ clrId: u.id, name: u.name })),
+        })) {
+          // `ranked` is the module's own minimum-sample rule (five readable
+          // transfers), and it is carried through rather than dropped. On a
+          // one-day window most CLRs are under it, and a share taken over one
+          // or two transfers is a coin toss printed as a judgement in a
+          // colour-graded table. The cell shows a dash and says why instead;
+          // see the Placed column in client/src/pages/manager-dashboard.tsx.
+          placementByUser.set(Number(s.clrId), { pct: s.pct, scored: s.scored, ranked: s.ranked });
+        }
+        const cached = new Map<number, PlacementCell>();
+        placementByUser.forEach((v, k) => cached.set(k, v));
+        const cachedAt = Date.now();
+        // The keys carry dates, so a new set of them appears every morning and
+        // yesterday's can never be asked for again. Swept on write rather than
+        // on a timer: the map is small, and a cache that only ever grows is a
+        // slow leak in a process that runs for weeks.
+        placementCache.forEach((v, k) => {
+          if (cachedAt - v.at >= PLACEMENT_CACHE_TTL_MS) placementCache.delete(k);
+        });
+        placementCache.set(placementKey, { at: cachedAt, rows: cached });
+      } catch (e: any) {
+        // Context, never a reason to fail the dashboard — the same bargain the
+        // write-up scan above makes.
+        console.error("[manager-dashboard] placement failed:", e?.message ?? e);
+      }
+
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
@@ -13101,6 +13292,18 @@ ${note}` : daysLine;
             // null when they logged no transfers in the range — nothing to
             // measure is not the same as measured badly.
             writeUpPct: writeUpByUser.has(u.id) ? writeUpByUser.get(u.id) : null,
+            // The same bargain for placement, twice over: null when nothing
+            // they sent could be read, because "we cannot say" is not "you
+            // placed badly" — and null again when too few of their transfers
+            // could be read to judge, because a share of two is not a verdict.
+            placementScore: placementByUser.get(u.id)?.ranked ? placementByUser.get(u.id)!.pct : null,
+            // How many of their transfers this stat could actually read, and
+            // how many it needs, so the cell can explain a dash instead of
+            // leaving a manager guessing. The threshold travels with the data
+            // rather than being retyped in the UI, where it would drift the
+            // first time somebody moved the dial.
+            placementScored: placementByUser.get(u.id)?.scored ?? 0,
+            placementMinScored: MIN_SCORED_TRANSFERS,
           };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
@@ -20298,8 +20501,6 @@ ${note}` : daysLine;
     const dow = t.getUTCDay();
     const monday = new Date(t); monday.setUTCDate(t.getUTCDate() - ((dow + 6) % 7));
     const weekStart = monday.toISOString().slice(0, 10);
-    // Only used to decide who belongs on the board, not to count anything.
-    const monthStart = `${today.slice(0, 7)}-01`;
 
     // ── scorecard ────────────────────────────────────────────────────────
     const clrs = sqlite.prepare(
@@ -20309,23 +20510,12 @@ ${note}` : daysLine;
           AND archived_at IS NULL`,
     ).all(orgId) as any[];
 
-    // Off the ranking, but not off the wall. Someone flagged out of the stats
-    // is deliberately absent from the chart — ranking them against people on
-    // different work is what the flag exists to prevent — yet the team total
-    // still counts them, so the board has to say who the difference is or its
-    // own arithmetic looks broken. Elleine is the whole reason: top producer,
-    // flagged out. She gets the corner, not a bar.
-    const aside = sqlite.prepare(
-      `SELECT u.name AS name,
-              SUM(CASE WHEN o.date = ?  THEN 1 ELSE 0 END) AS today,
-              SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS week
-         FROM lead_outcomes o JOIN users u ON u.id = o.assistant_id
-        WHERE o.org_id=? AND o.outcome_type='transfer' AND o.date >= ?
-          AND COALESCE(u.exclude_from_stats,0)=1
-        GROUP BY u.id
-        HAVING today > 0 OR week > 0
-        ORDER BY today DESC, week DESC`,
-    ).all(today, weekStart, orgId, weekStart) as any[];
+    // The excluded-CLR list this used to build ("Not ranked · today", the left
+    // half of the wall's bottom strip) is gone: Ethan asked for the strip to
+    // carry new leads alone. The query went with the zone rather than staying
+    // here feeding a field nothing reads — the wall's transfers PAGE still
+    // names the gap between the team total and the list it shows, which is
+    // where that reconciliation belongs.
     const ids = clrs.map((c) => Number(c.id));
     const counts = new Map<string, number>();
     if (ids.length) {
@@ -20458,9 +20648,6 @@ ${note}` : daysLine;
       version: APP_VERSION,
       now: new Date().toISOString(),
       today, weekStart, cursor,
-      // Named separately so the board can give them a corner rather than a
-      // place in the ranking. See `aside` above.
-      aside: aside.map((r) => ({ name: String(r.name ?? ""), today: Number(r.today) || 0, week: Number(r.week) || 0 })),
       scorecard: {
         people: people.map(({ bestDayBefore, ...p }) => p),
         team: {
@@ -20634,6 +20821,13 @@ ${note}` : daysLine;
         }));
         // Ranked by fewest received and nothing else — see compareStarved for
         // why the flag and the tier are both kept out of the ordering.
+        //
+        // DELIBERATE EXCEPTION to "organize every TV stat most to least". This
+        // page IS most-first; the quantity it leads with is NEED. Sorting it by
+        // transfers received would put Christopher Redoble — 282 in the same
+        // fortnight the bottom of this list took six — at the head of a
+        // starvation list and bury the people it exists to name. Do not
+        // "fix" it.
         return { days: STARVED_WINDOW_DAYS, from, los: orderStarved(los), loas: orderStarved(loas) };
       });
 
@@ -20708,9 +20902,14 @@ ${note}` : daysLine;
           });
           byPerson.set(uid, entry);
         }
+        // Most to least, like every other page on this wall: the biggest list
+        // first. What is NOT re-sorted is each person's OWN list — the SQL's
+        // rank ASC fills those and nothing touches them, because assistant_rank
+        // is a priority rather than a quantity. See orderAssignmentPeople.
+        const people = orderAssignmentPeople(Array.from(byPerson.values()));
         return {
           date: w.today,
-          people: Array.from(byPerson.values()),
+          people,
           // Carried, not charted. Rows sit at 'recommended' until the EOD
           // report marks them worked, so through the whole working day this
           // column says nothing about who has called whom.
@@ -20767,6 +20966,20 @@ ${note}` : daysLine;
 
       // ── lead sources ─────────────────────────────────────────────────────
       section("leadSources", () => {
+        // ONE period per window, not two.
+        //
+        // lead_source was rolled out on LEAD_SOURCE_TRUSTED_FROM. Measured on
+        // prod 2 Sep: 1 of 1,951 transfers before it carry a source, 792 of 957
+        // after. Counting the earlier months would put "blank" at the top of
+        // the board as though it were where the business comes from — so a
+        // window that reaches back past the rollout is CLIPPED to it here,
+        // rather than counted in full and then labelled "since 13 Aug" beside
+        // its own title. The board was showing two competing dates for one set
+        // of numbers ("This month · since Aug 13"); it now shows the range
+        // these numbers actually cover, and nothing else.
+        const effectiveStart = (start: string) =>
+          start < LEAD_SOURCE_TRUSTED_FROM ? LEAD_SOURCE_TRUSTED_FROM : start;
+        const scanFrom = effectiveStart(w.from);
         const rows = sqlite.prepare(
           `SELECT COALESCE(NULLIF(TRIM(lead_source), ''), '') AS source,
                   SUM(CASE WHEN date = ?  THEN 1 ELSE 0 END) AS today,
@@ -20775,8 +20988,8 @@ ${note}` : daysLine;
              FROM lead_outcomes
             WHERE org_id = ? AND outcome_type = 'transfer' AND date >= ?
             GROUP BY source`,
-        ).all(w.today, w.weekStart, w.monthStart, orgId, w.from) as any[];
-        const build = (key: "today" | "week" | "month", startDate: string) => {
+        ).all(w.today, effectiveStart(w.weekStart), effectiveStart(w.monthStart), orgId, scanFrom) as any[];
+        const build = (key: "today" | "week" | "month", nominalStart: string) => {
           let total = 0;
           let withSource = 0;
           const sources: Array<{ source: string; count: number }> = [];
@@ -20790,14 +21003,19 @@ ${note}` : daysLine;
             sources.push({ source: name, count: n });
           }
           sources.sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
-          return { startDate, ...leadSourceCoverage(total, withSource), sources: sources.slice(0, 8) };
+          const startDate = effectiveStart(nominalStart);
+          return {
+            // The dates these counts actually cover, both of them real.
+            startDate,
+            endDate: w.today,
+            // True when the rollout moved the start, which is the only case in
+            // which the window's own name ("This month") would overstate it.
+            clipped: startDate !== nominalStart,
+            ...leadSourceCoverage(total, withSource),
+            sources: sources.slice(0, 8),
+          };
         };
         return {
-          // Lead source was rolled out on this date. Measured on prod 2 Sep:
-          // 1 of 1,951 transfers before it carry a source, 792 of 957 after.
-          // Charting the earlier months would put "blank" at the top of the
-          // board as though it were where the business comes from.
-          fromDate: LEAD_SOURCE_TRUSTED_FROM,
           windows: {
             today: build("today", w.today),
             week: build("week", w.weekStart),
@@ -20836,14 +21054,18 @@ ${note}` : daysLine;
         ).all(orgId, addIsoDays(w.today, -1)) as any[]) {
           lastEvent.set(Number(r.id), r.at ? String(r.at) : null);
         }
-        const people = roster.map((p) => ({
+        // Most recently active first — this page's version of most-to-least.
+        // activeAgo counts the wrong way round for that (it is seconds AGO) and
+        // a null is "not lately" rather than a big number, so the ordering is
+        // orderByRecentlyActive's rather than an inline sort's.
+        const people = orderByRecentlyActive(roster.map((p) => ({
           name: p.name,
           activeAgo: activeAgoSeconds({
             nowMs,
             secondsChangedAt: changed.get(p.id) ?? null,
             lastEventAt: lastEvent.get(p.id) ?? null,
           }),
-        }));
+        })));
         return {
           // Never "logged in" and never "on a call": CallTools sends no
           // presence signal at all, so this is the honest claim and the only
@@ -20868,6 +21090,14 @@ ${note}` : daysLine;
         // not missed anything at 9am, and someone scheduled off or on approved
         // time off has nothing to miss at all — which is exactly what
         // scheduledOff / absenceExcused / startPassed encode.
+        // Roster order, and deliberately left that way. This section has no
+        // page of its own on the wall: its one consumer is the Scorecard, which
+        // turns it straight into a name-keyed lookup
+        // (Object.fromEntries(...map(c => [c.name, ...])) in client/src/pages/tv.tsx)
+        // to decide who is here. A lookup cannot read an order, so there is no
+        // most-to-least to impose — sorting it would be motion without meaning.
+        // Give this section a page and it needs an order; until then it does
+        // not.
         const people = roster.map((p) => {
           const c = byId.get(p.id);
           return {
@@ -20930,6 +21160,10 @@ ${note}` : daysLine;
         // exists, not a ranking: dropping Elleine Asuncion's appointments
         // because she carries exclude_from_stats would take real meetings off
         // a wall whose entire job is listing them.
+        // Soonest first, and DELIBERATELY not most-to-least anything. This is
+        // a schedule: the next meeting is the one somebody has to be ready for,
+        // and a diary sorted by size is not a diary. compareUpcoming owns that
+        // order. Do not "fix" it either.
         const upcoming = selectUpcomingAppointments(rows, { nowMs, today: from, days: UPCOMING_DAYS, tz });
         return {
           days: UPCOMING_DAYS,

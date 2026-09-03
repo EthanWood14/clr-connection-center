@@ -261,7 +261,33 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   if (list.length === 0) {
     return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No CLR activity in this {rangeLabel.toLowerCase()} range.</CardContent></Card>;
   }
-  const cols: Array<{ key: string; label: string; get: (r: any) => number; better: boolean; fmt: (r: any) => string }> = [
+  /**
+   * Why the Placed cell is a dash, in the cell's own tooltip.
+   *
+   * A blank in a colour-graded table reads as a bug unless it says what it
+   * means, and the three reasons are genuinely different: nobody transferred
+   * anybody, nothing they transferred could be traced to a desk, or the sample
+   * is too thin to judge. The last one is the common case on the short ranges,
+   * and it has an answer the manager can act on — pick a longer one.
+   */
+  const placementNote = (r: any): string | undefined => {
+    if (r.placementScore != null) return undefined;
+    const scored = Number(r.placementScored ?? 0);
+    const need = Number(r.placementMinScored ?? 0);
+    if (!r.transfers) return "No transfers logged in this range, so there is no placement to judge.";
+    if (!scored) return "None of this CLR's transfers in this range could be traced to a loan officer, so there is nothing to score.";
+    if (!need) return "Too few of this CLR's transfers in this range could be read to judge placement.";
+    return `Only ${scored} of this CLR's transfers in this range could be read, and ${need} are needed before a placement share means anything. Try a longer range.`;
+  };
+  // `get` may answer null, and null means "nothing to score" — never zero. It
+  // is kept out of the heat range below and painted as a plain cell, because a
+  // column whose minimum is a phantom 0 both paints the em dash the reddest
+  // colour on the table — the exact verdict the null exists to avoid — and
+  // stretches everybody else's spread against a floor nobody stands on.
+  const cols: Array<{
+    key: string; label: string; get: (r: any) => number | null; better: boolean;
+    fmt: (r: any) => string; title?: string; cellTitle?: (r: any) => string | undefined;
+  }> = [
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
     { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
@@ -270,11 +296,38 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
-    { key: "ctt",          label: "C>T%",      get: r => r.callToTransferPct ?? 0, better: true,  fmt: r => r.callToTransferPct == null ? "—" : `${r.callToTransferPct}%` },
+    { key: "ctt",          label: "C>T%",      get: r => r.callToTransferPct ?? null, better: true, fmt: r => r.callToTransferPct == null ? "—" : `${r.callToTransferPct}%` },
     // Share of every field a transfer could have had filled in that was.
-    { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? 0,        better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
+    { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
+    // Not a second transfer count: where each one was PUT. Same shape as
+    // Write-up above — a share, higher is better, a dash when there is nothing
+    // to score, because 0% is a verdict and an empty week has not earned one.
+    //
+    // The tooltip says what the server actually does. It used to promise that
+    // each transfer was judged "only against the LOs the CLR could have
+    // chosen", and no eligible set is ever supplied: outside the one compliance
+    // rule, every transfer really is scored against the whole floor. Rather
+    // than leave a claim standing that the route does not back, the sentence
+    // now describes the two pools that exist. (Supplying state licensing as the
+    // eligible set is the mechanism this stat was built for — see
+    // TransferRow.eligible — but it needs a state per transfer, and most rows
+    // have no phone this app can parse one out of.)
+    // HELD BACK, deliberately. The scoring is finished and the server still
+    // computes it, but the column is not shown: review found the compliance
+    // rule cannot protect anybody in production (an assistant belongs to
+    // exactly one loan officer, and the transfer form only offers that LO's
+    // assistants), so the rule can only ever LOWER a score — and recording
+    // loa_id costs up to 100 points where leaving it blank does not, which
+    // rewards withholding data. A number a manager judges people by has to
+    // be right before it is shown. Re-add this entry once loa_id is required
+    // on a transfer and state licensing can supply TransferRow.eligible.
+    // { key: "placement",    label: "Placed",    get: r => r.placementScore  ... (see git history)
   ];
-  const ranges = cols.map(c => { const v = list.map(c.get); return { min: Math.min(...v), max: Math.max(...v) }; });
+  // Nulls are excluded, and a column with nothing but nulls has no range at all.
+  const ranges = cols.map(c => {
+    const v = list.map(c.get).filter((n): n is number => n != null && Number.isFinite(n));
+    return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 0 };
+  });
   const project = (r: any) =>
     pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   return (
@@ -285,7 +338,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
             <tr>
               <th className="text-left px-3 py-2 font-medium w-8">#</th>
               <th className="text-left px-3 py-2 font-medium">CLR</th>
-              {cols.map(c => <th key={c.key} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
+              {cols.map(c => <th key={c.key} title={c.title} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
               {pace && <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Projected month-end transfers. Sundays are not counted as worked days.">Pace</th>}
             </tr>
           </thead>
@@ -299,15 +352,22 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
                     <ClrTrainingBadge inTraining={r.inTraining} activeWorkdays={r.activeWorkdays} />
                   </span>
                 </td>
-                {cols.map((c, ci) => (
-                  <td
-                    key={c.key}
-                    className="px-3 py-2 text-center tabular-nums font-semibold"
-                    style={{ backgroundColor: heatColor(c.get(r), ranges[ci].min, ranges[ci].max, c.better), color: "#1f2937" }}
-                  >
-                    {c.fmt(r)}
-                  </td>
-                ))}
+                {cols.map((c, ci) => {
+                  const v = c.get(r);
+                  // No value, no verdict: an unpainted cell in the table's own
+                  // muted ink, not the bottom of a red-to-green ramp.
+                  const heat = v == null ? null : heatColor(v, ranges[ci].min, ranges[ci].max, c.better);
+                  return (
+                    <td
+                      key={c.key}
+                      title={c.cellTitle?.(r)}
+                      className={"px-3 py-2 text-center tabular-nums font-semibold" + (heat ? "" : " text-muted-foreground")}
+                      style={heat ? { backgroundColor: heat, color: "#1f2937" } : undefined}
+                    >
+                      {c.fmt(r)}
+                    </td>
+                  );
+                })}
                 {pace && (() => {
                   const projected = project(r);
                   const tier = projected == null ? null : paceTier(projected);

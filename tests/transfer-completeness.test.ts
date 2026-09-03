@@ -7,6 +7,7 @@ import {
   scoreTransfer, summarizeCompleteness, capturedLabels,
   CAPTURE_LABELS, TRANSFER_COMPLETENESS_FIELDS,
   UNSCORED_LABELS, QUAL_LABELS, QUAL_WEIGHT,
+  qualAnswer, isInvestmentProperty, INVESTMENT_PROPERTY_LABEL,
 } from "../shared/transfer-completeness";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -285,4 +286,59 @@ test("a field that counts four times says so on the profile", () => {
   assert.match(profile, /data-testid="clr-completeness-weight"/);
   assert.match(profile, /\(f\.weight \?\? 1\) > 1 &&/);
   assert.match(profile, /weight\?: number/, "the response type must carry it");
+});
+
+// ── reading a qualification answer, not just noticing one ───────────────────
+//
+// capturedLabels asks "was this answered". The transfer-placement stat needs
+// the ANSWER, because it hangs a compliance rule off it, so it reads through
+// the same parse with the same discipline: label at the start of a line, value
+// compared whole, everything else failing closed.
+
+test("the investment label is one the composer writes and the score counts", () => {
+  assert.ok((CAPTURE_LABELS as readonly string[]).includes(INVESTMENT_PROPERTY_LABEL));
+  assert.ok((QUAL_LABELS as readonly string[]).includes(INVESTMENT_PROPERTY_LABEL));
+  const composer = capture.slice(capture.indexOf("export function composeLeadCaptureNotes"));
+  assert.ok(composer.includes(`${INVESTMENT_PROPERTY_LABEL}: `),
+    "the label this reader keys off is the one the composer writes");
+});
+
+test("a Yes and a No are read; anything else is no answer at all", () => {
+  assert.equal(qualAnswer("Investment/2nd Home: No", INVESTMENT_PROPERTY_LABEL), "no");
+  // The composer rides its routing hint on a Yes; the answer is the head.
+  assert.equal(
+    qualAnswer("Investment/2nd Home: Yes — give to LOA Justin, Mateo, or John", INVESTMENT_PROPERTY_LABEL),
+    "yes",
+  );
+  for (const line of [
+    "Investment/2nd Home: probably",
+    "Investment/2nd Home: Yes it is a rental",
+    "Investment/2nd Home:",
+    "Owns Home: Yes",
+    "not an investment property",
+    "",
+  ]) {
+    assert.equal(qualAnswer(line, INVESTMENT_PROPERTY_LABEL), null, line);
+  }
+});
+
+test("only an app-composed Yes is an investment property", () => {
+  assert.equal(isInvestmentProperty("Investment/2nd Home: Yes — give to LOA Justin, Mateo, or John"), true);
+  assert.equal(isInvestmentProperty("Investment/2nd Home: No"), false);
+  // The one that matters most: the note that says the opposite. A keyword
+  // search would read this as a Yes.
+  assert.equal(isInvestmentProperty("Not an investment property — they live there"), false);
+  assert.equal(isInvestmentProperty(null), false);
+});
+
+test("the reader shares capturedLabels' line discipline", () => {
+  const blob = "Owns Home: Yes\nInvestment/2nd Home: Yes — give to LOA Justin, Mateo, or John\nMilitary: No";
+  // Both readers agree the answer is there...
+  assert.ok(capturedLabels(blob).has(INVESTMENT_PROPERTY_LABEL));
+  assert.equal(isInvestmentProperty(blob), true);
+  // ...and both refuse it mid-sentence, for the same reason: a label is only a
+  // label at the start of a line.
+  const mid = "CLR asked about Investment/2nd Home: Yes was the answer";
+  assert.ok(!capturedLabels(mid).has(INVESTMENT_PROPERTY_LABEL));
+  assert.equal(isInvestmentProperty(mid), false);
 });

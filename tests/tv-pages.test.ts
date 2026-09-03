@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
   starvedWindowStart, compareStarved, orderStarved,
+  orderByRecentlyActive, orderAssignmentPeople,
   ACTIVE_WINDOW_SECONDS, ACTIVE_WINDOW_LABEL, LEAD_SOURCE_TRUSTED_FROM, STARVED_WINDOW_DAYS,
   appointmentStamp, appointmentInstantMs, appointmentDay, isDateOnlyStamp,
   upcomingHorizonMs, compareUpcoming, selectUpcomingAppointments,
@@ -19,6 +20,8 @@ const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 /** The module under test, read as text where a rule is a comment as much as code. */
 const pagesSource = readFileSync(join(root, "server/tv-pages.ts"), "utf8");
+/** The wall's pages, for the rules that only exist in what they render. */
+const tvPagesSource = readFileSync(join(root, "client/src/components/tv/pages.tsx"), "utf8");
 
 // ── windows ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +137,73 @@ test("junk counts are clamped rather than propagated", () => {
 
 test("the trustworthy-from date is the rollout date, not the epoch", () => {
   assert.equal(LEAD_SOURCE_TRUSTED_FROM, "2026-08-13");
+});
+
+// ── "Where they came from" says ONE period ──────────────────────────────────
+//
+// Ethan: "the time frame for where they came from is confusing". The eyebrow
+// carried a window name AND a start date — "This month · since Aug 13" — two
+// periods for one set of bars, and no way to tell which one the numbers were.
+
+/** Just the leadSources section of the /pages handler. */
+function leadSourceSection(): string {
+  const body = pagesRoute();
+  const start = body.indexOf('section("leadSources"');
+  assert.ok(start > 0, "the lead sources section is built through the wrapper");
+  const end = body.indexOf('section("onPhoneNow"', start);
+  assert.ok(end > start, "it is bounded by the next section");
+  return body.slice(start, end);
+}
+
+test("a window that reaches back past the rollout is CLIPPED, not merely labelled", () => {
+  // The old section counted the whole window and then printed the rollout date
+  // beside its name, so the numbers and the label disagreed: a month window
+  // starting the 1st really did include untracked days, which inflated the
+  // blanks the coverage line reports.
+  const s = leadSourceSection();
+  assert.match(s, /const effectiveStart = \(start: string\) =>\s*\n?\s*start < LEAD_SOURCE_TRUSTED_FROM \? LEAD_SOURCE_TRUSTED_FROM : start;/);
+  // Every bucket boundary goes through it, and so does the scan itself.
+  assert.match(s, /\.all\(w\.today, effectiveStart\(w\.weekStart\), effectiveStart\(w\.monthStart\), orgId, scanFrom\)/);
+  assert.match(s, /const scanFrom = effectiveStart\(w\.from\);/);
+});
+
+test("each window reports the dates it actually covers, and whether the rollout moved them", () => {
+  const s = leadSourceSection();
+  assert.match(s, /const startDate = effectiveStart\(nominalStart\);/);
+  assert.match(s, /endDate: w\.today/);
+  assert.match(s, /clipped: startDate !== nominalStart/);
+  // The bare rollout date no longer travels on its own, because a second date
+  // beside a window name is exactly the confusion being removed.
+  assert.ok(!/fromDate: LEAD_SOURCE_TRUSTED_FROM/.test(s), "no second period ships with the payload");
+});
+
+test("the eyebrow prints one period: the window's name, or the real dates", () => {
+  const page = tvPagesSource.slice(
+    tvPagesSource.indexOf("export function LeadSourcePage"),
+    tvPagesSource.indexOf("// ── on the phone now"),
+  );
+  assert.ok(page.length > 0, "the lead source page is in tv/pages.tsx");
+  // One expression, one period.
+  assert.match(page, /<Eyebrow>Lead source · \{period\}<\/Eyebrow>/);
+  assert.ok(!/since \$\{/.test(page), "the 'since ...' suffix is gone");
+  // Unclipped, the window's own name says everything and the date is noise.
+  assert.match(page, /: WINDOW_TITLE\[win\];/);
+  // Clipped, the name would overstate the days counted, so the dates replace
+  // it — and a window clipped down to a single day says that day once.
+  assert.match(page, /`\$\{from\} – \$\{to\}`/);
+  assert.match(page, /to && to !== from/);
+  // The thin-data caveat is a different thing and stays.
+  assert.match(page, /data-testid="tv-lead-source-coverage"/);
+  assert.match(page, /const thin = cov < 0\.95 && blank > 0;/);
+});
+
+test("the board hands the page the dates, not the rollout constant", () => {
+  const board = readFileSync(join(root, "client/src/pages/tv.tsx"), "utf8");
+  const call = board.slice(board.indexOf("<LeadSourcePage"), board.indexOf("{page === \"starved\""));
+  assert.match(call, /startDate=\{wnd\?\.startDate \?\? ""\}/);
+  assert.match(call, /endDate=\{wnd\?\.endDate \?\? board\?\.today \?\? ""\}/);
+  assert.match(call, /clipped=\{!!wnd\?\.clipped\}/);
+  assert.ok(!/fromDate=/.test(call), "the page is no longer handed a second period to print");
 });
 
 // ── the 15-minute active rule ───────────────────────────────────────────────
@@ -858,4 +928,187 @@ test("the upcoming page is anchored on the calendar day, not the business day", 
   // tonight and label tomorrow's "Today".
   assert.match(s, /const from = checkinToday\(tz\);/);
   assert.ok(!/w\.today/.test(s), "the business-day anchor must not leak in here");
+});
+
+// ── most to least, everywhere it means something ────────────────────────────
+//
+// Ethan: "all the tv stats should be organized from most to least." These are
+// the pages that were not, plus the two that are exceptions on purpose.
+
+/** One section of the /pages handler, cut at `endMarker` (or at the end). */
+function pageSection(name: string, endMarker: string): string {
+  const body = pagesRoute();
+  const start = body.indexOf(`section("${name}"`);
+  assert.ok(start > 0, `the ${name} section is built through the wrapper`);
+  if (!endMarker) return body.slice(start);
+  const end = body.indexOf(endMarker, start);
+  assert.ok(end > start, `${name} is bounded by ${endMarker}`);
+  return body.slice(start, end);
+}
+
+// ── assignments: the longest list first ─────────────────────────────────────
+
+test("the people with the most loan officers come first", () => {
+  const people = orderAssignmentPeople([
+    { name: "Ada", los: ["a", "b"] },
+    { name: "Bo", los: ["a", "b", "c", "d"] },
+    { name: "Cy", los: [] },
+    { name: "Di", los: ["a", "b", "c"] },
+  ]);
+  assert.deepEqual(people.map((p) => p.name), ["Bo", "Di", "Ada", "Cy"]);
+  assert.deepEqual(people.map((p) => p.los.length), [4, 3, 2, 0]);
+});
+
+test("an equal load breaks by name, so the wall never reshuffles between polls", () => {
+  const people = orderAssignmentPeople([
+    { name: "Zoe", los: ["a", "b"] },
+    { name: "Ada", los: ["a", "b"] },
+    { name: "Mia", los: ["a", "b"] },
+  ]);
+  assert.deepEqual(people.map((p) => p.name), ["Ada", "Mia", "Zoe"]);
+});
+
+test("ordering the people never reorders anybody's own list", () => {
+  // assistant_rank is a PRIORITY — who to call first — not a quantity. Sorting
+  // it by anything at all would throw away the only thing it says.
+  const ada = { name: "Ada", los: [{ rank: 1, loName: "Zeb" }, { rank: 2, loName: "Abe" }] };
+  const bo = { name: "Bo", los: [{ rank: 1, loName: "Moe" }, { rank: 2, loName: "Ann" }, { rank: 3, loName: "Cal" }] };
+  const out = orderAssignmentPeople([ada, bo]);
+  assert.deepEqual(out.map((p) => p.name), ["Bo", "Ada"]);
+  assert.deepEqual(out[0].los.map((l) => l.loName), ["Moe", "Ann", "Cal"], "still rank order, not alphabetical");
+  assert.deepEqual(out[1].los.map((l) => l.loName), ["Zeb", "Abe"]);
+});
+
+test("ordering the assignment people leaves the caller's array alone", () => {
+  const rows = [{ name: "Ada", los: [] as string[] }, { name: "Bo", los: ["a"] }];
+  const out = orderAssignmentPeople(rows);
+  assert.deepEqual(rows.map((r) => r.name), ["Ada", "Bo"]);
+  assert.deepEqual(out.map((r) => r.name), ["Bo", "Ada"]);
+  assert.notEqual(out, rows);
+});
+
+test("junk instead of a list is an empty one, not a crash on the wall", () => {
+  const out = orderAssignmentPeople([
+    { name: "Ada", los: undefined as any },
+    { name: "Bo", los: ["a"] },
+  ]);
+  assert.deepEqual(out.map((r) => r.name), ["Bo", "Ada"]);
+});
+
+test("the assignments section orders its people and not their lists", () => {
+  const s = pageSection("assignments", 'section("eod"');
+  assert.match(s, /orderAssignmentPeople\(Array\.from\(byPerson\.values\(\)\)\)/);
+  // The rank still fills each person's list, in the query.
+  assert.match(s, /ORDER BY u\.name COLLATE NOCASE ASC, a\.assistant_rank ASC/);
+  // And no second sort could quietly re-rank somebody's LOs behind that back.
+  assert.ok(!/\.sort\(/.test(s), "the ordering lives in one tested place");
+});
+
+// ── on the phone now: most recently active first ────────────────────────────
+
+test("the most recently active person is first, and seconds-ago sorts ascending", () => {
+  // activeAgo counts the wrong way round for "most first": it is seconds AGO,
+  // so the smallest number is the person who did something last.
+  const people = orderByRecentlyActive([
+    { name: "Ada", activeAgo: 600 },
+    { name: "Bo", activeAgo: 12 },
+    { name: "Cy", activeAgo: 240 },
+  ]);
+  assert.deepEqual(people.map((p) => p.name), ["Bo", "Cy", "Ada"]);
+  assert.deepEqual(people.map((p) => p.activeAgo), [12, 240, 600]);
+});
+
+test("nobody inactive drifts into the middle of a list titled 'right now'", () => {
+  // A null is "no signal in the last fifteen minutes", not a big number. Left
+  // to arithmetic, null - null is 0 and 5 - null is 5, so somebody who has not
+  // touched the phone all day floats up among the people who just did.
+  const people = orderByRecentlyActive([
+    { name: "Ada", activeAgo: null },
+    { name: "Bo", activeAgo: 300 },
+    { name: "Cy", activeAgo: null },
+    { name: "Di", activeAgo: 5 },
+  ]);
+  assert.deepEqual(people.map((p) => p.name), ["Di", "Bo", "Ada", "Cy"]);
+  // The count is unchanged by the ordering — it was never counting positions.
+  assert.equal(activeCount(people), 2);
+});
+
+test("a tie in recency breaks by name, and junk sorts as no signal", () => {
+  assert.deepEqual(
+    orderByRecentlyActive([
+      { name: "Zoe", activeAgo: 60 }, { name: "Ada", activeAgo: 60 },
+    ]).map((p) => p.name),
+    ["Ada", "Zoe"],
+  );
+  assert.deepEqual(
+    orderByRecentlyActive([
+      { name: "Ada", activeAgo: Number.NaN },
+      { name: "Bo", activeAgo: undefined as any },
+      { name: "Cy", activeAgo: 30 },
+    ]).map((p) => p.name),
+    ["Cy", "Ada", "Bo"],
+  );
+});
+
+test("ordering the active list leaves the caller's array alone", () => {
+  const rows = [{ name: "Ada", activeAgo: 900 }, { name: "Bo", activeAgo: 1 }];
+  const out = orderByRecentlyActive(rows);
+  assert.deepEqual(rows.map((r) => r.name), ["Ada", "Bo"]);
+  assert.deepEqual(out.map((r) => r.name), ["Bo", "Ada"]);
+  assert.notEqual(out, rows);
+});
+
+test("the onPhoneNow section orders through the shared rule, not an inline sort", () => {
+  const s = pageSection("onPhoneNow", 'section("checkins"');
+  assert.match(s, /orderByRecentlyActive\(roster\.map/);
+  assert.ok(!/\.sort\(/.test(s), "no second copy of the null-handling to get wrong");
+});
+
+// ── check-ins: a lookup, so there is no order to impose ─────────────────────
+
+test("the check-ins section is a lookup, and is deliberately left in roster order", () => {
+  // Its one consumer turns it straight into a name-keyed object to decide who
+  // is on the floor, and an object cannot read an order. There is no check-ins
+  // page on the deck either — tests/tv-board.test.ts pins the consumer itself.
+  // Sorting this would be motion without meaning, so it is not sorted, and the
+  // reason is written down where somebody would go looking to "fix" it.
+  const s = pageSection("checkins", 'section("upcoming"');
+  assert.ok(!/\.sort\(/.test(s), "nothing to sort by that any consumer could read");
+  assert.match(s, /const people = roster\.map/);
+  assert.match(s, /lookup/i, "and the reason is stated at the code");
+  assert.match(s, /Scorecard/, "naming the one consumer that made it moot");
+});
+
+// ── the two deliberate exceptions ───────────────────────────────────────────
+
+test("starved leads with the most STARVED, which is the fewest received", () => {
+  // It already is most-first; the quantity is NEED. Sorting it by transfers
+  // received would put Christopher Redoble — 282 in the same fortnight the
+  // bottom of the list took six — at the head of a starvation list.
+  const rows = [
+    { name: "Redoble", transfers: 282 },
+    { name: "Derek", transfers: 6 },
+    { name: "Nathan", transfers: 46 },
+  ];
+  assert.deepEqual(orderStarved(rows).map((r) => r.name), ["Derek", "Nathan", "Redoble"]);
+  // And the exception is written down, so nobody "organises" it later.
+  const s = starvedSection();
+  assert.match(s, /DELIBERATE EXCEPTION/);
+  assert.match(s, /Do not/);
+  assert.match(s, /"fix" it/);
+});
+
+test("upcoming stays chronological, and says why", () => {
+  // A diary sorted by size is not a diary: the next meeting is the one somebody
+  // has to be ready for.
+  //
+  // Bounded at the upcoming section, not at the end of the handler. Read to the
+  // end it also swallowed the payload assembly and everything else after it, so
+  // an unrelated `.sort(` added down there would have failed a test whose name
+  // points at appointments and whose message blames selectUpcomingAppointments.
+  const s = upcomingSection();
+  assert.match(s, /DELIBERATELY not most-to-least/);
+  assert.match(s, /compareUpcoming owns that/);
+  assert.match(s, /Do not "fix" it either/);
+  assert.ok(!/\.sort\(/.test(s), "the order is selectUpcomingAppointments', not the route's");
 });

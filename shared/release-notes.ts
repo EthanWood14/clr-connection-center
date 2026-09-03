@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.57.0",
+    headline: "A tidier wall, and the boards read most to least.",
+    items: [
+      { text: "The bottom of the office TV is now just new leads arriving from LeadVault. The not-ranked line has gone, and the strip keeps its height whether or not a lead has landed.", audience: "everyone" },
+      { text: "New leads from LeadVault now actually reach the wall. They slide in along the bottom as they arrive, showing a first name, where the lead came from, and the state.", audience: "everyone" },
+      { text: "Where they came from used to show two periods at once on the wall, so the number and the dates disagreed. It now names one stretch of days, and says so when the range is shorter than you asked for because lead source was not being recorded yet.", audience: "everyone" },
+      { text: "Daily assignments and who is on the phones now lead with the most, matching every other board on the wall instead of running alphabetically.", audience: "everyone" },
+      { text: "Who needs transfers most, and what is coming up, deliberately keep their own order: one leads with the person who has had the fewest, the other runs by time.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.56.0",
     headline: "What's coming up, and a tidier bottom of the wall.",
     items: [

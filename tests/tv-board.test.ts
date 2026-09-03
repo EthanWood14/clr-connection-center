@@ -1341,7 +1341,6 @@ test("the board unpacks the upcoming rows into what the page takes", () => {
 const strip = page.slice(page.indexOf("<footer"), page.indexOf("</footer>") + "</footer>".length);
 /** Everything between the deck and the moment overlay. */
 const belowDeck = page.slice(page.indexOf("</main>"), page.indexOf("{current && <MomentOverlay"));
-const notRanked = page.slice(page.indexOf("function NotRankedZone"), page.indexOf("function NewLeadZone"));
 const newLead = page.slice(page.indexOf("function NewLeadZone"), page.indexOf("function TvBoard"));
 /** The strip's type scale and both of its zones, as source. */
 const stripCode = page.slice(page.indexOf("const STRIP_LABEL"), page.indexOf("function TvBoard"));
@@ -1366,32 +1365,64 @@ test("the bottom strip is a band in the flow, not something floating over the de
   assert.doesNotMatch(page, /bottom-16 right-10|bottom-14 left-10/);
 });
 
-test("the strip is one row: two zones, a hairline each side of the deck's dots", () => {
-  // Not two widgets shoved together. The not-ranked people take one end, the
-  // new leads the other, the progress dots hold the middle, and a rule
-  // separates each pair \u2014 which is also what keeps the row balanced when one
-  // end is empty and the other has three names on it.
-  const order = ["<NotRankedZone", "<StripRule />", 'data-testid="tv-progress"', "<StripRule />", "<NewLeadZone"];
+test("the strip is one row: the lead notice, a hairline, the deck's dots", () => {
+  // The strip used to carry a second zone \u2014 "Not ranked \u00b7 today" \u2014 at the
+  // other end, with the dots holding the middle. Ethan asked for it to go, so
+  // what is left is NOT that layout with a hole in it: the notice takes the
+  // whole width from the left edge and the dots close the row on the right,
+  // the way page numbers close a footer. One rule, and no mirrored gap.
+  const order = ["<NewLeadZone", "<StripRule />", 'data-testid="tv-progress"'];
   let cursor = 0;
   for (const piece of order) {
     const found = strip.indexOf(piece, cursor);
     assert.ok(found > 0, `the strip reads left to right: ${piece}`);
     cursor = found + piece.length;
   }
-  assert.equal((strip.match(/<StripRule \/>/g) ?? []).length, 2, "one rule between each pair");
-  // Each end is a flex-1 column, so neither can drag the other across the
-  // screen; the dots never move off centre.
-  assert.match(notRanked, /className="flex min-w-0 flex-1 flex-col justify-center"/);
-  assert.match(newLead, /className="flex min-w-0 flex-1 flex-col justify-center text-right"/);
+  assert.equal((strip.match(/<StripRule \/>/g) ?? []).length, 1, "one rule, between the two things left");
+  assert.equal((strip.match(/<NewLeadZone/g) ?? []).length, 1, "and the notice is not rendered twice");
+  // The notice is a flex-1 column that fills the row rather than an end of it,
+  // and it reads from the left like everything else on the wall.
+  assert.match(newLead, /className="flex min-w-0 flex-1 flex-col justify-center"/);
+  assert.doesNotMatch(newLead, /text-right|justify-end/, "nothing is still aligned to a zone that has gone");
   assert.match(strip, /className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress"/);
-  // One label style and one content style, shared by both zones, so the labels
-  // sit on one baseline and the content on another.
+  // The two type styles survive the removal, so the row is the same height and
+  // sits on the same baselines it always did.
   assert.match(page, /const STRIP_LABEL = "text-\[clamp\(0\.7rem/);
   assert.match(page, /const STRIP_LINE = "mt-1\.5 flex items-baseline/);
-  for (const zone of [notRanked, newLead]) {
-    assert.match(zone, /className=\{STRIP_LABEL\}/);
-    assert.match(zone, /\{STRIP_LINE\}/);
-  }
+  assert.match(newLead, /className=\{STRIP_LABEL\}/);
+  assert.match(newLead, /\{STRIP_LINE\}/);
+});
+
+test("the not-ranked half is gone \u2014 component, data and all", () => {
+  // Ethan: "get rid of elleine's the floor graphic". Left half-removed it would
+  // be a component nobody renders and a query nobody reads.
+  assert.doesNotMatch(page, /NotRankedZone/);
+  assert.doesNotMatch(page, /tv-aside/);
+  assert.doesNotMatch(page, /\baside\b/, "no dangling type or prop on the board");
+  // The feed stops shipping the field with it.
+  assert.doesNotMatch(routes, /COALESCE\(u\.exclude_from_stats,0\)=1/, "the query went with the zone");
+  assert.doesNotMatch(routes, /aside: aside\.map/);
+  // What it reconciled has not been lost: the wall's transfers PAGE still names
+  // the gap between the team total and the list it ranks.
+  //
+  // This used to be `assert.match(routes, /excluded/)`, which proved nothing at
+  // all — "excluded" appears dozens of times in a 24,000-line file, so the
+  // check passed with the reconciliation deleted. It is read out of the one
+  // section that has to carry it, and followed all the way to the wall.
+  const feed = routes.slice(routes.indexOf('section("transfers"'), routes.indexOf('section("starved"'));
+  assert.ok(feed.length > 0, "the pages feed still builds a transfers section");
+  // Built from the rows the roster does NOT cover — which is the whole point:
+  // Elleine Asuncion carries exclude_from_stats=1 and is the top producer, so
+  // without this the team total is larger than every name under it adds up to.
+  assert.match(feed, /const excluded = rows\r?\n\s*\.filter\(\(r\) => !rosterIds\.has\(Number\(r\.id\)\)\)/);
+  assert.match(feed, /\.filter\(\(r\) => r\.today > 0 \|\| r\.week > 0 \|\| r\.month > 0\)/,
+    "and only people who actually transferred are named");
+  // ...and it is actually shipped, not merely computed.
+  assert.match(feed, /people, excluded, team: counts\(team\)/);
+  // The page reads it and prints the reconciliation line.
+  const pages = readFileSync(join(root, "client/src/components/tv/pages.tsx"), "utf8");
+  assert.match(pages, /export function TransfersPage\(\{ window: win, people, team, excluded, reduced \}/);
+  assert.match(pages, /data-testid="tv-transfers-excluded"/);
 });
 
 test("the strip is a footer, and never out-shouts the page above it", () => {
@@ -1408,20 +1439,16 @@ test("the strip is a footer, and never out-shouts the page above it", () => {
   assert.match(page, /const STRIP_QUIET = "truncate text-white\/25";/);
 });
 
-test("both of the strip's empty states are designed, not blank", () => {
-  // Zero excluded people and zero leads all morning still has to look like a
-  // footer somebody drew on purpose.
-  assert.match(notRanked, /\{!aside\.length && <span className=\{STRIP_QUIET\}>everyone today is on the board<\/span>\}/);
+test("the strip's empty state is designed, not blank", () => {
+  // Zero leads all morning still has to look like a footer somebody drew on
+  // purpose \u2014 which matters more now that the notice is the whole strip.
   assert.match(newLead, /<span className=\{STRIP_QUIET\}>nothing new yet today<\/span>/);
-  // The labels stay up in both cases \u2014 they name the zone, they are not
-  // headers that appear only when there is something under them.
-  assert.match(notRanked, /<div className=\{STRIP_LABEL\}>Not ranked/);
+  // The label stays up either way \u2014 it names the zone, it is not a header that
+  // appears only when there is something under it.
   assert.match(newLead, /<div className=\{STRIP_LABEL\}>New in LeadVault<\/div>/);
-  // And the strip is rendered unconditionally. The old card was gated on
-  // `!!aside.length && !current`, so an empty end simply vanished.
-  assert.doesNotMatch(strip, /!!aside\.length/);
-  assert.match(strip, /^\s*<NotRankedZone aside=\{aside\} \/>$/m, "no gate in front of it");
-  assert.match(strip, /^\s*<NewLeadZone notice=\{leadNotice\} up=\{leadUp\} reduced=\{reduced\} \/>$/m);
+  // And the strip is rendered unconditionally. The old notice was gated and
+  // slid up over the deck, so an empty strip simply vanished.
+  assert.match(strip, /^\s*<NewLeadZone notice=\{leadNotice\} up=\{leadUp\} reduced=\{reduced\} \/>$/m, "no gate in front of it");
 });
 
 test("a lead arriving never changes the height of the strip", () => {
@@ -1487,4 +1514,46 @@ test("every page pans against the height it is actually given", () => {
   // And the keyframes are still declared exactly once, on the board's root.
   assert.equal((page.match(/@keyframes tv-pan/g) ?? []).length, 1);
   assert.doesNotMatch(tvPages, /@keyframes/);
+});
+
+// ── check-ins: read as a lookup, which is why they are not re-ordered ───────
+
+test("the scorecard reads check-ins as a name-keyed lookup, so their order cannot matter", () => {
+  // This is the reason the /pages check-ins section keeps roster order while
+  // the rest of the wall was reorganised most-to-least (see
+  // tests/tv-pages.test.ts). Its only consumer is right here, and it collapses
+  // the array into an object before anything looks at it — an order cannot
+  // survive Object.fromEntries, so imposing one would be motion without
+  // meaning. If a check-ins PAGE is ever added, this test is where the reason
+  // stops being true.
+  assert.match(page, /checkins=\{board\?\.checkins\?\.people/);
+  assert.match(
+    page,
+    /Object\.fromEntries\(board\.checkins\.people\.map\(\(c: any\) => \[c\.name, !!c\.checkedIn \|\| !!c\.excused\]\)\)/,
+    "the rows become an object keyed by name",
+  );
+  // And it is used as a lookup: a name in, a boolean out. Never an index.
+  assert.match(page, /checkins\?: Record<string, boolean>;/);
+  assert.match(page, /const checked = checkins \? checkins\[p\.name\] !== false : true;/);
+  assert.ok(!/checkins\[0\]|checkins\.people\[/.test(page), "nothing reads it positionally");
+
+  // Exactly one consumer — the guard and the map on the same prop.
+  assert.equal((page.match(/board\??\.checkins/g) ?? []).length, 2,
+    "the section is read in one place and nowhere else on the wall");
+  // There is no check-ins page on the deck, so there is no list to order.
+  assert.ok(!/page === "checkins"/.test(page), "no check-ins page in the deck");
+  assert.ok(!/CheckinsPage/.test(page), "and no component for one");
+});
+
+test("a missing check-in never hides anybody from the scorecard", () => {
+  // The lookup answers three ways and only one of them removes a row: an
+  // explicit false. Absent data reads as present, because a broken query must
+  // never quietly empty the board.
+  const here = (checkins: Record<string, boolean> | undefined, name: string, busy: boolean) =>
+    busy || (checkins ? checkins[name] !== false : true);
+  assert.equal(here(undefined, "Ada", false), true, "no data at all: show everyone");
+  assert.equal(here({}, "Ada", false), true, "not in the map: show them");
+  assert.equal(here({ Ada: true }, "Ada", false), true);
+  assert.equal(here({ Ada: false }, "Ada", false), false, "checked in nowhere and did nothing");
+  assert.equal(here({ Ada: false }, "Ada", true), true, "but work today speaks for itself");
 });

@@ -638,12 +638,16 @@ export interface TvLeadSourceRow { source: string; count: number }
  * beat the others. For the same reason the shares say out loud that they are
  * shares of the sourced transfers, not of every transfer.
  */
-export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced }: {
+export function LeadSourcePage({ window: win, rows, coverage, startDate, endDate, clipped, reduced }: {
   window: TvWindow;
   rows: TvLeadSourceRow[];
   /** 0–1: the share of this window's transfers that carry a lead source. */
   coverage: number;
-  fromDate?: string | null;
+  /** The first and last day these counts actually cover. */
+  startDate?: string | null;
+  endDate?: string | null;
+  /** True when lead_source's rollout moved the start off the window's own. */
+  clipped?: boolean;
   reduced: boolean;
 }) {
   const pan = usePan(PAN_SECONDS.leadSource, reduced);
@@ -654,13 +658,35 @@ export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced 
   // sourced rows add up to and what the window actually held.
   const blank = cov > 0 && known > 0 ? Math.max(0, Math.round(known / cov) - known) : 0;
   const thin = cov < 0.95 && blank > 0;
-  const since = shortDay(fromDate);
+  // ONE period, never two. The eyebrow used to read "This month · since Aug 13"
+  // — a window name and a start date that disagree about which days are on the
+  // board, which is the first thing anybody asked about it. lead_source was
+  // only rolled out on that date, so the server clips a window that reaches
+  // back past it: when it did not have to, the window's own name says
+  // everything and the second date is noise; when it did, the name would
+  // overstate what is counted, so the real dates replace it. The coverage
+  // caveat under the bars is a different matter and stays — it is about thin
+  // data inside the period, not about which period this is.
+  const from = shortDay(startDate);
+  const to = shortDay(endDate);
+  const period = clipped && from
+    ? (to && to !== from ? `${from} – ${to}` : from)
+    : WINDOW_TITLE[win];
+  // ...and the SAME period everywhere else on the page. The eyebrow was fixed
+  // for saying one thing while the days on the board said another, and then the
+  // coverage caveat and the empty line went on saying "this month" underneath a
+  // clipped eyebrow that had already admitted the month was not what was
+  // counted. Two periods on one page is the confusion whichever line carries
+  // the second one, so both take the real dates when the eyebrow does.
+  const during = clipped && from
+    ? (to && to !== from ? `between ${from} and ${to}` : `on ${from}`)
+    : WINDOW_SUFFIX[win];
 
   return (
     <div className={PAGE} data-testid="tv-page-lead-source">
       <div className="mb-8 flex items-end justify-between gap-8">
         <div className="min-w-0">
-          <Eyebrow>Lead source · {WINDOW_TITLE[win]}{since ? ` · since ${since}` : ""}</Eyebrow>
+          <Eyebrow>Lead source · {period}</Eyebrow>
           <h2 className={TITLE}>Where they came from</h2>
         </div>
         <HeaderPill icon={<Layers className="h-8 w-8 shrink-0" />}>
@@ -683,7 +709,7 @@ export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced 
               />
             );
           })}
-          {!rows.length && <li className={EMPTY}>No transfers carry a lead source {WINDOW_SUFFIX[win]}.</li>}
+          {!rows.length && <li className={EMPTY}>No transfers carry a lead source {during}.</li>}
         </motion.ul>
       </div>
       {pan.overflowing && <PanCount>{rows.length} sources in all</PanCount>}
@@ -694,7 +720,7 @@ export function LeadSourcePage({ window: win, rows, coverage, fromDate, reduced 
           className="mt-6 shrink-0 text-[clamp(1.1rem,1.6vw,1.7rem)] leading-snug text-white/45"
           data-testid="tv-lead-source-coverage"
         >
-          {blank} more {blank === 1 ? "transfer" : "transfers"} {WINDOW_SUFFIX[win]} {blank === 1 ? "carries" : "carry"} no source, and {blank === 1 ? "is" : "are"} not counted above.
+          {blank} more {blank === 1 ? "transfer" : "transfers"} {during} {blank === 1 ? "carries" : "carry"} no source, and {blank === 1 ? "is" : "are"} not counted above.
         </motion.p>
       )}
     </div>

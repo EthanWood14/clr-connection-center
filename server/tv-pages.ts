@@ -151,6 +151,67 @@ export function activeCount(rows: Array<{ activeAgo: number | null }>): number {
   return rows.reduce((n, r) => n + (r.activeAgo === null ? 0 : 1), 0);
 }
 
+export interface ActivePerson {
+  name: string;
+  /** Seconds since this person last did anything, or null for "not lately". */
+  activeAgo: number | null;
+}
+
+/**
+ * Most recently active first — this page's answer to "most to least".
+ *
+ * The wall is ordered by quantity everywhere else; here the quantity is
+ * RECENCY, and `activeAgo` counts the wrong way round for it: it is seconds
+ * AGO, so the smallest number is the person who did something last and the
+ * sort runs ascending.
+ *
+ * A null is not a very large number. It means no signal at all in the last
+ * fifteen minutes — see activeAgoSeconds — so those rows are pushed to the end
+ * explicitly. Left to arithmetic, `null - null` is 0 and `5 - null` is 5, and
+ * somebody who has not touched the phone all day would drift into the middle of
+ * a list titled "active right now".
+ *
+ * Ties break by name so the wall never reorders two rows between polls.
+ */
+export function orderByRecentlyActive<T extends ActivePerson>(rows: T[]): T[] {
+  const ago = (r: T): number | null => {
+    const n = Number(r?.activeAgo);
+    return r?.activeAgo === null || r?.activeAgo === undefined || !Number.isFinite(n) ? null : n;
+  };
+  return [...(rows ?? [])].sort((a, b) => {
+    const x = ago(a);
+    const y = ago(b);
+    if ((x === null) !== (y === null)) return x === null ? 1 : -1;
+    return (x ?? 0) - (y ?? 0) || String(a?.name ?? "").localeCompare(String(b?.name ?? ""));
+  });
+}
+
+// ── who is carrying the most today ──────────────────────────────────────────
+
+export interface AssignmentPerson {
+  name: string;
+  /** The loan officers assigned to this person today, in assistant_rank order. */
+  los: unknown[];
+}
+
+/**
+ * The people with the longest lists first.
+ *
+ * Most to least, like every other page on this wall, and the quantity is how
+ * many loan officers somebody is carrying today. Name is only the tie-break,
+ * so two CLRs on four LOs each land the same way every poll.
+ *
+ * What this deliberately does NOT touch is each person's own list. That order
+ * is `assistant_rank` — a priority the assignment generator set, saying who to
+ * call first — and re-sorting a priority by anything at all throws away the
+ * one thing it says. Order the people; leave their lists alone.
+ */
+export function orderAssignmentPeople<T extends AssignmentPerson>(rows: T[]): T[] {
+  const size = (r: T) => (Array.isArray(r?.los) ? r.los.length : 0);
+  return [...(rows ?? [])].sort((a, b) =>
+    size(b) - size(a) || String(a?.name ?? "").localeCompare(String(b?.name ?? "")));
+}
+
 // ── who the floor owes work to ──────────────────────────────────────────────
 
 /** The fortnight the starved page measures. */
