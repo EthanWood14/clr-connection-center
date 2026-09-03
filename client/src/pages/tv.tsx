@@ -18,6 +18,9 @@
  *    Marking on enqueue meant a reload mid-queue lost everything behind the
  *    one on screen, permanently. Seen live.
  *  - It reloads itself when C3 deploys, so it is never a week behind the app.
+ *  - The bottom tenth of the screen is a STRIP, not an overlay. The deck is
+ *    given the box above it and nothing floats on top of a page. See the
+ *    block comment above NotRankedZone for why, and for how it is laid out.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,8 +33,9 @@ import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
 import {
+  PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
-  StarvedPage,
+  StarvedPage, UpcomingPage,
 } from "@/components/tv/pages";
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
@@ -136,7 +140,7 @@ const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeo
 type PageId =
   | "scorecard" | "team" | "latest" | "tip"
   | "transfersWeek" | "transfersMonth" | "writeup" | "assignments" | "eod"
-  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved";
+  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved" | "upcoming";
 
 /**
  * The deck, and when each page is allowed on it.
@@ -158,6 +162,10 @@ const DECK: Slot[] = [
   { id: "onPhoneNow",     dwellMs: 9_000 },
   { id: "team",           dwellMs: 10_000 },
   { id: "latest",         dwellMs: 11_000 },
+  // Straight after "what just happened", because it is the other half of the
+  // same question. Thirteen seconds, matching the other list pages people read
+  // names off rather than glance at.
+  { id: "upcoming",       dwellMs: 13_000 },
   { id: "transfersWeek",  dwellMs: 12_000 },
   { id: "assignments",    dwellMs: 12_000, when: (m) => !inEodWindow(m) },
   { id: "eod",            dwellMs: 12_000, when: inEodWindow },
@@ -315,8 +323,13 @@ function ScorecardPage({ people, reduced, now, checkins, dwellMs }: {
     return busy || checked;
   });
   const list = here.length ? here : people;
-  const VISIBLE = 6;
-  const overflow = Math.max(0, list.length - VISIBLE);
+  // MEASURED, not counted. This used to pan `rows past six` times a hard-coded
+  // 7.6rem, and both of those numbers were read off a deck that owned the whole
+  // screen under the header — which it no longer does, now the bottom strip has
+  // ten percent of it. usePan asks the box how much taller the list is than the
+  // space it was given, so the last row lands on the bottom edge whatever that
+  // space turns out to be. One pan on this wall, shared with the other pages.
+  const pan = usePan(dwellMs / 1000, reduced);
   const leader = list[0];
   const max = Math.max(1, leader?.transfersToday ?? 1);
   return (
@@ -333,15 +346,11 @@ function ScorecardPage({ people, reduced, now, checkins, dwellMs }: {
           </motion.div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div ref={pan.ref} className={PAN_BOX}>
       <motion.ul
         variants={stagger} initial="hidden" animate="show"
         className="flex flex-col justify-start gap-4"
-        style={overflow > 0 && !reduced ? {
-          // One pass down and back inside the dwell, with a beat at each end.
-          animation: `tv-pan ${dwellMs / 1000}s ease-in-out 1.2s both`,
-          ["--tv-pan" as any]: `-${overflow * 7.6}rem`,
-        } : undefined}
+        style={pan.style}
       >
         {list.map((p, i) => {
           const pct = Math.round((p.transfersToday / max) * 100);
@@ -378,7 +387,7 @@ function ScorecardPage({ people, reduced, now, checkins, dwellMs }: {
         {!list.length && <li className="text-white/50">No CLRs on the board.</li>}
       </motion.ul>
       </div>
-      {overflow > 0 && (
+      {pan.overflowing && (
         <p className="mt-2 shrink-0 text-center text-[clamp(0.85rem,1.1vw,1.1rem)] text-white/30">
           {list.length} on the board
         </p>
@@ -538,6 +547,126 @@ function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }
   );
 }
 
+// ── the bottom strip ────────────────────────────────────────────────────
+/**
+ * The band along the bottom of the wall.
+ *
+ * Ethan's ask, in his words: the not-ranked people and LeadVault's new leads go
+ * "in the bottom like 10% of the screen", in small text, "not overlaying
+ * anything". Both of those used to float ON TOP of whatever page was up — a
+ * card pinned to the bottom-right corner and a notice sliding up over the deck
+ * — so this is the opposite of that. It is a row in the page's own flow, and
+ * <main> above it is given a box that is shorter by exactly this much. Nothing
+ * in here is absolutely positioned, and nothing in here sits over the deck.
+ *
+ * One row, three zones, read across:
+ *
+ *   NOT RANKED · TODAY      |  ● ● ● ● ●  |      NEW IN LEADVAULT
+ *   Elleine Asuncion 4 +3  |   the deck    |  Maria Alvarez · Facebook
+ *
+ * The two lists take an end each and the deck's progress dots hold the middle.
+ * That is what keeps the row balanced with zero, one or several of either: each
+ * end is a flex-1 column with its own alignment, so neither end can drag the
+ * other across the screen, and the dots stay dead centre whatever is beside
+ * them. Both zones are the same two-line stack — a micro-label over a single
+ * line of content, at the same two type sizes — so their labels sit on one
+ * baseline and their content on another. Hairline rules separate the three.
+ *
+ * The height is fixed and the lead zone always renders its content line, full
+ * or empty. A strip that grew when a lead landed would jog the whole board
+ * every time LeadVault fired, so the space is reserved rather than made.
+ *
+ * It is a footer, and it is sized like one: the type bottoms out around a rem,
+ * the labels are white/30, and the only colour in it is the amber of a count
+ * and the emerald of an arrival. Under a moment the overlay covers it along
+ * with everything else — a celebration owns the whole screen, deliberately.
+ */
+const STRIP_LABEL = "text-[clamp(0.7rem,0.85vw,0.92rem)] font-semibold uppercase tracking-[0.28em] text-white/30";
+const STRIP_LINE = "mt-1.5 flex items-baseline gap-4 text-[clamp(0.95rem,1.25vw,1.3rem)] leading-none";
+const STRIP_QUIET = "truncate text-white/25";
+
+/** The hairline between two zones. */
+function StripRule() {
+  return <span className="my-4 w-px shrink-0 self-stretch bg-white/10" aria-hidden="true" />;
+}
+
+/**
+ * Who the chart leaves out.
+ *
+ * Someone flagged out of the stats is kept off the ranking on purpose, but the
+ * team total still counts them — so the wall names the difference instead of
+ * leaving two numbers that do not add up. Empty is a designed state, not a gap:
+ * the label stays and the line says so in words.
+ */
+function NotRankedZone({ aside }: { aside: Aside[] }) {
+  // Two, then a count. Three fitted the corner card this replaces; here the
+  // zone shares a row with fourteen progress dots and the lead notice, and
+  // three full names truncated to "Elleine Asu…" — which names nobody.
+  const shown = aside.slice(0, 2);
+  const more = aside.length - shown.length;
+  return (
+    <div className="flex min-w-0 flex-1 flex-col justify-center" data-testid="tv-aside">
+      <div className={STRIP_LABEL}>Not ranked · today</div>
+      <div className={STRIP_LINE}>
+        {shown.map((a) => (
+          <span key={a.name} className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate font-semibold text-white/65" title={a.name}>{a.name}</span>
+            <span className="shrink-0 font-black text-amber-300/80">{a.today}</span>
+          </span>
+        ))}
+        {more > 0 && <span className="shrink-0 text-white/30">+{more} more</span>}
+        {!aside.length && <span className={STRIP_QUIET}>everyone today is on the board</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A lead landing in LeadVault.
+ *
+ * It still ARRIVES: the row re-mounts on the lead's id and rises into place,
+ * lit emerald for as long as the notice holds, then fades to the same grey as
+ * the rest of the strip and stays there as the last one in. Quiet on purpose —
+ * a lead is news, not a celebration, and this must never read as a moment.
+ *
+ * What it deliberately does NOT do: pause the deck, queue behind the moment
+ * overlay, own a timer, or change the height of the strip. The row is the same
+ * shape before the first lead of the day as it is a second after one lands.
+ */
+function NewLeadZone({ notice, up, reduced }: {
+  notice: { lead: NewLead; more: number } | null;
+  up: boolean;
+  reduced: boolean;
+}) {
+  return (
+    <div
+      className="flex min-w-0 flex-1 flex-col justify-center text-right"
+      data-testid="tv-new-lead"
+      data-up={up ? "1" : "0"}
+    >
+      <div className={STRIP_LABEL}>New in LeadVault</div>
+      <div className={`${STRIP_LINE} justify-end`}>
+        {notice ? (
+          <motion.span
+            key={notice.lead.id}
+            className={`flex min-w-0 items-baseline justify-end gap-3 transition-colors duration-700 ${up ? "text-emerald-200" : "text-white/45"}`}
+            initial={{ opacity: 0, y: reduced ? 0 : 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reduced ? { duration: 0.25 } : { type: "spring", stiffness: 210, damping: 26 }}
+          >
+            <UserPlus className={`h-[1em] w-[1em] shrink-0 self-center ${up ? "text-emerald-300" : "text-white/25"}`} />
+            <span className="truncate font-semibold" title={notice.lead.name}>{notice.lead.name}</span>
+            {notice.lead.source && <span className="shrink-0 text-white/35">{notice.lead.source}</span>}
+            {notice.more > 0 && <span className="shrink-0 text-white/35">+{notice.more} more</span>}
+          </motion.span>
+        ) : (
+          <span className={STRIP_QUIET}>nothing new yet today</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── the page ────────────────────────────────────────────────────────────────
 /** Pages slide in from the right and out to the left, like a deck being dealt. */
 const slide = (reduced: boolean) => ({
@@ -684,15 +813,18 @@ export default function TvBoard() {
   }, [current]);
 
   // ── new leads ─────────────────────────────────────────────────────────
-  // LeadVault says a lead landed; a strip slides up along the bottom of the
-  // screen, holds, and drops again. Deliberately NOT a moment: it never goes
+  // LeadVault says a lead landed; it rises into the right-hand end of the
+  // bottom strip, holds lit for eight seconds, then settles into the strip's
+  // own grey as the last one in. Deliberately NOT a moment: it never goes
   // into the queue, so it cannot pause the deck and cannot end up waiting
   // behind a transfer's hype screen — by the time that finished, a lead that
   // "just" landed would be two minutes old and no longer news.
   //
-  // It owns no timer either. Whether the strip is up is read off the same
-  // second-clock the header already runs, which is one fewer thing that can
-  // be left running, or cancelled at the wrong moment.
+  // It owns no timer either. Whether the notice is still lit is read off the
+  // same second-clock the header already runs, which is one fewer thing that
+  // can be left running, or cancelled at the wrong moment. And the zone it
+  // lands in is the same height empty as full, so the strip never changes
+  // size under the deck when one arrives.
   const lastLeadId = useRef(0);
   const [leadNotice, setLeadNotice] = useState<{ lead: NewLead; more: number; until: number } | null>(null);
   useEffect(() => {
@@ -743,6 +875,7 @@ export default function TvBoard() {
         case "leadSource":   return !!board?.leadSources;
         case "onPhoneNow":   return !!board?.onPhoneNow;
         case "starved":      return !!board?.starved;
+        case "upcoming":     return !!board?.upcoming;
         default:             return true;
       }
     };
@@ -821,7 +954,11 @@ export default function TvBoard() {
       </header>
 
       {/* ── the deck ── */}
-      <main className="relative z-10 h-[calc(100vh-6rem-2.5rem)]">
+      {/* The deck's box, shortened by the strip below it rather than padded
+          behind it: 100vh less the 6rem header less the strip's 10vh. Every
+          page inside measures its own pan against the height it is handed, so
+          a tall list simply pans that much further. */}
+      <main className="relative z-10 h-[calc(100vh-6rem-10vh)]">
         {/* Not mode="wait". That holds the incoming page until the outgoing
             one reports its exit finished, and an exit that never finishes
             wedges the board — which has already happened twice on this screen.
@@ -913,6 +1050,27 @@ export default function TvBoard() {
                 loas={board?.starved?.loas ?? []}
               />
             )}
+            {page === "upcoming" && (
+              <UpcomingPage
+                reduced={reduced}
+                days={board?.upcoming?.days ?? 7}
+                todayCount={board?.upcoming?.todayCount ?? 0}
+                // The rows arrive already resolved and already formatted: the
+                // server picked appointment_datetime over follow_up_date and
+                // ran whenLabel over it. Nothing here parses a date — one
+                // `new Date("2026-09-03T14:30")` in this file would put a
+                // 2:30 PM meeting on the wall as 7:30 AM.
+                appointments={(board?.upcoming?.appointments ?? []).map((a: any, i: number) => ({
+                  id: a.id ?? i,
+                  borrower: String(a.borrower ?? ""),
+                  clr: String(a.clr ?? ""),
+                  lo: a.lo == null ? null : String(a.lo),
+                  when: a.when == null ? null : String(a.when),
+                  day: String(a.day ?? ""),
+                  isToday: !!a.isToday,
+                }))}
+              />
+            )}
             {page === "onPhoneNow" && (
               <OnPhoneNowPage
                 reduced={reduced}
@@ -926,70 +1084,33 @@ export default function TvBoard() {
         </AnimatePresence>
       </main>
 
-      {/* Off the ranking, in the corner. Someone flagged out of the stats is
-          kept out of the chart on purpose, but the team total still counts
-          them — so the wall names the difference instead of leaving two
-          numbers that do not add up. */}
-      {!!aside.length && !current && (
-        <div className="pointer-events-none absolute bottom-16 right-10 z-20 max-w-[26vw] rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-4 text-right backdrop-blur-sm" data-testid="tv-aside">
-          <div className="text-[clamp(0.8rem,1vw,1rem)] font-semibold uppercase tracking-[0.25em] text-white/35">Not ranked</div>
-          {aside.slice(0, 3).map((a) => (
-            <div key={a.name} className="mt-2 flex items-baseline justify-end gap-3">
-              <span className="truncate text-[clamp(1.1rem,1.6vw,1.7rem)] font-bold text-white/70" title={a.name}>{a.name}</span>
-              <span className="text-[clamp(1.6rem,2.4vw,2.6rem)] font-black leading-none text-amber-300/80">{a.today}</span>
-              <span className="text-[clamp(0.8rem,1vw,1rem)] text-white/35">today</span>
-            </div>
+      {/* ── the bottom strip: who is off the chart, where the deck is, and
+             what just landed. One row in the page's own flow, ten percent of
+             the screen, over nothing — see NotRankedZone above. ── */}
+      <footer
+        className="relative z-10 flex h-[10vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] px-10"
+        data-testid="tv-strip"
+      >
+        <NotRankedZone aside={aside} />
+        <StripRule />
+        {/* Progress dots: which page, and how long until the next. Dead centre,
+            which is also what holds the two zones either side of it balanced. */}
+        <div className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress">
+          {deck.map((d, i) => (
+            <span key={i} className="relative h-2 w-10 overflow-hidden rounded-full bg-white/15">
+              {i === slot && !current && (
+                <motion.span
+                  key={dealt}
+                  className="absolute inset-y-0 left-0 rounded-full bg-amber-300"
+                  initial={{ width: 0 }} animate={{ width: "100%" }}
+                  transition={{ duration: d.dwellMs / 1000, ease: "linear" }}
+                />
+              )}
+            </span>
           ))}
         </div>
-      )}
-
-      {/* A lead just landed in LeadVault. A strip along the bottom, kept clear
-          of the not-ranked card in the corner and of the progress dots below
-          it, and it never pauses the deck: a notice, not a moment. Under a
-          moment the overlay simply covers it, and its clock runs on. */}
-      {leadNotice && (
-        <motion.div
-          className="pointer-events-none absolute bottom-14 left-10 right-[30vw] z-20"
-          initial={{ y: reduced ? 0 : "140%", opacity: reduced ? 0 : 1 }}
-          animate={reduced ? { y: 0, opacity: leadUp ? 1 : 0 } : { y: leadUp ? "0%" : "140%", opacity: 1 }}
-          transition={reduced ? { duration: 0.25 } : { type: "spring", stiffness: 210, damping: 26 }}
-          data-testid="tv-new-lead"
-          data-up={leadUp ? "1" : "0"}
-        >
-          <div className="flex items-center gap-6 rounded-2xl border border-emerald-300/30 bg-emerald-400/[0.08] px-8 py-4 backdrop-blur-sm">
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-300">
-              <UserPlus className="h-7 w-7 text-[#0B1220]" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-[clamp(0.8rem,1vw,1rem)] font-semibold uppercase tracking-[0.25em] text-emerald-200/70">New lead in LeadVault</div>
-              <p className="mt-0.5 flex items-baseline gap-4 text-[clamp(1.4rem,2.2vw,2.2rem)] font-bold leading-tight">
-                <span className="truncate">{leadNotice.lead.name}</span>
-                {leadNotice.lead.source && (
-                  <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] font-medium text-white/45">{leadNotice.lead.source}</span>
-                )}
-              </p>
-            </div>
-            {leadNotice.more > 0 && (
-              <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] text-white/40">+{leadNotice.more} more</span>
-            )}
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── progress dots: which page, and how long until the next ── */}
-      <footer className="relative z-10 flex h-10 items-center justify-center gap-3" aria-hidden="true">
-        {deck.map((d, i) => (
-          <span key={i} className="relative h-2 w-10 overflow-hidden rounded-full bg-white/15">
-            {i === slot && !current && (
-              <motion.span
-                key={dealt}
-                className="absolute inset-y-0 left-0 rounded-full bg-amber-300"
-                initial={{ width: 0 }} animate={{ width: "100%" }}
-                transition={{ duration: d.dwellMs / 1000, ease: "linear" }}
-              />
-            )}
-          </span>
-        ))}
+        <StripRule />
+        <NewLeadZone notice={leadNotice} up={leadUp} reduced={reduced} />
       </footer>
 
       {current && <MomentOverlay moment={current} reduced={reduced} />}

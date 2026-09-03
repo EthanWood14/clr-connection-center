@@ -1151,16 +1151,14 @@ test("the new-lead strip never touches the deck timer or the moment queue", () =
   // One number remembered, not a set that grows for as long as the screen is up.
   assert.match(strip, /lastLeadId\.current = newest\.id;/);
   assert.doesNotMatch(strip, /new Set/);
-  assert.match(page, /\+\{leadNotice\.more\} more/);
-  // A strip along the bottom, clear of the corner card and the progress dots,
-  // reading as a notice and not a celebration: no confetti, no hype, no sound.
-  const mark = page.indexOf('data-testid="tv-new-lead"');
-  const el = page.slice(mark - 700, mark + 1800);
-  assert.match(el, /absolute bottom-14 left-10 right-\[30vw\]/);
-  assert.doesNotMatch(el, /Confetti|HypeScene|SOUND\[/);
-  assert.match(page, /bottom-16 right-10 z-20 max-w-\[26vw\][^\n]*data-testid="tv-aside"/, "the corner card still owns the corner");
-  // Reduced motion gets a plain fade with no travel.
-  assert.match(el, /reduced \? \{ y: 0, opacity: leadUp \? 1 : 0 \}/);
+  assert.match(page, /\+\{notice\.more\} more/);
+  // It lands in its own zone of the bottom strip (the tests at the end of this
+  // file), reading as a notice and not a celebration: no confetti, no hype, no
+  // sound. Reduced motion gets a plain fade with no travel.
+  const zone = page.slice(page.indexOf("function NewLeadZone"), page.indexOf("function TvBoard"));
+  assert.doesNotMatch(zone, /Confetti|HypeScene|SOUND\[/);
+  assert.match(zone, /initial=\{\{ opacity: 0, y: reduced \? 0 : 12 \}\}/);
+  assert.match(zone, /transition=\{reduced \? \{ duration: 0\.25 \}/);
 });
 
 test("an Outcomes edit that turns a row INTO an appointment mirrors both columns", () => {
@@ -1232,4 +1230,261 @@ test("an Outcomes edit that turns a row INTO an appointment mirrors both columns
   assert.match(outcomesUpdate, /storedOutcomeType: before\?\.outcomeType,/);
   assert.match(outcomes, /outcomeType: outcome\.outcomeType,/,
     "the default the form resets to is the stored type this compares against");
+});
+
+// ── the upcoming-appointments page ──────────────────────────────────────────
+// The wiring only. What counts as upcoming, and in what order, is tested
+// against the pure helpers in tests/tv-pages.test.ts.
+
+const tvPages = readFileSync(join(root, "client/src/components/tv/pages.tsx"), "utf8");
+/** Just the upcoming section of the /pages handler. */
+const upcomingSection = routes.slice(
+  routes.indexOf('section("upcoming"'),
+  routes.indexOf("} catch (e: any) {", routes.indexOf('section("upcoming"')),
+);
+/** Just the UpcomingPage component. */
+const upcomingPage = tvPages.slice(tvPages.indexOf("export function UpcomingPage"));
+
+test("the upcoming slot is in the deck AND has something to render", () => {
+  // The starved page shipped once as a deck slot with no renderer, and the
+  // wall went blank for thirteen seconds every cycle. This is that guard,
+  // aimed at the new slot specifically.
+  assert.match(page, /\{ id: "upcoming",\s+dwellMs: 13_000 \}/);
+  assert.match(page, /page === "upcoming"/, "the deck id has a renderer");
+  assert.match(page, /<UpcomingPage/);
+  assert.match(page, /StarvedPage, UpcomingPage,\n\} from "@\/components\/tv\/pages"/);
+  assert.match(tvPages, /export function UpcomingPage/);
+  assert.match(tvPages, /data-testid="tv-page-upcoming"/);
+  // Its dwell and its pan have to agree, the way every other page's do.
+  assert.match(tvPages, /upcoming: 13,/);
+  // And a missing section costs the slot rather than showing an empty page.
+  assert.match(page, /case "upcoming":\s+return !!board\?\.upcoming;/);
+});
+
+test("the upcoming section is on the /pages route, wrapped like every other", () => {
+  assert.ok(routes.indexOf('section("upcoming"') > 0, "built through the section() wrapper");
+  // Which means one failing query costs this page and nothing else: `failed`
+  // names it and the deck drops the slot.
+  assert.match(routes, /failed\.push\(name\);/);
+  assert.match(upcomingSection, /selectUpcomingAppointments\(/, "the shared rule decides what is upcoming");
+  // The payload the page is handed: the rows, the window, and today's count.
+  for (const key of [/days: UPCOMING_DAYS,/, /count: upcoming\.length,/, /todayCount: upcoming\.filter/]) {
+    assert.match(upcomingSection, key);
+  }
+});
+
+test("the appointment time is whenLabel's, and nothing else parses a date", () => {
+  // The live bug this page could most easily reintroduce: these stamps carry
+  // no timezone, so `new Date("2026-09-03T14:30")` reads them in the server's
+  // zone — UTC on Railway — and a 2:30 PM appointment goes on the wall as
+  // 7:30 AM. whenLabel is the one renderer that gets this right.
+  assert.match(upcomingSection, /when: a\.timed \? whenLabel\(a\.at, tz\) : null,/);
+  assert.match(routes, /rescheduleStampIsStale, whenLabel,/, "imported from tv-board, not re-implemented");
+  // Comments stripped first: both of these explain the bug they are avoiding,
+  // and that explanation should not trip its own guard.
+  const stripped = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const banned of [/new Date\(/, /toLocale(String|DateString|TimeString)/, /Date\.parse/, /Intl\.DateTimeFormat/]) {
+    assert.doesNotMatch(stripped(upcomingSection), banned, "the section must not format or parse a date itself");
+  }
+  // Date.now() is the only clock it is allowed, and it is handed straight to
+  // the shared rule rather than being formatted.
+  assert.match(upcomingSection, /const nowMs = Date\.now\(\);/);
+  // The page prints what it is given. Not one date parse on the client either.
+  for (const banned of [/new Date\(/, /toLocale(String|DateString|TimeString)/, /Date\.parse/]) {
+    assert.doesNotMatch(stripped(upcomingPage), banned, "the page must not parse an appointment time");
+  }
+  assert.match(upcomingPage, /\{a\.when \?\? <span className="text-white\/35">time not set<\/span>\}/);
+});
+
+test("the page answers the question from across the room", () => {
+  // Borrower, the CLR who booked it, the loan officer it is with, and when.
+  assert.match(upcomingPage, /\{a\.borrower\}/);
+  assert.match(upcomingPage, /Booked by \{a\.clr\}/);
+  assert.match(upcomingPage, /<NameChip name=\{a\.lo\} \/>/);
+  assert.match(upcomingPage, /\{a\.isToday \? "Today" : shortDay\(a\.day\) \?\? ""\}/);
+  // Today is the amber row and the pill counts it — the one thing the floor
+  // looks up for.
+  assert.match(upcomingPage, /a\.isToday \? "border-amber-300\/45 bg-amber-400\/\[0\.10\]"/);
+  assert.match(upcomingPage, /\{dueToday\} still today/);
+  assert.match(upcomingPage, /Nothing left today/);
+  // An LO-less appointment says so instead of leaving a gap that reads broken.
+  assert.match(upcomingPage, /no loan officer named/);
+  // It is a schedule, not a second leaderboard: no bars, no ranks, no counts
+  // per CLR.
+  assert.doesNotMatch(upcomingPage, /MeterRow|meterPct|CountUp|rank=/);
+});
+
+test("a long list pans and an empty one says so, like the other tall pages", () => {
+  assert.match(upcomingPage, /const pan = usePan\(PAN_SECONDS\.upcoming, reduced\);/);
+  assert.match(upcomingPage, /<div ref=\{pan\.ref\} className=\{PAN_BOX\}>/);
+  assert.match(upcomingPage, /style=\{pan\.style\}/);
+  assert.match(upcomingPage, /\{pan\.overflowing && <PanCount>/);
+  // A wall that says nothing looks broken, so the empty state is a sentence in
+  // the shared EMPTY type, not a blank screen.
+  assert.match(upcomingPage, /<li className=\{EMPTY\}>/);
+  assert.match(upcomingPage, /Nothing booked for the next \{win\} days\. The board is clear\./);
+});
+
+test("the board unpacks the upcoming rows into what the page takes", () => {
+  // React error #31 twice already on this board: the payload is untyped, so
+  // handing a page an object where it wanted a string type-checks fine and
+  // then blanks the screen.
+  assert.match(page, /appointments=\{\(board\?\.upcoming\?\.appointments \?\? \[\]\)\.map/);
+  assert.match(page, /days=\{board\?\.upcoming\?\.days \?\? 7\}/);
+  assert.match(page, /todayCount=\{board\?\.upcoming\?\.todayCount \?\? 0\}/);
+  assert.doesNotMatch(page, /appointments=\{board\?\.upcoming\?\.appointments \?\? \[\]\}/);
+});
+
+
+// ── the bottom strip ────────────────────────────────────────────────────
+/** The strip element itself. There is exactly one <footer> on this board. */
+const strip = page.slice(page.indexOf("<footer"), page.indexOf("</footer>") + "</footer>".length);
+/** Everything between the deck and the moment overlay. */
+const belowDeck = page.slice(page.indexOf("</main>"), page.indexOf("{current && <MomentOverlay"));
+const notRanked = page.slice(page.indexOf("function NotRankedZone"), page.indexOf("function NewLeadZone"));
+const newLead = page.slice(page.indexOf("function NewLeadZone"), page.indexOf("function TvBoard"));
+/** The strip's type scale and both of its zones, as source. */
+const stripCode = page.slice(page.indexOf("const STRIP_LABEL"), page.indexOf("function TvBoard"));
+
+test("the bottom strip is a band in the flow, not something floating over the deck", () => {
+  // Ethan: "in the bottom like 10% of the screen ... not overlaying anything".
+  // Both halves of it used to be pinned ON TOP of whatever page was up \u2014 a
+  // card at bottom-16 right-10 and a notice at bottom-14 sliding up over it.
+  assert.match(strip, /data-testid="tv-strip"/);
+  assert.match(strip, /className="relative z-10 flex h-\[10vh\] items-stretch/);
+  // The deck is GIVEN a shorter box; it is not padded to clear an overlay.
+  assert.match(page, /<main className="relative z-10 h-\[calc\(100vh-6rem-10vh\)\]">/);
+  assert.doesNotMatch(page, /pb-\[10vh\]|padding-bottom/);
+  // Nothing under the deck is pinned over it any more. The single `absolute`
+  // left down here is the fill inside a progress dot, inside its own pill.
+  assert.doesNotMatch(belowDeck, /pointer-events-none/);
+  assert.doesNotMatch(belowDeck, /\bz-20\b/);
+  assert.doesNotMatch(belowDeck, /absolute[^"]*(bottom-|inset-0|right-\[)/);
+  assert.equal((belowDeck.match(/\babsolute\b/g) ?? []).length, 1, "only the progress-dot fill");
+  assert.match(belowDeck, /className="absolute inset-y-0 left-0 rounded-full bg-amber-300"/);
+  // And the two old anchors are gone for good.
+  assert.doesNotMatch(page, /bottom-16 right-10|bottom-14 left-10/);
+});
+
+test("the strip is one row: two zones, a hairline each side of the deck's dots", () => {
+  // Not two widgets shoved together. The not-ranked people take one end, the
+  // new leads the other, the progress dots hold the middle, and a rule
+  // separates each pair \u2014 which is also what keeps the row balanced when one
+  // end is empty and the other has three names on it.
+  const order = ["<NotRankedZone", "<StripRule />", 'data-testid="tv-progress"', "<StripRule />", "<NewLeadZone"];
+  let cursor = 0;
+  for (const piece of order) {
+    const found = strip.indexOf(piece, cursor);
+    assert.ok(found > 0, `the strip reads left to right: ${piece}`);
+    cursor = found + piece.length;
+  }
+  assert.equal((strip.match(/<StripRule \/>/g) ?? []).length, 2, "one rule between each pair");
+  // Each end is a flex-1 column, so neither can drag the other across the
+  // screen; the dots never move off centre.
+  assert.match(notRanked, /className="flex min-w-0 flex-1 flex-col justify-center"/);
+  assert.match(newLead, /className="flex min-w-0 flex-1 flex-col justify-center text-right"/);
+  assert.match(strip, /className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress"/);
+  // One label style and one content style, shared by both zones, so the labels
+  // sit on one baseline and the content on another.
+  assert.match(page, /const STRIP_LABEL = "text-\[clamp\(0\.7rem/);
+  assert.match(page, /const STRIP_LINE = "mt-1\.5 flex items-baseline/);
+  for (const zone of [notRanked, newLead]) {
+    assert.match(zone, /className=\{STRIP_LABEL\}/);
+    assert.match(zone, /\{STRIP_LINE\}/);
+  }
+});
+
+test("the strip is a footer, and never out-shouts the page above it", () => {
+  // Small type with a hard ceiling, quiet labels, and no headline sizes in it
+  // anywhere. The corner card it replaces ran a 2.6rem number.
+  assert.match(page, /const STRIP_LABEL = "[^"]*text-white\/30";/);
+  assert.match(page, /const STRIP_LINE = "[^"]*text-\[clamp\(0\.95rem,1\.25vw,1\.3rem\)\]/);
+  // No clamp anywhere in the strip may reach a page-heading ceiling. The pages
+  // above it top out at 4.8rem, and this has to stay a footnote to them.
+  const tops = (stripCode.match(/clamp\([^)]*?[\d.]+rem\)/g) ?? [])
+    .map((m) => Number(/([\d.]+)rem\)$/.exec(m)?.[1] ?? 0));
+  assert.ok(tops.length >= 2, "the strip's type is set in clamp(), like the rest of the wall");
+  for (const top of tops) assert.ok(top > 0 && top <= 1.4, `the strip stays small: ${top}rem`);
+  assert.match(page, /const STRIP_QUIET = "truncate text-white\/25";/);
+});
+
+test("both of the strip's empty states are designed, not blank", () => {
+  // Zero excluded people and zero leads all morning still has to look like a
+  // footer somebody drew on purpose.
+  assert.match(notRanked, /\{!aside\.length && <span className=\{STRIP_QUIET\}>everyone today is on the board<\/span>\}/);
+  assert.match(newLead, /<span className=\{STRIP_QUIET\}>nothing new yet today<\/span>/);
+  // The labels stay up in both cases \u2014 they name the zone, they are not
+  // headers that appear only when there is something under them.
+  assert.match(notRanked, /<div className=\{STRIP_LABEL\}>Not ranked/);
+  assert.match(newLead, /<div className=\{STRIP_LABEL\}>New in LeadVault<\/div>/);
+  // And the strip is rendered unconditionally. The old card was gated on
+  // `!!aside.length && !current`, so an empty end simply vanished.
+  assert.doesNotMatch(strip, /!!aside\.length/);
+  assert.match(strip, /^\s*<NotRankedZone aside=\{aside\} \/>$/m, "no gate in front of it");
+  assert.match(strip, /^\s*<NewLeadZone notice=\{leadNotice\} up=\{leadUp\} reduced=\{reduced\} \/>$/m);
+});
+
+test("a lead arriving never changes the height of the strip", () => {
+  // A strip that grew when LeadVault fired would jog the whole board, deck and
+  // all, several times an hour. So the lead zone renders its content line in
+  // BOTH states \u2014 a ternary, never a bare `&&` that collapses the row \u2014 and
+  // nothing about the strip's height is conditional.
+  assert.match(newLead, /\{notice \? \(/);
+  assert.match(newLead, /\) : \(\s*<span className=\{STRIP_QUIET\}>/);
+  assert.doesNotMatch(strip, /h-\[\$\{|h-\[calc/);
+  assert.equal((strip.match(/h-\[10vh\]/g) ?? []).length, 1, "one fixed height, not a computed one");
+  // It still ARRIVES: the row re-mounts on the lead's id and rises in, lit
+  // while the notice holds and fading to the strip's own grey afterwards.
+  assert.match(newLead, /key=\{notice\.lead\.id\}/);
+  assert.match(newLead, /up \? "text-emerald-200" : "text-white\/45"/);
+  assert.match(newLead, /transition-colors duration-700/);
+  assert.match(page, /<NewLeadZone notice=\{leadNotice\} up=\{leadUp\} reduced=\{reduced\} \/>/);
+  // Still no timer, still nothing from the moment pipeline.
+  assert.doesNotMatch(newLead, /setTimeout|setInterval|setQueue|setCurrent|setSlot|setDealt/);
+});
+
+test("the progress dots and click-to-advance both still work from inside the strip", () => {
+  // The dots moved into the strip; they did not change. Same fill, same key on
+  // `dealt` so a repeated page re-runs the bar, same pause under a moment.
+  assert.match(strip, /\{deck\.map\(\(d, i\) => \(/);
+  assert.match(strip, /\{i === slot && !current && \(/);
+  assert.match(strip, /transition=\{\{ duration: d\.dwellMs \/ 1000, ease: "linear" \}\}/);
+  assert.match(strip, /key=\{dealt\}/);
+  assert.match(strip, /aria-hidden="true" data-testid="tv-progress"/);
+  // Click-to-advance is still on the root, so a tap anywhere \u2014 the strip
+  // included \u2014 moves the deck on.
+  assert.match(page, /onClick=\{advance\}\n\s+role="button"/);
+  assert.match(page, /if \(e\.key === "Enter" \|\| e\.key === " " \|\| e\.key === "ArrowRight"\) advance\(\);/);
+});
+
+test("every page pans against the height it is actually given", () => {
+  // The strip took a tenth of the screen off the deck, so every tall page has
+  // further to pan. usePan MEASURES scrollHeight against clientHeight, so the
+  // pages in tv/pages.tsx correct themselves \u2014 but the scorecard used to do
+  // its own arithmetic off two numbers read from the old, taller deck: rows
+  // past a hard-coded six, times a hard-coded 7.6rem. It would have stopped
+  // short of its last row. One pan on this wall now, and it is the measured one.
+  const scorecard = page.slice(page.indexOf("function ScorecardPage"), page.indexOf("function TeamPage"));
+  assert.match(scorecard, /const pan = usePan\(dwellMs \/ 1000, reduced\);/);
+  assert.match(scorecard, /<div ref=\{pan\.ref\} className=\{PAN_BOX\}>/);
+  assert.match(scorecard, /style=\{pan\.style\}/);
+  assert.match(scorecard, /\{pan\.overflowing && \(/);
+  // Comments stripped: the one above explains the arithmetic it replaced, and
+  // that explanation must not trip its own guard.
+  const code = scorecard.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  assert.doesNotMatch(code, /VISIBLE|7\.6|overflow \* /);
+  assert.match(page, /^  PAN_BOX, usePan,$/m, "imported from the one place they live");
+  assert.match(tvPages, /export function usePan\(seconds: number, reduced: boolean\)/);
+  assert.match(tvPages, /export const PAN_BOX = "min-h-0 flex-1 overflow-hidden";/);
+  // The measurement itself is unchanged: how much taller the content is than
+  // its box, which is the only number that survives the box changing size.
+  assert.match(tvPages, /const next = Math\.max\(0, el\.scrollHeight - el\.clientHeight\);/);
+  assert.match(tvPages, /"--tv-pan": `-\$\{Math\.round\(over\)\}px`/);
+  // Every page that pans still asks for a box and still measures it, so a
+  // shorter deck simply means a longer slide, not a truncated list.
+  assert.equal((tvPages.match(/usePan\(PAN_SECONDS\./g) ?? []).length, 11);
+  assert.equal((tvPages.match(/ref=\{\w+\.ref\}/g) ?? []).length, 11);
+  // And the keyframes are still declared exactly once, on the board's root.
+  assert.equal((page.match(/@keyframes tv-pan/g) ?? []).length, 1);
+  assert.doesNotMatch(tvPages, /@keyframes/);
 });

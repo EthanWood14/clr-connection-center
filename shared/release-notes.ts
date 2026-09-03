@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.56.0",
+    headline: "What's coming up, and a tidier bottom of the wall.",
+    items: [
+      { text: "The office TV has a new page listing the appointments coming up over the next week — who booked it, which loan officer it is with, and when. It pans when there are more than fit.", audience: "everyone" },
+      { text: "Anyone kept out of the rankings, and new leads arriving from LeadVault, now sit in a small strip along the bottom of the wall instead of floating on top of whatever page is showing.", audience: "everyone" },
+      { text: "A meeting moved from the Outcomes page used to keep its old time in a second place, which could leave the upcoming list, the end-of-day summary and the reminders naming a time nobody was keeping. Those all agree now.", audience: "everyone" },
+      { text: "Month-end pace on the Transfer Scorecard no longer counts Sundays as working days, so the projection divides by days people actually work. The tier lines will trip slightly earlier than before.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.55.0",
     headline: "Moved meetings say so, and tasks reach the person who got them.",
     items: [

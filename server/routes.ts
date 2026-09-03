@@ -23,14 +23,15 @@ import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
 import {
   classifyOutcome, detectAppointmentMove, detectMilestones, flattenTips, normalizeAppointmentTime, pickTip,
-  rescheduleStampIsStale,
+  rescheduleStampIsStale, whenLabel,
   type PersonStats,
 } from "./tv-board";
 import { recordNewLead, newLeadsSince } from "./tv-leads";
 import {
   tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
-  starvedWindowStart, orderStarved,
+  starvedWindowStart, orderStarved, selectUpcomingAppointments,
   LEAD_SOURCE_TRUSTED_FROM, ACTIVE_WINDOW_LABEL, ACTIVE_WINDOW_SECONDS, STARVED_WINDOW_DAYS,
+  UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE,
 } from "./tv-pages";
 import { pickQuote } from "@shared/tv-quotes";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
@@ -20877,6 +20878,78 @@ ${note}` : daysLine;
           };
         });
         return { date, people };
+      });
+
+      // ── what is coming up ────────────────────────────────────────────────
+      section("upcoming", () => {
+        // Anchored on the PLAIN calendar date in the office's zone, not on the
+        // 7pm business day — the same split the check-ins section above makes.
+        // At 7:15pm the business day is already tomorrow, and anchoring on it
+        // would hide an appointment at 8pm tonight and label tomorrow's "Today".
+        const from = checkinToday(tz);
+        const through = addIsoDays(from, UPCOMING_DAYS - 1);
+        // The day after the last day the page looks at — the scan's exclusive
+        // upper bound, used against both columns below.
+        const scanTo = addIsoDays(from, UPCOMING_DAYS);
+        const nowMs = Date.now();
+        // outcome_type = 'appointment' IS the exclusion rule. Completing an
+        // appointment overwrites the type on the same row — transferred and
+        // fell-through meetings are simply not in this result set — and a
+        // rebooked one keeps the type and carries its new time in follow_up_date,
+        // which is the column appointmentStamp reads. See
+        // UPCOMING_APPOINTMENT_TYPE and appointmentStamp.
+        //
+        // The date bounds only PRUNE the scan; what actually decides what is
+        // upcoming is selectUpcomingAppointments, on the office's clock.
+        //
+        // They ask EITHER column, and deliberately NOT the reminders' COALESCE.
+        // A COALESCE has a preference baked into it, and the two columns have
+        // drifted apart on plenty of rows already in the table — the Outcomes
+        // dialog used to save follow_up_date alone and leave
+        // appointment_datetime on the meeting's ORIGINAL time (see
+        // server/tv-board.ts). Pruned on the abandoned column, a meeting moved
+        // into next week never reaches appointmentStamp at all, and the wall
+        // loses a booking the app's own Appointments page still lists. A row
+        // whose live slot is outside the window is dropped a step later by the
+        // shared rule, which is the only thing here that knows which slot that
+        // is; a slightly wider scan is the price of never pre-empting it.
+        const rows = sqlite.prepare(
+          `SELECT o.id AS id, o.outcome_type AS outcomeType,
+                  o.borrower_name AS borrower,
+                  o.appointment_datetime AS appointmentDatetime,
+                  o.follow_up_date AS followUpDate,
+                  u.name AS clr, lo.full_name AS lo
+             FROM lead_outcomes o
+             LEFT JOIN users u ON u.id = o.assistant_id
+             LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+            WHERE o.org_id = ? AND o.outcome_type = ?
+              AND (   (NULLIF(o.follow_up_date, '')        >= ? AND NULLIF(o.follow_up_date, '')        < ?)
+                   OR (NULLIF(o.appointment_datetime, '')  >= ? AND NULLIF(o.appointment_datetime, '')  < ?))`,
+        ).all(orgId, UPCOMING_APPOINTMENT_TYPE, from, scanTo, from, scanTo) as any[];
+        // Whoever booked it is named, roster or not. This is a meeting that
+        // exists, not a ranking: dropping Elleine Asuncion's appointments
+        // because she carries exclude_from_stats would take real meetings off
+        // a wall whose entire job is listing them.
+        const upcoming = selectUpcomingAppointments(rows, { nowMs, today: from, days: UPCOMING_DAYS, tz });
+        return {
+          days: UPCOMING_DAYS,
+          from, through,
+          count: upcoming.length,
+          todayCount: upcoming.filter((a) => a.isToday).length,
+          // whenLabel is the board's one appointment-time renderer: a naive
+          // stamp is printed from its own digits and a zoned one is converted,
+          // so 14:30 is half two in the office whatever zone this box runs in.
+          // Nothing in here may format an appointment time any other way — a
+          // bare new Date() on these strings put a 2:30 PM meeting on the wall
+          // as 7:30 AM once already.
+          appointments: upcoming.map((a) => ({
+            id: a.id, borrower: a.borrower, clr: a.clr, lo: a.lo,
+            at: a.at, day: a.day, isToday: a.isToday,
+            // Null for a row that names a day and no clock reading; the page
+            // says "time not set" rather than inventing one.
+            when: a.timed ? whenLabel(a.at, tz) : null,
+          })),
+        };
       });
     } catch (e: any) {
       // Nothing above may 500 this route. A wall showing fewer pages beats a

@@ -7,12 +7,18 @@ import {
   tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
   starvedWindowStart, compareStarved, orderStarved,
   ACTIVE_WINDOW_SECONDS, ACTIVE_WINDOW_LABEL, LEAD_SOURCE_TRUSTED_FROM, STARVED_WINDOW_DAYS,
+  appointmentStamp, appointmentInstantMs, appointmentDay, isDateOnlyStamp,
+  upcomingHorizonMs, compareUpcoming, selectUpcomingAppointments,
+  UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE, type UpcomingApptRow,
 } from "../server/tv-pages";
-import { businessTodayInTz } from "../server/business-day";
+import { businessTodayInTz, parseWallClockInTz } from "../server/business-day";
+import Database from "better-sqlite3";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
+/** The module under test, read as text where a rule is a comment as much as code. */
+const pagesSource = readFileSync(join(root, "server/tv-pages.ts"), "utf8");
 
 // ── windows ─────────────────────────────────────────────────────────────────
 
@@ -414,4 +420,442 @@ test("last-transfer is the real last one, not the last one inside the window", (
   // MAX over a join that carries no date test. Clipping it to the window would
   // hand every starved row a null and lose the one thing they can say.
   assert.match(starvedSection(), /MAX\(o\.date\) AS lastAt/);
+});
+
+// ── what is coming up ───────────────────────────────────────────────────────
+
+const TZ = "America/Los_Angeles";
+/** Thursday. The whole upcoming block is read off this day. */
+const THU = "2026-09-03";
+const at = (wall: string) => parseWallClockInTz(wall, TZ);
+/** How the office clock reads an instant — the check that matters here. */
+const officeClock = (ms: number) => new Date(ms).toLocaleString("en-US", {
+  timeZone: TZ, weekday: "short", hour: "numeric", minute: "2-digit",
+});
+
+test("an appointment's time comes from follow_up_date, then appointment_datetime", () => {
+  // THE DRIFTED ROW. The Outcomes dialog used to save followUpDate alone and
+  // leave appointment_datetime sitting on the meeting's ORIGINAL time, and
+  // every meeting it moved before it started mirroring is still that shape in
+  // the table (server/tv-board.ts says so at length). follow_up_date is the
+  // live slot on those rows; appointment_datetime is the abandoned one.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-04T10:00", followUpDate: "2026-09-05T10:00" }),
+    "2026-09-05T10:00",
+    "the follow-up is the slot the meeting actually moved to",
+  );
+  // Mirrored rows — the shape every edit dialog writes now — agree either way.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-05T10:00", followUpDate: "2026-09-05T10:00" }),
+    "2026-09-05T10:00",
+  );
+  // Most rows in production have only this one: the Appointments page binds
+  // its datetime-local input to follow_up_date.
+  assert.equal(appointmentStamp({ followUpDate: "2026-09-04T10:00" }), "2026-09-04T10:00");
+  assert.equal(appointmentStamp({ appointmentDatetime: null, followUpDate: "2026-09-04" }), "2026-09-04");
+  // And CallSync books straight into appointment_datetime with no follow-up at
+  // all, so that column is still the fallback and always will be.
+  assert.equal(appointmentStamp({ appointmentDatetime: "2026-09-04T10:00" }), "2026-09-04T10:00");
+  assert.equal(appointmentStamp({ appointmentDatetime: "2026-09-04T10:00", followUpDate: "  " }), "2026-09-04T10:00");
+  // Blank is absent, exactly as SQL's NULLIF treats it.
+  assert.equal(appointmentStamp({ appointmentDatetime: "   ", followUpDate: "2026-09-04T10:00" }), "2026-09-04T10:00");
+  assert.equal(appointmentStamp({ appointmentDatetime: "", followUpDate: "" }), "");
+  assert.equal(appointmentStamp(null), "");
+});
+
+test("a day with no clock reading still takes the hour off the mirrored column", () => {
+  // The quick reschedule mirrors a value onto appointment_datetime only when it
+  // carries a "T" (appointments.tsx), so a date-only save leaves a timed stamp
+  // behind. When that stamp is on the SAME day the follow-up names, the two
+  // columns agree about the day and only one of them knows the hour — so the
+  // wall prints 10:00 instead of "time not set". It is a tie-break inside one
+  // day, never a preference: it cannot move a meeting to another day.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-04T10:00", followUpDate: "2026-09-04" }, TZ),
+    "2026-09-04T10:00",
+  );
+  // A different day is the drift again, and the follow-up wins outright.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-01T10:00", followUpDate: "2026-09-04" }, TZ),
+    "2026-09-04",
+  );
+  // Two date-only columns have no hour to borrow.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-04", followUpDate: "2026-09-04" }, TZ),
+    "2026-09-04",
+  );
+  // The day is compared on the OFFICE's clock, not on the stamp's leading ten
+  // characters: 04:30Z on the 4th is the evening of the 3rd in Los Angeles.
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-04T04:30:00Z", followUpDate: "2026-09-03" }, TZ),
+    "2026-09-04T04:30:00Z",
+  );
+  assert.equal(
+    appointmentStamp({ appointmentDatetime: "2026-09-04T04:30:00Z", followUpDate: "2026-09-04" }, TZ),
+    "2026-09-04",
+  );
+});
+
+test("the reminders keep their own COALESCE, and this page does not copy it", () => {
+  // reminders.ts prefers appointment_datetime, and that is right for a cron
+  // asking "is there a time to remind about". It is the wrong preference for a
+  // wall asking "which day is this meeting on", because on a drifted row the
+  // two columns answer differently — so the orders are opposite ON PURPOSE and
+  // this test pins both of them rather than letting them quietly converge.
+  const reminders = readFileSync(join(root, "server/reminders.ts"), "utf8");
+  const coalesce = reminders.slice(reminders.indexOf("COALESCE("), reminders.indexOf(") AS scheduled_date"));
+  assert.ok(
+    coalesce.indexOf("appointment_datetime") < coalesce.indexOf("follow_up_date"),
+    "the reminder cron still prefers appointment_datetime",
+  );
+  assert.match(routes, /Prefer appointment_datetime, fall back to follow_up_date/);
+  // The board's rule is the other way round, and says why.
+  const stamp = pagesSource.slice(
+    pagesSource.indexOf("Which of the two columns holds this appointment's LIVE time"),
+    pagesSource.indexOf("export function isDateOnlyStamp"),
+  );
+  assert.ok(stamp.indexOf("const follow =") < stamp.indexOf("const appt ="));
+  assert.match(stamp, /if \(!follow\) return appt;/);
+  assert.match(stamp, /appointments\.tsx/, "the surface the office already believes is named");
+});
+
+test("the board agrees with the Appointments page about which column is live", () => {
+  // The page the floor actually reads sorts, groups and prints from
+  // followUpDate alone — so a meeting it lists on Friday must not be on the
+  // wall as Tuesday's.
+  const appointments = readFileSync(join(root, "client/src/pages/appointments.tsx"), "utf8");
+  assert.match(appointments, /const dayOf = \(o: Outcome\) => String\(o\.followUpDate\)\.slice\(0, 10\);/);
+  assert.match(appointments, /\.sort\(\(a, b\) => \(a\.followUpDate \?\? "9999-99-99"\)/);
+  // And its edit dialog clears appointment_datetime rather than letting a stale
+  // value shadow the new follow-up: that column is a mirror, not a source.
+  const mirror = readFileSync(join(root, "client/src/lib/appointment-datetime.ts"), "utf8");
+  assert.match(mirror, /followUpDate\.includes\("T"\) \? followUpDate : null/);
+});
+
+test("a naive stamp is the office's wall clock, whatever zone this box is in", () => {
+  // The bug this exists to stop: "14:30" carries no zone, so handing it to
+  // Date.parse reads it in the SERVER's zone — UTC on Railway — and a 2:30 PM
+  // appointment went up on the wall as 7:30 AM.
+  const original = process.env.TZ;
+  try {
+    for (const tz of ["UTC", "America/New_York", "Asia/Manila", "America/Los_Angeles"]) {
+      process.env.TZ = tz;
+      assert.match(officeClock(appointmentInstantMs("2026-09-03T14:30", TZ)), /Thu 2:30 PM/, tz);
+      assert.match(officeClock(appointmentInstantMs("2026-09-03T09:05", TZ)), /Thu 9:05 AM/, tz);
+    }
+  } finally { process.env.TZ = original; }
+  // A stamp that DOES carry a zone is a real instant and is converted.
+  assert.match(officeClock(appointmentInstantMs("2026-09-03T21:30:00.000Z", TZ)), /Thu 2:30 PM/);
+});
+
+test("a day with no clock reading lasts until the end of that day", () => {
+  assert.equal(isDateOnlyStamp("2026-09-04"), true);
+  assert.equal(isDateOnlyStamp("2026-09-04T09:00"), false);
+  // 23:59, not midnight: resolving a date-only row at midnight would drop it
+  // off the board a minute into the morning it is actually due.
+  assert.equal(appointmentInstantMs("2026-09-04", TZ), at("2026-09-04T23:59"));
+  assert.ok(Number.isNaN(appointmentInstantMs("", TZ)));
+  assert.ok(Number.isNaN(appointmentInstantMs(null, TZ)));
+});
+
+test("the day label always agrees with the time printed beside it", () => {
+  // A naive stamp's leading ten characters ARE the office's day; converting
+  // them would be the 7:30 AM bug again. A zoned one is converted, which is
+  // the same split whenLabel makes when it renders the time.
+  assert.equal(appointmentDay("2026-09-03T23:30", TZ), "2026-09-03");
+  assert.equal(appointmentDay("2026-09-03", TZ), "2026-09-03");
+  // 04:30Z on the 4th is 9:30 PM on the 3rd in the office.
+  assert.equal(appointmentDay("2026-09-04T04:30:00Z", TZ), "2026-09-03");
+  assert.equal(appointmentDay("", TZ), "");
+});
+
+test("the horizon is today and the six days after it", () => {
+  assert.equal(UPCOMING_DAYS, 7);
+  // The last instant the page looks as far as: the end of today + 6.
+  assert.equal(upcomingHorizonMs(THU, 7, TZ), at("2026-09-09T23:59"));
+  assert.equal(upcomingHorizonMs(THU, 1, TZ), at("2026-09-03T23:59"), "one day means today only");
+  // Junk falls back to the constant rather than emptying the board.
+  assert.equal(upcomingHorizonMs(THU, 0 as any, TZ), upcomingHorizonMs(THU, UPCOMING_DAYS, TZ));
+  assert.equal(upcomingHorizonMs(THU, Number.NaN, TZ), upcomingHorizonMs(THU, UPCOMING_DAYS, TZ));
+});
+
+/** One board's worth of rows, all of them read against Thursday 10am. */
+const upcomingRows: UpcomingApptRow[] = [
+  { id: 1, outcomeType: "appointment", borrower: "Dana Whitfield", clr: "Jordon Chang", lo: "Alex Thompson", appointmentDatetime: "2026-09-03T14:30" },
+  { id: 2, outcomeType: "appointment", borrower: "Kevin Ostrowski", clr: "Marco Diaz", lo: "Shervin Mohseni", appointmentDatetime: "2026-09-03T09:00" },
+  { id: 3, outcomeType: "appointment", borrower: "Tomas Reyes", clr: "Elleine Asuncion", lo: "Derek Bullen", followUpDate: "2026-09-04T11:15" },
+  { id: 4, outcomeType: "appointment", borrower: "Priya Natarajan", clr: "Marco Diaz", lo: "Sean Murphy", appointmentDatetime: "", followUpDate: "2026-09-03" },
+  { id: 5, outcomeType: "appointment", borrower: "Ana Petrova", clr: "Jordon Chang", lo: "Michael Kim", appointmentDatetime: "2026-09-09T08:00" },
+  { id: 6, outcomeType: "appointment", borrower: "Too Far Out", clr: "Jordon Chang", lo: "Michael Kim", appointmentDatetime: "2026-09-10T08:00" },
+  { id: 7, outcomeType: "transfer", borrower: "Already Transferred", clr: "Marco Diaz", lo: "Alex Thompson", appointmentDatetime: "2026-09-04T10:00" },
+  { id: 8, outcomeType: "fell_through", borrower: "Fell Through", clr: "Marco Diaz", lo: "Alex Thompson", followUpDate: "2026-09-04T10:00" },
+  { id: 9, outcomeType: "appointment", borrower: "No Time Yet", clr: "Marco Diaz", lo: "Alex Thompson" },
+  { id: 10, outcomeType: "appointment", borrower: "Yesterday", clr: "Marco Diaz", lo: "Alex Thompson", appointmentDatetime: "2026-09-02T10:00" },
+];
+const upcomingAt10 = () =>
+  selectUpcomingAppointments(upcomingRows, { nowMs: at("2026-09-03T10:00"), today: THU, days: UPCOMING_DAYS, tz: TZ });
+
+test("only appointments that have not happened, inside the week, are on the board", () => {
+  assert.deepEqual(upcomingAt10().map((a) => a.id), [1, 4, 3, 5]);
+});
+
+test("an appointment that already started is off the board", () => {
+  // 9am is not "coming up" at two in the afternoon, and a board still listing
+  // it is worse than a board listing nothing.
+  const nine = upcomingAt10().find((a) => a.id === 2);
+  assert.equal(nine, undefined);
+  // At 8:30am it has not happened yet, so it IS on the board.
+  const earlier = selectUpcomingAppointments(upcomingRows, { nowMs: at("2026-09-03T08:30"), today: THU, tz: TZ });
+  assert.ok(earlier.some((a) => a.id === 2));
+  // Yesterday's is gone at any hour of today.
+  assert.ok(!earlier.some((a) => a.id === 10));
+});
+
+test("today's date-only appointment survives the whole day", () => {
+  const dateOnly = upcomingAt10().find((a) => a.id === 4);
+  assert.ok(dateOnly, "a day with no clock reading is still today's meeting");
+  assert.equal(dateOnly!.timed, false, "and the page is told there is no time to print");
+  assert.equal(dateOnly!.isToday, true);
+  // Still there at half four in the afternoon; gone once the day has ended.
+  const late = selectUpcomingAppointments(upcomingRows, { nowMs: at("2026-09-03T16:30"), today: THU, tz: TZ });
+  assert.ok(late.some((a) => a.id === 4));
+  const tomorrow = selectUpcomingAppointments(upcomingRows, { nowMs: at("2026-09-04T09:00"), today: "2026-09-04", tz: TZ });
+  assert.ok(!tomorrow.some((a) => a.id === 4));
+});
+
+test("transferred, fell-through and unfinished rows are all excluded", () => {
+  const ids = upcomingAt10().map((a) => a.id);
+  // Completing an appointment overwrites outcome_type on the same row, and the
+  // old appointment_datetime stays behind forever — so the type is the only
+  // honest test, and these two rows both carry a future time.
+  assert.ok(!ids.includes(7), "a transferred appointment is not upcoming");
+  assert.ok(!ids.includes(8), "one that fell through is not upcoming");
+  assert.ok(!ids.includes(9), "and one with no time at all is not on the board");
+  assert.equal(UPCOMING_APPOINTMENT_TYPE, "appointment");
+  // Every other type the Appointments page can save is out for the same reason.
+  for (const type of ["transfer", "fell_through", "callback_requested", "deferral", "future_contact", "no_answer", "not_interested", "wrong_number"]) {
+    const out = selectUpcomingAppointments(
+      [{ id: 99, outcomeType: type, borrower: "X", appointmentDatetime: "2026-09-04T10:00" }],
+      { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ },
+    );
+    assert.equal(out.length, 0, `${type} is not an appointment`);
+  }
+});
+
+test("the horizon cuts at the end of the seventh day, not the eighth", () => {
+  const ids = upcomingAt10().map((a) => a.id);
+  assert.ok(ids.includes(5), "the last day of the window is on the board");
+  assert.ok(!ids.includes(6), "the day after it is not");
+  // The very last minute of the window is in; the first minute after is out.
+  const edge = (stamp: string) => selectUpcomingAppointments(
+    [{ id: 1, outcomeType: "appointment", borrower: "Edge", appointmentDatetime: stamp }],
+    { nowMs: at("2026-09-03T10:00"), today: THU, days: 7, tz: TZ },
+  ).length;
+  assert.equal(edge("2026-09-09T23:59"), 1);
+  assert.equal(edge("2026-09-10T00:00"), 0);
+});
+
+test("soonest first, and ties never reshuffle between polls", () => {
+  // A date-only row sorts at the END of its day: the board does not know when
+  // it is, and guessing 9am would put it above meetings that have a real time.
+  assert.deepEqual(upcomingAt10().map((a) => a.borrower), [
+    "Dana Whitfield", "Priya Natarajan", "Tomas Reyes", "Ana Petrova",
+  ]);
+  const same = { atMs: 1, borrower: "", clr: "", lo: null, at: "", timed: true, day: "", isToday: false };
+  assert.ok(compareUpcoming({ ...same, id: 1, atMs: 1 }, { ...same, id: 2, atMs: 2 }) < 0);
+  assert.ok(compareUpcoming({ ...same, id: 1, borrower: "Zoe" }, { ...same, id: 2, borrower: "Adam" }) > 0);
+  assert.ok(compareUpcoming({ ...same, id: 7 }, { ...same, id: 3 }) > 0, "id is the last resort");
+});
+
+test("a rebooked appointment shows on its new slot, with nothing special done", () => {
+  // A move overwrites the time in place and keeps outcome_type 'appointment',
+  // so it simply arrives here as an appointment at the new time.
+  const moved = selectUpcomingAppointments(
+    [{ id: 1, outcomeType: "appointment", borrower: "Tomas Reyes", clr: "Marco Diaz", lo: "Derek Bullen", appointmentDatetime: "2026-09-08T16:15", followUpDate: "2026-09-08T16:15" }],
+    { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ },
+  );
+  assert.equal(moved.length, 1);
+  assert.match(officeClock(moved[0].atMs), /Tue 4:15 PM/);
+});
+
+/**
+ * A meeting the Outcomes dialog moved before it started mirroring.
+ *
+ * appointment_datetime is the ABANDONED original; follow_up_date is the slot
+ * the meeting actually has. This shape exists in production by the row-load —
+ * see server/tv-board.ts — and the app's own Appointments page lists these on
+ * the follow-up's day, because that is the only column it reads.
+ */
+const drifted: UpcomingApptRow[] = [
+  // Moved out of last Tuesday into next Tuesday. Preferring the appointment
+  // column would read a time in the PAST and drop the meeting off the wall
+  // entirely, while Appointments still shows it under Sep 8.
+  { id: 41, outcomeType: "appointment", borrower: "Rosa Iglesias", clr: "Marco Diaz", lo: "Derek Bullen",
+    appointmentDatetime: "2026-09-01T14:30", followUpDate: "2026-09-08T14:30" },
+  // Moved off this morning onto tomorrow afternoon. Preferring the appointment
+  // column would put it on the wall as TODAY at 9 — a meeting nobody has.
+  { id: 42, outcomeType: "appointment", borrower: "Owen Brady", clr: "Jordon Chang", lo: "Sean Murphy",
+    appointmentDatetime: "2026-09-03T09:00", followUpDate: "2026-09-04T13:00" },
+];
+
+test("a meeting moved before the mirror shows on its real day, not the abandoned one", () => {
+  const out = selectUpcomingAppointments(drifted, { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ });
+  assert.deepEqual(out.map((a) => a.id), [42, 41], "both survive, soonest first");
+
+  const [tomorrow, nextWeek] = out;
+  // The one whose abandoned time was 9am today: on the board for FRIDAY, not
+  // today, and not dropped as "already happened" at ten in the morning.
+  assert.equal(tomorrow.day, "2026-09-04");
+  assert.equal(tomorrow.isToday, false);
+  assert.match(officeClock(tomorrow.atMs), /Fri 1:00 PM/);
+  // The one moved into next week: on Tuesday the 8th, not last Tuesday.
+  assert.equal(nextWeek.day, "2026-09-08");
+  assert.match(officeClock(nextWeek.atMs), /Tue 2:30 PM/);
+
+  // The old rule is what this pins against: read appointment_datetime first and
+  // the first row is in the past and the second is on the wrong day.
+  const abandoned = drifted.map((r) => String(r.appointmentDatetime));
+  assert.ok(abandoned.every((stampText) => !out.some((a) => a.at === stampText)));
+});
+
+test("a drifted row is still gone once its REAL slot has passed", () => {
+  // The fix must not turn into "never let an appointment expire". The live slot
+  // is the one the past test is measured against, exactly like any other row.
+  const gone = selectUpcomingAppointments(
+    [{ id: 43, outcomeType: "appointment", borrower: "Past It", clr: "Marco Diaz",
+       appointmentDatetime: "2026-09-08T14:30", followUpDate: "2026-09-03T09:00" }],
+    { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ },
+  );
+  assert.equal(gone.length, 0, "the follow-up is 9am and it is now 10");
+  // ...and present an hour earlier, on the follow-up's time.
+  const [live] = selectUpcomingAppointments(
+    [{ id: 43, outcomeType: "appointment", borrower: "Past It", clr: "Marco Diaz",
+       appointmentDatetime: "2026-09-08T14:30", followUpDate: "2026-09-03T09:00" }],
+    { nowMs: at("2026-09-03T08:00"), today: THU, tz: TZ },
+  );
+  assert.match(officeClock(live.atMs), /Thu 9:00 AM/);
+  assert.equal(live.isToday, true);
+});
+
+test("a half-filled row is named, not left blank on a wall", () => {
+  const [row] = selectUpcomingAppointments(
+    [{ id: 1, outcomeType: "appointment", borrower: "  ", clr: null, lo: "  ", appointmentDatetime: "2026-09-04T10:00" }],
+    { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ },
+  );
+  assert.equal(row.borrower, "A borrower");
+  assert.equal(row.clr, "A CLR");
+  // The loan officer is the one thing left null: "with A loan officer" would
+  // be a claim, and the page says "no loan officer named" instead.
+  assert.equal(row.lo, null);
+});
+
+test("selecting leaves the caller's rows alone and answers an empty board", () => {
+  const before = upcomingRows.map((r) => r.id);
+  upcomingAt10();
+  assert.deepEqual(upcomingRows.map((r) => r.id), before);
+  assert.deepEqual(selectUpcomingAppointments([], { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ }), []);
+  assert.deepEqual(selectUpcomingAppointments(null, { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ }), []);
+});
+
+// ── the rules the upcoming section has to keep ──────────────────────────────
+
+/** Just the upcoming section of the /pages handler. */
+function upcomingSection(): string {
+  const body = pagesRoute();
+  const start = body.indexOf('section("upcoming"');
+  assert.ok(start > 0, "the upcoming section is built through the wrapper");
+  const end = body.indexOf("} catch (e: any) {", start);
+  assert.ok(end > start, "it is bounded by the handler's own catch");
+  return body.slice(start, end);
+}
+
+test("the upcoming section reads only appointments, org-scoped", () => {
+  const s = upcomingSection();
+  assert.match(s, /FROM lead_outcomes o/);
+  assert.match(s, /o\.org_id = \? AND o\.outcome_type = \?/);
+  assert.match(s, /UPCOMING_APPOINTMENT_TYPE/, "the type comes from the shared constant");
+  // The CLR and the LO are LEFT JOINs: an appointment with no LO yet is still
+  // a meeting, and dropping it would be a hole in the schedule.
+  assert.match(s, /LEFT JOIN users u ON u\.id = o\.assistant_id/);
+  assert.match(s, /LEFT JOIN loan_officers lo ON lo\.id = o\.lo_id/);
+});
+
+test("the SQL bounds only prune; the shared rule decides", () => {
+  const s = upcomingSection();
+  // NOT a COALESCE any more, on purpose. A COALESCE carries a preference, and
+  // the two columns disagree on rows already in the table — pruning on the
+  // abandoned one drops a rescheduled meeting before appointmentStamp ever
+  // sees it. The scan asks EITHER column and lets the shared rule choose.
+  assert.doesNotMatch(s, /COALESCE\(/, "no preference is baked into the scan");
+  assert.match(s, /NULLIF\(o\.follow_up_date, ''\)\s+>= \? AND NULLIF\(o\.follow_up_date, ''\)\s+< \?/);
+  assert.match(s, /NULLIF\(o\.appointment_datetime, ''\)\s+>= \? AND NULLIF\(o\.appointment_datetime, ''\)\s+< \?/);
+  assert.match(s, /const scanTo = addIsoDays\(from, UPCOMING_DAYS\);/);
+  assert.match(s, /\.all\(orgId, UPCOMING_APPOINTMENT_TYPE, from, scanTo, from, scanTo\)/);
+  assert.match(s, /selectUpcomingAppointments\(rows, \{ nowMs, today: from, days: UPCOMING_DAYS, tz \}\)/);
+  // No second copy of the window arithmetic in the route.
+  assert.ok(!/\.sort\(/.test(s), "the ordering lives in one tested place");
+});
+
+test("the SQL bound cannot prune a drifted row before the rule runs", () => {
+  // The route's own statement, lifted out of routes.ts and run against a
+  // throwaway database. Reading the text proves the shape; running it proves
+  // the row survives, which is the thing that actually went wrong.
+  const sql = /sqlite\.prepare\(\s*`([\s\S]*?)`/.exec(upcomingSection())?.[1];
+  assert.ok(sql && /FROM lead_outcomes/.test(sql), "the upcoming statement was found");
+
+  const db = new Database(":memory:");
+  db.exec(`
+    CREATE TABLE lead_outcomes (
+      id INTEGER PRIMARY KEY, org_id INTEGER, outcome_type TEXT, borrower_name TEXT,
+      appointment_datetime TEXT, follow_up_date TEXT, assistant_id INTEGER, lo_id INTEGER);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+    CREATE TABLE loan_officers (id INTEGER PRIMARY KEY, full_name TEXT);
+    INSERT INTO users VALUES (1, 'Marco Diaz');
+    INSERT INTO loan_officers VALUES (1, 'Derek Bullen');
+  `);
+  const insert = db.prepare(
+    "INSERT INTO lead_outcomes (id, org_id, outcome_type, borrower_name, appointment_datetime, follow_up_date, assistant_id, lo_id)"
+    + " VALUES (?, 1, 'appointment', ?, ?, ?, 1, 1)",
+  );
+  // 1: drifted — the abandoned original is a week in the past, the live slot is
+  //    inside the window. The COALESCE bound pruned exactly this row.
+  insert.run(1, "Rosa Iglesias", "2026-09-01T14:30", "2026-09-08T14:30");
+  // 2: drifted the other way — the abandoned original is inside the window and
+  //    the live slot is beyond it. Kept by the scan, dropped by the rule.
+  insert.run(2, "Late Mover", "2026-09-04T09:00", "2026-09-30T09:00");
+  // 3: CallSync's shape — appointment_datetime only, no follow-up at all.
+  insert.run(3, "Call Sync", "2026-09-05T11:00", null);
+  // 4: mirrored, the shape every edit dialog writes now.
+  insert.run(4, "Mirrored", "2026-09-06T12:00", "2026-09-06T12:00");
+  // 5: blank strings in both columns — NULLIF territory, and nothing to show.
+  insert.run(5, "Unfinished", "", "");
+  // 6: nowhere near the window on either column.
+  insert.run(6, "Next Month", "2026-10-14T09:00", "2026-10-14T09:00");
+
+  const from = THU, scanTo = "2026-09-10";
+  const rows = db.prepare(sql!).all(1, UPCOMING_APPOINTMENT_TYPE, from, scanTo, from, scanTo) as any[];
+  const scanned = rows.map((r) => r.id).sort((a, b) => a - b);
+  assert.deepEqual(scanned, [1, 2, 3, 4], "the drifted row reaches the rule; the far-off ones do not");
+
+  // And through the rule, the drifted row lands on its real day.
+  const out = selectUpcomingAppointments(rows as UpcomingApptRow[], { nowMs: at("2026-09-03T10:00"), today: THU, tz: TZ });
+  assert.deepEqual(out.map((r) => r.id), [3, 4, 1]);
+  assert.equal(out.find((r) => r.id === 1)!.day, "2026-09-08");
+  assert.ok(!out.some((r) => r.id === 2), "a live slot past the horizon is still dropped");
+  // The columns come back under the names the shared rule expects — an alias
+  // typo here would silently blank every time on the wall.
+  assert.deepEqual(
+    Object.keys(rows[0]).sort(),
+    ["appointmentDatetime", "borrower", "clr", "followUpDate", "id", "lo", "outcomeType"],
+  );
+  db.close();
+});
+
+test("the upcoming page is anchored on the calendar day, not the business day", () => {
+  const s = upcomingSection();
+  // checkinToday is the plain local calendar date. w.today is the 7pm business
+  // day, which at 7:15pm is already tomorrow — it would hide an 8pm meeting
+  // tonight and label tomorrow's "Today".
+  assert.match(s, /const from = checkinToday\(tz\);/);
+  assert.ok(!/w\.today/.test(s), "the business-day anchor must not leak in here");
 });

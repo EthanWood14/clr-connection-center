@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
 import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
+import { countNonSundaysInMonth } from "@shared/pace-days";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -285,7 +286,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
               <th className="text-left px-3 py-2 font-medium w-8">#</th>
               <th className="text-left px-3 py-2 font-medium">CLR</th>
               {cols.map(c => <th key={c.key} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
-              {pace && <th className="text-center px-3 py-2 font-medium whitespace-nowrap">Pace</th>}
+              {pace && <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Projected month-end transfers. Sundays are not counted as worked days.">Pace</th>}
             </tr>
           </thead>
           <tbody>
@@ -833,7 +834,7 @@ export default function ManagerDashboard() {
         </SectionTitle>
         {scorecardRange === "mtd" && (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Pace projects the whole month from what has happened so far:</span>
+            <span>Pace projects the whole month from what has happened so far, Sundays not counted:</span>
             {[...PACE_TIERS].reverse().map(t => (
               <span key={t.at} className="rounded px-1.5 py-0.5 font-bold" style={{ backgroundColor: t.color, color: t.text }}>
                 {t.label}+
@@ -845,9 +846,16 @@ export default function ManagerDashboard() {
           pace={scorecardRange === "mtd" ? (() => {
             const w = byRange.mtd?.window;
             if (!w?.endDate) return undefined;
-            const [y, m] = w.endDate.split("-").map(Number);
-            // Day 0 of the NEXT month is the last day of this one.
-            return { daysElapsed: w.days ?? 0, daysInMonth: new Date(Date.UTC(y, m, 0)).getUTCDate() };
+            const [y, m, d] = w.endDate.split("-").map(Number);
+            // Sundays are not working days, so BOTH halves of the ratio count only
+            // non-Sundays: divide by the ones already worked, multiply by the ones
+            // the month will have. Feeding one half non-Sundays and the other raw
+            // calendar days would inflate every projection by about a seventh.
+            // (Deliberately not the comp estimate's rule — see shared/pace-days.ts.)
+            return {
+              daysElapsed: countNonSundaysInMonth(y, m, d),
+              daysInMonth: countNonSundaysInMonth(y, m),
+            };
           })() : undefined}
           rows={byRange[scorecardRange]?.leaderboard ?? []}
           rangeLabel={byRange[scorecardRange]?.window?.label ?? SCORECARD_OPTIONS.find(option => option.key === scorecardRange)?.label ?? "selected"}

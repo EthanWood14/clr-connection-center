@@ -24,7 +24,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy } from "lucide-react";
+import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy } from "lucide-react";
 
 // ── local twins of the tv.tsx pieces ────────────────────────────────────────
 // Same look, same timings. tv.tsx does not export them, and a near-miss on a
@@ -104,10 +104,11 @@ const PAN_SECONDS = {
   leadSource: 11,
   onPhoneNow: 9,
   starved: 13,
+  upcoming: 13,
 } as const;
 
 /** The clipping box a panned list lives in, as a flex child. */
-const PAN_BOX = "min-h-0 flex-1 overflow-hidden";
+export const PAN_BOX = "min-h-0 flex-1 overflow-hidden";
 
 /**
  * Pan a list that does not fit instead of cutting it off.
@@ -125,13 +126,20 @@ const PAN_BOX = "min-h-0 flex-1 overflow-hidden";
  * that far: the last name lands on the bottom edge, never short of it and
  * never into empty space below it.
  *
+ * Exported, along with PAN_BOX, because the scorecard in tv.tsx pans too and
+ * used to do it with its own arithmetic — rows times a hard-coded 7.6rem, past
+ * a hard-coded six that fit. Both of those numbers were read off the height the
+ * deck had before the bottom strip took ten percent of the screen, and neither
+ * of them knows that happened; the measured version simply asks the box. One
+ * pan on this wall, and it is this one.
+ *
  * Put `ref` on a clipping box (PAN_BOX as a flex child) and `style` on the one
  * list inside it. A list that fits gets no animation at all, and neither does
  * anything under reduced motion — there the first screenful simply sits still,
  * which is why `overflowing` stays true either way: it drives the quiet count
  * line, and a reader who is not being panned needs it more, not less.
  */
-function usePan(seconds: number, reduced: boolean) {
+export function usePan(seconds: number, reduced: boolean) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [over, setOver] = useState(0);
   // Deliberately no dependency list. The board polls every thirty seconds and
@@ -959,6 +967,120 @@ export function StarvedPage({ days, los, loas, reduced }: {
           Send the next ones to {nameList(least.map((p) => `${p.name} (${Number(p.transfers) || 0})`))}.
         </motion.p>
       )}
+    </div>
+  );
+}
+
+// ── what is coming up ───────────────────────────────────────────────────────
+export interface TvUpcomingAppointment {
+  id: number;
+  borrower: string;
+  /** The CLR who booked it. */
+  clr: string;
+  /** The loan officer it is with. Null when the row never named one. */
+  lo: string | null;
+  /**
+   * The time, ALREADY RENDERED by the server's whenLabel — "Thu 2:30 PM".
+   *
+   * It arrives as a string on purpose. These stamps carry no timezone: they
+   * are the wall clock somebody typed, and reading one with `new Date()` in a
+   * browser (or on a server running UTC, which is how this bit once) turns a
+   * 2:30 PM appointment into a 7:30 AM one. This page therefore does no date
+   * arithmetic of any kind — it prints what it is given.
+   */
+  when: string | null;
+  /** The calendar day, YYYY-MM-DD, for the small line above the time. */
+  day: string;
+  isToday: boolean;
+}
+
+/**
+ * The meetings that are still coming.
+ *
+ * The one question this page answers from the far side of the room is "what is
+ * on today, and who is it with". So today's rows are the amber ones and the
+ * pill counts them; everything else is the week behind them, soonest first.
+ *
+ * Three names on a row and no numbers anywhere: a borrower, the CLR who booked
+ * it, and the loan officer it is with. There is deliberately no count per CLR
+ * and no ranking — appointments booked is already a column on the scorecard,
+ * and a second leaderboard hiding inside a schedule would quietly turn a list
+ * people need to READ into one they check their own position on.
+ */
+export function UpcomingPage({ appointments, days, todayCount, reduced }: {
+  appointments: TvUpcomingAppointment[];
+  days: number;
+  todayCount: number;
+  reduced: boolean;
+}) {
+  const win = Math.max(1, Math.round(Number(days) || 7));
+  const list = appointments ?? [];
+  const dueToday = Math.max(0, Math.round(Number(todayCount) || 0));
+  const pan = usePan(PAN_SECONDS.upcoming, reduced);
+
+  return (
+    <div className={PAGE} data-testid="tv-page-upcoming">
+      <div className="mb-8 flex items-end justify-between gap-8">
+        <div className="min-w-0">
+          <Eyebrow>Next {win} days · {list.length} booked</Eyebrow>
+          <h2 className={TITLE}>Coming up</h2>
+          <p className="mt-2 text-[clamp(1.05rem,1.5vw,1.55rem)] text-white/45">
+            Appointments still on the books, soonest first.
+          </p>
+        </div>
+        {dueToday > 0 ? (
+          <HeaderPill tone="gold" icon={<CalendarClock className="h-8 w-8 shrink-0" />}>
+            <span className="truncate">{dueToday} still today</span>
+          </HeaderPill>
+        ) : (
+          <HeaderPill icon={<CalendarClock className="h-8 w-8 shrink-0" />}>Nothing left today</HeaderPill>
+        )}
+      </div>
+
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col justify-start gap-3" style={pan.style}>
+          {list.map((a) => (
+            <motion.li
+              key={a.id} variants={rise(reduced)}
+              className={`grid grid-cols-[16rem_1fr_auto] items-center gap-6 rounded-2xl border px-6 py-3.5 ${
+                a.isToday ? "border-amber-300/45 bg-amber-400/[0.10]" : "border-white/10 bg-white/[0.04]"
+              }`}
+              data-testid="tv-row"
+            >
+              <div className="min-w-0">
+                <p className={`text-[clamp(0.85rem,1.1vw,1.15rem)] font-semibold uppercase tracking-[0.22em] ${
+                  a.isToday ? "text-amber-200/85" : "text-white/35"
+                }`}>
+                  {a.isToday ? "Today" : shortDay(a.day) ?? ""}
+                </p>
+                <p className={`whitespace-nowrap text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight ${
+                  a.isToday ? "text-amber-200" : "text-white/85"
+                }`}>
+                  {/* A row with a day and no clock reading says so. A made-up
+                      9am would be read as a time somebody agreed to. */}
+                  {a.when ?? <span className="text-white/35">time not set</span>}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-[clamp(1.5rem,2.4vw,2.6rem)] font-bold leading-tight" title={a.borrower}>{a.borrower}</p>
+                <p className="truncate text-[clamp(1rem,1.35vw,1.35rem)] text-white/45">Booked by {a.clr}</p>
+              </div>
+              <div className="flex min-w-0 items-center justify-end gap-3">
+                <span className="shrink-0 text-[clamp(1rem,1.3vw,1.3rem)] text-white/35">with</span>
+                {a.lo
+                  ? <NameChip name={a.lo} />
+                  : <span className="text-[clamp(1.1rem,1.5vw,1.5rem)] text-white/30">no loan officer named</span>}
+              </div>
+            </motion.li>
+          ))}
+          {!list.length && (
+            <li className={EMPTY}>
+              Nothing booked for the next {win} days. The board is clear.
+            </li>
+          )}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{list.length} in the next {win} days</PanCount>}
     </div>
   );
 }
