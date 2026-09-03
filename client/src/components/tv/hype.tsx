@@ -36,12 +36,12 @@ export const HYPE_IMPACT_MS: Record<HypeKind, number> = {
 const FLOOR = 62;
 
 const WORD: Record<HypeKind, string> = {
-  transfer: "TRANSFER!", appointment: "BOOKED!", rescheduled: "MOVED",
+  transfer: "TRANSFER!", appointment: "BOOKED!", rescheduled: "REBOOKED",
   fell_through: "FELL THROUGH", missed_appointment: "NO-SHOW", milestone: "MILESTONE!",
 };
 
 const KICKER: Record<HypeKind, string> = {
-  transfer: "LIVE TRANSFER", appointment: "MEETING SET", rescheduled: "MEETING MOVED",
+  transfer: "LIVE TRANSFER", appointment: "MEETING SET", rescheduled: "MEETING REBOOKED",
   fell_through: "IT HAPPENS", missed_appointment: "MISSED APPOINTMENT", milestone: "TEAM MILESTONE",
 };
 

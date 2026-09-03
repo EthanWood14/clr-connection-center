@@ -3230,6 +3230,8 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   // webhook_settings: LeadVault reporting token (outbound call summary feed)
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN leadvault_reporting_token TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN callsync_secret TEXT`); } catch {}
+  // webhook_settings: LeadVault "new lead" webhook secret (the office TV strip)
+  try { sqlite.exec(`ALTER TABLE webhook_settings ADD COLUMN leadvault_lead_secret TEXT`); } catch {}
 
   // One C3 outcome per CallSync call. Later recording/AI events update the same
   // outcome instead of inflating transfer and appointment totals.
@@ -4947,7 +4949,7 @@ export function getUnmappedDialpadAgents(orgId: number, sinceDate: string): any[
 
 export function getWebhookSettings() {
   const row = sqlite.prepare(`SELECT * FROM webhook_settings WHERE id=1`).get() as any;
-  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null, zapier_webhook_url: null, zapier_secret: null, leadvault_reporting_token: null, callsync_secret: null };
+  return row ?? { id: 1, mojo_secret: null, bonzo_secret: null, bonzo_api_token: null, mojo_api_key: null, zapier_webhook_url: null, zapier_secret: null, leadvault_reporting_token: null, callsync_secret: null, leadvault_lead_secret: null };
 }
 
 export function updateWebhookSettings(data: {
@@ -4959,6 +4961,7 @@ export function updateWebhookSettings(data: {
   zapierSecret?: string | null;
   leadvaultReportingToken?: string | null;
   callsyncSecret?: string | null;
+  leadvaultLeadSecret?: string | null;
 }) {
   const now = new Date().toISOString();
   const existing = getWebhookSettings();
@@ -4970,9 +4973,10 @@ export function updateWebhookSettings(data: {
   const zapSecret = data.zapierSecret !== undefined ? (data.zapierSecret || null) : existing.zapier_secret;
   const lvToken = data.leadvaultReportingToken !== undefined ? (data.leadvaultReportingToken || null) : existing.leadvault_reporting_token;
   const callSyncSecret = data.callsyncSecret !== undefined ? (data.callsyncSecret || null) : existing.callsync_secret;
+  const lvLeadSecret = data.leadvaultLeadSecret !== undefined ? (data.leadvaultLeadSecret || null) : existing.leadvault_lead_secret;
   sqlite.prepare(
-    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, zapier_webhook_url=?, zapier_secret=?, leadvault_reporting_token=?, callsync_secret=?, updated_at=? WHERE id=1`
-  ).run(mojo, bonzo, bonzoToken, mojoKey, zapUrl, zapSecret, lvToken, callSyncSecret, now);
+    `UPDATE webhook_settings SET mojo_secret=?, bonzo_secret=?, bonzo_api_token=?, mojo_api_key=?, zapier_webhook_url=?, zapier_secret=?, leadvault_reporting_token=?, callsync_secret=?, leadvault_lead_secret=?, updated_at=? WHERE id=1`
+  ).run(mojo, bonzo, bonzoToken, mojoKey, zapUrl, zapSecret, lvToken, callSyncSecret, lvLeadSecret, now);
   return getWebhookSettings();
 }
 

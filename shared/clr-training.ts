@@ -46,7 +46,6 @@ export const TRAINING_DAYS: TrainingDay[] = [
       "Take them through the info sheet on a live call. Get someone on the phone, take all the information, and get the transfer. Explain each step again after the call. Show them what it looks like in action to help them better understand the process.",
       "Let them listen to a call and have them jot the information down on their own blank sheet. This builds muscle memory when they get on the phones.",
       "Roleplay some more with the trainee. Have them fill out the info sheet as you go along. Go through each of the Big Three scenarios (Refinance, HELOC, and Reverse). Don't stop until they each have a clean and smooth call.",
-      "Have them do some live dials. Nothing is better for learning than practice. This session should be heavily supervised. Genuinely do not leave their side and make sure everything goes smoothly. Get that transfer!",
       "Finally, print and have them take Quiz #2.",
     ],
     eod: "They should be set up on the computer and systems and be able to complete one smooth info-sheet roleplay call.",
@@ -63,7 +62,6 @@ export const TRAINING_DAYS: TrainingDay[] = [
     ],
     afternoon: [
       "Come back to more roleplaying, this time focusing on open-ended questions. Have them try to hold a 10-minute conversation with you by only using open-ended questions.",
-      "Have them shadow some more live dials after this. Show them in action how to reframe an objection. Then, have them make some live dials. It should be heavily supervised again. They should be practicing getting over objections here.",
     ],
     eod: "Pass Quiz #3 and complete two smooth roleplay calls while getting over objections and asking open-ended questions. That 10-minute mock phone call is a good baseline for this. They should also be able to get past the top four objections without thinking about it.",
   },

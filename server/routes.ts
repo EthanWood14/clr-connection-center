@@ -21,7 +21,12 @@ import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buc
 import { summarizeCompleteness, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
 import { summarizeNetworks, type NetworkObservation } from "./checkin-networks";
 import { parseTrainingDays, readStoredManual, canEditTraining } from "@shared/training-manual";
-import { classifyOutcome, detectMilestones, flattenTips, pickTip, type PersonStats } from "./tv-board";
+import {
+  classifyOutcome, detectAppointmentMove, detectMilestones, flattenTips, normalizeAppointmentTime, pickTip,
+  rescheduleStampIsStale,
+  type PersonStats,
+} from "./tv-board";
+import { recordNewLead, newLeadsSince } from "./tv-leads";
 import {
   tvPageWindows, previousBusinessDay, leadSourceCoverage, activeAgoSeconds, activeCount,
   starvedWindowStart, orderStarved,
@@ -59,12 +64,13 @@ import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStat
 import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate } from "./clr-workday-rate";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
-import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz } from "./business-day";
+import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz, isValidTimezone, normalizeTimezone } from "./business-day";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBonzoSource } from "./shotgun-bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "./clr-task-scheduler";
+import { formatTaskDueLabel, notifyTaskAssignment, taskAssigneeChanged, type TaskAssignmentReason } from "./clr-task-assignment-email";
 import {
   evaluateCheckinIp,
   normalizeAllowedIps,
@@ -5086,8 +5092,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Update own profile preferences (currently: timezone).
-  // IANA timezone name, validated against Intl.supportedValuesOf when available;
-  // we also fall back to constructing an Intl.DateTimeFormat to probe the value.
+  // IANA timezone name, checked by isValidTimezone — the one rule every route
+  // that writes a timezone column shares (server/business-day.ts).
   app.patch("/api/auth/profile", requireAuth, (req: any, res) => {
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -5096,17 +5102,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     if (typeof body.timezone === "string") {
       const tz = body.timezone.trim();
-      let valid = false;
-      try {
-        const supported = (Intl as any).supportedValuesOf?.("timeZone") as string[] | undefined;
-        if (supported && Array.isArray(supported)) {
-          valid = supported.includes(tz);
-        } else {
-          new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
-          valid = true;
-        }
-      } catch { valid = false; }
-      if (!valid) return res.status(400).json({ error: `Invalid timezone: ${tz}` });
+      if (!isValidTimezone(tz)) return res.status(400).json({ error: `Invalid timezone: ${tz}` });
       patch.timezone = tz;
     }
 
@@ -5433,6 +5429,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // LeadVault/CallSync authenticates this machine-to-machine endpoint with
     // the shared x-api-token inside the route handler.
     if (req.path === "/webhook/callsync") return next();
+    // Same shared-token door, for the "a lead landed" notice the office TV
+    // shows. Verified inside the handler; unconfigured means shut, not open.
+    if (req.path === "/webhook/leadvault-lead") return next();
     // LO/LOA self-service portal — no C3 login; each request resolves an
     // organization-scoped shared code before touching roster data.
     if (req.path.startsWith("/portal/")) return next();
@@ -5507,6 +5506,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isAdmin) return res.status(403).json({ error: "Admins only" });
     const parsed = insertUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    // insertUserSchema is generated from the table, so `timezone` is nothing
+    // more than TEXT to it. The same check the profile route makes, made here
+    // too — an account minted with a junk zone breaks every read path that
+    // hands it to Intl, and nobody is looking at a new hire's timezone.
+    if (req.body?.timezone !== undefined) {
+      const tz = String(req.body.timezone ?? "").trim();
+      if (!isValidTimezone(tz)) return res.status(400).json({ error: `Invalid timezone: ${tz}` });
+      (parsed.data as any).timezone = tz;
+    }
     // Force the new user into the creator's org; only a super-admin may mint a
     // super-admin or place a user in another org (anti mass-assignment).
     const createData: any = { ...parsed.data };
@@ -5685,6 +5693,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     ];
     if (!isAdmin) for (const k of PRIVILEGED) delete (rest as any)[k];
     if (!isSuper) { delete (rest as any).superAdmin; delete (rest as any).super_admin; }
+    // users.timezone is not a preference, it is an argument to Intl. This route
+    // takes the whole body, so before this check any signed-in account could
+    // store "" or "Mars/Olympus_Mons" on itself and every read path that formats
+    // in that zone — task deadlines, EOD windows, push quiet hours, the overdue
+    // sweep — raised a RangeError somewhere else entirely, long after the
+    // request that caused it. Checked at the write, with the same rule as
+    // PATCH /api/auth/profile. `null` is rejected with everything else: the
+    // column is NOT NULL with a real default, so "unset" is not a value to send.
+    if ("timezone" in (rest as any)) {
+      const tz = typeof (rest as any).timezone === "string" ? (rest as any).timezone.trim() : (rest as any).timezone;
+      if (!isValidTimezone(tz)) return res.status(400).json({ error: `Invalid timezone: ${tz}` });
+      (rest as any).timezone = tz;
+    }
     if (newPassword?.trim()) {
       const hash = await bcrypt.hash(newPassword.trim(), 10);
       storage.setUserPassword(id, hash);
@@ -7239,17 +7260,68 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       completedByName: String(entry.completed_by_name ?? "Unknown"), note: String(entry.note ?? ""),
     })),
   });
-  const emailTaskAssignment = (assignee: any, task: { title: string; description: string; due: Date; assignedBy: string }) => {
-    const email = String(assignee?.email ?? "").trim();
-    if (!email.includes("@")) return;
-    const subject = `New C3 task: ${task.title}`;
-    const safeTitle = eodActivityEsc(task.title);
-    const safeDetails = eodActivityEsc(task.description || "No additional instructions were provided.");
-    const safeManager = eodActivityEsc(task.assignedBy || "A manager");
-    const safeDue = eodActivityEsc(task.due.toLocaleString("en-US", { timeZone: assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
-    void sendEmail({ to: [email], subject, html: buildEmail({ subject, preheader: `Due ${safeDue}`, body:
-      `<p><strong>${safeManager}</strong> assigned you a new task in C3.</p><div style="padding:16px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0"><p style="margin:0 0 8px"><strong>${safeTitle}</strong></p><p style="margin:0 0 8px">${safeDetails}</p><p style="margin:0;color:#b45309"><strong>Due: ${safeDue}</strong></p></div><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }) })
-      .catch((error: any) => console.error("[clr-tasks] assignment email failed:", error?.message ?? error));
+  // Email whoever a task lands on. The in-app notice and push reach them while
+  // they are in C3; this is what reaches them when they are not. Every rule for
+  // when NOT to send — an auto-spawned recurrence, a self-assignment, an
+  // account with no real mailbox — is stated in server/clr-task-assignment-email.ts,
+  // and none of them can fail the request: the row is already committed and
+  // notifyTaskAssignment neither throws nor returns a promise to await. (There
+  // is no email opt-out to honour here: users.mute_* covers chat and forum
+  // notifications only, and assigned work is not something a CLR opts out of.)
+  const emailTaskAssignment = (
+    assignee: any,
+    task: { title: string; description: string; due: Date; assignedBy: string; assignedByUserId: number },
+    reason: TaskAssignmentReason,
+  ) => notifyTaskAssignment({
+    // Queued like the rest of C3's mail rather than { immediate: true }: this
+    // is a notice, not the overdue alert whose delivery has to be recorded.
+    send: (message) => sendEmail({ to: [message.to], subject: message.subject, html: message.html }),
+    render: (input, dueLabel) => {
+      const taskTitle = String(input.task.title ?? "");
+      const subject = input.reason === "reassigned" ? `C3 task assigned to you: ${taskTitle}` : `New C3 task: ${taskTitle}`;
+      const safeTitle = eodActivityEsc(taskTitle);
+      const safeDetails = eodActivityEsc(input.task.description || "No additional instructions were provided.");
+      const safeManager = eodActivityEsc(input.task.assignedBy || "A manager");
+      // dueLabel already names the zone it is written in — see formatTaskDueLabel.
+      const safeDue = eodActivityEsc(dueLabel);
+      const lead = input.reason === "reassigned"
+        ? `<p><strong>${safeManager}</strong> moved a C3 task to you.</p>`
+        : `<p><strong>${safeManager}</strong> assigned you a new task in C3.</p>`;
+      return { subject, html: buildEmail({ subject, preheader: `Due ${safeDue}`, body:
+        `${lead}<div style="padding:16px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0"><p style="margin:0 0 8px"><strong>${safeTitle}</strong></p><p style="margin:0 0 8px">${safeDetails}</p><p style="margin:0;color:#b45309"><strong>Due: ${safeDue}</strong></p></div><p><a href="https://www.westcapitallending.center/#/tasks">Open Task Center</a></p>` }) };
+    },
+    log: (message: string) => console.log(message),
+    onError: (message: string) => console.error(message),
+  }, {
+    reason,
+    assignee: {
+      id: Number(assignee?.id ?? 0) || 0,
+      name: assignee?.name ?? null,
+      email: assignee?.email ?? null,
+      timezone: assignee?.timezone ?? null,
+    },
+    task,
+  });
+
+  // Occurrences the recurrence engine created by itself go through the same
+  // notifier, tagged "recurrence_spawn", so "an automatic spawn is not an
+  // assignment decision" is one named policy in one file instead of a rule that
+  // holds only because nobody ever wired a call here.
+  const announceSpawnedTaskOccurrence = (row: any) => {
+    if (!row) return;
+    const assignee = storage.getUserById(Number(row.assigned_user_id)) as any;
+    const creator = storage.getUserById(Number(row.created_by_user_id)) as any;
+    emailTaskAssignment(assignee, {
+      title: String(row.title ?? ""), description: String(row.description ?? ""),
+      due: new Date(String(row.due_at)), assignedBy: String(creator?.name ?? "A manager"),
+      assignedByUserId: Number(row.created_by_user_id) || 0,
+    }, "recurrence_spawn");
+  };
+
+  // Every catch-up hands what it created straight to the policy above, so a
+  // new occurrence is never quietly created without that decision being made.
+  const announceSpawnedTaskOccurrences = (created: any[]) => {
+    for (const row of created ?? []) announceSpawnedTaskOccurrence(row);
   };
 
   app.get("/api/clr-tasks", requireAuth, (req: any, res) => {
@@ -7259,7 +7331,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const canManage = taskManager(me);
     // Do not depend solely on the minute cron. A server restart or sleeping
     // browser catches every recurring series up before the task list renders.
-    ensureRecurringTaskOccurrences(taskSqlite(), new Date().toISOString(), 500, orgId);
+    announceSpawnedTaskOccurrences(ensureRecurringTaskOccurrences(taskSqlite(), new Date().toISOString(), 500, orgId));
     const rows = taskSqlite().prepare(`
       SELECT t.*, assigned.name AS assigned_user_name, creator.name AS created_by_name,
         (SELECT COUNT(*) FROM clr_task_completions c WHERE c.task_id=t.id) AS completion_count,
@@ -7325,16 +7397,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const result = taskSqlite().prepare(`
       INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?, 'active',?,?)
-    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ, due.toISOString(), now, now);
+    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone), due.toISOString(), now, now);
     const id = Number(result.lastInsertRowid);
     taskSqlite().prepare(`UPDATE clr_tasks SET series_id=? WHERE id=?`).run(id, id);
+    // `users.timezone ?? default` is not a guard. `??` catches null and nothing
+    // else, and that column holds blank strings and zone names Intl has never
+    // heard of — either of which throws a RangeError right HERE: after the row
+    // is committed and before emailTaskAssignment, so the task exists and the
+    // CLR is never told about it.
+    //
+    // So a stored zone meets Intl in exactly two places, both of which treat
+    // blank and unusable alike and fall back to the office's clock:
+    // formatTaskDueLabel writes every deadline a person reads, and
+    // normalizeTimezone settles the zone this row is STORED with, above — which
+    // is the one clr-task-scheduler.ts later hands to Intl to compute the next
+    // occurrence, on a path with no reader and no label.
     storage.createNotification({
       userId: assignedUserId, type: "task_assigned", title: `New task: ${title}`,
-      message: `Due ${due.toLocaleString("en-US", { timeZone: assignee.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}${recurrence === "none" ? "" : ` · repeats ${recurrence}`}.`,
+      message: `Due ${formatTaskDueLabel(due, assignee.timezone)}${recurrence === "none" ? "" : ` · repeats ${recurrence}`}.`,
       isRead: false,
     } as any);
-    sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
-    emailTaskAssignment(assignee, { title, description, due, assignedBy: actor?.name ?? "A manager" });
+    sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${formatTaskDueLabel(due, assignee.timezone)}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
+    emailTaskAssignment(assignee, { title, description, due, assignedBy: actor?.name ?? "A manager", assignedByUserId: actorId }, "created");
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: "create", entityType: "clr_task", entityId: id, entityLabel: title,
       details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString() }) });
     res.status(201).json({ ok: true, id });
@@ -7363,11 +7447,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
     taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,recurrence_timezone=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
-      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), assignee.timezone ?? before.recurrence_timezone ?? BUSINESS_DAY_DEFAULT_TZ, due.toISOString(), status, new Date().toISOString(), id, orgId);
-    if (assignedUserId !== Number(before.assigned_user_id)) {
+      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone, normalizeTimezone(before.recurrence_timezone)), due.toISOString(), status, new Date().toISOString(), id, orgId);
+    // Only a change of assignee is news. Retitling, re-prioritising or moving
+    // the deadline leaves the same person holding it, and re-announcing that
+    // teaches everyone to ignore the notice that does matter.
+    if (taskAssigneeChanged(before.assigned_user_id, assignedUserId)) {
       storage.createNotification({ userId: assignedUserId, type: "task_assigned", title: `Task assigned: ${title}`, message: `A manager assigned this task to you.`, isRead: false } as any);
-      sendPushToUser(assignedUserId, { title: "C3 task assigned to you", body: `${title} — due ${due.toLocaleString()}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
-      emailTaskAssignment(assignee, { title, description, due, assignedBy: (storage.getUserById(actorId) as any)?.name ?? "A manager" });
+      sendPushToUser(assignedUserId, { title: "C3 task assigned to you", body: `${title} — due ${formatTaskDueLabel(due, assignee.timezone)}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
+      // The new assignee only — whoever lost the task is not mailed about it.
+      emailTaskAssignment(assignee, { title, description, due, assignedBy: (storage.getUserById(actorId) as any)?.name ?? "A manager", assignedByUserId: actorId }, "reassigned");
     }
     const actor = storage.getUserById(actorId) as any;
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: status === "archived" ? "archive" : "update", entityType: "clr_task", entityId: id, entityLabel: title,
@@ -7461,8 +7549,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // successor is a separate active row, so finishing late cannot erase any
     // deadlines that were missed in between.
     try {
-      spawnNextTaskOccurrence(taskSqlite(), id);
-      ensureRecurringTaskOccurrences(taskSqlite(), completedAt);
+      announceSpawnedTaskOccurrence(spawnNextTaskOccurrence(taskSqlite(), id));
+      announceSpawnedTaskOccurrences(ensureRecurringTaskOccurrences(taskSqlite(), completedAt));
     } catch (error: any) {
       // Completion is already durable; GET and the minute scheduler retry the
       // successor independently instead of making the user complete it twice.
@@ -7480,7 +7568,19 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   async function alertOverdueClrTasks() {
     const now = new Date().toISOString();
-    ensureRecurringTaskOccurrences(taskSqlite(), now);
+    // This catch-up sits ABOVE every try in this function, and it is the only
+    // statement here that touches Intl (clr-task-scheduler resolves each series'
+    // stored zone). One unusable row therefore threw straight out of the whole
+    // sweep: the cron's own .catch() logged it and NOBODY got an overdue notice,
+    // push or email — not that org, every org, and not that minute, every minute
+    // after, because the next tick met the same row. Recurrence is best-effort
+    // here and GET /api/clr-tasks catches the series up again; the alerts below
+    // are what this function is for and they no longer depend on it.
+    try {
+      announceSpawnedTaskOccurrences(ensureRecurringTaskOccurrences(taskSqlite(), now));
+    } catch (error: any) {
+      console.error("[clr-tasks] overdue sweep catch-up failed:", error?.message ?? error);
+    }
     const overdue = taskSqlite().prepare(`
       SELECT t.*, u.name AS assigned_user_name, a.id AS alert_id,
         COALESCE(a.email_attempts,0) AS email_attempts
@@ -7496,11 +7596,11 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         .run(task.id, task.org_id, task.due_at, now);
       const managers = taskManagers(Number(task.org_id));
       const title = `Overdue CLR task: ${String(task.title)}`;
-      const message = `${String(task.assigned_user_name ?? "A CLR")} did not complete this task by ${new Date(task.due_at).toLocaleString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ })}.`;
+      const message = `${String(task.assigned_user_name ?? "A CLR")} did not complete this task by ${formatTaskDueLabel(new Date(task.due_at), BUSINESS_DAY_DEFAULT_TZ)}.`;
       const assignee = storage.getUserById(Number(task.assigned_user_id)) as any;
       if (claimed.changes) {
         storage.createNotification({ userId: Number(task.assigned_user_id), type: "task_overdue", title: `Your task is overdue: ${String(task.title)}`,
-          message: `This was due ${new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ })}. Open Task Center to complete it.`, isRead: false } as any);
+          message: `This was due ${formatTaskDueLabel(new Date(task.due_at), assignee?.timezone)}. Open Task Center to complete it.`, isRead: false } as any);
         sendPushToUser(Number(task.assigned_user_id), { title: "Your C3 task is overdue", body: String(task.title), url: "/#/tasks", portal: "c3" }).catch(() => {});
         for (const manager of managers) {
           storage.createNotification({ userId: Number(manager.id), type: "task_overdue", title, message, isRead: false } as any);
@@ -7528,7 +7628,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const bcc = recipients.filter((email) => email !== primary);
       const safeTitle = eodActivityEsc(String(task.title));
       const safeAssignee = eodActivityEsc(String(task.assigned_user_name ?? "A CLR"));
-      const safeDue = eodActivityEsc(new Date(task.due_at).toLocaleString("en-US", { timeZone: assignee?.timezone ?? BUSINESS_DAY_DEFAULT_TZ }));
+      const safeDue = eodActivityEsc(formatTaskDueLabel(new Date(task.due_at), assignee?.timezone));
       try {
         await sendEmail({
           to: [primary], bcc: bcc.length ? bcc : undefined, subject: title,
@@ -11293,7 +11393,8 @@ ${note}` : daysLine;
     const orgId = Number(sessionUser?.orgId ?? 1) || 1;
     const sqlite = storageExtra.getRawSqlite();
     const existing = sqlite.prepare(`
-      SELECT assistant_id, outcome_type, follow_up_date, org_id
+      SELECT assistant_id, outcome_type, follow_up_date, appointment_datetime,
+             reschedule_datetime, org_id
       FROM lead_outcomes WHERE id = ?
     `).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
@@ -11368,6 +11469,80 @@ ${note}` : daysLine;
     }
     if ("requiresFollowup" in body) body.requiresFollowup = boolToInt(body.requiresFollowup);
     if ("rescheduled" in body) body.rescheduled = boolToInt(body.rescheduled);
+    // ── a meeting that MOVED is REBOOKED on the wall, not booked again ────
+    // Moving a meeting overwrites its time in place, so the TV either said
+    // nothing (it had already played this row's BOOKED! and dedupes on the
+    // event id) or shouted BOOKED a second time as though the meeting were
+    // brand new. The flag has to be written HERE, while the old time is still
+    // in `existing`: one statement later it is gone, and the audit log keeps
+    // new values only. detectAppointmentMove owns the rule — see tv-board.ts.
+    const movedTo = detectAppointmentMove(existing, body);
+    // The time each column is left holding once this patch lands. A field the
+    // patch does not mention keeps whatever the row already had.
+    const nextAppt = "appointmentDatetime" in body ? body.appointmentDatetime : existing.appointment_datetime;
+    const nextFollow = "followUpDate" in body ? body.followUpDate : existing.follow_up_date;
+    const stillAnAppointment = existing.outcome_type === "appointment"
+      && (body.outcomeType === undefined || body.outcomeType === "appointment");
+    if (movedTo) {
+      if (!body.rescheduled) body.rescheduled = 1;
+      if (!body.rescheduleDatetime) body.rescheduleDatetime = movedTo;
+    } else if (
+      stillAnAppointment
+      && !("rescheduled" in body)
+      && ("appointmentDatetime" in body || "followUpDate" in body)
+    ) {
+      // A time WIPED rather than moved takes the flag with it. reminders.ts
+      // COALESCEs reschedule_datetime into the date it schedules against, so a
+      // stamp left behind on a now-dateless appointment would go on nagging
+      // about a meeting that no longer has a time. Only while it stays an
+      // appointment: a conversion keeps its history, and reminders skips it.
+      if (!normalizeAppointmentTime(nextAppt) && !normalizeAppointmentTime(nextFollow)) {
+        body.rescheduled = null;
+        body.rescheduleDatetime = null;
+      } else if (
+        !("rescheduleDatetime" in body)
+        && rescheduleStampIsStale(existing.reschedule_datetime, nextAppt, nextFollow)
+      ) {
+        // The same wipe rule, applied to a stamp that has gone stale rather
+        // than to a time that has gone away — and the only repair rows written
+        // before the two columns were kept in step will ever get.
+        //
+        // Such a row holds an abandoned time in one column, so a meeting moved
+        // BACK onto it is not detected as a move (tv-board.ts owns that rule
+        // and says why it stays conservative) and the old rescheduled stamp
+        // SURVIVES. tv-board's rescheduled branch renders
+        // `reschedule_datetime || appointment_datetime`, so the TV's Latest
+        // strip goes on shouting "Rebooked to <the time the meeting just left>"
+        // — actively wrong, not merely silent. A stamp matching NEITHER column
+        // the patch leaves behind describes nothing that exists: drop it, and
+        // drop `rescheduled` with it.
+        //
+        // Retraction only. Every write here is null, so this can silence a
+        // stale REBOOKED and can never mint one. What it cannot repair is the
+        // LO's Bonzo task, which keeps the abandoned time: no sync fires for a
+        // move nobody detected. That residual is written down in tv-board.ts.
+        body.rescheduled = null;
+        body.rescheduleDatetime = null;
+      }
+    }
+    // ── two different questions, deliberately answered apart ───────────
+    // What the WALL announces is settled above and is now finished: only a
+    // real move sets body.rescheduled, and giving a dateless appointment its
+    // first time is not one — it is a booking, and the row already played
+    // BOOKED! when it was logged. Nothing below touches that flag.
+    //
+    // What BONZO is told is a separate question with a different answer. An
+    // appointment logged without a time never got the LO a task
+    // (syncAppointmentToBonzo only creates one when there is a datetime to
+    // hang it on), so this patch is the first moment one can exist. Until the
+    // Bonzo condition dropped its "appointmentDatetime is present and
+    // non-empty" term — rightly, it fired on every notes-only save — this was
+    // the only path that created that task, and the LO silently got nothing.
+    const gainedFirstTime = stillAnAppointment
+      && !movedTo
+      && !normalizeAppointmentTime(existing.appointment_datetime)
+      && !normalizeAppointmentTime(existing.follow_up_date)
+      && !!(normalizeAppointmentTime(nextAppt) || normalizeAppointmentTime(nextFollow));
     const outcome = storage.updateLeadOutcome(id, body);
     if (outcome) {
       const actor = storage.getUserById(Number(sessionUser?.userId)) as any;
@@ -11389,13 +11564,42 @@ ${note}` : daysLine;
         setImmediate(() => syncTransferToBonzo(id).catch((e: any) => console.error("[bonzo-transfer]", e?.message ?? e)));
       }
       if (existing.outcome_type === "appointment") {
+        // One save can do two things at once: settle the meeting's TIME and
+        // edit the notes. The time branches below own the LO's Bonzo task, and
+        // they sit ahead of the notes branch as `else if`s — so a save that
+        // both moved (or first-time-set) the meeting and rewrote the notes
+        // dropped those notes on the floor: the task the LO opens carries no
+        // context, and the new text never reached Bonzo at all. One mechanism
+        // for both branches rather than the same tail copied twice. Chained,
+        // so the result note lands first and the notes follow it as the very
+        // same "📝 Appointment notes updated" entry every other notes edit
+        // produces — the LO reads one shape of note, not two.
+        const withNotes = (p: Promise<void>): Promise<void> =>
+          "notes" in body ? p.then(() => syncAppointmentNotesToBonzo(id)) : p;
         if (body.outcomeType === "transfer") {
           setImmediate(() => syncAppointmentResultToBonzo(id, "transferred").catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
         } else if (body.outcomeType === "fell_through") {
           setImmediate(() => syncAppointmentResultToBonzo(id, "fell_through").catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
-        } else if (body.rescheduled === 1 || ("rescheduleDatetime" in body && body.rescheduleDatetime) || ("appointmentDatetime" in body && body.appointmentDatetime)) {
+        } else if (body.rescheduled === 1 || ("rescheduleDatetime" in body && body.rescheduleDatetime)) {
+          // Agrees with the wall by construction: a genuine move set
+          // body.rescheduled a few lines above. The third term this used to
+          // carry — "appointmentDatetime is present and non-empty" — fired on
+          // every save from the Appointments edit dialog, which mirrors the
+          // time onto the patch unchanged, so a notes-only edit told Bonzo the
+          // meeting had been rescheduled; and it never fired for the Outcomes
+          // page, which back then moved a meeting with followUpDate alone. Same
+          // bug from both sides. That dialog now mirrors both columns — and only
+          // when the follow-up actually changed — so its moves reach this branch
+          // and its unrelated saves name no time at all (appointment-datetime.ts).
           const newDt = body.rescheduleDatetime || body.appointmentDatetime || null;
-          setImmediate(() => syncAppointmentResultToBonzo(id, "rescheduled", newDt).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+          setImmediate(() => withNotes(syncAppointmentResultToBonzo(id, "rescheduled", newDt)).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
+        } else if (gainedFirstTime) {
+          // The wall stayed silent for this one on purpose — see above — but
+          // Bonzo has to hear it, because this is where the LO's task gets
+          // created. "scheduled", never "rescheduled": nothing moved, and the
+          // note the LO reads must not claim it did.
+          const setDt = nextAppt || nextFollow || null;
+          setImmediate(() => withNotes(syncAppointmentResultToBonzo(id, "scheduled", setDt)).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
         } else if ("notes" in body) {
           // A plain notes edit — mirror it so the Bonzo record stays current.
           setImmediate(() => syncAppointmentNotesToBonzo(id).catch((e: any) => console.error("[bonzo-appt]", e?.message ?? e)));
@@ -13847,7 +14051,10 @@ ${note}` : daysLine;
   }
   function checkinTzFor(userId: number): string {
     const u = storage.getUserById(userId) as any;
-    return (u?.timezone as string) || BUSINESS_DAY_DEFAULT_TZ;
+    // Through the shared rule, not `||`: that catches null and blank but not a
+    // junk or retired zone name, and this runs once per CLR on the board — one
+    // bad legacy row would take the whole page down.
+    return normalizeTimezone(u?.timezone, BUSINESS_DAY_DEFAULT_TZ);
   }
 
   // The time this person is expected to start on a given date. Uses their
@@ -16922,6 +17129,14 @@ ${note}` : daysLine;
           : null;
         const loId = lo?.id ?? existingOutcome?.lo_id ?? 0;
 
+        // This overwrite can change appointment_datetime on a row that already
+        // exists, and it deliberately does NOT set the rescheduled flag the
+        // wall reads. The link is keyed by external_call_id, so an update here
+        // is the dialer re-delivering or correcting ONE call, not a person
+        // moving a meeting — and webhook deliveries are retried and unordered,
+        // so a late one carrying the ORIGINAL time would announce a REBOOKED
+        // back to where the meeting started. Rebookings are detected in
+        // PATCH /api/outcomes/:id, where a human is the one doing it.
         if (existingOutcome) {
           db.prepare(`UPDATE lead_outcomes SET
             date=?, assistant_id=?, lo_id=?, borrower_name=COALESCE(?, borrower_name),
@@ -16987,6 +17202,52 @@ ${note}` : daysLine;
       activity_recorded: activityRecorded,
       conversation: normalized.conversation,
     });
+  });
+
+  /**
+   * A lead just landed in LeadVault.
+   *
+   * Same door and the same lock as the CallSync webhook above: LeadVault is
+   * the only caller, and it proves it with a shared token in x-api-token,
+   * compared in constant time. Without a secret configured the endpoint is
+   * shut rather than open — an unauthenticated URL that puts words on a screen
+   * the whole floor faces is not a thing to leave lying around.
+   *
+   * Nothing is written to the database. See server/tv-leads.ts for why a wall
+   * notice is not a record.
+   */
+  function leadvaultLeadSecret(): string {
+    const env = (process.env.LEADVAULT_LEAD_WEBHOOK_SECRET || "").trim();
+    if (env) return env;
+    try {
+      const s = storageExtra.getWebhookSettings() as any;
+      if (s?.leadvault_lead_secret) return String(s.leadvault_lead_secret).trim();
+    } catch {}
+    return "";
+  }
+
+  app.post("/api/webhook/leadvault-lead", (req, res) => {
+    const secret = leadvaultLeadSecret();
+    if (!secret) {
+      return res.status(503).json({ ok: false, error: "LeadVault lead notices are not configured" });
+    }
+    const suppliedToken = req.headers["x-api-token"] as string | undefined;
+    const suppliedBytes = Buffer.from(suppliedToken?.trim() ?? "");
+    const expectedBytes = Buffer.from(secret);
+    if (suppliedBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(suppliedBytes, expectedBytes)) {
+      storageExtra.logWebhookEvent({
+        source: "leadvault", eventType: "auth_failed",
+        payload: { error: "invalid token" }, processed: false,
+      });
+      return res.status(401).json({ ok: false, error: "invalid token" });
+    }
+
+    const lead = recordNewLead(req.body ?? {});
+    // Older than the buffer's own ten-minute window. Answered 200 on purpose:
+    // a retry of this morning's delivery is not an error on LeadVault's side,
+    // it is simply not news, and a 4xx would have it retried forever.
+    if (!lead) return res.json({ ok: true, shown: false, reason: "too old" });
+    return res.json({ ok: true, shown: true, id: lead.id });
   });
 
   app.post("/api/webhook/mojo", (req, res) => {
@@ -17186,12 +17447,15 @@ ${note}` : daysLine;
       callsyncSecret: s.callsync_secret ?? "",
       callsyncSecretConfigured: !!(s.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET),
       callsyncSecretManagedByEnv: !s.callsync_secret && !!process.env.CALLSYNC_WEBHOOK_SECRET,
+      leadvaultLeadSecret: s.leadvault_lead_secret ?? "",
+      leadvaultLeadSecretConfigured: !!(s.leadvault_lead_secret || process.env.LEADVAULT_LEAD_WEBHOOK_SECRET),
+      leadvaultLeadSecretManagedByEnv: !s.leadvault_lead_secret && !!process.env.LEADVAULT_LEAD_WEBHOOK_SECRET,
     });
   });
 
   app.put("/api/webhook/settings", requireAuth, (req: any, res) => {
     if (!requireAdminSession(req, res)) return;
-    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret, leadvaultReportingToken, callsyncSecret } = req.body ?? {};
+    const { mojoSecret, bonzoSecret, bonzoApiToken, mojoApiKey, zapierWebhookUrl, zapierSecret, leadvaultReportingToken, callsyncSecret, leadvaultLeadSecret } = req.body ?? {};
     const updated = storageExtra.updateWebhookSettings({
       mojoSecret: typeof mojoSecret === "string" ? mojoSecret : undefined,
       bonzoSecret: typeof bonzoSecret === "string" ? bonzoSecret : undefined,
@@ -17201,6 +17465,7 @@ ${note}` : daysLine;
       zapierSecret: typeof zapierSecret === "string" ? zapierSecret : undefined,
       leadvaultReportingToken: typeof leadvaultReportingToken === "string" ? leadvaultReportingToken : undefined,
       callsyncSecret: typeof callsyncSecret === "string" ? callsyncSecret : undefined,
+      leadvaultLeadSecret: typeof leadvaultLeadSecret === "string" ? leadvaultLeadSecret : undefined,
     });
     res.json({
       mojoSecret: updated.mojo_secret ?? "",
@@ -17213,6 +17478,9 @@ ${note}` : daysLine;
       callsyncSecret: updated.callsync_secret ?? "",
       callsyncSecretConfigured: !!(updated.callsync_secret || process.env.CALLSYNC_WEBHOOK_SECRET),
       callsyncSecretManagedByEnv: !updated.callsync_secret && !!process.env.CALLSYNC_WEBHOOK_SECRET,
+      leadvaultLeadSecret: updated.leadvault_lead_secret ?? "",
+      leadvaultLeadSecretConfigured: !!(updated.leadvault_lead_secret || process.env.LEADVAULT_LEAD_WEBHOOK_SECRET),
+      leadvaultLeadSecretManagedByEnv: !updated.leadvault_lead_secret && !!process.env.LEADVAULT_LEAD_WEBHOOK_SECRET,
     });
   });
 
@@ -20140,11 +20408,12 @@ ${note}` : daysLine;
     const eventSql = `
       SELECT o.id, o.outcome_type, o.transfer_type, o.borrower_name, o.appointment_datetime,
              o.reschedule_datetime, o.rescheduled, o.missed_reason, o.created_at, o.updated_at,
-             u.name AS assistant_name, lo.full_name AS lo_name,
+             u.name AS assistant_name, lo.full_name AS lo_name, loa.full_name AS loa_name,
              COALESCE(o.updated_at, o.created_at) AS stamp
         FROM lead_outcomes o
         LEFT JOIN users u ON u.id = o.assistant_id
         LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+        LEFT JOIN loan_officer_assistants loa ON loa.id = o.loa_id
        WHERE o.org_id = ? AND o.outcome_type IN ('transfer','appointment','fell_through')`;
     let events: ReturnType<typeof classifyOutcome>[] = [];
     let cursor = since;
@@ -20173,8 +20442,16 @@ ${note}` : daysLine;
     // Standalone quotes, not raw manual lines: a line like "run the four steps
     // from this morning" means nothing on a wall with no morning session in
     // sight. flattenTips stays for the manual-backed view elsewhere.
+    //
+    // Two different people are named here and they are not interchangeable:
+    // `author` is whoever wrote the training plan, and `quoteAuthor` is whoever
+    // said the line. Only the attributed half of the book has one, so it goes
+    // out as null for the fifty training lines and the board prints nothing
+    // rather than putting the plan's author under words they never said.
     const quote = pickQuote(Number(req.query.tip) || 0);
-    const tip = quote ? { day: 0, half: "morning" as const, text: quote.text, author } : pickTip(0, flattenTips(days, author));
+    const tip = quote
+      ? { day: 0, half: "morning" as const, text: quote.text, author, quoteAuthor: quote.author ?? null }
+      : pickTip(0, flattenTips(days, author));
 
     res.json({
       version: APP_VERSION,
@@ -20194,6 +20471,11 @@ ${note}` : daysLine;
         },
       },
       events, recent, milestones, tip,
+      // New leads ride the SAME cursor as the events above and follow the same
+      // rule: no cursor is a TV that has just booted, and it is not shown what
+      // it missed. They are deliberately not events — nothing here queues, the
+      // deck does not pause, and the strip is gone in eight seconds.
+      newLeads: newLeadsSince(since),
     });
   });
 
@@ -22590,7 +22872,7 @@ ${note}` : daysLine;
     if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: notes-update note failed: ${note.error}`);
   }
 
-  async function syncAppointmentResultToBonzo(outcomeId: number, result: "transferred" | "fell_through" | "rescheduled", newDatetime?: string | null): Promise<void> {
+  async function syncAppointmentResultToBonzo(outcomeId: number, result: "transferred" | "fell_through" | "rescheduled" | "scheduled", newDatetime?: string | null): Promise<void> {
     if (!bonzoConfigured()) return;
     const db = storageExtra.getRawSqlite();
     const o = db.prepare(`SELECT * FROM lead_outcomes WHERE id=?`).get(outcomeId) as any;
@@ -22608,9 +22890,18 @@ ${note}` : daysLine;
         db.prepare(`UPDATE lead_outcomes SET bonzo_task_id=NULL WHERE id=?`).run(outcomeId);
       }
     } else {
+      // Two arrivals at one place. "rescheduled" MOVED a meeting; "scheduled"
+      // gave a dateless one its first time — the wall says nothing about that
+      // second case, but the LO still needs a task at the new time, and the
+      // note must not tell them a meeting moved when none did.
+      const moved = result === "rescheduled";
       const dt = newDatetime ? wallClockToBonzo(String(newDatetime)) : null;
-      msg = `🔁 Appointment RESCHEDULED${dt ? ` to ${dt.date} at ${dt.time}` : ""} — logged in C3 by ${by}.`;
-      // Move the task: delete the old one and recreate at the new time.
+      msg = moved
+        ? `🔁 Appointment RESCHEDULED${dt ? ` to ${dt.date} at ${dt.time}` : ""} — logged in C3 by ${by}.`
+        : `📅 Appointment TIME SET${dt ? ` for ${dt.date} at ${dt.time}` : ""} — logged in C3 by ${by}.`;
+      // Put the task where the meeting now is: drop any old one, recreate at
+      // the new time. A first-time set has none to drop, and this is the only
+      // path that gives it one.
       if (dt) {
         if (o.bonzo_task_id) await deleteTask(o.bonzo_task_id);
         const assignee = await getProspectAssignee(o.bonzo_prospect_id);
@@ -22620,12 +22911,12 @@ ${note}` : daysLine;
             prospectId: o.bonzo_prospect_id,
             assigneeId: assignee,
             title: `Appointment: ${o.borrower_name || "prospect"} (${dt.time})`,
-            details: `Rescheduled in C3 by ${by}.`,
+            details: moved ? `Rescheduled in C3 by ${by}.` : `Time set in C3 by ${by}.`,
             date: dt.date,
             time: dt.time,
           });
           if (t.ok) newTaskId = t.id;
-          else console.error(`[bonzo-appt] outcome=${outcomeId}: reschedule task failed: ${t.error}`);
+          else console.error(`[bonzo-appt] outcome=${outcomeId}: ${moved ? "reschedule" : "scheduled"} task failed: ${t.error}`);
         }
         db.prepare(`UPDATE lead_outcomes SET bonzo_task_id=? WHERE id=?`).run(newTaskId, outcomeId);
       }

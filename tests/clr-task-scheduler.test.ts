@@ -103,6 +103,39 @@ test("weekly recurrences keep the assignee's local time across daylight saving",
   }), "2026-11-07T01:00:00.000Z"); // Fri Nov 6, still 5:00 PM (now PST)
 });
 
+test("a task row holding an unusable timezone still yields its next occurrence", () => {
+  const row = (recurrence_timezone: string) => ({
+    due_at: "2026-10-31T00:00:00.000Z", recurrence: "weekly", schedule_days: "[]", recurrence_timezone,
+  });
+  const office = nextTaskOccurrenceForRow(row("America/Los_Angeles"));
+  assert.equal(office, "2026-11-07T01:00:00.000Z");
+
+  // recurrence_timezone is a NOT NULL TEXT column older than any check on it,
+  // so it holds blanks and zone names Intl has never heard of. `|| DEFAULT`
+  // caught null and blank and nothing else — and unlike a deadline label this
+  // read has no reader to show a fallback to. It runs under GET /api/clr-tasks
+  // (a 500 on the whole list), the completion path, and the minute overdue
+  // sweep, where the throw cost every org its overdue notices entirely.
+  for (const stored of ["", "   ", "Mars/Olympus_Mons", "America/Nowhere"]) {
+    assert.throws(() => new Intl.DateTimeFormat("en-US", { timeZone: stored }), RangeError,
+      `${JSON.stringify(stored)} is exactly what the bare read could not survive`);
+    assert.equal(nextTaskOccurrenceForRow(row(stored)), office,
+      `${JSON.stringify(stored)} has to read as unset, not as a 500`);
+  }
+});
+
+test("a spawned successor never inherits an unusable timezone", () => {
+  const db = dbWithTask("daily", "2026-08-21T17:00:00.000Z");
+  db.prepare(`UPDATE clr_tasks SET recurrence_timezone='Mars/Olympus_Mons' WHERE id=1`).run();
+  const created = ensureRecurringTaskOccurrences(db as any, "2026-08-22T18:00:00.000Z");
+  assert.ok(created.length >= 1, "the series still advances");
+  // Copying the parent's column forward would turn one unreadable row into a
+  // series of them, one per cycle, for as long as the task exists.
+  for (const child of created) {
+    assert.equal(String(child.recurrence_timezone), "America/Los_Angeles");
+  }
+});
+
 test("failed overdue email backs off, then accepted mail waits one day", () => {
   const now = new Date("2026-08-25T18:00:00.000Z");
   assert.equal(overdueEmailRetryAt(now, 0), "2026-08-25T18:05:00.000Z");

@@ -17,6 +17,12 @@ import {
   X,
 } from "lucide-react";
 import { businessTodayClient } from "@/lib/business-day";
+import { appointmentDatetimeFor, ownsAppointmentDatetime } from "@/lib/appointment-datetime";
+
+// NOTE: this page is not wired up. Nothing imports it and App.tsx has no route
+// for it — the live follow-up surfaces are the Appointments page (Upcoming
+// Appointments) and the Outcomes page's edit dialog. Nothing here runs, so a
+// fix landed in this file has no effect on the app; fix the live page instead.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +88,7 @@ function AppointmentCard({
   outcome: Outcome;
   loName: string;
   onMarkContacted: (id: number) => void;
-  onReschedule: (id: number, date: string) => void;
+  onReschedule: (id: number, date: string, outcomeType: string) => void;
   isPendingMark: boolean;
   isPendingReschedule: boolean;
 }) {
@@ -91,7 +97,7 @@ function AppointmentCard({
 
   const handleReschedule = () => {
     if (!newDate) return;
-    onReschedule(outcome.id, newDate);
+    onReschedule(outcome.id, newDate, outcome.outcomeType);
     setRescheduling(false);
     setNewDate("");
   };
@@ -282,7 +288,7 @@ function DateGroup({
   outcomes: Outcome[];
   loMap: Map<number, string>;
   onMarkContacted: (id: number) => void;
-  onReschedule: (id: number, date: string) => void;
+  onReschedule: (id: number, date: string, outcomeType: string) => void;
   pendingMarkId: number | null;
   pendingRescheduleId: number | null;
 }) {
@@ -372,6 +378,11 @@ export default function Appointments() {
   const sortedOverdueDates = Array.from(overdueByDate.keys()).sort();
 
   // Mutations
+  // Marking contacted clears the follow-up ONLY. It deliberately does not touch
+  // appointment_datetime: an appointment marked handled at 9am still happened
+  // at 2:30 today, and nulling the column would erase that time from the EOD
+  // digest and from the TV's Latest strip, both of which read
+  // `appointment_datetime || follow_up_date`.
   const markContactedMutation = useMutation({
     mutationFn: (id: number) => {
       setPendingMarkId(id);
@@ -388,10 +399,22 @@ export default function Appointments() {
     },
   });
 
+  // Moving an appointment writes the new time to BOTH columns, exactly as the
+  // Appointments page and the Outcomes edit dialog do. Writing followUpDate
+  // alone would leave appointment_datetime on the ABANDONED time, and every
+  // surface that prefers that column — the Upcoming Appointments list, the
+  // 30-minute reminder cron, reminders.ts's COALESCE, the EOD digest, the Bonzo
+  // note — would go on showing a meeting at a time it no longer had. This list
+  // carries every outcome type that can hold a follow-up, so the guard is what
+  // keeps a callback's date out of the appointment column.
   const rescheduleMutation = useMutation({
-    mutationFn: ({ id, date }: { id: number; date: string }) => {
+    mutationFn: ({ id, date, outcomeType }: { id: number; date: string; outcomeType: string }) => {
       setPendingRescheduleId(id);
-      return apiRequest("PATCH", `/api/outcomes/${id}`, { followUpDate: date });
+      const payload: Record<string, any> = { followUpDate: date };
+      if (ownsAppointmentDatetime(outcomeType)) {
+        payload.appointmentDatetime = appointmentDatetimeFor(date);
+      }
+      return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
@@ -408,8 +431,8 @@ export default function Appointments() {
     markContactedMutation.mutate(id);
   };
 
-  const handleReschedule = (id: number, date: string) => {
-    rescheduleMutation.mutate({ id, date });
+  const handleReschedule = (id: number, date: string, outcomeType: string) => {
+    rescheduleMutation.mutate({ id, date, outcomeType });
   };
 
   const totalCount = dueOutcomes.length;

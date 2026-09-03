@@ -4,15 +4,28 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  classifyOutcome, detectMilestones, flattenTips, pickTip, whenLabel, type OutcomeRow,
+  classifyOutcome, detectAppointmentMove, detectMilestones, flattenTips, pickTip,
+  rescheduleStampIsStale, whenLabel,
+  type OutcomeRow,
 } from "../server/tv-board";
 import { TRAINING_DAYS } from "../shared/clr-training";
+import { appointmentDatetimeFor, ownsAppointmentDatetime, timeColumnsPatch } from "../client/src/lib/appointment-datetime";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const page = readFileSync(join(root, "client/src/pages/tv.tsx"), "utf8");
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
+// The Outcomes page's edit dialog is the live surface that moves a meeting; the
+// Appointments page is where the mirroring convention it follows was set.
+const outcomes = readFileSync(join(root, "client/src/pages/outcomes.tsx"), "utf8");
+const appointments = readFileSync(join(root, "client/src/pages/appointments.tsx"), "utf8");
+// The PATCH is where the wall's flag is written and where it is retracted, so
+// most of the wiring below is read out of that one handler rather than the file.
+const outcomePatch = routes.slice(
+  routes.indexOf(`app.patch("/api/outcomes/:id"`),
+  routes.indexOf("// If the appointment time changed"),
+);
 
 const row = (over: Partial<OutcomeRow> = {}): OutcomeRow => ({
   id: 7, outcome_type: "transfer", borrower_name: "Maria Alvarez", assistant_name: "Elleine Asuncion",
@@ -28,15 +41,513 @@ test("a transfer is a transfer, and says who it went to", () => {
   assert.equal(e.detail, "to Christopher Redoble");
 });
 
-test("an appointment is a meeting set; a rescheduled one is a meeting moved", () => {
+test("an appointment is a meeting set; a moved one is REBOOKED", () => {
   const set = classifyOutcome(row({ outcome_type: "appointment", appointment_datetime: "2026-09-03T14:30" }))!;
   assert.equal(set.kind, "appointment");
   assert.match(String(set.detail), /Thu/);
   const moved = classifyOutcome(row({ outcome_type: "appointment", rescheduled: 1, reschedule_datetime: "2026-09-04T09:00" }))!;
   assert.equal(moved.kind, "rescheduled");
-  assert.match(String(moved.detail), /^Moved to Fri/);
+  assert.match(String(moved.detail), /^Rebooked to Fri/);
   // Different ids, so the same row can play twice as two different things.
   assert.notEqual(set.id, moved.id);
+});
+
+test("each rebooking of the same meeting is its own moment", () => {
+  // The client swallows any event id it has already played. Under a bare
+  // `${id}:rescheduled` the second move of a meeting lands on the first one's
+  // id and never reaches the wall, so the id carries the slot moved TO.
+  const first = classifyOutcome(row({ outcome_type: "appointment", rescheduled: 1, reschedule_datetime: "2026-09-04T09:00" }))!;
+  const second = classifyOutcome(row({ outcome_type: "appointment", rescheduled: 1, reschedule_datetime: "2026-09-08T16:00" }))!;
+  assert.equal(first.id, "7:rescheduled:2026-09-04T09:00");
+  assert.notEqual(first.id, second.id);
+  // A formatting-only rewrite is the same slot, and must NOT mint a new id —
+  // otherwise a later notes edit would replay the rebooking.
+  const same = classifyOutcome(row({ outcome_type: "appointment", rescheduled: 1, reschedule_datetime: "2026-09-04 09:00:00" }))!;
+  assert.equal(same.id, first.id);
+});
+
+test("a transfer given to an LOA says which LOA", () => {
+  const withLoa = classifyOutcome(row({ loa_name: "Jasmine Cruz" }))!;
+  assert.equal(withLoa.detail, "to Christopher Redoble — LOA Jasmine Cruz");
+  // Keyed off HAVING an assistant, never off the LO's name. Only Redoble has
+  // LOAs today; the day another LO gets one it must not go quiet.
+  const other = classifyOutcome(row({ lo_name: "Alex Thompson", loa_name: "Jasmine Cruz" }))!;
+  assert.equal(other.detail, "to Alex Thompson — LOA Jasmine Cruz");
+  // Every transfer without one reads exactly as it did before.
+  assert.equal(classifyOutcome(row())!.detail, "to Christopher Redoble");
+  assert.equal(classifyOutcome(row({ loa_name: "   " }))!.detail, "to Christopher Redoble");
+  // The latest-moments row already joins its own fields with "·"; a third dot
+  // inside the detail would read as one long chain at TV distance.
+  assert.doesNotMatch(String(withLoa.detail), /·/);
+});
+
+// ── what counts as a move ───────────────────────────────────────────────────
+// The old appointment time is unrecoverable the instant the UPDATE lands, so
+// PATCH /api/outcomes/:id decides while it can still see it. This is that
+// decision, and it is the only thing standing between "REBOOKED" on the wall
+// and a notes edit shouting it.
+const appt = (over: Record<string, unknown> = {}) => ({
+  outcome_type: "appointment", follow_up_date: "2026-09-03T14:30",
+  appointment_datetime: "2026-09-03T14:30", ...over,
+});
+
+test("moving a meeting is a move, whichever page moved it", () => {
+  // The Appointments page mirrors the new time onto BOTH fields...
+  assert.equal(
+    detectAppointmentMove(appt(), { followUpDate: "2026-09-05T10:00", appointmentDatetime: "2026-09-05T10:00" }),
+    "2026-09-05T10:00",
+  );
+  // ...and a patch naming followUpDate alone — every move the Outcomes edit
+  // dialog made before it started mirroring, and still a legal patch from any
+  // caller — has to be a move too. Watching only the appointment field would
+  // leave that one silent.
+  assert.equal(detectAppointmentMove(appt(), { followUpDate: "2026-09-05T10:00" }), "2026-09-05T10:00");
+  // A date-only appointment moving to another day still moved.
+  assert.equal(
+    detectAppointmentMove(appt({ follow_up_date: "2026-09-03", appointment_datetime: null }), { followUpDate: "2026-09-04" }),
+    "2026-09-04",
+  );
+});
+
+test("a notes-only edit is not a move", () => {
+  assert.equal(detectAppointmentMove(appt(), { notes: "left a voicemail" }), null);
+  // The Appointments edit dialog posts the whole record, so the unchanged
+  // time rides along with the new notes on every save.
+  assert.equal(detectAppointmentMove(appt(), {
+    notes: "left a voicemail", followUpDate: "2026-09-03T14:30", appointmentDatetime: "2026-09-03T14:30",
+  }), null);
+});
+
+test("an unchanged time is not a move, however it is spelled", () => {
+  // A datetime-local input hands the value back with the seconds trimmed, and
+  // a space for the T is the same stamp again. Neither is a rebooking.
+  assert.equal(detectAppointmentMove(appt({ follow_up_date: "2026-09-03T14:30:00" }), { followUpDate: "2026-09-03T14:30" }), null);
+  assert.equal(detectAppointmentMove(appt(), { followUpDate: "2026-09-03 14:30" }), null);
+  // Clearing the time is not a move...
+  assert.equal(detectAppointmentMove(appt(), { followUpDate: null, appointmentDatetime: null }), null);
+  // ...and neither is putting a first one onto a row that never had one.
+  assert.equal(
+    detectAppointmentMove(appt({ follow_up_date: null, appointment_datetime: null }), { appointmentDatetime: "2026-09-05T10:00" }),
+    null,
+  );
+});
+
+// The two stored columns DRIFT APART, and the rule has to survive it. The
+// Outcomes page's edit dialog used to save a moved meeting with followUpDate
+// alone and never touch appointment_datetime, leaving the row holding the new
+// time in one column and the original in the other. It mirrors both columns
+// now — see "the Outcomes edit dialog no longer drifts the two columns apart"
+// below — but every row it moved before that still looks like this, and the
+// Appointments edit dialog still rebuilds appointmentDatetime out of the
+// follow-up field on every save that carries one (appointments.tsx ~948),
+// notes-only saves included.
+// This is what such a row actually looks like: booked Thu 2:30, moved by the
+// old Outcomes edit dialog to the following Thursday at 11, appointment_datetime
+// left on the abandoned slot.
+const drifted = (over: Record<string, unknown> = {}) => ({
+  outcome_type: "appointment",
+  follow_up_date: "2026-09-10T11:00",
+  appointment_datetime: "2026-09-03T14:30",
+  ...over,
+});
+
+test("a notes-only save on a row whose two columns disagree is NOT a move", () => {
+  // The exact regression. The Appointments edit dialog posts the whole record,
+  // mirroring the follow-up time onto appointmentDatetime; against its OWN
+  // stale column that reads as a jump from Thu 2:30 to Thu 11:00, and the wall
+  // shouted REBOOKED while Bonzo deleted and recreated the LO's task — for an
+  // edit that changed nothing but the notes.
+  assert.equal(detectAppointmentMove(drifted(), {
+    outcomeType: "appointment",
+    notes: "Borrower confirmed by text",
+    followUpDate: "2026-09-10T11:00",
+    appointmentDatetime: "2026-09-10T11:00",
+  }), null);
+  // Same row, the quick notes-only mutation, which posts notes alone.
+  assert.equal(detectAppointmentMove(drifted(), { notes: "Borrower confirmed by text" }), null);
+  // And the mirror written the other way round — a patch that puts the stale
+  // appointment time back into view is still a time this meeting already has.
+  assert.equal(detectAppointmentMove(drifted(), { appointmentDatetime: "2026-09-03T14:30:00" }), null);
+});
+
+test("a genuine move on a drifted row is still a move", () => {
+  // Appointments page, quick reschedule: both fields, a time in neither column.
+  assert.equal(
+    detectAppointmentMove(drifted(), { followUpDate: "2026-09-11T09:00", appointmentDatetime: "2026-09-11T09:00" }),
+    "2026-09-11T09:00",
+  );
+  // Appointments page, full edit dialog: the same mirror plus the rest of the
+  // record, so the notes ride along with a time that really did change.
+  assert.equal(detectAppointmentMove(drifted(), {
+    outcomeType: "appointment", notes: "Moved at the borrower's request",
+    followUpDate: "2026-09-11T09:00", appointmentDatetime: "2026-09-11T09:00",
+  }), "2026-09-11T09:00");
+  // followUpDate on its own — the shape every stored drifted row was moved by,
+  // and still a legal patch. The drifted appointment column must not swallow it.
+  assert.equal(detectAppointmentMove(drifted(), { followUpDate: "2026-09-11T09:00" }), "2026-09-11T09:00");
+  // A drifted row moved to a date-only slot, which the edit dialog sends with
+  // appointmentDatetime cleared.
+  assert.equal(
+    detectAppointmentMove(drifted(), { followUpDate: "2026-09-11", appointmentDatetime: null }),
+    "2026-09-11",
+  );
+});
+
+test("moving a meeting BACK onto the other column's time is the accepted blind spot", () => {
+  // Say so plainly, and say the whole of it rather than pretending the only
+  // cost is silence: a drifted row moved back to the time still sitting in
+  // appointment_datetime looks exactly like the notes-only save above, and
+  // nothing can tell them apart from the patch and the row alone.
+  assert.equal(
+    detectAppointmentMove(drifted(), { followUpDate: "2026-09-03T14:30", appointmentDatetime: "2026-09-03T14:30" }),
+    null,
+  );
+  // What that actually costs, in full. The wall says nothing for the rebooking
+  // — and because the PATCH concludes "tell Bonzo" from the same flag, NO SYNC
+  // FIRES EITHER: the LO's Bonzo task is left sitting at the abandoned time and
+  // the LO is never told the meeting came back. That is the price of never
+  // inventing a move, and a false REBOOKED costs more — it deletes and
+  // recreates that task at a time nobody chose.
+  assert.match(outcomePatch, /\} else if \(body\.rescheduled === 1 \|\| \("rescheduleDatetime" in body && body\.rescheduleDatetime\)\) \{/,
+    "Bonzo is told from the wall's own flag, so an undetected move reaches neither");
+  // The one half of it that IS repaired lives in the retraction below: the
+  // stale stamp does not survive the missed move, so the Latest strip at least
+  // stops advertising the time the meeting just left.
+  assert.match(outcomePatch, /rescheduleStampIsStale\(existing\.reschedule_datetime, nextAppt, nextFollow\)/);
+});
+
+// ── the drift, stopped at its source ───────────────────────────────────────
+// The Outcomes edit dialog is the one that moved meetings, so that is the
+// mutation these read. (An earlier pass fixed followups.tsx instead, which
+// nothing imports and no route reaches — a change with no runtime effect at
+// all. Assert against the page that actually runs.)
+const outcomesUpdate = outcomes.slice(
+  outcomes.indexOf("const updateMutation"),
+  outcomes.indexOf("const updateDateMutation"),
+);
+
+test("the Outcomes edit dialog no longer drifts the two columns apart", () => {
+  // Moving a meeting here wrote followUpDate ALONE, so appointment_datetime
+  // kept the ABANDONED time — and every surface that prefers that column went
+  // on showing it: the Upcoming Appointments list, the 30-minute reminder cron
+  // (routes.ts "Prefer appointment_datetime"), reminders.ts's COALESCE, the EOD
+  // digest, and the Bonzo appointment note. All of them read
+  // `appointment_datetime || follow_up_date`, so a retyped meeting has to reach
+  // both columns.
+  //
+  // And this dialog IS where an appointment's time is retyped: it has no
+  // appointment field of its own, and showFollowUp puts the follow-up input in
+  // front of every appointment.
+  assert.match(outcomes, /const FOLLOWUP_TYPES = new Set\(\["appointment",/);
+  assert.match(outcomes, /const showFollowUp = FOLLOWUP_TYPES\.has\(watchedType\)/);
+  // One rule, in one place. The page states no times of its own — it hands the
+  // submitted value and the one the row was loaded with to timeColumnsPatch and
+  // spreads whatever comes back.
+  assert.match(outcomesUpdate, /Object\.assign\(payload, timeColumnsPatch\(\{\s+outcomeType: data\.outcomeType,\s+followUpDate: data\.followUpDate,\s+storedFollowUpDate: before\?\.followUpDate,\s+storedOutcomeType: before\?\.outcomeType,\s+\}\)\);/);
+  assert.doesNotMatch(outcomesUpdate, /payload\.appointmentDatetime/,
+    "the mirror is the shared rule's business, not a second copy kept in the page");
+  assert.doesNotMatch(outcomesUpdate, /followUpDate: fud/,
+    "and neither column is asserted unconditionally any more");
+  // `before` is the row the dialog was opened on, which is exactly what the
+  // form reset its default to — so this asks the same question dirtyFields
+  // would, without depending on the form's own bookkeeping.
+  assert.match(outcomes, /onSubmit=\{values => editTarget && updateMutation\.mutate\(\{ id: editTarget\.id, data: values, before: editTarget \}\)\}/);
+  assert.match(outcomes, /followUpDate: outcome\.followUpDate \?\? "",/,
+    "the default the form resets to is the stored value this compares against");
+
+  // A genuine retype still mirrors, on exactly the Appointments page's
+  // convention: a stamp with a time component is copied across, and a date-only
+  // value CLEARS the appointment column rather than letting a stale time shadow
+  // the new date.
+  assert.deepEqual(
+    timeColumnsPatch({ outcomeType: "appointment", followUpDate: "2026-09-11T09:00", storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: "appointment" }),
+    { followUpDate: "2026-09-11T09:00", appointmentDatetime: "2026-09-11T09:00" },
+  );
+  assert.deepEqual(
+    timeColumnsPatch({ outcomeType: "appointment", followUpDate: "2026-09-11", storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: "appointment" }),
+    { followUpDate: "2026-09-11", appointmentDatetime: null },
+  );
+  assert.match(appointments, /payload\.appointmentDatetime =\s+fud && typeof fud === "string" && fud\.includes\("T"\) \? fud : null;/);
+  assert.equal(appointmentDatetimeFor("2026-09-11T09:00"), "2026-09-11T09:00");
+  assert.equal(appointmentDatetimeFor("2026-09-11"), null);
+  // A mirrored move is still a move: the server sees a time in neither column.
+  assert.equal(
+    detectAppointmentMove(drifted(), timeColumnsPatch({
+      outcomeType: "appointment", followUpDate: "2026-09-11T09:00", storedFollowUpDate: "2026-09-10T11:00", storedOutcomeType: "appointment",
+    })),
+    "2026-09-11T09:00",
+  );
+  // And a mirrored move leaves nothing to drift: both columns name one slot.
+  assert.equal(rescheduleStampIsStale("2026-09-11T09:00", "2026-09-11T09:00", "2026-09-11T09:00"), false);
+});
+
+test("an Outcomes edit of a NON-appointment never touches appointment_datetime", () => {
+  // This dialog edits every outcome type, and several of them carry a follow-up
+  // date — callbacks, deferrals, future contacts. Only an appointment owns
+  // appointment_datetime; writing a callback's date there would invent an
+  // appointment time on the wall, in both reminder crons and in the EOD digest.
+  assert.equal(ownsAppointmentDatetime("appointment"), true);
+  for (const t of ["callback_requested", "deferral", "future_contact", "transfer", "fell_through", "", null, undefined]) {
+    assert.equal(ownsAppointmentDatetime(t), false, `${t} does not own the appointment column`);
+    assert.deepEqual(
+      timeColumnsPatch({ outcomeType: t, followUpDate: "2026-09-11T09:00", storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: t }),
+      { followUpDate: "2026-09-11T09:00" },
+      `${t} moves its own date and nothing else`,
+    );
+    // CHANGE, not presence, on this half of the mirror too. Every case above
+    // hands the rule a follow-up that HAS a value, so the whole non-appointment
+    // branch could be re-gated on `next &&` — reinstating exactly the bug the
+    // appointment branch was fixed for — and all of them still passed. Clearing
+    // a callback's date is a decision the CLR made, and it has to be sent.
+    assert.deepEqual(
+      timeColumnsPatch({ outcomeType: t, followUpDate: "", storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: t }),
+      { followUpDate: null },
+      `${t} must be able to have its follow-up cleared`,
+    );
+    assert.deepEqual(
+      timeColumnsPatch({ outcomeType: t, followUpDate: null, storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: t }),
+      { followUpDate: null },
+    );
+  }
+  // The gate is INSIDE the rule, which is the only thing that writes the column
+  // — asserted by what comes back, not by which line number the guard sits on.
+  // (An index comparison proves nothing here: a write moved out from under its
+  // guard still comes after it.)
+  assert.match(outcomesUpdate, /outcomeType: data\.outcomeType,/);
+  assert.doesNotMatch(outcomesUpdate, /appointmentDatetime/,
+    "the page never names the column; ownsAppointmentDatetime decides");
+  // The type is the one being SAVED, not the one the row had: an edit that
+  // converts an appointment into a transfer has stopped owning the column, and
+  // the wall's own rules stop at "is this still an appointment" too.
+  assert.equal(
+    detectAppointmentMove(drifted(), { outcomeType: "transfer", followUpDate: "2026-09-11T09:00" }),
+    null,
+  );
+  assert.equal(
+    detectAppointmentMove({ outcome_type: "callback_requested", follow_up_date: "2026-09-03T14:30" }, { followUpDate: "2026-09-11T09:00" }),
+    null,
+  );
+});
+
+test("clearing an Outcomes follow-up takes the appointment column with it", () => {
+  // The old gate was presence — `&& fud` — so emptying the field wrote nothing
+  // at all, and the ABANDONED time stayed in appointment_datetime for every
+  // surface that prefers that column to read. Exactly the drift this mirror
+  // exists to stop, arriving from the clearing side. A field the CLR emptied is
+  // a decision, and it is told to both columns.
+  const cleared = timeColumnsPatch({ outcomeType: "appointment", followUpDate: "", storedFollowUpDate: "2026-09-10T11:00", storedOutcomeType: "appointment" });
+  assert.deepEqual(cleared, { followUpDate: null, appointmentDatetime: null });
+  assert.deepEqual(
+    timeColumnsPatch({ outcomeType: "appointment", followUpDate: null, storedFollowUpDate: "2026-09-03T14:30", storedOutcomeType: "appointment" }),
+    { followUpDate: null, appointmentDatetime: null },
+  );
+  // Wiping a time is not moving it, so no REBOOKED is invented...
+  assert.equal(detectAppointmentMove(drifted(), cleared), null);
+  assert.equal(detectAppointmentMove(appt(), cleared), null);
+  // ...and naming both columns is what puts the save into the PATCH's wipe
+  // branch, which drops the stale reschedule stamp rather than leaving
+  // reminders.ts nagging about a meeting that no longer has a time.
+  assert.match(outcomePatch, /&& \("appointmentDatetime" in body \|\| "followUpDate" in body\)/);
+  assert.match(outcomePatch, /if \(!normalizeAppointmentTime\(nextAppt\) && !normalizeAppointmentTime\(nextFollow\)\) \{/);
+});
+
+test("an unrelated Outcomes save writes neither time column", () => {
+  // The dialog posts the whole record, so a notes or borrower-name save carries
+  // the follow-up field too. Under a presence gate that save re-asserted the
+  // follow-up over appointment_datetime — which is where CallSync writes, and
+  // where it writes ALONE — so an edit about the notes silently reverted a
+  // CallSync-corrected time. Nothing revealed it: writing back a time the row
+  // already holds is not a move, so the wall stayed quiet and no Bonzo sync
+  // fired. Unchanged means the payload says nothing about either column.
+  const unchanged = timeColumnsPatch({ outcomeType: "appointment", followUpDate: "", storedFollowUpDate: null, storedOutcomeType: "appointment" });
+  assert.deepEqual(unchanged, {});
+  assert.deepEqual(
+    timeColumnsPatch({ outcomeType: "appointment", followUpDate: "2026-09-10T11:00", storedFollowUpDate: "2026-09-10T11:00", storedOutcomeType: "appointment" }),
+    {}, "a value that came back unedited is not an instruction about anything",
+  );
+  const callsyncRow = { outcome_type: "appointment", follow_up_date: null, appointment_datetime: "2026-09-05T10:00" };
+  const notesOnly = { ...unchanged, notes: "left a voicemail", borrowerName: "Maria Alvarez" };
+  assert.equal(detectAppointmentMove(callsyncRow, notesOnly), null);
+  assert.equal(detectAppointmentMove(drifted(), notesOnly), null);
+  // Both columns keep what they had: every branch that can rewrite a time is
+  // gated on the patch naming one.
+  assert.match(outcomePatch, /const nextAppt = "appointmentDatetime" in body \? body\.appointmentDatetime : existing\.appointment_datetime;/);
+  assert.match(outcomePatch, /const nextFollow = "followUpDate" in body \? body\.followUpDate : existing\.follow_up_date;/);
+  // ...including the reminder clock, which no longer restarts for a save that
+  // moved no meeting.
+  assert.match(routes, /if \("appointmentDatetime" in body \|\| "followUpDate" in body \|\| "assistantId" in body\) \{/);
+  // And the row shape this protects: CallSync books into appointment_datetime
+  // and never writes follow_up_date, so that column is the corrected one.
+  const callsyncInsert = routes.slice(
+    routes.indexOf("const inserted = db.prepare(`INSERT INTO lead_outcomes"),
+    routes.indexOf("outcomeId = Number(inserted.lastInsertRowid);"),
+  );
+  assert.match(callsyncInsert, /appointment_datetime/);
+  assert.doesNotMatch(callsyncInsert, /follow_up_date/,
+    "the column an unrelated save must not overwrite");
+});
+
+// ── healing the rows that already drifted ──────────────────────────────────
+test("a move BACK onto a drifted row's stale column retracts the claim instead of showing it", () => {
+  // A legacy row, moved by the old Outcomes edit dialog: follow_up_date on the
+  // new Thursday at 11, appointment_datetime still on the original Thu 2:30,
+  // and the stamp from that move sitting on the row.
+  const legacy = drifted({ rescheduled: 1, reschedule_datetime: "2026-09-10T11:00" });
+  // While the claim is live it names a slot the row is genuinely holding.
+  assert.equal(rescheduleStampIsStale("2026-09-10T11:00", legacy.appointment_datetime, legacy.follow_up_date), false);
+  // Now move it BACK onto Thu 2:30 — the time appointment_datetime never let
+  // go of. Not detectable as a move, by design.
+  const back = { followUpDate: "2026-09-03T14:30", appointmentDatetime: "2026-09-03T14:30" };
+  assert.equal(detectAppointmentMove(legacy, back), null);
+  // Left alone the stamp SURVIVES, and the wall does not go quiet — it goes
+  // wrong. classifyOutcome renders `reschedule_datetime || appointment_datetime`,
+  // so the Latest strip advertises the slot the meeting just walked away from.
+  const stillClaiming = classifyOutcome(row({
+    outcome_type: "appointment", rescheduled: 1,
+    reschedule_datetime: "2026-09-10T11:00", appointment_datetime: "2026-09-03T14:30",
+  }))!;
+  assert.equal(stillClaiming.kind, "rescheduled");
+  assert.match(String(stillClaiming.detail), /Rebooked to Thu 11:00 AM/, "the ABANDONED slot, on the wall");
+  // So the PATCH retracts it: the stamp matches neither column the patch leaves.
+  assert.equal(rescheduleStampIsStale("2026-09-10T11:00", back.appointmentDatetime, back.followUpDate), true);
+  // ...and the row then reads as the plain appointment it actually is.
+  const retracted = classifyOutcome(row({
+    outcome_type: "appointment", rescheduled: null,
+    reschedule_datetime: null, appointment_datetime: "2026-09-03T14:30",
+  }))!;
+  assert.equal(retracted.kind, "appointment");
+  assert.match(String(retracted.detail), /Thu 2:30 PM/);
+});
+
+test("the retraction can only ever RETRACT a claim, never mint one", () => {
+  // A stamp naming a slot either column still holds is a live claim.
+  assert.equal(rescheduleStampIsStale("2026-09-10T11:00", "2026-09-10T11:00", "2026-09-10T11:00"), false);
+  assert.equal(rescheduleStampIsStale("2026-09-10T11:00", null, "2026-09-10T11:00"), false);
+  assert.equal(rescheduleStampIsStale("2026-09-10T11:00", "2026-09-10T11:00", null), false);
+  // Same slot typed differently is the same slot — a seconds-trimming rewrite
+  // must not read as an abandoned time.
+  assert.equal(rescheduleStampIsStale("2026-09-10 11:00:00", "2026-09-10T11:00", null), false);
+  // No stamp is not a stale stamp. This is the half that matters: nothing here
+  // may ever be the reason a REBOOKED appears.
+  assert.equal(rescheduleStampIsStale(null, "2026-09-03T14:30", "2026-09-03T14:30"), false);
+  assert.equal(rescheduleStampIsStale("", "2026-09-03T14:30", null), false);
+  assert.equal(rescheduleStampIsStale(undefined, null, null), false);
+  // Wired into the PATCH, and only where a move was NOT detected.
+  assert.match(outcomePatch, /reschedule_datetime, org_id/, "the PATCH has to be able to SEE the stored stamp");
+  assert.match(outcomePatch, /!\("rescheduleDatetime" in body\)\s*\r?\n\s*&& rescheduleStampIsStale\(existing\.reschedule_datetime, nextAppt, nextFollow\)/,
+    "an explicit stamp in the patch is the caller's, not ours to drop");
+  const retract = outcomePatch.slice(
+    outcomePatch.indexOf("rescheduleStampIsStale("),
+    outcomePatch.indexOf("// ── two different questions"),
+  );
+  assert.match(retract, /body\.rescheduled = null;/);
+  assert.match(retract, /body\.rescheduleDatetime = null;/);
+  assert.doesNotMatch(retract, /body\.rescheduled = 1/, "retraction only — every write in this branch is null");
+});
+
+test("a first-time set is not a move on the wall, but Bonzo still hears it", () => {
+  // An appointment logged with no time at all, later given one. Not a
+  // rebooking: the row already played BOOKED! when it was logged, and there is
+  // no old slot to have moved from.
+  const dateless = { outcome_type: "appointment", follow_up_date: null, appointment_datetime: null };
+  assert.equal(detectAppointmentMove(dateless, { appointmentDatetime: "2026-09-05T10:00" }), null);
+  assert.equal(detectAppointmentMove(dateless, { followUpDate: "2026-09-05T10:00", appointmentDatetime: "2026-09-05T10:00" }), null);
+  assert.equal(detectAppointmentMove(dateless, { followUpDate: "2026-09-05" }), null);
+  // Empty strings are dateless too — PATCH nullifies "" before it gets here,
+  // but the rule must not depend on that.
+  assert.equal(detectAppointmentMove({ outcome_type: "appointment", follow_up_date: "", appointment_datetime: "" }, { followUpDate: "2026-09-05T10:00" }), null);
+
+  // ...and yet the LO must get their task. Bonzo's condition is deliberately
+  // NOT the wall's: syncAppointmentToBonzo only creates a task when the
+  // appointment has a datetime, so an appointment logged without one has none,
+  // and this patch is the first moment it can exist. Dropping the old
+  // "appointmentDatetime is present" term from the Bonzo condition was right
+  // for notes-only saves and took this path down with it.
+  const patch = routes.slice(routes.indexOf(`app.patch("/api/outcomes/:id"`), routes.indexOf("// If the appointment time changed"));
+  assert.match(patch, /const gainedFirstTime = stillAnAppointment/);
+  assert.match(patch, /&& !movedTo/, "a move is the other rule — these two must never both fire");
+  assert.match(patch, /&& !normalizeAppointmentTime\(existing\.appointment_datetime\)\s*\r?\n\s*&& !normalizeAppointmentTime\(existing\.follow_up_date\)/,
+    "a first time means NEITHER column had one");
+  assert.match(patch, /\} else if \(gainedFirstTime\) \{/);
+  assert.match(patch, /syncAppointmentResultToBonzo\(id, "scheduled", setDt\)/);
+  // The wall's flag is settled before this and must stay settled: nothing in
+  // the first-time path may write rescheduled.
+  const firstTime = patch.slice(patch.indexOf("const gainedFirstTime"), patch.indexOf("const outcome = storage.updateLeadOutcome"));
+  assert.doesNotMatch(firstTime, /body\.rescheduled\s*=/, "a first-time set must never light the wall");
+  // And the note the LO reads must not claim a meeting moved when none did.
+  const mirror = routes.slice(routes.indexOf("async function syncAppointmentResultToBonzo"));
+  assert.match(mirror, /"transferred" \| "fell_through" \| "rescheduled" \| "scheduled"/);
+  assert.match(mirror, /const moved = result === "rescheduled";/);
+  assert.match(mirror, /Appointment TIME SET/);
+  // Either way the task lands at the new time — a first-time set simply has no
+  // old one to delete.
+  assert.match(mirror, /if \(o\.bonzo_task_id\) await deleteTask\(o\.bonzo_task_id\);/);
+  assert.match(mirror, /details: moved \? `Rescheduled in C3 by \$\{by\}\.` : `Time set in C3 by \$\{by\}\.`/);
+});
+
+test("a save that sets the first time AND edits the notes reaches Bonzo with both", () => {
+  // The time branches are `else if`s standing ahead of the notes branch, so a
+  // save that did both fell into the time branch and lost the notes entirely:
+  // the task the LO opens carries no context, and the new text never reached
+  // the prospect at all. Both branches have the gap; ONE mechanism closes both
+  // rather than the same tail copied twice.
+  assert.match(outcomePatch, /const withNotes = \(p: Promise<void>\): Promise<void> =>\s*\r?\n\s*"notes" in body \? p\.then\(\(\) => syncAppointmentNotesToBonzo\(id\)\) : p;/);
+  assert.match(outcomePatch, /withNotes\(syncAppointmentResultToBonzo\(id, "rescheduled", newDt\)\)/);
+  assert.match(outcomePatch, /withNotes\(syncAppointmentResultToBonzo\(id, "scheduled", setDt\)\)/);
+  // Chained, so the result note lands first and the notes follow it — and they
+  // follow it as the SAME entry every other notes edit produces, so the LO
+  // reads one shape of note rather than a second invented one.
+  assert.equal((outcomePatch.match(/syncAppointmentNotesToBonzo\(id\)/g) ?? []).length, 2,
+    "once in the shared mechanism, once in the plain notes-only branch");
+  assert.match(
+    routes.slice(routes.indexOf("async function syncAppointmentNotesToBonzo")),
+    /notesToBonzoHtml\(text, \{ title: `📝 Appointment notes updated in C3 by \$\{clr\?\.name \?\? "a CLR"\}` \}\)/,
+  );
+  // The plain notes-only branch stays exactly where it was, for saves that
+  // touch nothing but the notes.
+  assert.match(outcomePatch, /\} else if \("notes" in body\) \{/);
+});
+
+test("completing an appointment is not a move", () => {
+  // Becoming a transfer or a fall-through is its own moment on the wall; a
+  // date riding along in the same patch must not turn it into a rebooking.
+  assert.equal(detectAppointmentMove(appt(), { outcomeType: "transfer", transferType: "direct", followUpDate: "2026-09-05T10:00" }), null);
+  assert.equal(detectAppointmentMove(appt(), { outcomeType: "fell_through", followUpDate: "2026-09-05T10:00" }), null);
+  // And a row that was never an appointment cannot be rebooked.
+  assert.equal(detectAppointmentMove({ outcome_type: "transfer", follow_up_date: "2026-09-03T14:30" }, { followUpDate: "2026-09-05T10:00" }), null);
+});
+
+test("the move is written at edit time, and Bonzo agrees with the wall", () => {
+  // Nothing else in the codebase writes lead_outcomes.rescheduled, and the old
+  // time is gone one statement after the UPDATE — the PATCH is the only place
+  // that can still see what the meeting moved FROM.
+  // Read out of the handler itself, not the file: "the PATCH does this" is a
+  // claim about where the code is, and a whole-file match would hold just as
+  // well with any of it stranded somewhere that never runs.
+  assert.match(outcomePatch, /SELECT assistant_id, outcome_type, follow_up_date, appointment_datetime,\s*\r?\n\s*reschedule_datetime, org_id/,
+    "reschedule_datetime rides along so a stamp that has gone stale can be retracted");
+  assert.match(outcomePatch, /const movedTo = detectAppointmentMove\(existing, body\);/);
+  assert.match(outcomePatch, /if \(!body\.rescheduled\) body\.rescheduled = 1;/);
+  // The Bonzo mirror concludes "rescheduled" from that same flag. Its old test
+  // — "appointmentDatetime is present and non-empty" — fired on unchanged
+  // times and never fired for the Outcomes page.
+  assert.match(outcomePatch, /\} else if \(body\.rescheduled === 1 \|\| \("rescheduleDatetime" in body && body\.rescheduleDatetime\)\) \{/);
+  // This one stays on the whole file on purpose: a negative is strongest with
+  // the widest scope — the dropped term must be gone from routes.ts entirely.
+  assert.doesNotMatch(routes, /\("appointmentDatetime" in body && body\.appointmentDatetime\)/);
+  // A time wiped rather than moved drops the flag: reminders.ts COALESCEs
+  // reschedule_datetime into the date it schedules against, so a stamp left
+  // on a now-dateless appointment would nag about a meeting with no time.
+  assert.match(outcomePatch, /if \(!normalizeAppointmentTime\(nextAppt\) && !normalizeAppointmentTime\(nextFollow\)\) \{/);
+  assert.match(outcomePatch, /body\.rescheduleDatetime = null;/);
+  assert.match(
+    readFileSync(join(root, "server/reminders.ts"), "utf8"),
+    /NULLIF\(lo\.reschedule_datetime, ''\)/,
+    "if reminders stops reading the column, the wipe rule above can go",
+  );
+  // And the feed cannot name an LOA it never selected.
+  assert.match(routes, /loa\.full_name AS loa_name/);
+  assert.match(routes, /LEFT JOIN loan_officer_assistants loa ON loa\.id = o\.loa_id/);
 });
 
 test("a fell-through WITH a reason is a missed appointment; without one it is just a fall-through", () => {
@@ -264,7 +775,7 @@ test("every moment is one big word, with no cartoon left in it", () => {
     assert.match(hype, new RegExp(`\\b${k}: "[A-Z !\\-]+"`), `${k} needs its own word`);
     assert.match(hype, new RegExp(`\\b${k}: \\d+`), `${k} needs an impact time`);
   }
-  assert.match(hype, /TRANSFER!/); assert.match(hype, /BOOKED!/); assert.match(hype, /MOVED/);
+  assert.match(hype, /TRANSFER!/); assert.match(hype, /BOOKED!/); assert.match(hype, /REBOOKED/);
   assert.match(hype, /FELL THROUGH/); assert.match(hype, /NO-SHOW/); assert.match(hype, /MILESTONE!/);
   // No props, and none of their choreography. Comments are stripped first:
   // the file's header explains what used to be there and why it went, and
@@ -347,20 +858,39 @@ test("the tip page shows standalone quotes, not raw manual lines", async () => {
   // a wall with no morning session in sight, so the board quotes a set written
   // to stand alone.
   const { TV_QUOTES, pickQuote } = await import("../shared/tv-quotes");
-  assert.equal(TV_QUOTES.length, 50);
+  // Two registers now share the book. The training lines are unattributed and
+  // stay deliberately quiet; the ones Ethan picked are quoted people, and the
+  // rules that keep the first set plain would throw most of them out — half
+  // carry an exclamation mark and the longest runs past 240 characters.
+  const plain = TV_QUOTES.filter((q) => !q.author);
+  const quoted = TV_QUOTES.filter((q) => q.author);
+  assert.equal(TV_QUOTES.length, 78);
+  assert.equal(plain.length, 50, "the training lines are untouched");
+  assert.equal(quoted.length, 28);
   for (const q of TV_QUOTES) {
-    assert.ok(q.text.length > 20 && q.text.length < 160, `awkward length: ${q.text}`);
     assert.ok(!/^\s|\s$/.test(q.text), `padded: ${q.text}`);
     // Nothing may lean on the manual being open beside it.
     assert.doesNotMatch(q.text, /\b(this morning|yesterday|last week|as we (covered|said)|see day \d|step \d)\b/i, q.text);
-    // No motivational-poster voice.
+  }
+  for (const q of plain) {
+    assert.ok(q.text.length > 20 && q.text.length < 160, `awkward length: ${q.text}`);
+    // No motivational-poster voice — these are read on a bad day too.
     assert.doesNotMatch(q.text, /!|\b(crush|grind it|hustle|beast|warrior|no excuses)\b/i, q.text);
   }
-  assert.equal(new Set(TV_QUOTES.map((q) => q.text)).size, 50, "no duplicates");
+  for (const q of quoted) {
+    assert.ok(q.text.length > 10, `too short to be worth the page: ${q.text}`);
+    assert.ok(String(q.author).trim().length > 1, `quoted with nobody attached: ${q.text}`);
+  }
+  assert.equal(new Set(TV_QUOTES.map((q) => q.text)).size, 78, "no duplicates");
   // Deterministic, and it walks the whole list rather than clustering.
   assert.equal(pickQuote(7)?.text, pickQuote(7)?.text);
-  const walked = new Set(Array.from({ length: 50 }, (_, i) => pickQuote(i)?.text));
-  assert.equal(walked.size, 50, "every quote must be reachable");
+  const walked = new Set(Array.from({ length: 78 }, (_, i) => pickQuote(i)?.text));
+  assert.equal(walked.size, 78, "every quote must be reachable");
+  // The name has to survive the trip to the screen, and an unattributed line
+  // must not render a dangling dash where a person's name would go.
+  assert.match(page, /quoteAuthor\?: string \| null/);
+  assert.match(page, /tip\.quoteAuthor[\s\S]{0,80}\$\{tip\.quoteAuthor\}/);
+  assert.match(routes, /quoteAuthor: quote\.author \?\? null/);
   // And the route serves them.
   assert.match(routes, /const quote = pickQuote\(Number\(req\.query\.tip\) \|\| 0\)/);
 });
@@ -471,4 +1001,235 @@ test("an appointment time is the clock the office typed, whatever zone the serve
   // Nonsense is still shown as-is rather than invented.
   assert.equal(whenLabel("garbage"), "garbage");
   assert.equal(whenLabel("2026-09-03T99:99"), "2026-09-03T99:99");
+});
+
+// ── a new lead lands in LeadVault ───────────────────────────────────────────
+// The receiving half of the wall notice: a token-secured webhook, a tiny
+// in-memory buffer, and a strip along the bottom of the board. None of it is a
+// record, and none of it may touch the moment pipeline.
+
+const CALLSYNC_ROUTE = 'app.post("/api/webhook/callsync"';
+const LEAD_ROUTE = 'app.post("/api/webhook/leadvault-lead"';
+// From the secret helper through the handler: the two are one lock.
+const leadRoute = routes.slice(routes.indexOf("function leadvaultLeadSecret()"), routes.indexOf('app.post("/api/webhook/mojo"'));
+
+test("the new-lead webhook is shut without the shared secret, and locked with it", () => {
+  // Locked exactly like the CallSync webhook beside it, because it is the same
+  // caller: a shared token in x-api-token, compared in constant time. Every
+  // line here is a way this kind of door has been left open before.
+  assert.ok(routes.indexOf(LEAD_ROUTE) > 0, "the endpoint must exist");
+  // No secret configured is SHUT, not open. A URL that puts words on a screen
+  // the whole floor faces must never be anonymous.
+  assert.match(leadRoute, /if \(!secret\) \{\s*\r?\n\s*return res\.status\(503\)/);
+  assert.match(leadRoute, /req\.headers\["x-api-token"\]/);
+  assert.match(leadRoute, /crypto\.timingSafeEqual\(suppliedBytes, expectedBytes\)/);
+  assert.match(leadRoute, /return res\.status\(401\)\.json\(\{ ok: false, error: "invalid token" \}\)/);
+  assert.match(leadRoute, /eventType: "auth_failed"/, "a rejected delivery is logged");
+  // Its own secret, not CallSync's: either can be rotated without the other,
+  // and neither doubles as a key to anything else in C3.
+  assert.match(leadRoute, /LEADVAULT_LEAD_WEBHOOK_SECRET/);
+  assert.doesNotMatch(leadRoute, /leadvaultReportingToken\(\)/);
+  // The same four locks as the endpoint it is modelled on.
+  const callsync = routes.slice(routes.indexOf(CALLSYNC_ROUTE), routes.indexOf(LEAD_ROUTE));
+  for (const lock of [/x-api-token/, /timingSafeEqual/, /status\(401\)/, /status\(503\)/]) {
+    assert.match(callsync, lock);
+    assert.match(leadRoute, lock);
+  }
+  // Reachable without a session ONLY because the handler checks the token
+  // itself — the same bargain the CallSync line above it strikes.
+  const guard = routes.slice(routes.indexOf('app.use("/api", (req: Request'), routes.indexOf("requireAuth(req, res, next);"));
+  assert.match(guard, /if \(req\.path === "\/webhook\/leadvault-lead"\) return next\(\);/);
+  // And it stores nothing: a notice is not a record, so there is no table.
+  assert.doesNotMatch(leadRoute, /\b(INSERT|UPDATE|DELETE|CREATE TABLE)\b/);
+  // The secret is settable beside the other integration secrets, not only in
+  // the environment, and the URL to hand LeadVault is on the same card.
+  assert.match(storage, /ALTER TABLE webhook_settings ADD COLUMN leadvault_lead_secret TEXT/);
+  assert.match(routes, /leadvaultLeadSecret: typeof leadvaultLeadSecret === "string" \? leadvaultLeadSecret : undefined/);
+  const integrations = readFileSync(join(root, "client/src/pages/integrations.tsx"), "utf8");
+  assert.match(integrations, /leadvaultLeadSecret: local\.leadvaultLeadSecret/);
+  assert.match(integrations, /api\/webhook\/leadvault-lead/);
+});
+
+test("the ring buffer keeps a few minutes of arrivals and nothing else", async () => {
+  const { recordNewLead, newLeadsSince, resetNewLeads, NEW_LEAD_KEEP, NEW_LEAD_MAX_AGE_MS } =
+    await import("../server/tv-leads");
+  resetNewLeads();
+  const t0 = Date.parse("2026-09-02T17:00:00.000Z");
+
+  // Only what the wall shows is kept. A state and a campaign are accepted so
+  // LeadVault does not need a different body for C3 — and then dropped.
+  const one = recordNewLead(
+    { name: " Maria  Alvarez ", source: "Facebook", state: "CA", campaign: "Sept Refi", at: new Date(t0).toISOString() },
+    t0,
+  )!;
+  assert.deepEqual(Object.keys(one).sort(), ["at", "id", "name", "source"]);
+  assert.equal(one.name, "Maria Alvarez", "whitespace is tidied, not preserved");
+
+  // Older than the window is not news, and is never taken in at all. This is
+  // the retry-storm guard: a backfill pointed at the webhook cannot replay the
+  // morning onto the wall.
+  const stale = recordNewLead({ name: "This morning", at: new Date(t0 - NEW_LEAD_MAX_AGE_MS - 1000).toISOString() }, t0);
+  assert.equal(stale, null);
+  assert.equal(newLeadsSince(new Date(t0 - 60_000).toISOString(), t0).length, 1);
+
+  // The buffer is short on purpose: past a screenful, the oldest go.
+  resetNewLeads();
+  for (let i = 0; i < NEW_LEAD_KEEP + 12; i += 1) {
+    recordNewLead({ name: `Lead ${i}`, at: new Date(t0).toISOString() }, t0);
+  }
+  const held = newLeadsSince(new Date(t0 - 60_000).toISOString(), t0);
+  assert.equal(held.length, NEW_LEAD_KEEP);
+  assert.equal(held[0].name, "Lead 12", "the oldest fell off the back");
+
+  // And they age out on their own, with no further delivery to trigger it —
+  // otherwise a quiet afternoon would leave the morning sitting in memory.
+  assert.equal(newLeadsSince(new Date(t0 - 60_000).toISOString(), t0 + NEW_LEAD_MAX_AGE_MS + 1).length, 0);
+
+  // A sender an hour fast cannot park a notice at the top of the buffer: an
+  // unreadable or future stamp is simply when it arrived.
+  resetNewLeads();
+  const skewed = recordNewLead({ name: "Clock skew", at: new Date(t0 + 3_600_000).toISOString() }, t0)!;
+  assert.equal(skewed.at, new Date(t0).toISOString());
+  assert.equal(recordNewLead({ name: "No stamp" }, t0)!.at, new Date(t0).toISOString());
+  assert.equal(recordNewLead({ at: "garbage" }, t0)!.name, "A new lead", "a nameless lead still reads as a sentence");
+});
+
+test("the feed hands the board only the leads after its cursor", async () => {
+  const { recordNewLead, newLeadsSince, resetNewLeads } = await import("../server/tv-leads");
+  resetNewLeads();
+  const t0 = Date.parse("2026-09-02T17:00:00.000Z");
+  const at = (secs: number) => new Date(t0 + secs * 1000).toISOString();
+  for (const s of [10, 20, 30]) recordNewLead({ name: `Lead ${s}`, at: at(s) }, t0 + 60_000);
+
+  // Strictly after, exactly like the event query's COALESCE(...) > ?.
+  assert.deepEqual(newLeadsSince(at(20), t0 + 60_000).map((l) => l.name), ["Lead 30"]);
+  assert.equal(newLeadsSince(at(30), t0 + 60_000).length, 0, "a cursor already at the newest sees nothing");
+
+  // No cursor is a TV that has just booted. Same rule as the events: a board
+  // coming up does not replay what it missed while it was dark.
+  assert.deepEqual(newLeadsSince(null, t0 + 60_000), []);
+  assert.deepEqual(newLeadsSince("not a date", t0 + 60_000), []);
+
+  // Ids are monotonic, so the board can tell two same-named leads apart and
+  // show each of them exactly once.
+  const ids = newLeadsSince(at(0), t0 + 60_000).map((l) => l.id);
+  assert.deepEqual([...ids].sort((a, b) => a - b), ids);
+  assert.equal(new Set(ids).size, ids.length);
+
+  // And the route feeds it the cursor the endpoint already takes, rather than
+  // inventing a second one for the board to keep.
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
+  assert.match(feed, /newLeads: newLeadsSince\(since\),/);
+  assert.equal((feed.match(/const since = /g) ?? []).length, 1, "one cursor for the whole feed");
+});
+
+test("the new-lead strip never touches the deck timer or the moment queue", () => {
+  // A lead landing is ambient. Through the moment queue it would pause the
+  // deck and wait behind a transfer's ten-second hype screen — by which time
+  // it is not news — so it is deliberately its own small thing.
+  const from = page.indexOf("// ── new leads ──");
+  // fromIndex on purpose: there is an earlier module-level "the deck" heading.
+  const strip = page.slice(from, page.indexOf("// ── the deck ──", from));
+  assert.ok(strip.length > 0, "the new-lead block must exist");
+  for (const forbidden of [/setQueue/, /setCurrent/, /setSlot/, /setDealt/, /remember\(/, /played\.current/]) {
+    assert.doesNotMatch(strip, forbidden, `the strip must not reach into the moment pipeline: ${forbidden}`);
+  }
+  // It is not a Moment, so nothing can enqueue one by accident.
+  const union = page.slice(page.indexOf("type Moment ="), page.indexOf("const POLL_MS"));
+  assert.doesNotMatch(union, /NewLead/i);
+  // The deck's pause is still only about `current`, and gained no second reason.
+  const deck = page.slice(page.indexOf("const [slot, setSlot]"), page.indexOf("const page = (deck[slot]"));
+  assert.match(deck, /if \(current\) return;/);
+  assert.doesNotMatch(deck, /lead/i);
+  // Its own hold, and no timer of its own to leak or cancel at the wrong
+  // moment: whether the strip is up is read off the clock the header runs.
+  assert.match(page, /const NEW_LEAD_HOLD_MS = 8_000;/);
+  assert.match(strip, /const leadUp = !!leadNotice && now\.getTime\(\) < leadNotice\.until;/);
+  assert.doesNotMatch(strip, /setTimeout|setInterval/);
+  // Newest wins and the rest are a count, so five at once is one notice.
+  assert.match(strip, /const newest = fresh\.reduce/);
+  // One number remembered, not a set that grows for as long as the screen is up.
+  assert.match(strip, /lastLeadId\.current = newest\.id;/);
+  assert.doesNotMatch(strip, /new Set/);
+  assert.match(page, /\+\{leadNotice\.more\} more/);
+  // A strip along the bottom, clear of the corner card and the progress dots,
+  // reading as a notice and not a celebration: no confetti, no hype, no sound.
+  const mark = page.indexOf('data-testid="tv-new-lead"');
+  const el = page.slice(mark - 700, mark + 1800);
+  assert.match(el, /absolute bottom-14 left-10 right-\[30vw\]/);
+  assert.doesNotMatch(el, /Confetti|HypeScene|SOUND\[/);
+  assert.match(page, /bottom-16 right-10 z-20 max-w-\[26vw\][^\n]*data-testid="tv-aside"/, "the corner card still owns the corner");
+  // Reduced motion gets a plain fade with no travel.
+  assert.match(el, /reduced \? \{ y: 0, opacity: leadUp \? 1 : 0 \}/);
+});
+
+test("an Outcomes edit that turns a row INTO an appointment mirrors both columns", () => {
+  // The change gate asked only about the follow-up VALUE, and a conversion does
+  // not have to touch it: a callback booked for Friday 9am becomes an
+  // appointment for Friday 9am, and the CLR changes one dropdown. That save is
+  // the moment the row starts OWNING appointment_datetime — and it wrote no
+  // appointmentDatetime at all, so the row entered its life as an appointment
+  // with the two columns already out of step. Every surface that prefers
+  // appointment_datetime (Upcoming Appointments, the 30-minute reminder cron,
+  // reminders.ts's COALESCE, the EOD digest, the Bonzo note, the TV wall) then
+  // read whatever the row's previous life had left in that column: nothing, or
+  // a stale time. The presence gate this replaced had the same hole — it never
+  // asked about the type either.
+  assert.deepEqual(
+    timeColumnsPatch({
+      outcomeType: "appointment", followUpDate: "2026-09-11T09:00",
+      storedFollowUpDate: "2026-09-11T09:00", storedOutcomeType: "callback_requested",
+    }),
+    { followUpDate: "2026-09-11T09:00", appointmentDatetime: "2026-09-11T09:00" },
+    "the column it just started owning is written on the very save that hands it over",
+  );
+  // A date-only follow-up still clears rather than inventing a meeting time.
+  assert.deepEqual(
+    timeColumnsPatch({
+      outcomeType: "appointment", followUpDate: "2026-09-11",
+      storedFollowUpDate: "2026-09-11", storedOutcomeType: "deferral",
+    }),
+    { followUpDate: "2026-09-11", appointmentDatetime: null },
+  );
+  // But a conversion with NO follow-up at all says nothing about either column.
+  // CallSync books meetings with appointment_datetime set and follow_up_date
+  // NULL, so mirroring the empty follow-up here would delete the only time the
+  // row has — on the very save that turns it into an appointment.
+  assert.deepEqual(
+    timeColumnsPatch({
+      outcomeType: "appointment", followUpDate: "", storedFollowUpDate: "", storedOutcomeType: "future_contact",
+    }),
+    {},
+    "becoming an appointment with an empty follow-up must not erase a booked time",
+  );
+
+  // Only INTO. Converting an appointment away has stopped owning the column, so
+  // the type changing is not by itself a reason to write a time — a transfer
+  // clears appointment_datetime in the PATCH anyway, and a callback that keeps
+  // its date must not have that date copied into a column it does not own.
+  for (const t of ["callback_requested", "transfer", "fell_through"]) {
+    assert.deepEqual(
+      timeColumnsPatch({
+        outcomeType: t, followUpDate: "2026-09-11T09:00",
+        storedFollowUpDate: "2026-09-11T09:00", storedOutcomeType: "appointment",
+      }),
+      {},
+      `converting an appointment into a ${t} is not an instruction about either column`,
+    );
+  }
+  // And an appointment that stays an appointment is still judged on its value
+  // alone — the notes-only save that started all of this.
+  assert.deepEqual(
+    timeColumnsPatch({
+      outcomeType: "appointment", followUpDate: "2026-09-11T09:00",
+      storedFollowUpDate: "2026-09-11T09:00", storedOutcomeType: "appointment",
+    }),
+    {},
+  );
+
+  // The page has to hand over the type the row was LOADED with for any of that
+  // to be answerable, and `before` is that row.
+  assert.match(outcomesUpdate, /storedOutcomeType: before\?\.outcomeType,/);
+  assert.match(outcomes, /outcomeType: outcome\.outcomeType,/,
+    "the default the form resets to is the stored type this compares against");
 });

@@ -86,5 +86,13 @@ test("assignment sends the CLR an in-app alert, push, and email", () => {
   assert.match(create, /type: "task_assigned"/);
   assert.match(create, /sendPushToUser\(assignedUserId/);
   assert.match(create, /emailTaskAssignment\(assignee/);
-  assert.match(routes, /New C3 task:/);
+  // The subject line has to be in the notifier's own renderer. Matched against
+  // the whole file it would still pass with the string stranded anywhere else,
+  // including in a route that never sends anything.
+  const emailHelper = routes.slice(routes.indexOf("const emailTaskAssignment = ("), routes.indexOf("const announceSpawnedTaskOccurrence"));
+  assert.match(emailHelper, /`New C3 task: \$\{taskTitle\}`/);
+  // And the deadline it prints is the helper's, never a bare toLocaleString on
+  // a users.timezone that can be blank — see clr-task-assignment-email.test.ts.
+  assert.match(create, /formatTaskDueLabel\(due, assignee\.timezone\)/);
+  assert.doesNotMatch(create, /timeZone:/);
 });

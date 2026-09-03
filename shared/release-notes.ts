@@ -29,6 +29,20 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.55.0",
+    headline: "Moved meetings say so, and tasks reach the person who got them.",
+    items: [
+      { text: "A meeting that gets moved now goes up on the office TV as REBOOKED, with the new time. Until now the board either said nothing or announced it a second time as a fresh booking, because nothing in C3 ever recorded that a meeting had been moved rather than made.", audience: "everyone" },
+      { text: "A transfer that went through an assistant now names them on the wall alongside the loan officer, so the person who actually took it is on the screen.", audience: "everyone" },
+      { text: "Whoever a task is assigned to now gets an email about it, when it is given to them and again if it is handed to someone else. Assigning a task to yourself does not email you, and a repeating task does not email its owner every morning.", audience: "everyone" },
+      { text: "Task deadlines in emails and phone alerts were being written in the server's own clock rather than yours, so a 5pm Friday deadline could arrive reading as midnight. They now show in the assignee's time.", audience: "everyone" },
+      { text: "Editing an appointment on the Outcomes page used to leave the meeting time behind on the old slot, so the Upcoming Appointments list, the end-of-day summary and the reminders could all still be naming a time nobody was keeping. An edit there now moves the meeting properly.", audience: "everyone" },
+      { text: "New leads arriving in LeadVault will slide up along the bottom of the office TV. The wall is ready for them; LeadVault still has to be pointed at it before any appear.", audience: "manager" },
+      { text: "Twenty-eight more quotes on the wall, this time with who said them.", audience: "everyone" },
+      { text: "A blank or unrecognised timezone saved against somebody's profile could take down the tasks page and the check-in board for everyone. It is now checked when it is saved, and anything already stored that C3 cannot read falls back to office time instead of breaking the page.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.54.0",
     headline: "Appointment times were seven hours out.",
     items: [

@@ -53,9 +53,130 @@ export interface OutcomeRow {
   updated_at?: string | null;
   assistant_name?: string | null;
   lo_name?: string | null;
+  /** The LO's assistant this transfer was handed to, when there is one. Not the CLR — that is assistant_name. */
+  loa_name?: string | null;
 }
 
 const clean = (v: unknown, max = 80) => String(v ?? "").trim().slice(0, max);
+
+/**
+ * An appointment stamp reduced to the slot it actually names: the day, and
+ * the clock reading if there is one.
+ *
+ * "2026-09-04T14:30:00" and "2026-09-04 14:30" are one meeting typed two ways.
+ * A datetime-local input rewriting the seconds off a stored value must never
+ * read as a rebooking, and must never mint a second event id for a meeting
+ * that did not move.
+ */
+export function normalizeAppointmentTime(v: unknown): string {
+  const s = String(v ?? "").trim();
+  if (!s) return "";
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return s;
+  return m[2] ? `${m[1]}T${m[2]}:${m[3]}` : m[1];
+}
+
+/**
+ * Did this edit MOVE a meeting? Returns the new time if so, else null.
+ *
+ * A move is done by overwriting the time in place, so only the incoming patch
+ * and the row as it still stands can tell a rebooking from a notes edit — one
+ * statement later the old time is gone, and the audit log keeps new values
+ * only. Hence the flag is written at edit time, not worked out afterwards.
+ *
+ * Three client paths reach this, all of them PATCH /api/outcomes/:id: the
+ * Appointments page's quick reschedule and its full edit dialog, and the
+ * Outcomes page's edit dialog. All three mirror a moved meeting onto BOTH
+ * followUpDate and appointmentDatetime, so as things stand either field alone
+ * would catch every move those pages make. Both are watched anyway: the mirror
+ * is a convention the pages keep, not a rule this endpoint enforces, and a
+ * patch naming only one of the two columns is a legal patch.
+ *
+ * A patched field is compared against BOTH stored columns, not against its own
+ * one. The two columns disagree on plenty of rows already in the table: the
+ * Outcomes edit dialog used to save followUpDate alone and leave
+ * appointment_datetime on the original time, and every meeting it moved before
+ * it started mirroring is still that shape. The Appointments edit dialog
+ * rebuilds appointmentDatetime out of the follow-up field on every save that
+ * carries one, a notes-only save included — it posts the whole record. (The
+ * Outcomes dialog now names a time only when the follow-up actually CHANGED,
+ * so its notes saves name neither column; the rows it drifted before it
+ * mirrored at all are still in the table.) Compared
+ * field-against-its-own-column, that notes save on such a row reads as a move
+ * — a false REBOOKED on the wall, and a false "rescheduled" to Bonzo, which
+ * deletes and recreates the LO's task. A time that already sits in either
+ * column is a time this meeting already has, whichever field the patch puts it
+ * in.
+ *
+ * The known and accepted cost, stated in full because it is bigger than
+ * silence: moving a meeting BACK onto a time still sitting in the other column
+ * is not detected. The wall says nothing for that rebooking, AND no Bonzo sync
+ * fires for it either — the LO's task keeps the abandoned time and the LO is
+ * never told the meeting came back. The rule is deliberately not total: it
+ * trades that one missed rebooking for never inventing one, because a false
+ * REBOOKED does not just mis-light the TV, it deletes and recreates the LO's
+ * task at a time nobody chose.
+ *
+ * What the PATCH does still fix, via rescheduleStampIsStale below, is the
+ * loudest half of it: the stale `rescheduled` / `reschedule_datetime` left on
+ * the row no longer survives the missed move, so the Latest strip stops
+ * advertising "Rebooked to <the abandoned time>". Retraction only — a missed
+ * move is never turned into a claimed one.
+ */
+export function detectAppointmentMove(
+  before: { outcome_type?: unknown; appointment_datetime?: unknown; follow_up_date?: unknown } | null | undefined,
+  patch: Record<string, unknown>,
+): string | null {
+  if (!before || !patch) return null;
+  if (String(before.outcome_type ?? "") !== "appointment") return null;
+  // Converting the appointment into something else — a transfer, a
+  // fall-through — is its own moment, whatever date rides along in the patch.
+  if (patch.outcomeType !== undefined && patch.outcomeType !== "appointment") return null;
+  // Every slot this meeting already occupies, from either column.
+  const oldSlots = [before.appointment_datetime, before.follow_up_date]
+    .map((v) => normalizeAppointmentTime(v))
+    .filter((s) => s !== "");
+  // A move needs somewhere to have come FROM. Putting a first time onto a
+  // dateless row is a booking, not a rebooking — the wall already played
+  // BOOKED! for that row. (routes.ts still tells Bonzo about it: the task the
+  // LO needs cannot exist until the appointment has a time.)
+  if (!oldSlots.length) return null;
+  for (const field of ["appointmentDatetime", "followUpDate"]) {
+    if (!(field in patch)) continue;
+    const to = normalizeAppointmentTime(patch[field]);
+    // Clearing the time is not a move; nor is writing back a slot the meeting
+    // is already in, however the other column happens to spell it.
+    if (!to || oldSlots.indexOf(to) !== -1) continue;
+    return String(patch[field]);
+  }
+  return null;
+}
+
+/**
+ * Is a stored reschedule stamp describing a slot this meeting no longer has?
+ *
+ * A live REBOOKED claim always names a time one of the two columns is actually
+ * holding — the move that made the claim wrote both. A stamp matching NEITHER
+ * column names a slot that was abandoned, and the only surface that reads it,
+ * classifyOutcome's rescheduled branch, would put that abandoned time on the
+ * wall as "Rebooked to …". Rows the Outcomes edit dialog moved before it
+ * started mirroring the two columns are exactly this shape once a meeting is
+ * moved back onto the time the other column was still holding: no move is
+ * detected, so nothing refreshes the stamp.
+ *
+ * Answers one question only — "does this stamp still describe anything?" — so
+ * the caller can RETRACT it. It can never say a meeting moved.
+ */
+export function rescheduleStampIsStale(
+  stored: unknown,
+  nextAppointment: unknown,
+  nextFollowUp: unknown,
+): boolean {
+  const stamp = normalizeAppointmentTime(stored);
+  if (!stamp) return false;
+  return stamp !== normalizeAppointmentTime(nextAppointment)
+    && stamp !== normalizeAppointmentTime(nextFollowUp);
+}
 
 /** "2026-09-01T15:30" → "Tue 3:30 PM", in the office's own clock. */
 export function whenLabel(iso: string | null | undefined, tz = "America/Los_Angeles"): string | null {
@@ -107,12 +228,29 @@ export function classifyOutcome(row: OutcomeRow): TvEvent | null {
     lo: clean(row.lo_name) || null,
   };
   switch (row.outcome_type) {
-    case "transfer":
-      return { ...base, id: `${row.id}:transfer`, kind: "transfer", detail: base.lo ? `to ${base.lo}` : null };
+    case "transfer": {
+      // A transfer handed to an LO's assistant says which assistant. Keyed off
+      // "this transfer HAS an LOA", never off the LO's name — only Redoble has
+      // assistants today, and this must not go quiet the day another LO gets
+      // one. The latest-moments row already joins its fields with "·", so the
+      // assistant hangs off a dash rather than adding a third dot.
+      const loa = clean(row.loa_name, 40);
+      const detail = base.lo
+        ? (loa ? `to ${base.lo} — LOA ${loa}` : `to ${base.lo}`)
+        : (loa ? `to LOA ${loa}` : null);
+      return { ...base, id: `${row.id}:transfer`, kind: "transfer", detail };
+    }
     case "appointment":
       if (row.rescheduled) {
-        const when = whenLabel(row.reschedule_datetime || row.appointment_datetime);
-        return { ...base, id: `${row.id}:rescheduled`, kind: "rescheduled", detail: when ? `Moved to ${when}` : "Rescheduled" };
+        // The id carries the slot it moved TO. The client remembers every id
+        // it has played, so a second rebooking under a bare `${id}:rescheduled`
+        // would land on the first one's id and be swallowed in silence.
+        const to = row.reschedule_datetime || row.appointment_datetime;
+        const when = whenLabel(to);
+        return {
+          ...base, id: `${row.id}:rescheduled:${normalizeAppointmentTime(to) || "?"}`, kind: "rescheduled",
+          detail: when ? `Rebooked to ${when}` : "Rebooked",
+        };
       }
       return {
         ...base, id: `${row.id}:appointment`, kind: "appointment",
@@ -224,7 +362,15 @@ export interface Tip {
   day: number;
   half: "morning" | "afternoon" | "eod";
   text: string;
+  /** Who wrote the training plan this came out of. Always present. */
   author: string;
+  /**
+   * Who SAID it — set only for the attributed half of the wall-quote book, and
+   * absent (or null) for a manual line, which is nobody's quotation. The board
+   * prints an attribution only when this is a non-empty string; see TipPage in
+   * client/src/pages/tv.tsx.
+   */
+  quoteAuthor?: string | null;
 }
 
 /** Every step in the plan, flattened, in reading order. */

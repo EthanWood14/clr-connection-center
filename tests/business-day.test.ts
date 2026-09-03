@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import {
+  BUSINESS_DAY_DEFAULT_TZ,
   BUSINESS_DAY_ROLLOVER_HOUR as SERVER_ROLLOVER_HOUR,
   businessTodayInTz as serverBusinessToday,
   countWeekdaysInMonth,
+  isValidTimezone,
+  normalizeTimezone,
   previousWeekdaysFromBusinessDate,
   requiredEodWeekdaysInTz,
 } from "../server/business-day";
@@ -132,4 +135,119 @@ test("the month-end comp estimate paces on weekdays, not calendar days", () => {
   // \b matters: "weekdaysElapsed" contains "daysElapsed" as a substring.
   assert.ok(!/\bdaysElapsed\b|\bdaysInMonth\b/.test(projected), "no calendar-day pacing may remain");
   assert.match(projected, /Math\.max\(1, countWeekdaysInMonth/, "a weekend-only window must not divide by zero");
+});
+
+// A zone name is not a preference, it is an argument to Intl. Every zone-aware
+// call in this app - business "today", the EOD window, push quiet hours, a task
+// deadline, the recurrence engine - raises a RangeError on a name Intl does not
+// know. So there are two questions here, deliberately answered apart: what may
+// be WRITTEN, and what a read does with what is already stored.
+
+test("a timezone is checked before it is ever stored", () => {
+  assert.equal(isValidTimezone("America/Los_Angeles"), true);
+  assert.equal(isValidTimezone("America/New_York"), true);
+  assert.equal(isValidTimezone("UTC"), true);
+  // Surrounding whitespace is a typo, not a different zone.
+  assert.equal(isValidTimezone("  America/Denver  "), true);
+
+  // Legacy spellings Intl still resolves are storable too. The question is
+  // whether the value WORKS, not whether tzdata calls it canonical - a zone
+  // that formats without throwing cannot hurt any read path downstream.
+  assert.equal(isValidTimezone("PST"), true);
+  assert.equal(isValidTimezone("US/Pacific"), true);
+
+  // Everything a NOT NULL TEXT column will otherwise happily accept. Each of
+  // these is a RangeError at some later, entirely unrelated moment.
+  for (const bad of ["", "   ", "Mars/Olympus_Mons", "America/Nowhere", "Pacific Time", "not a zone at all"]) {
+    assert.equal(isValidTimezone(bad), false, `${JSON.stringify(bad)} must not be storable`);
+  }
+  // Not-a-string is not a zone either, null included: the column is NOT NULL
+  // with a real default, so a request does not get to say "unset".
+  for (const bad of [null, undefined, 0, 1, true, {}, ["America/Denver"]]) {
+    assert.equal(isValidTimezone(bad), false, `${String(bad)} must not be storable`);
+  }
+
+  // Every zone the app itself offers has to survive its own check. The rule
+  // this replaced preferred Intl.supportedValuesOf("timeZone"), which lists
+  // canonical names only and so refused "UTC" and "Asia/Kolkata" - two options
+  // sitting in that very picker, which 400'd when anybody chose them.
+  const settings = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "client/src/pages/settings.tsx"), "utf8");
+  const picker = settings.slice(
+    settings.indexOf("const TIMEZONE_GROUPS"),
+    settings.indexOf("];", settings.indexOf("const TIMEZONE_GROUPS")),
+  );
+  const offered = [...picker.matchAll(/value: "([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(offered.length >= 30, "the timezone picker was found and still offers a full list");
+  assert.ok(offered.includes("UTC") && offered.includes("Asia/Kolkata"), "including the two that used to be refused");
+  for (const zone of offered) {
+    assert.equal(isValidTimezone(zone), true, `the picker offers ${zone}, so it must be storable`);
+  }
+});
+
+test("a timezone already in the database degrades instead of throwing", () => {
+  // Checking the write cannot repair rows written before the check existed, and
+  // rewriting people's records to cover for a bug is not a migration anyone
+  // should run. So every read falls back rather than trusting the column.
+  assert.equal(normalizeTimezone("America/New_York"), "America/New_York");
+  assert.equal(normalizeTimezone("  America/Denver  "), "America/Denver");
+  for (const stored of ["", "   ", "Mars/Olympus_Mons", "America/Nowhere", null, undefined, 7]) {
+    assert.throws(() => new Intl.DateTimeFormat("en-US", { timeZone: String(stored) }), RangeError,
+      `${String(stored)} is what a bare read could not survive`);
+    assert.equal(normalizeTimezone(stored), BUSINESS_DAY_DEFAULT_TZ);
+  }
+  // A caller may name the zone it falls back TO - the CLR task PATCH keeps the
+  // row's own stored zone when the assignee has none worth using.
+  assert.equal(normalizeTimezone("", "America/Chicago"), "America/Chicago");
+  assert.equal(normalizeTimezone("Mars/Olympus_Mons", "America/Chicago"), "America/Chicago");
+  // And the office clock is a zone Intl really does accept, so the fallback of
+  // last resort can never itself be the next RangeError.
+  assert.equal(isValidTimezone(BUSINESS_DAY_DEFAULT_TZ), true);
+});
+
+test("every route that writes users.timezone checks it first", () => {
+  const routes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server/routes.ts"), "utf8");
+
+  // PATCH /api/users/:id takes the whole request body. Before this check any
+  // signed-in account could store "" or "Mars/Olympus_Mons" on itself, and the
+  // RangeError then surfaced somewhere else entirely - a task deadline, the
+  // overdue sweep, push quiet hours - long after the request that caused it.
+  // This is the source that fed every one of those, so it is stopped at the write.
+  const patchUser = routes.slice(
+    routes.indexOf('app.patch("/api/users/:id", requireAuth'),
+    routes.indexOf('app.patch("/api/users/:id/manager"'),
+  );
+  assert.match(patchUser, /if \("timezone" in \(rest as any\)\) \{/,
+    "the mass-assigned body is asked about timezone at all");
+  assert.match(patchUser, /if \(!isValidTimezone\(tz\)\) return res\.status\(400\)/,
+    "and an unusable one is refused rather than stored");
+  assert.match(patchUser, /\(rest as any\)\.timezone = tz;/, "the trimmed value is what reaches the column");
+  // Before the write, not merely somewhere in the same handler.
+  assert.ok(patchUser.indexOf("isValidTimezone") < patchUser.indexOf("storage.updateUser(id, rest)"),
+    "a check that runs after the update is not a check");
+
+  // The other two doors onto the same column. The profile route has always had
+  // this rule; it now states it in the same words instead of its own copy.
+  const profile = routes.slice(
+    routes.indexOf('app.patch("/api/auth/profile"'),
+    routes.indexOf('app.patch("/api/users/me/seen-intro"'),
+  );
+  assert.match(profile, /if \(!isValidTimezone\(tz\)\) return res\.status\(400\)/);
+  assert.doesNotMatch(profile, /supportedValuesOf/, "one rule in one place, not a copy per route");
+
+  // insertUserSchema is generated from the table, so `timezone` is nothing more
+  // than TEXT to it: POST /api/users would mint an account with a junk zone.
+  const createUser = routes.slice(
+    routes.indexOf('app.post("/api/users", async'),
+    routes.indexOf("const newUser = storage.createUser(createData);"),
+  );
+  assert.match(createUser, /if \(!isValidTimezone\(tz\)\) return res\.status\(400\)/);
+
+  // And nothing else writes the column. A hand-built UPDATE would sidestep all
+  // three checks above, and the super-admin console builds exactly that shape
+  // of statement for users - today over is_active and super_admin only.
+  assert.doesNotMatch(routes, /UPDATE users SET[^`]*\btimezone\b/,
+    "no raw SQL may set users.timezone");
+  const saConsole = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server/saConsole.ts"), "utf8");
+  assert.doesNotMatch(saConsole, /timezone/,
+    "the super-admin console must not grow a fourth door onto this column");
 });

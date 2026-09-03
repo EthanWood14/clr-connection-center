@@ -237,6 +237,60 @@ export const BUSINESS_DAY_ROLLOVER_HOUR = ROLLOVER_HOUR;
 export const BUSINESS_DAY_DEFAULT_TZ = DEFAULT_TZ;
 
 /**
+ * May this value be STORED in a timezone column?
+ *
+ * One question, asked of the only authority that matters: will Intl take it?
+ * Every zone-aware call in the app — Intl.DateTimeFormat, toLocaleString,
+ * tzOffsetMsAt above — throws a RangeError on a name it does not know, and
+ * those calls sit in crons, notification paths and list endpoints where a
+ * RangeError is not a 400 but a dead feature. Asking here, once, at the write,
+ * is what keeps them from having to.
+ *
+ * PATCH /api/auth/profile has always made this check; this is that check,
+ * lifted out so every route writing a timezone makes the same one. It differs
+ * from that original in a single deliberate way: the original preferred
+ * Intl.supportedValuesOf("timeZone"), which lists only CANONICAL zone names —
+ * and so rejected "UTC" and "Asia/Kolkata", two of the 37 options the app's own
+ * timezone picker offers (client/src/pages/settings.tsx). Intl formats both
+ * perfectly well. The question a write has to answer is whether the value
+ * works, not whether it is spelled the way tzdata prefers.
+ *
+ * Anything that is not a non-blank string is invalid, null included: these
+ * columns are NOT NULL with a real default, so "unset" is not something a
+ * request gets to say.
+ */
+export function isValidTimezone(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const zone = value.trim();
+  if (!zone) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The zone a READ path should actually use for a value already in the database.
+ *
+ * Checking the write cannot repair what is already stored: users.timezone and
+ * clr_tasks.recurrence_timezone are NOT NULL TEXT columns older than any check
+ * on them, so they hold blank strings and names Intl has never heard of — and
+ * rewriting people's records to cover for that is not a migration anyone should
+ * run. So every read degrades instead: a stored value Intl accepts is used as
+ * it stands, and anything else reads as unset and falls back.
+ *
+ * The fallback is the caller's to name, because "what to use instead" is not
+ * always the office clock — the CLR task PATCH, for one, prefers the zone the
+ * row is already stored with before it gives up and takes the office's.
+ */
+export function normalizeTimezone(value: unknown, fallback: string = DEFAULT_TZ): string {
+  const zone = typeof value === "string" ? value.trim() : "";
+  return zone && isValidTimezone(zone) ? zone : fallback;
+}
+
+/**
  * Returns true if the given user has already submitted an EOD report for the
  * given business date. Used by the post-EOD rollover logic: any new activity
  * a CLR logs after submitting today's EOD should count toward tomorrow.

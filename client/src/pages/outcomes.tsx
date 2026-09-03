@@ -29,6 +29,7 @@ import {
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+import { timeColumnsPatch } from "@/lib/appointment-datetime";
 import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection, composeLeadCaptureNotes } from "@/lib/lead-capture";
 import { copyToClipboard } from "@/lib/utils";
 
@@ -1476,15 +1477,37 @@ export default function Outcomes() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: EditOutcomeValues }) => {
+    mutationFn: ({ id, data, before }: { id: number; data: EditOutcomeValues; before: any }) => {
       const payload: Record<string, unknown> = {
         outcomeType: data.outcomeType,
         transferType: data.outcomeType === "transfer" ? data.transferType : null,
         loId: data.loId,
         borrowerName: data.borrowerName ?? "",
         notes: data.notes ?? "",
-        followUpDate: data.followUpDate || null,
       };
+      // Moving an appointment happens HERE — the edit dialog has no appointment
+      // field of its own, and showFollowUp always shows the follow-up field for
+      // an appointment (FOLLOWUP_TYPES), so that one input IS where a meeting's
+      // time is retyped. Saving it alone left appointment_datetime on the
+      // ABANDONED time, and every surface that prefers that column — Upcoming
+      // Appointments, the 30-minute reminder cron, reminders.ts's COALESCE, the
+      // EOD digest, the Bonzo note, the TV wall — went on naming a slot the
+      // meeting no longer had.
+      //
+      // The mirror is gated on the follow-up having CHANGED in this edit, not on
+      // it having a value: the dialog posts the whole record, so a notes or
+      // borrower-name save carries the follow-up field too, and a presence gate
+      // made that save re-assert it over a time CallSync had corrected in
+      // appointment_datetime — invisibly, since writing back a time the row
+      // already holds is not a move. `before` is the row the dialog was opened
+      // on, which is what the form reset its default to. timeColumnsPatch owns
+      // the whole rule, clearing included; see client/src/lib/appointment-datetime.ts.
+      Object.assign(payload, timeColumnsPatch({
+        outcomeType: data.outcomeType,
+        followUpDate: data.followUpDate,
+        storedFollowUpDate: before?.followUpDate,
+        storedOutcomeType: before?.outcomeType,
+      }));
       return apiRequest("PATCH", `/api/outcomes/${id}`, payload);
     },
     onSuccess: () => {
@@ -1801,7 +1824,7 @@ export default function Outcomes() {
         outcome={editTarget}
         open={!!editTarget}
         onClose={() => setEditTarget(null)}
-        onSubmit={values => editTarget && updateMutation.mutate({ id: editTarget.id, data: values })}
+        onSubmit={values => editTarget && updateMutation.mutate({ id: editTarget.id, data: values, before: editTarget })}
         isPending={updateMutation.isPending}
         los={los}
         currentUserId={authUser?.id}

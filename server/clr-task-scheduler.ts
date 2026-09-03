@@ -1,5 +1,5 @@
 import { nextTaskOccurrenceDueAt, normalizeTaskScheduleDays, type TaskRecurrence } from "../shared/clr-tasks";
-import { BUSINESS_DAY_DEFAULT_TZ, parseWallClockInTz } from "./business-day";
+import { normalizeTimezone, parseWallClockInTz } from "./business-day";
 
 type TaskDb = {
   prepare(sql: string): any;
@@ -15,7 +15,13 @@ function scheduleDays(row: any): number[] {
 }
 
 export function nextTaskOccurrenceForRow(row: any): string | null {
-  const timezone = String(row.recurrence_timezone || BUSINESS_DAY_DEFAULT_TZ);
+  // `|| BUSINESS_DAY_DEFAULT_TZ` catches null and blank and nothing else, so a
+  // stored zone Intl has never heard of reached the formatter below as a
+  // RangeError — and this function has no reader to show a fallback to: it runs
+  // under GET /api/clr-tasks (a 500 on the whole list), the completion path and
+  // the minute sweep. A row's zone is validated on the way in, but rows written
+  // before that check are still here, so the read degrades as well.
+  const timezone = normalizeTimezone(row.recurrence_timezone);
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hourCycle: "h23",
@@ -63,7 +69,9 @@ export function spawnNextTaskOccurrence(db: TaskDb, taskId: number): any | null 
         VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?,?)`).run(
           task.org_id, task.title, task.description, task.assigned_user_id,
           task.created_by_user_id, task.priority, task.recurrence,
-          task.schedule_days ?? "[]", task.recurrence_timezone || BUSINESS_DAY_DEFAULT_TZ,
+          // The successor inherits a zone that has been through the same check,
+          // so one bad row cannot seed a whole series of them.
+          task.schedule_days ?? "[]", normalizeTimezone(task.recurrence_timezone),
           nextDue, seriesId, now, now,
         );
       childId = Number(created.lastInsertRowid);

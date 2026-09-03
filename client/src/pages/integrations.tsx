@@ -16,6 +16,7 @@ import { InfoBanner } from "@/components/info-banner";
 const MOJO_URL = "https://www.westcapitallending.center/api/webhook/mojo";
 const BONZO_URL = "https://www.westcapitallending.center/api/webhook/bonzo";
 const ZAPIER_INBOUND_URL = "https://www.westcapitallending.center/api/webhook/mojo/zapier";
+const LEADVAULT_LEAD_URL = "https://www.westcapitallending.center/api/webhook/leadvault-lead";
 
 type Settings = {
   mojoSecret: string;
@@ -28,6 +29,9 @@ type Settings = {
   callsyncSecret: string;
   callsyncSecretConfigured?: boolean;
   callsyncSecretManagedByEnv?: boolean;
+  leadvaultLeadSecret: string;
+  leadvaultLeadSecretConfigured?: boolean;
+  leadvaultLeadSecretManagedByEnv?: boolean;
 };
 
 type WebhookEvent = {
@@ -277,6 +281,7 @@ export default function IntegrationsPage() {
   const [local, setLocal] = useState<Settings>({
     mojoSecret: "", bonzoSecret: "", bonzoApiToken: "", mojoApiKey: "",
     zapierWebhookUrl: "", zapierSecret: "", leadvaultReportingToken: "", callsyncSecret: "",
+    leadvaultLeadSecret: "",
   });
   useEffect(() => {
     if (settings) {
@@ -289,6 +294,7 @@ export default function IntegrationsPage() {
         zapierSecret: settings.zapierSecret ?? "",
         leadvaultReportingToken: settings.leadvaultReportingToken ?? "",
         callsyncSecret: settings.callsyncSecret ?? "",
+        leadvaultLeadSecret: settings.leadvaultLeadSecret ?? "",
       });
     }
   }, [settings]);
@@ -577,8 +583,9 @@ export default function IntegrationsPage() {
               </div>
               <CardDescription className="mt-1">
                 Pulls outbound call summaries (Dialpad + Mojo call logs) from LeadVault to power the
-                Outbound CLR Calls page. The LEADVAULT_REPORTING_TOKEN environment variable takes
-                precedence over the token saved here.
+                Outbound CLR Calls page, and takes the "a new lead landed" notice LeadVault sends to
+                the office TV. Each direction has its own secret; the matching environment variable
+                takes precedence over anything saved here.
               </CardDescription>
             </div>
           </div>
@@ -596,8 +603,39 @@ export default function IntegrationsPage() {
               />
             </div>
           </div>
+          <div className="pt-4 border-t">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              New-Lead Notice URL (LeadVault POSTs here when a lead lands)
+            </label>
+            <div className="flex gap-2 mt-1.5">
+              <Input readOnly value={LEADVAULT_LEAD_URL} className="font-mono text-xs" />
+              <CopyBtn value={LEADVAULT_LEAD_URL} />
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Slides a strip along the bottom of the office TV for a few seconds. Nothing is stored:
+              the last few arrivals live in memory and anything over ten minutes old is ignored.
+            </p>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              New-Lead Shared Secret (sent as x-api-token — no secret, no notices)
+            </label>
+            <div className="mt-1.5">
+              <SecretInput
+                value={local.leadvaultLeadSecret}
+                onChange={(v) => setLocal(p => ({ ...p, leadvaultLeadSecret: v }))}
+                placeholder="Paste the shared secret LeadVault will send"
+              />
+            </div>
+            {settings?.leadvaultLeadSecretManagedByEnv && (
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Currently set by the LEADVAULT_LEAD_WEBHOOK_SECRET environment variable, which takes
+                precedence over anything saved here.
+              </p>
+            )}
+          </div>
           <div className="flex justify-end pt-2">
-            <Button onClick={() => saveMutation.mutate({ leadvaultReportingToken: local.leadvaultReportingToken })} disabled={saveMutation.isPending}>
+            <Button onClick={() => saveMutation.mutate({ leadvaultReportingToken: local.leadvaultReportingToken, leadvaultLeadSecret: local.leadvaultLeadSecret })} disabled={saveMutation.isPending}>
               <Save className="w-3.5 h-3.5 mr-1.5" /> Save
             </Button>
           </div>

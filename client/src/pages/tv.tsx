@@ -5,7 +5,7 @@
  * timer the way ads rotate on a screen in a lobby — scorecard, team, latest,
  * a training tip — and each one re-enters fresh so its bars grow and its
  * numbers count up again every time it comes around. The moments (a transfer
- * lands, a meeting is set or moved, an appointment is missed, a call falls
+ * lands, a meeting is set or rebooked, an appointment is missed, a call falls
  * through, a milestone) cut in over whatever page is up, then the loop resumes.
  *
  * Rules that shape it:
@@ -24,7 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  ArrowRightLeft, CalendarCheck2, CalendarClock, CalendarX2, Flame, GraduationCap, Trophy, Users,
+  ArrowRightLeft, CalendarCheck2, CalendarClock, CalendarX2, Flame, GraduationCap, Quote, Trophy, UserPlus, Users,
 } from "lucide-react";
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
@@ -45,8 +45,21 @@ interface Person {
   lastTransferAt?: string | null; lastCallAt?: string | null;
 }
 interface Aside { name: string; today: number; week: number }
+/** A lead that just landed in LeadVault. Transient — see server/tv-leads.ts. */
+interface NewLead { id: number; name: string; source: string | null; at: string }
 interface Milestone { id: string; kind: string; headline: string; detail: string; weight: 1 | 2 | 3 }
-interface Tip { day: number; half: "morning" | "afternoon" | "eod"; text: string; author: string }
+/**
+ * A line for the tip page. Two registers share it: the quiet ones rewritten
+ * from the training plan, which carry a day and the plan's author, and the
+ * ones Ethan chose, which carry the person who actually said them.
+ */
+interface Tip {
+  day: number; half: "morning" | "afternoon" | "eod"; text: string;
+  /** Who wrote the training plan. */
+  author: string;
+  /** Who said the quote, when it is one. Null for the training lines. */
+  quoteAuthor?: string | null;
+}
 interface Feed {
   version: string; now: string; today: string; weekStart: string; cursor: string;
   scorecard: {
@@ -55,6 +68,7 @@ interface Feed {
   };
   events: TvEvent[]; recent: TvEvent[]; milestones: Milestone[]; tip: Tip | null;
   aside?: Aside[];
+  newLeads?: NewLead[];
 }
 
 type Moment =
@@ -92,6 +106,15 @@ function since(iso: string | null | undefined, now: number): { label: string; qu
 const TIP_MS = 45_000;
 const PLAYED_KEY = "c3:tv:played";
 
+/**
+ * How long the new-lead strip stays up before it slides back down.
+ *
+ * Not part of HOLD_MS below, on purpose. A lead landing is an ambient notice
+ * along the bottom of the screen, not a moment: it never queues, it never
+ * pauses the deck, and it never waits behind a celebration.
+ */
+const NEW_LEAD_HOLD_MS = 8_000;
+
 /** How long each kind holds the screen. A transfer earns the longest beat. */
 const HOLD_MS: Record<Kind | "milestone" | "overtake", number> = {
   transfer: 9500, appointment: 8000, rescheduled: 8000, fell_through: 8500, missed_appointment: 7500, milestone: 10500,
@@ -102,7 +125,7 @@ const HOLD_MS: Record<Kind | "milestone" | "overtake", number> = {
 const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeof ArrowRightLeft; confetti: boolean }> = {
   transfer:           { label: "Transfer",            hue: "from-amber-400 via-yellow-300 to-amber-500",   ring: "ring-amber-300/60",   Icon: ArrowRightLeft, confetti: true },
   appointment:        { label: "Meeting set",         hue: "from-sky-400 via-cyan-300 to-blue-500",        ring: "ring-sky-300/60",     Icon: CalendarCheck2, confetti: false },
-  rescheduled:        { label: "Meeting moved",       hue: "from-teal-400 via-emerald-300 to-teal-500",    ring: "ring-teal-300/60",    Icon: CalendarClock,  confetti: false },
+  rescheduled:        { label: "Meeting rebooked",    hue: "from-teal-400 via-emerald-300 to-teal-500",    ring: "ring-teal-300/60",    Icon: CalendarClock,  confetti: false },
   fell_through:       { label: "Fell through",        hue: "from-rose-500 via-red-400 to-rose-700",        ring: "ring-rose-300/50",    Icon: Flame,          confetti: false },
   missed_appointment: { label: "Missed appointment",  hue: "from-orange-500 via-amber-400 to-orange-600",  ring: "ring-orange-300/50",  Icon: CalendarX2,     confetti: false },
 };
@@ -444,13 +467,27 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
         className="max-w-[1500px] rounded-[2.5rem] border border-violet-300/25 bg-gradient-to-br from-violet-500/15 via-transparent to-transparent p-16"
       >
         <div className="mb-6 flex items-center gap-3 text-[clamp(1rem,1.5vw,1.6rem)] font-semibold uppercase tracking-[0.3em] text-violet-200/80">
-          <GraduationCap className="h-8 w-8" /> From the training plan
+          {/* A quote somebody else said is not "from the training plan", and
+              labelling Rocky Balboa as such would be its own small joke. */}
+          {tip?.quoteAuthor
+            ? <><Quote className="h-8 w-8" /> On the wall</>
+            : <><GraduationCap className="h-8 w-8" /> From the training plan</>}
         </div>
         {tip ? (
           <>
-            <blockquote className="text-[clamp(1.8rem,3.1vw,3.4rem)] font-medium leading-snug text-white [text-wrap:balance]">“{tip.text}”</blockquote>
+            {/* The longest of these runs past 240 characters, so the type has
+                to give way rather than push the card off a 1080p screen. */}
+            <blockquote
+              className={`font-medium leading-snug text-white [text-wrap:balance] ${
+                tip.text.length > 150
+                  ? "text-[clamp(1.2rem,2vw,2.2rem)]"
+                  : "text-[clamp(1.8rem,3.1vw,3.4rem)]"
+              }`}
+            >“{tip.text}”</blockquote>
             <p className="mt-8 text-[clamp(1.1rem,1.7vw,1.7rem)] text-white/50">
-              {tip.day > 0 ? `Day ${tip.day} · ${tip.half === "eod" ? "by end of day" : tip.half} · ` : ""}{tip.author}
+              {tip.quoteAuthor
+                ? `— ${tip.quoteAuthor}`
+                : `${tip.day > 0 ? `Day ${tip.day} · ${tip.half === "eod" ? "by end of day" : tip.half} · ` : ""}${tip.author}`}
             </p>
           </>
         ) : <p className="text-white/50">No training plan yet.</p>}
@@ -595,7 +632,7 @@ export default function TvBoard() {
     const reel: Moment[] = [
       ev("transfer", "Maria Delgado", "to Alex Thompson"),
       ev("appointment", "Dana Whitfield", "Today 2:30 PM"),
-      ev("rescheduled", "Tomas Reyes", "Moved to Tue 4:15 PM"),
+      ev("rescheduled", "Tomas Reyes", "Rebooked to Tue 4:15 PM"),
       ev("fell_through", "Kevin Ostrowski", null),
       ev("missed_appointment", "Priya Natarajan", "No answer"),
       { type: "milestone", key: `demo-${stamp}-milestone`, milestone: { id: "demo", kind: "team-day", headline: "25 transfers today", detail: "The whole floor. Keep going.", weight: 3 } },
@@ -645,6 +682,34 @@ export default function TvBoard() {
     const done = setTimeout(() => setCurrent(null), hold);
     return () => clearTimeout(done);
   }, [current]);
+
+  // ── new leads ─────────────────────────────────────────────────────────
+  // LeadVault says a lead landed; a strip slides up along the bottom of the
+  // screen, holds, and drops again. Deliberately NOT a moment: it never goes
+  // into the queue, so it cannot pause the deck and cannot end up waiting
+  // behind a transfer's hype screen — by the time that finished, a lead that
+  // "just" landed would be two minutes old and no longer news.
+  //
+  // It owns no timer either. Whether the strip is up is read off the same
+  // second-clock the header already runs, which is one fewer thing that can
+  // be left running, or cancelled at the wrong moment.
+  const lastLeadId = useRef(0);
+  const [leadNotice, setLeadNotice] = useState<{ lead: NewLead; more: number; until: number } | null>(null);
+  useEffect(() => {
+    const fresh = (data?.newLeads ?? []).filter((l) => l.id > lastLeadId.current);
+    if (!fresh.length) return;
+    // Five arriving in one poll is ONE notice, not five eight-second holds
+    // stacked behind each other: the newest gets the strip, and the rest are
+    // a quiet count beside it.
+    const newest = fresh.reduce((a, b) => (b.id > a.id ? b : a));
+    // Ids only climb, so the newest one IS the high-water mark. The feed
+    // re-sends a lead until an outcome moves the shared cursor past it, and a
+    // screen that stays up for weeks should remember one number for that, not
+    // a set that grows all day.
+    lastLeadId.current = newest.id;
+    setLeadNotice({ lead: newest, more: fresh.length - 1, until: Date.now() + NEW_LEAD_HOLD_MS });
+  }, [data]);
+  const leadUp = !!leadNotice && now.getTime() < leadNotice.until;
 
   // ── the deck ──────────────────────────────────────────────────────────
   // Advances on its own clock; pauses while a moment is up so the page under
@@ -876,6 +941,39 @@ export default function TvBoard() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* A lead just landed in LeadVault. A strip along the bottom, kept clear
+          of the not-ranked card in the corner and of the progress dots below
+          it, and it never pauses the deck: a notice, not a moment. Under a
+          moment the overlay simply covers it, and its clock runs on. */}
+      {leadNotice && (
+        <motion.div
+          className="pointer-events-none absolute bottom-14 left-10 right-[30vw] z-20"
+          initial={{ y: reduced ? 0 : "140%", opacity: reduced ? 0 : 1 }}
+          animate={reduced ? { y: 0, opacity: leadUp ? 1 : 0 } : { y: leadUp ? "0%" : "140%", opacity: 1 }}
+          transition={reduced ? { duration: 0.25 } : { type: "spring", stiffness: 210, damping: 26 }}
+          data-testid="tv-new-lead"
+          data-up={leadUp ? "1" : "0"}
+        >
+          <div className="flex items-center gap-6 rounded-2xl border border-emerald-300/30 bg-emerald-400/[0.08] px-8 py-4 backdrop-blur-sm">
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-300">
+              <UserPlus className="h-7 w-7 text-[#0B1220]" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[clamp(0.8rem,1vw,1rem)] font-semibold uppercase tracking-[0.25em] text-emerald-200/70">New lead in LeadVault</div>
+              <p className="mt-0.5 flex items-baseline gap-4 text-[clamp(1.4rem,2.2vw,2.2rem)] font-bold leading-tight">
+                <span className="truncate">{leadNotice.lead.name}</span>
+                {leadNotice.lead.source && (
+                  <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] font-medium text-white/45">{leadNotice.lead.source}</span>
+                )}
+              </p>
+            </div>
+            {leadNotice.more > 0 && (
+              <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] text-white/40">+{leadNotice.more} more</span>
+            )}
+          </div>
+        </motion.div>
       )}
 
       {/* ── progress dots: which page, and how long until the next ── */}
