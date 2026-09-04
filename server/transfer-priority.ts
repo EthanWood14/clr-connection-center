@@ -16,6 +16,12 @@
  *   - the busiest choice available is worth exactly 0
  *   - a CLR's score is the mean over the transfers they actually made
  *
+ * ...with one exception, and it is FLAT rather than graded. A transfer the app
+ * recorded as an investment property carried no placement decision at all: it
+ * was required to reach one of three named assistants. It is worth 100% when
+ * the record names one of them and 0% when it does not, however starved the
+ * loan officer was that morning. See INVESTMENT_PROPERTY_LOAS.
+ *
  * Pure arithmetic over plain rows, exactly like server/tv-pages.ts: the route
  * runs the SQL and hands the rows over, so every rule in this file is testable
  * without a database and without booting Express.
@@ -34,14 +40,17 @@
  *      if the caller counts recipients over a run-up as well as the range; the
  *      same window on both sides rebuilds every load as zero.
  *   2. AGAINST THE CHOICES THAT EXISTED — see `TransferRow.eligible`.
- *   3. A FORCED DESTINATION IS NOT A CHOICE — see `TransferRow.constrainedTo`
- *      and `constraintVerdict`. It protects the AXIS it forced; it does not
- *      excuse the rest of the transfer, and it does not excuse the one that
- *      disobeyed it.
- *   4. THE LOAN OFFICER IS THE DESTINATION — see `transferCredit`. Rule 3 is
- *      not allowed to suspend rule 4: a compliance answer narrows the pool on
- *      the axis it names and leaves every other axis judged exactly as it
- *      would have been without it.
+ *   3. A FORCED ROUTE IS NOT A PLACEMENT DECISION — see
+ *      `TransferRow.investmentProperty` and `resolveInvestmentRouting`.
+ *      Following a routing requirement is correct behaviour and is worth 100%
+ *      flat; ignoring it is worth 0 flat. How starved the desk was never
+ *      enters into it, in either direction.
+ *   4. THE LOAN OFFICER IS THE DESTINATION OF A PLACEMENT — see
+ *      `transferCredit`. Every RAMPED transfer is scored on the loan officer
+ *      and on nothing else. The assistant is read in exactly one place, the
+ *      flat verdict above, because the routing rule names three assistants and
+ *      the assistant recorded on the transfer is the only record that says
+ *      whether one of them got it.
  *   5. A RECORD NOBODY CAN READ IS NOT A GOOD PLACEMENT — see the UNPLACED note
  *      on `scoreTransferPriority`.
  */
@@ -90,22 +99,18 @@ export const PRIORITY_WINDOW_DAYS = STARVED_WINDOW_DAYS;
  */
 export const FULL_CREDIT_LOS = 5;
 
-/** "as well as ... lowest 2 LOA's". LOAs are a much smaller pool. */
-export const FULL_CREDIT_LOAS = 2;
-
 /**
  * The full-credit band as a SHARE of the pool, which is what makes the band
  * survive being handed three names instead of nineteen.
  *
- * "The lightest quarter" reproduces both of Ethan's numbers exactly on the prod
- * floor — ceil(19 x 0.25) = 5 loan officers, ceil(7 x 0.25) = 2 assistants — so
- * nothing about the everyday reading of the stat changes. What it adds is a
- * sensible answer when a CLR is handed a lead in a state with only three
- * licensed loan officers: a fixed five would put every one of them at 100% and
- * measure nothing at all, while the quarter-share puts one there and ramps the
- * other two.
+ * "The lightest quarter" reproduces Ethan's number exactly on the prod floor —
+ * ceil(19 x 0.25) = 5 loan officers — so nothing about the everyday reading of
+ * the stat changes. What it adds is a sensible answer when a CLR is handed a
+ * lead in a state with only three licensed loan officers: a fixed five would
+ * put every one of them at 100% and measure nothing at all, while the
+ * quarter-share puts one there and ramps the other two.
  *
- * The absolute constants above stay as the ceiling, so growing the floor from
+ * The absolute constant above stays as the ceiling, so growing the floor from
  * nineteen loan officers to forty does not silently widen the band to ten.
  */
 export const FULL_CREDIT_SHARE = 0.25;
@@ -171,85 +176,147 @@ export const SCORE_NON_RECEIVING_RECIPIENTS = false;
 export const MIN_SCORED_TRANSFERS = 5;
 
 /**
- * Ethan's rule: "investment properties must go to justin, john, or mateo".
+ * Ethan's rule, verbatim: "any investment qualification yes should be 100 if
+ * transfers to chris LOA justin, mateo, or john. 0 if anything else".
  *
- * ── WHAT "PROTECTED" MEANS, AND WHAT IT DOES NOT ────────────────────────────
+ * ── WHAT THE INVESTMENT RULE IS, AND WHAT IT IS NOT ─────────────────────────
  *
- * PROTECTED MEANS: the axis the rule forced is judged only against the
- * destinations the rule allowed, never against the whole floor. Sending an
- * investment property to Justin — the busiest assistant in the building — is
- * compared with John and Mateo and with nobody else, so obeying a routing
- * requirement can never be read as bad placement.
+ * A transfer the app recorded as "Investment/2nd Home: Yes" carried no
+ * placement decision. It was required to reach one of the three assistants
+ * named above, so it is not graded on how starved anybody was, and it is not
+ * graded on anything else either:
  *
- * PROTECTED DOES NOT MEAN the transfer is excused. The rule names three
- * ASSISTANTS. It says nothing whatever about which loan officer the lead lands
- * in front of, and the loan officer is the destination (rule 4 at the top of
- * this file). So every axis the rule did not force is judged exactly as it
- * would have been without the rule, and a row that names a loan officer is
- * scored on that loan officer.
+ *   FOLLOWED — the transfer records one of the three as its assistant. Exactly
+ *     100%, flat, however busy that desk was that morning. This is the point of
+ *     the rule rather than an exemption from it: obeying a forced routing
+ *     requirement is the correct behaviour, and the stat has to say so.
+ *   NOT FOLLOWED — anything else. A different assistant, no assistant recorded
+ *     at all, a different loan officer: exactly 0%, flat. "Anything else" is
+ *     the rule as it was given, and a blank is one of the things it names.
  *
- * That is the whole of the fix for a real inversion. The first version scored a
- * constrained row against the forced set ALONE, which meant the loan officer
- * was not scored at all: a lead pushed onto the single busiest desk in the
- * company came out at 100% because the row also happened to name an allowed
- * assistant. A compliance rule exists to stop somebody being marked DOWN for
- * obeying it. It must never become a way to score UP, and answering a
- * qualification question is not a placement decision.
+ * "Chris's" is half of the rule, not decoration, and it is enforced. The three
+ * are HIS assistants, so an assistant only counts when she is on that desk:
+ * `resolveInvestmentRouting` resolves the desk from the three named assistants'
+ * OWN parent loan officer — never by matching an officer's name — and admits
+ * only the assistants who sit there. Another loan officer's Justin is not the
+ * Justin the rule names, and a flagged transfer recording him scores 0 under
+ * the same clause a blank does.
  *
- * ── THE THREE READINGS ──────────────────────────────────────────────────────
+ * The loan officer recorded ON THE TRANSFER is not a second gate on top of
+ * that. The transfer form only offers the chosen officer's own assistants, so
+ * naming an admitted assistant IS naming that desk; a flagged transfer sent to
+ * a different loan officer carries a different assistant or none, and lands on
+ * the 0 by the clause above rather than by a check on `loId`.
  *
- * `constraintVerdict` is where they are decided:
+ * An UNFLAGGED transfer knows nothing about any of this: it is scored by the
+ * ordinary placement rules, on how starved the receiving loan officer was that
+ * morning, exactly as it always was. Nothing about ordinary placement changes.
  *
- *   OBEYED — the row records a destination inside the allowed set. That axis is
- *     scored inside the set alone (protected); every other axis on the row is
- *     scored as the free choice it was.
+ * ── THE ASSISTANT IS THE FACT THE RULE TURNS ON ─────────────────────────────
  *
- *   IGNORED — the row records a destination the rule did not allow. That is not
- *     a forced choice, and it certainly is not a better one: it scores 0, the
- *     same as the busiest desk in the building. Both halves of that verdict are
- *     system-written — the answer the app composed itself, and the destination
- *     the transfer landed on — so nobody is being marked down for a sentence
- *     somebody typed. The first version scored this case as UNREADABLE, which
- *     valued it at the floor mean: answering "Yes" then sending the lead
- *     anywhere at all paid better than the placement actually deserved.
+ * The rule names three ASSISTANTS, so the assistant column decides it:
+ * `TransferRow.loaId` carries the one the transfer recorded, and a flagged row
+ * is compared against the ids those three names resolve to.
  *
- *   UNREADABLE — the row records nothing at all on the axis the rule names (an
- *     investment property with no loa_id). See `constraintVerdict` for why that
- *     is "we cannot tell" and not "they broke it", and for why it now costs
- *     almost nothing either way.
+ * It is read for FLAGGED ROWS AND NOTHING ELSE, and that boundary is what makes
+ * reading it safe at all. The column is blank on roughly two thirds of real
+ * transfers. Read on the ramp, it would separate CLRs by which of them used the
+ * assistant picker — CRM hygiene printed as a placement judgement, and charged
+ * for a second time by a stat that is not about paperwork. So it is not read
+ * there: `destinationKey` and `transferCredit` see the loan officer alone, and
+ * an unflagged transfer scores exactly the same whether the field was filled in
+ * or left empty.
+ *
+ * On a flagged row the blank is not paperwork, it is the answer. The rule asks
+ * which of three people took an investment lead, and a record naming nobody
+ * does not say one of them did.
+ *
+ * The three are never resolved by matching their names against free text, and a
+ * loan officer's NAME is never matched at all: there is a surname gate
+ * elsewhere in this app, for LAP eligibility, and a stat that judges people is
+ * the last place that pattern belongs. The names below are resolved against the
+ * assistant ROSTER once per scan, and what the rule compares from then on is
+ * ids.
+ *
+ * THAT RESOLUTION IS NOT RENAME-SAFE, and this file used to claim it was. The
+ * roster's stabler handles — the row id and the parent desk — cannot be reached
+ * from the words "Justin, Mateo or John" without matching a name somewhere, and
+ * nobody has recorded the three ids anywhere this stat can read. So a recorded
+ * first name is the only handle available for the three themselves, and it is
+ * mutable: rename one of them past recognition and the roster stops answering.
+ *
+ * What that costs is bounded on purpose. The rule STOPS for everybody instead
+ * of running on the two that still resolve, so a rename can only ever switch
+ * the rule off, never turn it into a false accusation — and when it happens it
+ * is counted, logged and shown rather than absorbed.
+ *
+ * The DESK half of the rule IS id-based, and does survive a rename: the desk is
+ * whichever parent loan officer the three assistants' own roster rows point at,
+ * so that officer can be renamed and the rule will not notice.
+ *
+ * ── WHEN A NAME DOES NOT RESOLVE TO ONE ASSISTANT ───────────────────────────
+ *
+ * `resolveInvestmentRouting` states what it does in every awkward case rather
+ * than quietly taking the first row it finds, and it hands back a sentence
+ * naming what failed so the route can log it and the cell can say it:
+ *
+ *   NOBODY — a name matches no assistant on the roster, because they left or
+ *     because the spelling moved. The rule STOPS: null, applied to nobody, and
+ *     every flagged transfer falls through to the ordinary placement its record
+ *     shows. Running on two of the three instead would read every compliant
+ *     transfer to the third as a flat zero — the sharpest verdict this file
+ *     hands out, arrived at because somebody was renamed.
+ *   TWO OR MORE ON THE SAME DESK — a name matches several of that officer's
+ *     assistants, because a second Justin was hired onto it. All of them are
+ *     admitted, so a transfer naming either scores 100. Choosing between them
+ *     would be a guess, and a guess here can only fail in one of two
+ *     directions: a wrong 100 costs nothing, while a wrong 0 accuses somebody
+ *     of ignoring a routing rule they actually obeyed.
+ *   ON SOMEBODY ELSE'S DESK — a name matches an assistant who does not sit at
+ *     the desk the three share. She is simply not admitted and the rule runs on
+ *     the rest, because another loan officer's Justin is a different person.
+ *     That is the ordinary case rather than a failure.
+ *   NO SHARED DESK, OR MORE THAN ONE — the three sit at no desk in common, or a
+ *     full set of them sits at each of two desks, or one of them has no parent
+ *     desk recorded at all. "Chris's" cannot then be resolved without picking a
+ *     desk, so the rule STOPS for everybody rather than guess which was meant.
+ *
+ * A rule that stopped is never silent. The flagged transfers it did not judge
+ * are counted on the CLR's row (`investmentUnscored`), the route logs the
+ * sentence once per scan, and the dashboard shows those CLRs a dash and the
+ * reason instead of a share that would be read as a verdict on their placement.
  *
  * ── WHY THIS IS NOW SWITCHED ON ─────────────────────────────────────────────
  *
- * A forced destination is not a placement decision. Sending an investment
- * property to Justin — the busiest LOA on the floor — is compliance on that
- * axis, and the stat must not read it as bad placement. The mechanism for that
- * is `TransferRow.constrainedTo`, and this constant is the list it is switched
- * on with.
- *
- * The mechanism was built long before it could be used, because what was
- * missing was the FACT. `lead_goal` is empty on every transfer in production
- * and `lead_type` has two rows in total, so the only trace of an investment
+ * The rule was built long before it could be used, because what was missing was
+ * the FACT. `lead_goal` is empty on every transfer in production and
+ * `lead_type` has two rows in total, so the only trace of an investment
  * property used to be free text somebody typed. A stat that judges people must
  * never hinge on finding a word in a sentence that might perfectly well be
  * denying it, so the rule stayed inert rather than guess.
  *
  * The fact now exists. The qualification question is asked on both capture
- * surfaces and the app composes the answer itself, and
- * `isInvestmentProperty` in @shared/transfer-completeness reads it the same
- * strict way that file already reads its section markers: the label at the
- * start of a line, the answer compared whole, everything else failing closed.
- * A "No", a description, and a missing answer all leave the transfer
- * unconstrained — the reading has to be wrong in the harmless direction,
- * because an invented constraint would hand somebody full credit for a rule
- * that never bound them.
+ * surfaces and the app composes the answer itself, and `isInvestmentProperty`
+ * in @shared/transfer-completeness reads it the same strict way that file
+ * already reads its section markers: the label at the start of a line, the
+ * answer compared whole, everything else failing closed. A "No", a description,
+ * and a missing answer all leave the transfer unflagged — the reading has to be
+ * wrong in the harmless direction, because an invented flag would hand somebody
+ * a flat 0 for a rule that never bound them.
  *
  * What has NOT changed is which file does that reading. Nothing here touches
- * stored text and nothing here calls `investmentPropertyKeys`; the route does
- * both and passes the result down on the rows it applies to. A test enforces
- * that separation, because the guess this rule refuses to make is exactly the
- * one that would be easiest to add here later.
+ * stored text: the route reads the app's own answer and passes a boolean down
+ * on the rows it applies to. A test enforces that separation, because the guess
+ * this rule refuses to make is exactly the one that would be easiest to add
+ * here later.
  */
 export const INVESTMENT_PROPERTY_LOAS = ["Justin", "John", "Mateo"] as const;
+
+/** What a transfer that obeyed the routing requirement is worth. Flat. */
+export const INVESTMENT_FOLLOWED_CREDIT = 1;
+
+/** What one that ignored it is worth. Flat, and the worst score there is. */
+export const INVESTMENT_IGNORED_CREDIT = 0;
 
 /**
  * True since the transfer form began recording the answer in a form the app
@@ -257,35 +324,56 @@ export const INVESTMENT_PROPERTY_LOAS = ["Justin", "John", "Mateo"] as const;
  *
  * Kept as one switch in one file so the rule can be taken back off in one edit
  * if the question ever stops being asked, and so a test can pin what it means
- * in both positions rather than let it drift into decoration.
+ * in both positions rather than let it drift into decoration. The route honours
+ * it at the call site: with the switch off, no row is ever flagged.
  */
 export const INVESTMENT_PROPERTY_INPUT_AVAILABLE = true;
 
 // ── inputs ──────────────────────────────────────────────────────────────────
 
-/** A transfer lands on a loan officer, and sometimes on that LO's assistant. */
+/**
+ * The two kinds of row a roster carries.
+ *
+ * Only a loan officer is ever SCORED. An assistant row is on the roster for one
+ * reason — its IDENTITY: the name, the id, and the desk it sits at — because
+ * that is what resolves the investment rule, which names three of ONE loan
+ * officer's assistants. Its own load is never read and it is never a
+ * destination the ramp can score.
+ */
 export type RecipientKind = "lo" | "loa";
 
 /**
- * One possible destination for a transfer.
+ * One row of the roster.
  *
  * Extends the TV's StarvedRow so the same rows can be fed to orderStarved
  * without a second shape to keep in sync.
  */
 export interface RecipientRow extends StarvedRow {
-  /** loan_officers.id or loan_officer_assistants.id, as the transfer rows carry it. */
+  /** loan_officers.id or loan_officer_assistants.id, as the roster carries it. */
   id: number | string;
   kind: RecipientKind;
   /**
+   * On an ASSISTANT row, the loan officer whose desk she sits at
+   * (loan_officer_assistants.lo_id). Meaningless on a loan officer's own row,
+   * and never read there.
+   *
+   * This is what makes "Chris's Justin, Mateo or John" enforceable without
+   * matching anybody's name: the desk the rule means is the one those three
+   * roster rows point at, and an assistant on another officer's desk is a
+   * different person however she is spelled. See `resolveInvestmentRouting`.
+   */
+  deskId?: number | string | null;
+  /**
    * Transfers received across the WHOLE window — the figure the TV's Starved
    * page shows. Per-transfer scoring walks backwards from it; see
-   * `snapshotLoads`.
+   * `snapshotLoads`. Read on a loan officer, and only on a loan officer.
    */
   transfers: number;
   /**
    * Is this a real destination that is actually taking transfers? Required, not
    * optional, so a caller has to make the decision rather than inherit a
-   * default — see SCORE_NON_RECEIVING_RECIPIENTS.
+   * default — see SCORE_NON_RECEIVING_RECIPIENTS. An assistant is not a
+   * destination at all under this stat, so an assistant row is false.
    */
   receiving: boolean;
 }
@@ -295,7 +383,21 @@ export interface TransferRow {
   /** The CLR who made the transfer (lead_outcomes.assistant_id). */
   clrId: number | string;
   clrName?: string | null;
+  /**
+   * The loan officer it landed on — the destination of a PLACEMENT, and the
+   * only one. Every ramped transfer is scored on this and on nothing else.
+   */
   loId?: number | string | null;
+  /**
+   * The assistant the transfer recorded (lead_outcomes.loa_id).
+   *
+   * Read on FLAGGED ROWS AND NOWHERE ELSE. The routing rule names three
+   * assistants, so on an investment property this column is the compliance
+   * fact: one of the three is 100%, anything else — a different assistant, a
+   * blank — is 0%. On every other transfer it is not read at all, because it
+   * is blank on two thirds of real rows and scoring it there would separate
+   * CLRs by who used the assistant picker. See INVESTMENT_PROPERTY_LOAS.
+   */
   loaId?: number | string | null;
   /**
    * When it landed — an ISO date or timestamp; only the date part is used.
@@ -320,36 +422,28 @@ export interface TransferRow {
    */
   eligible?: Array<number | string> | null;
   /**
-   * The recipients this transfer was FORCED to go to — a compliance rule, not a
-   * choice. Same key format as `eligible`, and it wins over it ON THE AXIS IT
-   * NAMES and only there.
+   * Did the app record this transfer as an investment property or second home?
    *
-   * It PROTECTS the axis it forced and CHARGES a transfer that ignored it; a
-   * row that records nothing on the axis it names is judged as the free
-   * placement it looks like. What it never does is take the rest of the row out
-   * of the reckoning: a set of assistants leaves the loan officer judged
-   * exactly as an unconstrained transfer's would be. `constraintVerdict`
-   * decides which reading applies, and what "protected" means is spelled out on
-   * INVESTMENT_PROPERTY_LOAS.
-   *
-   * The route sets it for an investment property; see
-   * INVESTMENT_PROPERTY_LOAS for where the fact comes from and why nothing in
-   * this file reads it.
+   * The FACT only, never the text it came from: the route reads the app's own
+   * composed answer with `isInvestmentProperty` and passes the boolean down.
+   * True means the transfer was required to reach one of the three named
+   * assistants, and it is scored flat — 100% when `loaId` names one of them,
+   * 0% when it does not. Anything else (false, null, absent) is an ordinary
+   * transfer, scored on the floor as usual.
    */
-  constrainedTo?: Array<number | string> | null;
+  investmentProperty?: boolean | null;
 }
 
 export interface PriorityOptions {
   fullCreditLos?: number;
-  fullCreditLoas?: number;
   flagPercentile?: number;
   scoreNonReceiving?: boolean;
   /** Overrides MIN_SCORED_TRANSFERS. */
   minScored?: number;
   /**
    * Restrict the pool to these `recipientKey` strings. This is how a per-transfer
-   * eligible or constrained set is scored; unknown keys are ignored, and a set
-   * that names nobody on the roster falls back to the whole pool.
+   * eligible set is scored; unknown keys are ignored, and a set that names
+   * nobody on the roster falls back to the whole pool.
    */
   poolKeys?: Array<number | string> | null;
   /**
@@ -372,11 +466,10 @@ export type CreditBand =
   | "ramp";
 
 export interface RecipientCredit {
-  /** `${kind}:${id}` — how transfers are matched to this row. */
+  /** `lo:${id}` — how transfers are matched to this row. */
   key: string;
   id: number | string;
   name: string;
-  kind: RecipientKind;
   /** Transfers received as at the moment this credit describes. */
   transfers: number;
   /** 0-1. A transfer here is worth this much to the CLR who made it. */
@@ -392,7 +485,7 @@ export interface ClrPriorityScore {
   /** How many landed on a destination this rule could read. */
   scored: number;
   /**
-   * How many could not be read — no recipient on the row, a recipient who is no
+   * How many could not be read — no loan officer on the row, one who is no
    * longer on the roster, or one excluded by TRAP 2. They are NOT dropped; see
    * `unplacedValuedAt`.
    */
@@ -400,20 +493,33 @@ export interface ClrPriorityScore {
   /** How many were scored against the whole floor because no eligible set came with them. */
   unrestricted: number;
   /**
-   * How many had an axis scored against a forced set rather than a free choice.
-   *
-   * A forced set binds ONE axis, so a constrained row can still have a free one
-   * — the loan officer, under the assistant rule — and that axis is judged
-   * against the eligible set, or against the whole floor when none came with
-   * the row. Those transfers are counted here rather than in `unrestricted`,
-   * because the label says which rule was binding, not which pool every axis
-   * happened to land in.
+   * How many were judged by the investment routing rule instead of by the ramp
+   * — flagged rows, whenever the roster could resolve the three names. Each one
+   * scored exactly 100% or exactly 0%, and none of them was compared with the
+   * floor at all.
    */
-  constrained: number;
+  investment: number;
   /**
-   * How many landed OUTSIDE a set that was forced on them. Each one scored 0;
-   * see the three cases on INVESTMENT_PROPERTY_LOAS. Kept on the row for the
-   * same reason `unplaced` is: a verdict this sharp has to be countable.
+   * How many flagged transfers the routing rule did NOT judge, because the
+   * roster could not resolve it — see `resolveInvestmentRouting`. They were
+   * read as ordinary placement instead, which is the only honest fallback and
+   * also a misleading one: a CLR who obeyed the rule perfectly sent every one
+   * of these onto the busiest desk on the floor, and ordinary placement scores
+   * that 0. So this count is carried out to the dashboard, which shows those
+   * CLRs a dash and the reason rather than a percentage they did not earn.
+   */
+  investmentUnscored: number;
+  /**
+   * How many of those recorded somebody other than the three, or nobody at all.
+   * Each one scored exactly 0.
+   *
+   * These two counters are what makes a 0% READABLE, so they are carried all
+   * the way to the cell rather than computed and dropped. "0%, and eleven of
+   * your twelve transfers broke the investment routing rule" and "0%, you fed
+   * the busiest desk in the building" are very different accusations, and a
+   * manager looking at the number cannot tell them apart without this. The same
+   * goes in the other direction: a 100% earned by following the routing rule is
+   * not the same achievement as a 100% earned by feeding the starved.
    */
   breaches: number;
   /** The mean, 0-100 — or null when there is nothing at all to average. */
@@ -422,8 +528,16 @@ export interface ClrPriorityScore {
   mean: number | null;
   /**
    * What each unreadable transfer was counted as: the mean credit of every
-   * readable transfer the whole floor made in the window. Null when the floor
-   * made none.
+   * ORDINARY readable transfer the whole floor made in the window. Null when
+   * the floor made none.
+   *
+   * Ordinary only, and that word is load-bearing. The flat routing verdicts are
+   * 0 and 1 with nothing in between, and mixing them in made one CLR's score
+   * move on other people's compliance: a fortnight in which the floor's
+   * investment transfers happened to be breaches dragged this filler down by
+   * tens of points, and every CLR with an unreadable record was re-scored for
+   * something they had no part in. A transfer whose destination cannot be read
+   * is valued from placement, because placement is what it failed to record.
    */
   unplacedValuedAt: number | null;
   /**
@@ -481,10 +595,10 @@ export function percentileNearestRank(values: number[], p: number): number {
 /**
  * The heaviest load a needs_transfers flag can still promote (TRAP 1).
  *
- * Computed over every eligible recipient of the kind INCLUDING the ones on
- * zero: a real loan officer who took nothing is still part of the floor this cut
- * measures, and leaving them out would judge "heaviest" against only the people
- * already being fed.
+ * Computed over every eligible recipient INCLUDING the ones on zero: a real loan
+ * officer who took nothing is still part of the floor this cut measures, and
+ * leaving them out would judge "heaviest" against only the people already being
+ * fed.
  */
 export function flagPromotionCut(rows: RecipientRow[], percentile: number = FLAG_PROMOTION_PERCENTILE): number {
   return percentileNearestRank((rows ?? []).map(receivedCount), percentile);
@@ -540,7 +654,7 @@ function dedupeRecipients(rows: RecipientRow[]): RecipientRow[] {
   return Array.from(seen.values());
 }
 
-// ── what a transfer to each recipient is worth ──────────────────────────────
+// ── what a transfer to each loan officer is worth ───────────────────────────
 
 /**
  * Credit is a function of LOAD ALONE, and never increases with it.
@@ -565,21 +679,40 @@ function dedupeRecipients(rows: RecipientRow[]): RecipientRow[] {
  * which is what the first version used: two loan officers happening to land on
  * the same number is not a change in the world, and it should not silently
  * re-score everybody else.
+ *
+ * ONE POOL, because there is one kind of destination. Assistants used to be
+ * ranked in a pool of their own so that an assistant-only row could be scored;
+ * no row is ever scored on an assistant now, so an assistant is not a recipient
+ * here at all. See INVESTMENT_PROPERTY_LOAS.
+ *
+ * Recipients excluded by TRAP 2 get no entry at all — not a zero. A transfer
+ * that reaches only them cannot be read, and lands in `unplaced`.
  */
-function creditsForKind(
-  rows: RecipientRow[],
-  capBandSize: number,
-  percentile: number,
-  scoreNonReceiving: boolean,
-): RecipientCredit[] {
-  const eligible = dedupeRecipients(rows.filter((r) => scoreNonReceiving || r.receiving === true));
+export function recipientCredits(rows: RecipientRow[], opts: PriorityOptions = {}): RecipientCredit[] {
+  let list = (rows ?? []).filter((r) => r && r.kind === "lo");
+
+  // A pool restriction that names nobody on the roster is treated as no
+  // restriction at all: an eligibility list we cannot resolve is missing
+  // information, and missing information must never become an invented cage.
+  const pool = keyList(opts.poolKeys);
+  if (pool.length) {
+    const allowed = new Set(pool);
+    const kept = list.filter((r) => allowed.has(recipientKey(r.kind, r.id)));
+    if (kept.length) list = kept;
+  }
+
+  const percentile = Number.isFinite(Number(opts.flagPercentile))
+    ? Number(opts.flagPercentile)
+    : FLAG_PROMOTION_PERCENTILE;
+  const scoreNonReceiving = opts.scoreNonReceiving ?? SCORE_NON_RECEIVING_RECIPIENTS;
+  const eligible = dedupeRecipients(list.filter((r) => scoreNonReceiving || r.receiving === true));
   if (!eligible.length) return [];
 
   // Fewest received first, ties by name — the TV's rule, not a second copy.
   const ordered = orderStarved(eligible);
   const loads = ordered.map(receivedCount);
 
-  const bandSize = fullCreditBandSize(ordered.length, capBandSize);
+  const bandSize = fullCreditBandSize(ordered.length, positiveInt(opts.fullCreditLos, FULL_CREDIT_LOS));
   const baseLine = bandSize > 0 ? loads[bandSize - 1] : -1;
 
   // ...plus the stated priorities, so long as they are not already well fed.
@@ -602,55 +735,11 @@ function creditsForKind(
       key: recipientKey(r.kind, r.id),
       id: r.id,
       name: String(r.name ?? ""),
-      kind: r.kind,
       transfers,
       credit: inBand ? 1 : round(busier / rampSize, 4),
       band,
     };
   });
-}
-
-/**
- * What a transfer to each recipient is worth, 0-1.
- *
- * Loan officers and assistants are scored inside their own pools. They are not
- * comparable: the heaviest LOA on prod took 54, which would be a quiet fortnight
- * for a loan officer, and one shared ramp would make every LOA look starved.
- *
- * Recipients excluded by TRAP 2 get no entry at all — not a zero. A transfer
- * that reaches only them cannot be read, and lands in `unplaced`.
- */
-export function recipientCredits(rows: RecipientRow[], opts: PriorityOptions = {}): RecipientCredit[] {
-  let list = (rows ?? []).filter((r) => r && (r.kind === "lo" || r.kind === "loa"));
-
-  // A pool restriction that names nobody on the roster is treated as no
-  // restriction at all: an eligibility list we cannot resolve is missing
-  // information, and missing information must never become an invented cage.
-  const pool = keyList(opts.poolKeys);
-  if (pool.length) {
-    const allowed = new Set(pool);
-    const kept = list.filter((r) => allowed.has(recipientKey(r.kind, r.id)));
-    if (kept.length) list = kept;
-  }
-
-  const percentile = Number.isFinite(Number(opts.flagPercentile))
-    ? Number(opts.flagPercentile)
-    : FLAG_PROMOTION_PERCENTILE;
-  const scoreNonReceiving = opts.scoreNonReceiving ?? SCORE_NON_RECEIVING_RECIPIENTS;
-  return [
-    ...creditsForKind(
-      list.filter((r) => r.kind === "lo"),
-      positiveInt(opts.fullCreditLos, FULL_CREDIT_LOS),
-      percentile,
-      scoreNonReceiving,
-    ),
-    ...creditsForKind(
-      list.filter((r) => r.kind === "loa"),
-      positiveInt(opts.fullCreditLoas, FULL_CREDIT_LOAS),
-      percentile,
-      scoreNonReceiving,
-    ),
-  ];
 }
 
 /**
@@ -667,35 +756,145 @@ export function creditIndex(credits: RecipientCredit[]): Map<string, number> {
 }
 
 /**
- * Which destination on the row this transfer is judged on.
+ * THE LOAN OFFICER IS THE DESTINATION OF A PLACEMENT, and he is the only one.
  *
- * THE LOAN OFFICER IS THE DESTINATION. A transfer row names a loan officer and,
- * on roughly a third of real rows, that loan officer's assistant. The first
- * version took Math.max across the two, so a transfer into the busiest desk in
- * the company could score 100% because of who happened to be sitting next to
- * him — the headline safeguard bypassed on a third of the data, and the stat
- * partly measuring which LOs have their assistant field filled in. The assistant
- * on the row is an org-chart fact, not a place the CLR chose to send the lead.
+ * A transfer row names a loan officer and, on roughly a third of real rows, that
+ * loan officer's assistant. The first version took Math.max across the two, so a
+ * transfer into the busiest desk in the company could score 100% because of who
+ * happened to be sitting next to him — the headline safeguard bypassed on a
+ * third of the data, and the stat partly measuring which LOs have their
+ * assistant field filled in.
  *
- * The assistant IS the destination when they are the only one named: an
- * LOA-only row is a real placement, and the LOA pool is scored for exactly
- * that. A compliance rule naming three assistants does NOT make the assistant
- * the destination — it narrows the pool the assistant is compared in, and the
- * loan officer on the row goes on being the destination. That is why the two
- * axes can be handed different pools: pass a function and each `kind` is looked
- * up in the index built for it. See `scoreTransferPriority`.
+ * So the assistant is not read HERE, on the ramp, in any form. The form only
+ * offers the chosen loan officer's own assistants, so on an ordinary transfer
+ * the field carries no decision to score, and two thirds of real rows leave it
+ * blank; reading it on the ramp could only ever separate CLRs by CRM hygiene,
+ * which the write-up completeness stat already charges for exactly once.
+ *
+ * The one place it IS read is the flat investment verdict in
+ * `scoreTransferPriority`, where the routing rule names three assistants and
+ * the column is the only record of whether one of them got the lead. See
+ * INVESTMENT_PROPERTY_LOAS.
  */
-export type CreditLookup = (kind: RecipientKind) => Map<string, number> | null | undefined;
+function destinationKey(row: TransferRow): string | null {
+  return hasId(row?.loId) ? recipientKey("lo", row.loId) : null;
+}
 
-export function transferCredit(row: TransferRow, index: Map<string, number> | CreditLookup): number | null {
-  const indexFor: CreditLookup = typeof index === "function" ? index : () => index;
-  const lookup = (kind: RecipientKind, id: number | string | null | undefined): number | null => {
-    if (!hasId(id)) return null;
-    const c = indexFor(kind)?.get(recipientKey(kind, id));
-    return typeof c === "number" && Number.isFinite(c) ? c : null;
-  };
-  const lo = lookup("lo", row?.loId);
-  return lo === null ? lookup("loa", row?.loaId) : lo;
+export function transferCredit(row: TransferRow, index: Map<string, number>): number | null {
+  const key = destinationKey(row);
+  if (key === null) return null;
+  const c = index?.get(key);
+  return typeof c === "number" && Number.isFinite(c) ? c : null;
+}
+
+// ── the routing requirement, resolved from the roster ────────────────────────
+
+/** "Justin", "Justin and Mateo", "Justin, John and Mateo". */
+function andList(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** What the roster was able to say about the routing requirement. */
+export interface InvestmentRouting {
+  /**
+   * The assistants the rule admits, as `recipientKey` strings — or null when
+   * the roster cannot answer the question, in which case the rule runs against
+   * nobody at all and every flagged transfer is read as ordinary placement.
+   */
+  keys: Set<string> | null;
+  /**
+   * The `recipientKey` of the loan officer whose desk those three sit at — the
+   * "Chris's" in the rule, resolved from THEIR rows and never from his name.
+   * Null whenever `keys` is.
+   */
+  desk: string | null;
+  /**
+   * Null when the rule resolved. Otherwise one sentence saying what failed and
+   * naming who it failed on, because "the rule stopped" is useless to whoever
+   * has to fix it without "and here is which name did not answer". The route
+   * logs it once per scan and the cell says it, since a compliance rule that
+   * quietly stops running is exactly the kind of thing nobody notices.
+   */
+  problem: string | null;
+}
+
+/**
+ * The routing requirement, resolved from the roster: which assistants an
+ * investment property was required to reach, and whose desk they sit at.
+ *
+ * The names in INVESTMENT_PROPERTY_LOAS are resolved against the assistant
+ * ROSTER once per scan, and what comes back is a set of ids. Nothing downstream
+ * ever compares a name again: a flagged transfer is judged by whether its
+ * `loa_id` is in this set.
+ *
+ * THE DESK IS PART OF THE ANSWER, because the rule is "CHRIS'S Justin, Mateo or
+ * John" and other loan officers have a Justin too. The desk is resolved from
+ * the three named assistants' own parent rows — the one desk all three of them
+ * sit at — and only assistants on that desk are admitted. A loan officer's NAME
+ * is never read to get there, here or anywhere else in this file: there is a
+ * surname gate elsewhere in this app, for LAP eligibility, and a stat that
+ * judges people cannot hang a hundred points on somebody's surname surviving a
+ * rename. Because the desk is an id, the officer can be renamed freely.
+ *
+ * The three assistants themselves are matched on their recorded first name,
+ * which is mutable, and that is stated rather than papered over — see the
+ * rename section on INVESTMENT_PROPERTY_LOAS. Every way this can fail to
+ * resolve is decided out loud below rather than by taking the first row that
+ * matches, and every one of them STOPS the rule for everybody instead of
+ * running it on part of the roster, because a rule running on two names out of
+ * three reads the third's compliant transfers as flat zeroes.
+ */
+export function resolveInvestmentRouting(recipients: RecipientRow[]): InvestmentRouting {
+  const stopped = (problem: string): InvestmentRouting => ({ keys: null, desk: null, problem });
+  // Only assistants, and only ones with an id a transfer could name.
+  const rows = (recipients ?? []).filter((r) => r && r.kind === "loa" && hasId(r.id));
+  const sought = INVESTMENT_PROPERTY_LOAS.map((named) => {
+    const first = named.toLowerCase();
+    // Their full name, or the first word of it: "Justin" and "Justin Alvarez"
+    // are the same person, and the roster carries whichever HR typed.
+    const matches = rows.filter((r) => {
+      const name = String(r.name ?? "").trim().toLowerCase();
+      return name === first || name.split(/\s+/)[0] === first;
+    });
+    const desks = matches.filter((r) => hasId(r.deskId)).map((r) => recipientKey("lo", r.deskId as number | string));
+    return { named, matches, desks: Array.from(new Set(desks)) };
+  });
+
+  const missing = sought.filter((s) => !s.matches.length).map((s) => s.named);
+  if (missing.length) return stopped(`the roster has no active assistant named ${andList(missing)}`);
+
+  const deskless = sought.filter((s) => !s.desks.length).map((s) => s.named);
+  if (deskless.length) return stopped(`the roster records no loan officer's desk for ${andList(deskless)}`);
+
+  const everyone = andList(INVESTMENT_PROPERTY_LOAS as readonly string[]);
+  // The one desk all three answer to. Their own rows decide it; nobody's name does.
+  const shared = sought[0].desks.filter((d) => sought.every((s) => s.desks.indexOf(d) >= 0));
+  if (!shared.length) return stopped(`${everyone} do not all sit at one loan officer's desk`);
+  if (shared.length > 1) {
+    return stopped(`${everyone} sit together at ${shared.length} different loan officers' desks,`
+      + ` so which desk the rule means cannot be told from the roster`);
+  }
+
+  const desk = shared[0];
+  const keys = new Set<string>();
+  for (const s of sought) {
+    for (const r of s.matches) {
+      // An assistant of the same name on ANOTHER officer's desk is a different
+      // person, and admitting her would widen the rule past what it says.
+      if (hasId(r.deskId) && recipientKey("lo", r.deskId) === desk) keys.add(recipientKey("loa", r.id));
+    }
+  }
+  return { keys, desk, problem: null };
+}
+
+/**
+ * Just the admitted assistants, for callers that only need the comparison set.
+ * Null carries the same meaning it does above: the rule could not be resolved,
+ * so it is applied to nobody. `resolveInvestmentRouting` says why.
+ */
+export function investmentAssistantKeys(recipients: RecipientRow[]): Set<string> | null {
+  return resolveInvestmentRouting(recipients).keys;
 }
 
 // ── when the transfer happened, and what the floor looked like then ──────────
@@ -704,14 +903,6 @@ export function transferCredit(row: TransferRow, index: Map<string, number> | Cr
 export function transferDay(at?: string | null): string | null {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(at ?? "").trim());
   return m ? m[1] : null;
-}
-
-/** Both destinations named on a row — both of their received counts include it. */
-function destinationKeys(row: TransferRow): string[] {
-  const keys: string[] = [];
-  if (hasId(row?.loId)) keys.push(recipientKey("lo", row.loId));
-  if (hasId(row?.loaId)) keys.push(recipientKey("loa", row.loaId));
-  return keys;
 }
 
 /**
@@ -783,23 +974,23 @@ export function snapshotLoads(
   const perDay = new Map<string, number[]>();
   const totals = new Map<string, number>();
   for (const t of rows) {
+    const key = destinationKey(t);
+    if (key === null) continue;
+    totals.set(key, (totals.get(key) ?? 0) + 1);
     const day = transferDay(t?.at);
-    for (const key of destinationKeys(t)) {
-      totals.set(key, (totals.get(key) ?? 0) + 1);
-      if (day === null) continue;
-      let counts = perDay.get(key);
-      if (!counts) {
-        counts = new Array(days.length).fill(0) as number[];
-        perDay.set(key, counts);
-      }
-      counts[dayIndex.get(day) as number] += 1;
+    if (day === null) continue;
+    let counts = perDay.get(key);
+    if (!counts) {
+      counts = new Array(days.length).fill(0) as number[];
+      perDay.set(key, counts);
     }
+    counts[dayIndex.get(day) as number] += 1;
   }
 
   const endLoad = new Map<string, number>();
   for (const r of recipients ?? []) {
-    if (!r || (r.kind !== "lo" && r.kind !== "loa")) continue;
-    const key = recipientKey(r.kind, r.id);
+    if (!r || r.kind !== "lo") continue;
+    const key = recipientKey("lo", r.id);
     endLoad.set(key, Math.max(endLoad.get(key) ?? 0, receivedCount(r)));
   }
 
@@ -844,124 +1035,6 @@ export function snapshotLoads(
 
 // ── the stat ────────────────────────────────────────────────────────────────
 
-/** Which pool a transfer is judged against, and why. */
-type PoolSource = "constrained" | "eligible" | "floor";
-
-/**
- * The TWO pools a transfer can be judged in, resolved against the roster.
- *
- * `free` is the choice the CLR actually had — their eligible set, or an empty
- * list meaning the whole floor. `forced` is the set a compliance rule imposed
- * on one axis. They are not alternatives: a constrained row is judged in BOTH,
- * one axis in each, which is the difference between protecting the forced part
- * of a decision and excusing the whole of it.
- */
-function poolsFor(row: TransferRow, known: Set<string>): { free: string[]; forced: string[] } {
-  const free = keyList(row?.eligible).filter((k) => known.has(k));
-  const forced = keyList(row?.constrainedTo).filter((k) => known.has(k));
-  if (!forced.length) return { free, forced: [] };
-  // Where eligibility is also known the two are intersected — nobody can be
-  // asked to send to somebody unlicensed — but an empty intersection means the
-  // two inputs disagree, and the compliance rule is the one that was actually
-  // binding on the CLR.
-  const both = free.length ? forced.filter((k) => free.includes(k)) : forced;
-  return { free, forced: both.length ? both : forced };
-}
-
-/** The two axes a forced set can be written on. */
-const RECIPIENT_KINDS: RecipientKind[] = ["lo", "loa"];
-
-/** What a forced set has to say about one transfer. */
-type ConstraintVerdict = "obeyed" | "breach" | "unreadable";
-
-interface ConstraintReading {
-  verdict: ConstraintVerdict;
-  /**
-   * The axes the set actually binds ON THIS ROW. Only these are scored inside
-   * the forced set; everything else on the row stays a free choice. Empty
-   * unless the verdict is `obeyed`, because nothing is protected otherwise.
-   */
-  bound: RecipientKind[];
-}
-
-/**
- * Can this forced set be read against this transfer at all, and what does it
- * say?
- *
- * A forced set is written on an AXIS — the investment rule names three
- * assistants, so it binds `loaId` and says nothing whatever about which loan
- * officer the row also carries. So the set is only applied to a transfer that
- * actually records a destination on that axis, and it is applied to THAT AXIS
- * ONLY:
- *
- *   - the destination is in the set → OBEYED. That axis is judged inside the
- *     set, protected; the axes the set does not name are judged as usual.
- *   - the destination is a roster name the set does not allow → BREACH. Scored
- *     0, because ignoring a compliance rule is not a forced choice and must not
- *     score better than an ordinary good placement.
- *   - nothing on the axis at all → UNREADABLE.
- *
- * ── WHAT AN INVESTMENT PROPERTY WITH NO loa_id MEANS ────────────────────────
- *
- * It means WE CANNOT TELL, and that is a different answer from "they broke the
- * rule". `loa_id` is filled on roughly a third of real transfer rows; a blank
- * one is overwhelmingly a field nobody wrote, not a lead that demonstrably went
- * somewhere it was not allowed. This file already refuses to read a missing
- * field as a verdict — see the UNPLACED note — and a compliance breach is the
- * sharpest verdict it can hand out, so it is the last one to hang off a blank.
- *
- * What "we cannot tell" must NOT mean is "no score". Dropping the rule and then
- * dropping the transfer with it is how answering "Investment/2nd Home: Yes"
- * came to ERASE a bad placement: the row went unreadable and was valued at the
- * floor mean, so a lead pushed onto the busiest desk in the building paid better
- * than the 0 it had earned. So the rule steps out of the way and the transfer is
- * judged as the placement the record does show — the free choice it looks like,
- * against the whole floor — and reported as unrestricted rather than
- * constrained, exactly as an unresolvable pool already is.
- *
- * ── AND WHY A BLANK BARELY MATTERS ANY MORE ─────────────────────────────────
- *
- * `loa_id` is optional, so whether the rule can be read at all comes down to
- * whether somebody used the picker. That decided a hundred points of score
- * while a constrained row was judged on the assistant alone: two CLRs doing the
- * identical, identically compliant thing came out 100% apart because one of
- * them filled a field in. A placement stat that swings on CRM hygiene is
- * measuring the wrong thing, and the completeness stat already charges for the
- * gap once.
- *
- * It cannot swing that way now. A row that names a loan officer is scored on
- * that loan officer whether the assistant is recorded or not — the forced axis
- * is protected when it is there and simply absent when it is not, and neither
- * reading touches the destination the score is taken from. So RECORDED and NOT
- * RECORDED are the same number for the same behaviour: no penalty for the gap,
- * and no windfall from it.
- *
- * The one place a recorded loa_id still changes the answer is a BREACH, and
- * that is evidence rather than hygiene: it takes a destination the rule
- * forbade, written by the system, to earn it. A blank is never read as one.
- *
- * An id nobody on the roster answers to is skipped rather than read as a
- * breach: it is one more thing we cannot resolve, not evidence.
- */
-function constraintVerdict(row: TransferRow, keys: string[], known: Set<string>): ConstraintReading {
-  const allowed = new Set(keys);
-  const bound: RecipientKind[] = [];
-  let obeyed = false;
-  let recorded = false;
-  for (const kind of RECIPIENT_KINDS) {
-    // A set that names nobody of this kind does not bind this axis.
-    if (!keys.some((k) => k.startsWith(`${kind}:`))) continue;
-    const id = kind === "lo" ? row?.loId : row?.loaId;
-    if (!hasId(id)) continue;
-    const key = recipientKey(kind, id);
-    if (!known.has(key)) continue;
-    bound.push(kind);
-    if (allowed.has(key)) obeyed = true;
-    else recorded = true;
-  }
-  return obeyed ? { verdict: "obeyed", bound } : { verdict: recorded ? "breach" : "unreadable", bound: [] };
-}
-
 /**
  * A percentage per CLR: the mean of the transfers they made.
  *
@@ -978,8 +1051,19 @@ function constraintVerdict(row: TransferRow, keys: string[], known: Set<string>)
  * that anybody placed a lead badly.
  *
  * So an unreadable transfer is counted at the FLOOR MEAN: the average credit of
- * every readable transfer the whole floor made in the same window. It says the
- * only honest thing available, which is "this one looked like everybody else's".
+ * every ORDINARY readable transfer the whole floor made in the same window. It
+ * says the only honest thing available, which is "this one looked like
+ * everybody else's".
+ *
+ * ORDINARY, because the flat routing verdicts have no business valuing a
+ * placement. They are 0 or 1 with nothing between, and folding them in made one
+ * CLR's score move on other people's compliance: the same unreadable record was
+ * worth tens of points more in a fortnight where the floor's investment
+ * transfers happened to obey the rule than in one where they did not, though
+ * nothing about the CLR's own work had changed. The filler is now derived from
+ * ramped transfers alone, so an unreadable ordinary transfer is valued only
+ * from ordinary placement — and when the floor made none, there is no filler
+ * and the unreadable rows stay out of the denominator.
  * It cannot be a reward, because a CLR placing better than the floor is pulled
  * down by it and nobody profits from a missing field. It cannot be an
  * accusation, because it is never 0 and a CLR placing worse than the floor is
@@ -992,16 +1076,32 @@ function constraintVerdict(row: TransferRow, keys: string[], known: Set<string>)
  * readable transfer at all there is nothing to say about them, and printing the
  * floor's average over an empty record would be a number about the floor wearing
  * their name.
+ *
+ * A FLAGGED transfer is the one exception, and it is Ethan's, twice affirmed
+ * with the gaming risk in front of him: "0 if anything else". On an investment
+ * property the assistant is not a field somebody forgot to fill in, it is the
+ * answer to the only question the rule asks, so a blank one scores 0 and is
+ * counted as a breach rather than valued at the floor mean. The loan officer on
+ * such a row is not consulted at all — see the forced-route branch below.
  */
 export function scoreTransferPriority(
   transfers: TransferRow[],
   recipients: RecipientRow[],
   opts: PriorityOptions = {},
 ): ClrPriorityScore[] {
-  const pool = (recipients ?? []).filter((r) => r && (r.kind === "lo" || r.kind === "loa"));
-  const { days, loadAt } = snapshotLoads(transfers ?? [], pool);
+  const roster = (recipients ?? []).filter((r) => r && (r.kind === "lo" || r.kind === "loa"));
+  const officers = roster.filter((r) => r.kind === "lo");
+  const { days, loadAt } = snapshotLoads(transfers ?? [], officers);
   const dayOf = new Map(days.map((d, i) => [d, i] as const));
-  const known = new Set(pool.map((r) => recipientKey(r.kind, r.id)));
+  // Every loan officer the roster answers to, which is what an eligible set is
+  // resolved against.
+  const known = new Set(officers.map((r) => recipientKey("lo", r.id)));
+  // The assistants an investment property was required to reach — the three
+  // named, narrowed to the desk they share — resolved once for the whole scan.
+  // Null means the roster cannot answer that today, and a rule nobody can
+  // resolve is not applied to anybody. Flagged rows are still COUNTED in that
+  // case (`investmentUnscored`), so the silence is visible downstream.
+  const allowed = resolveInvestmentRouting(roster).keys;
 
   // Credits cost a sort per pool and repeat hard: one snapshot per day per
   // distinct eligible set, not one per transfer.
@@ -1012,7 +1112,7 @@ export function scoreTransferPriority(
     if (hit) return hit;
     // dayIndex -1 is "no usable date", and loadAt reads that as the end of the
     // window — the harshest snapshot, and the only one nobody can game.
-    const rows = pool.map((r) => ({ ...r, transfers: loadAt(recipientKey(r.kind, r.id), dayIndex) }));
+    const rows = officers.map((r) => ({ ...r, transfers: loadAt(recipientKey("lo", r.id), dayIndex) }));
     const built = creditIndex(recipientCredits(rows, { ...opts, poolKeys: keys, roster: undefined }));
     cache.set(cacheKey, built);
     return built;
@@ -1025,9 +1125,18 @@ export function scoreTransferPriority(
     scored: number;
     unplaced: number;
     unrestricted: number;
-    constrained: number;
+    investment: number;
+    investmentUnscored: number;
     breaches: number;
     sum: number;
+    /**
+     * The ramped half of `sum`, and how many transfers it came from. Kept apart
+     * so the floor mean below is built from ordinary placement alone: a flat
+     * routing verdict must never move what somebody else's unreadable record is
+     * worth.
+     */
+    rampSum: number;
+    rampScored: number;
   };
   // A Map, not an object literal: a clrId of `__proto__` used to write onto
   // Object.prototype rather than into the accumulator.
@@ -1038,7 +1147,8 @@ export function scoreTransferPriority(
     if (!row) {
       row = {
         clrId, name: String(name ?? clrId), transfers: 0, scored: 0,
-        unplaced: 0, unrestricted: 0, constrained: 0, breaches: 0, sum: 0,
+        unplaced: 0, unrestricted: 0, investment: 0, investmentUnscored: 0,
+        breaches: 0, sum: 0, rampSum: 0, rampScored: 0,
       };
       acc.set(key, row);
     }
@@ -1058,6 +1168,44 @@ export function scoreTransferPriority(
     const row = open(t.clrId, t.clrName);
     row.transfers += 1;
 
+    /*
+     * THE FORCED ROUTE, AND IT IS FLAT.
+     *
+     * An investment property had three allowed destinations and the CLR made no
+     * placement decision, so there is nothing here to grade: it is worth
+     * everything if one of the three is on the record and nothing if not. No
+     * snapshot is taken, no pool is built and the eligible set is not consulted,
+     * because none of them has anything to say about a decision nobody made.
+     *
+     * The record that decides is the ASSISTANT, and a blank one is a 0 rather
+     * than a data gap. That is deliberate and it is the sharp edge of this rule:
+     * everywhere else in this file a missing field is read as "we cannot say"
+     * and valued at the floor mean, but the rule asks which of three people took
+     * an investment lead and a row naming nobody does not say one of them did.
+     * The loan officer is not consulted either way — naming one of the three IS
+     * naming that desk, so a flagged transfer sent elsewhere carries a different
+     * assistant or none and lands on the 0 below by the same clause.
+     *
+     * The ONE thing that can stop the rule is the roster failing to resolve the
+     * three names and their desk, which is a fact about the roster rather than
+     * about anybody's work. That falls through to the ordinary reading below —
+     * and is counted on the way past, because falling through is not harmless:
+     * the desk these transfers were required to reach is the busiest on the
+     * floor, so ordinary placement scores perfect compliance as 0.
+     */
+    if (t.investmentProperty === true && allowed === null) row.investmentUnscored += 1;
+    if (t.investmentProperty === true && allowed !== null) {
+      row.investment += 1;
+      row.scored += 1;
+      const recorded = hasId(t.loaId) ? recipientKey("loa", t.loaId) : null;
+      if (recorded !== null && allowed.has(recorded)) row.sum += INVESTMENT_FOLLOWED_CREDIT;
+      else {
+        row.sum += INVESTMENT_IGNORED_CREDIT;
+        row.breaches += 1;
+      }
+      continue;
+    }
+
     // The floor as it stood at the START of the day this transfer was made —
     // never as it stands now, which would read the CLR's own work back at them.
     // A row with no usable date has no snapshot to sit in front of, so it falls
@@ -1066,48 +1214,28 @@ export function scoreTransferPriority(
     const day = transferDay(t.at);
     const dayIndex = day === null ? -1 : dayOf.get(day) ?? -1;
     // A pool naming nobody on the roster is a list we cannot resolve, not a
-    // constraint. It falls back to whatever IS resolvable — the eligible set if
-    // one came with the row, the whole floor otherwise — and is reported as
-    // such, so "scored against everybody" never hides behind a rule that never
-    // applied.
-    const { free, forced } = poolsFor(t, known);
-    let source: PoolSource = forced.length ? "constrained" : free.length ? "eligible" : "floor";
-    // A forced set only binds a transfer it can actually be read against, and
-    // when it IS read it can say the CLR ignored it. See `constraintVerdict`.
-    let breach = false;
-    let bound: RecipientKind[] = [];
-    if (source === "constrained") {
-      const reading = constraintVerdict(t, forced, known);
-      if (reading.verdict === "breach") breach = true;
-      else if (reading.verdict === "unreadable") source = free.length ? "eligible" : "floor";
-      else bound = reading.bound;
-    }
-    if (source === "constrained") row.constrained += 1;
-    else if (source === "floor") row.unrestricted += 1;
+    // constraint. It falls back to the whole floor and is reported as such, so
+    // "scored against everybody" never hides behind a rule that never applied.
+    const free = keyList(t.eligible).filter((k) => known.has(k));
+    if (!free.length) row.unrestricted += 1;
 
-    // ONE POOL PER AXIS, which is what keeps a compliance answer from washing
-    // a placement out. The axis the rule forced is judged inside the forced set
-    // — protected, never compared with a destination the rule forbade — and
-    // every other axis is judged in the free pool exactly as it would have been
-    // with no rule at all. `transferCredit` then picks the destination as it
-    // always does: the loan officer, or the assistant when nobody else is
-    // named. Both pools are memoised, and only the axis actually read is built.
-    //
-    // 0 without a lookup: a breach is a verdict on the rule, not a reading of
-    // the pool, and the destination is not in that pool by definition.
-    const credit = breach ? 0 : transferCredit(t, (kind) =>
-      creditsFor(dayIndex, bound.includes(kind) ? forced : free));
+    const credit = transferCredit(t, creditsFor(dayIndex, free));
     if (credit === null) row.unplaced += 1;
     else {
       row.scored += 1;
       row.sum += credit;
-      if (breach) row.breaches += 1;
+      row.rampScored += 1;
+      row.rampSum += credit;
     }
   }
 
   const all = Array.from(acc.values());
-  const readable = all.reduce((n, r) => n + r.scored, 0);
-  const floorMean = readable ? all.reduce((n, r) => n + r.sum, 0) / readable : null;
+  // ORDINARY placement only. The flat routing verdicts are deliberately left
+  // out of this: they are 0 or 1 with nothing between, and letting them value
+  // an unreadable record moved a CLR's score on OTHER people's compliance. See
+  // `unplacedValuedAt`.
+  const ramped = all.reduce((n, r) => n + r.rampScored, 0);
+  const floorMean = ramped ? all.reduce((n, r) => n + r.rampSum, 0) / ramped : null;
   const minScored = positiveInt(opts.minScored, MIN_SCORED_TRANSFERS);
 
   const scores: ClrPriorityScore[] = all.map((r) => {
@@ -1121,7 +1249,8 @@ export function scoreTransferPriority(
       scored: r.scored,
       unplaced: r.unplaced,
       unrestricted: r.unrestricted,
-      constrained: r.constrained,
+      investment: r.investment,
+      investmentUnscored: r.investmentUnscored,
       breaches: r.breaches,
       pct: mean === null ? null : Math.round(mean * 100),
       mean: mean === null ? null : round(mean, 4),
@@ -1156,28 +1285,4 @@ export function scoreTransferPriority(
       String(a.clrId).localeCompare(String(b.clrId))
     );
   });
-}
-
-// ── the compliance rule ─────────────────────────────────────────────────────
-
-/**
- * The `constrainedTo` set for an investment property, resolved from the ROSTER.
- *
- * Names are matched against `loan_officer_assistants.name` — a roster field
- * somebody maintains — and never against stored text, which is where the guess
- * this stat must not make would live. Nothing in the SCORING path calls this:
- * the route calls it, decides per transfer whether the rule applies, and passes
- * the result down on the rows it applies to. A transfer that arrives without a
- * `constrainedTo` is judged as the free choice it was.
- */
-export function investmentPropertyKeys(recipients: RecipientRow[]): string[] {
-  const wanted = new Set(INVESTMENT_PROPERTY_LOAS.map((n) => n.toLowerCase()));
-  const keys: string[] = [];
-  for (const r of recipients ?? []) {
-    if (!r || r.kind !== "loa") continue;
-    const name = String(r.name ?? "").trim().toLowerCase();
-    if (!name) continue;
-    if (wanted.has(name) || wanted.has(name.split(/\s+/)[0])) keys.push(recipientKey(r.kind, r.id));
-  }
-  return keys;
 }

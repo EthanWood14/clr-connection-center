@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   receivedCount, percentileNearestRank, flagPromotionCut, fullCreditBandSize, recipientKey,
   recipientCredits, creditIndex, transferCredit, transferDay, snapshotLoads,
-  scoreTransferPriority, investmentPropertyKeys,
-  FULL_CREDIT_LOS, FULL_CREDIT_LOAS, FULL_CREDIT_SHARE, FLAG_PROMOTION_PERCENTILE,
+  scoreTransferPriority, investmentAssistantKeys, resolveInvestmentRouting,
+  FULL_CREDIT_LOS, FULL_CREDIT_SHARE, FLAG_PROMOTION_PERCENTILE,
   SCORE_NON_RECEIVING_RECIPIENTS, MIN_SCORED_TRANSFERS, PRIORITY_WINDOW_DAYS,
   INVESTMENT_PROPERTY_LOAS, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
+  INVESTMENT_FOLLOWED_CREDIT, INVESTMENT_IGNORED_CREDIT,
   type RecipientRow, type TransferRow, type RecipientCredit, type ClrPriorityScore,
 } from "../server/transfer-priority";
 import { orderStarved, STARVED_WINDOW_DAYS } from "../server/tv-pages";
@@ -31,20 +32,34 @@ const mgr = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "
 // the reason it is shaped the way it is. 687 transfers went to loan officers in
 // that fortnight and 282 of them — 41% — went to one man.
 
-const lo = (id: number, name: string, transfers: number, extra: Partial<RecipientRow> = {}): RecipientRow =>
-  ({ id, name, kind: "lo", transfers, receiving: true, ...extra });
-
-const loa = (id: number, name: string, transfers: number): RecipientRow =>
-  ({ id, name, kind: "loa", transfers, receiving: true });
-
-/** A seeded demo row, or a placeholder: real in the table, real to nobody else. */
-const demo = (id: number, name: string): RecipientRow =>
-  ({ id, name, kind: "lo", transfers: 0, receiving: false, lastAt: null });
-
 const REDOBLE = 1, NATHAN = 2, RYAN_A = 3, SHERVIN = 5, KIM = 13, MATEO_LO = 14;
 const COLE_LO = 15, SEAN = 16, DEREK = 17, GARY = 18, KHASHI = 19;
 const ALEX_DEMO = 20;
 const JUSTIN = 101, JOHN = 102, MATEO_LOA = 104, ERIK = 106, RYAN_LOA = 107;
+
+const lo = (id: number, name: string, transfers: number, extra: Partial<RecipientRow> = {}): RecipientRow =>
+  ({ id, name, kind: "lo", transfers, receiving: true, ...extra });
+
+/**
+ * An assistant on the roster.
+ *
+ * No assistant is ever a DESTINATION: her load is not read and the ramp cannot
+ * score anybody on her, which is what the route hands over too (transfers 0,
+ * receiving false). The row is here for its IDENTITY — the id, the name, and
+ * the DESK she sits at — because that is what resolves the three the investment
+ * rule names, and the desk is half of what it names.
+ *
+ * Every assistant in this fixture sits at Christopher Redoble's desk, which is
+ * what makes "Chris's Justin, Mateo or John" a statement about these rows. A
+ * test below hires another Justin onto somebody else's desk to prove that she
+ * is a different person and is not admitted.
+ */
+const loa = (id: number, name: string, deskId: number = REDOBLE): RecipientRow =>
+  ({ id, name, kind: "loa", transfers: 0, receiving: false, deskId });
+
+/** A seeded demo row, or a placeholder: real in the table, real to nobody else. */
+const demo = (id: number, name: string): RecipientRow =>
+  ({ id, name, kind: "lo", transfers: 0, receiving: false, lastAt: null });
 
 const recipients: RecipientRow[] = [
   lo(REDOBLE, "Christopher Redoble", 282, { needsTransfers: true }),
@@ -76,13 +91,19 @@ const recipients: RecipientRow[] = [
   demo(23, "Casey Bennett"),
   demo(24, "Morgan Ellis"),
   demo(25, "Unknown LO (Recovered)"),
-  loa(JUSTIN, "Justin", 54),
-  loa(JOHN, "John", 53),
-  loa(103, "Aaron", 35),
-  loa(MATEO_LOA, "Mateo", 32),
-  loa(105, "Cole", 27),
-  loa(ERIK, "Erik", 25),
-  loa(RYAN_LOA, "Ryan", 25),
+  // The seven assistants, every one of them Christopher Redoble's — which is
+  // what makes "Chris's Justin, Mateo or John" a statement about these rows.
+  // Their own loads are not in this fixture because nothing scores them. Their
+  // parent DESK is, because it is half of the rule: an assistant is admitted
+  // only where she sits at the one desk all three named rows point at, and that
+  // desk is resolved from these rows rather than from any loan officer's name.
+  loa(JUSTIN, "Justin"),
+  loa(JOHN, "John"),
+  loa(103, "Aaron"),
+  loa(MATEO_LOA, "Mateo"),
+  loa(105, "Cole"),
+  loa(ERIK, "Erik"),
+  loa(RYAN_LOA, "Ryan"),
 ];
 
 const credits = recipientCredits(recipients);
@@ -100,6 +121,17 @@ const D1 = "2026-08-24", D2 = "2026-08-25", D3 = "2026-08-26";
 /** One transfer, from a CLR to a loan officer, on a day. */
 const t = (clrId: string, loId: number | null, at: string | null = D1): TransferRow =>
   ({ clrId, clrName: clrId, loId, at });
+
+/**
+ * The same row with the ASSISTANT recorded on it as well.
+ *
+ * A real field the module really reads — but on FLAGGED ROWS ONLY. Every
+ * unflagged pairing that uses this asserts EXACT equality rather than a
+ * tolerance, because whether somebody used the assistant picker is CRM hygiene
+ * and it must not be worth a single point of ordinary placement.
+ */
+const withLoa = (row: TransferRow, loaId: number | null): TransferRow =>
+  ({ ...row, loaId });
 
 // ── the window ──────────────────────────────────────────────────────────────
 
@@ -221,10 +253,9 @@ test("a date is only ever read as a date", () => {
 
 // ── the full-credit line ────────────────────────────────────────────────────
 
-test("the band is the lightest quarter, capped — which is Ethan's five and two", () => {
+test("the band is the lightest quarter, capped — which is Ethan's five", () => {
   assert.equal(FULL_CREDIT_SHARE, 0.25);
   assert.equal(fullCreditBandSize(19, FULL_CREDIT_LOS), FULL_CREDIT_LOS);
-  assert.equal(fullCreditBandSize(7, FULL_CREDIT_LOAS), FULL_CREDIT_LOAS);
   // The cap holds as the floor grows, so a hiring spree does not widen the band.
   assert.equal(fullCreditBandSize(40, FULL_CREDIT_LOS), 5);
   // ...and it shrinks when there is barely a choice to make, because a band that
@@ -257,7 +288,7 @@ test("Derek Bullen and Sean Murphy — the two names the floor would call starve
   // and not the flag line propping the band up.
   const unflagged = recipients.map(({ needsTransfers, ...r }) => r as RecipientRow);
   const bandAt = (fullCreditLos: number) =>
-    recipientCredits(unflagged, { fullCreditLos }).filter((c) => c.kind === "lo" && c.credit === 1).map((c) => c.name);
+    recipientCredits(unflagged, { fullCreditLos }).filter((c) => c.credit === 1).map((c) => c.name);
   assert.deepEqual(bandAt(5),
     ["Gary Dawson", "Khashi Tabrizi", "Derek Bullen", "Sean Murphy", "Cole Thomas Fairon"]);
   assert.deepEqual(bandAt(3), ["Gary Dawson", "Khashi Tabrizi", "Derek Bullen"],
@@ -343,7 +374,7 @@ test("the exclusion is exactly what keeps them out — flip it and they take the
   assert.ok(starved.includes("Alex Thompson"));
   assert.ok(starved.includes("Unknown LO (Recovered)"));
   assert.equal(starved.filter((n) => n === "Derek Bullen" || n === "Sean Murphy").length, 0);
-  assert.equal(loose.filter((c) => c.kind === "lo" && c.transfers === 0).length, 8);
+  assert.equal(loose.filter((c) => c.transfers === 0).length, 8);
 });
 
 // ── the ramp ────────────────────────────────────────────────────────────────
@@ -352,17 +383,15 @@ test("credit never rises with load — choosing the lighter LO can never score w
   // The one invariant this shape exists to guarantee. The old rule jumped a
   // flagged LO to 1.0 and left everybody lighter on the ramp, which meant the
   // stat could pay MORE for the busier desk.
-  for (const kind of ["lo", "loa"] as const) {
-    const mine = credits.filter((c) => c.kind === kind).sort((a, b) => a.transfers - b.transfers);
-    for (let i = 1; i < mine.length; i += 1) {
-      assert.ok(mine[i].credit <= mine[i - 1].credit,
-        `${mine[i].name} (${mine[i].transfers}) beats ${mine[i - 1].name} (${mine[i - 1].transfers})`);
-    }
+  const mine = [...credits].sort((a, b) => a.transfers - b.transfers);
+  for (let i = 1; i < mine.length; i += 1) {
+    assert.ok(mine[i].credit <= mine[i - 1].credit,
+      `${mine[i].name} (${mine[i].transfers}) beats ${mine[i - 1].name} (${mine[i - 1].transfers})`);
   }
 });
 
 test("the ramp falls from the line to the busiest choice, which is exactly 0", () => {
-  const ramp = credits.filter((c) => c.kind === "lo" && c.band === "ramp")
+  const ramp = credits.filter((c) => c.band === "ramp")
     .sort((a, b) => a.transfers - b.transfers);
   assert.deepEqual(ramp.map((c) => c.credit),
     [0.9167, 0.8333, 0.75, 0.6667, 0.5, 0.5, 0.4167, 0.3333, 0.25, 0.1667, 0.0833, 0]);
@@ -396,70 +425,70 @@ test("every credit is a share between 0 and 1", () => {
   for (const c of credits) {
     assert.ok(c.credit >= 0 && c.credit <= 1, `${c.name} ${c.credit}`);
   }
-  assert.equal(credits.length, 19 + 7, "only the recipients this rule can judge");
+  assert.equal(credits.length, 19, "only the loan officers this rule can judge");
 });
 
-// ── the LOA pool ────────────────────────────────────────────────────────────
-
-test("the two lightest assistants are promoted, and the 25-25 tie is deterministic", () => {
-  assert.equal(FULL_CREDIT_LOAS, 2);
-  const loas = recipients.filter((r) => r.kind === "loa");
-  // orderStarved breaks the tie by name, always the same way.
-  assert.deepEqual(orderStarved(loas).map((r) => r.name),
-    ["Erik", "Ryan", "Cole", "Mateo", "Aaron", "John", "Justin"]);
-  assert.equal(creditOf("Erik"), 1);
-  assert.equal(creditOf("Ryan"), 1);
-  assert.equal(bandOf("Erik"), "starved");
-  assert.equal(bandOf("Ryan"), "starved");
-});
+// ── one pool, because there is one destination ──────────────────────────────
 
 test("a tie at the edge of the band takes both: equal load, equal credit", () => {
-  // Narrow the band to one and Erik is first by name — but Ryan carries the same
-  // 25, and handing one of them 100% and the other 80% for having a later
-  // surname would be arbitrary. The line is a LOAD, so a tie cannot be split.
-  const one = recipientCredits(recipients, { fullCreditLoas: 1 });
-  const pick = (n: string) => one.filter((c) => c.kind === "loa" && c.name === n)[0];
-  assert.equal(pick("Erik").credit, 1);
-  assert.equal(pick("Ryan").credit, 1);
-  assert.equal(pick("Cole").credit, 0.8, "the ramp below them is untouched");
+  // Narrow the band to one and Gary Dawson is first by name — but Khashi
+  // Tabrizi carries the same zero, and handing one of them 100% and the other
+  // 94% for having a later surname would be arbitrary. The line is a LOAD, so a
+  // tie cannot be split. (Measured with the needs_transfers flags off, so this
+  // is the band edge on its own and not the flag line propping it up.)
+  const unflagged = recipients.map(({ needsTransfers, ...r }) => r as RecipientRow);
+  const one = recipientCredits(unflagged, { fullCreditLos: 1 });
+  const pick = (n: string) => one.filter((c) => c.name === n)[0];
+  assert.equal(pick("Gary Dawson").credit, 1);
+  assert.equal(pick("Khashi Tabrizi").credit, 1);
+  assert.equal(pick("Derek Bullen").credit, 0.9412, "the ramp below them is untouched");
 });
 
-test("assistants ramp inside their own pool, never against the loan officers", () => {
-  // The heaviest LOA took 54 — a quiet fortnight for a loan officer. One shared
-  // ramp would paint every assistant as starved.
-  assert.equal(creditOf("Justin"), 0);     // 54
-  assert.equal(creditOf("John"), 0.2);     // 53
-  assert.equal(creditOf("Aaron"), 0.4);    // 35
-  assert.equal(creditOf("Mateo"), 0.6);    // 32
-  assert.equal(creditOf("Cole"), 0.8);     // 27
+test("an assistant is not a recipient at all — the pool is loan officers", () => {
+  // Assistants used to be ranked in a pool of their own, so that a row naming
+  // only an assistant could still be scored. Nothing is ever scored on an
+  // assistant now, so there is no assistant pool and nothing to look one up in.
+  assert.equal(credits.filter((c) => /^loa:/.test(c.key)).length, 0);
+  const index = creditIndex(credits);
+  for (const id of [JUSTIN, JOHN, MATEO_LOA, ERIK, RYAN_LOA]) {
+    assert.equal(index.get(recipientKey("loa", id)), undefined, String(id));
+  }
+  // They are still on the ROSTER, because their identity is what the three
+  // names in the investment rule are resolved against.
+  assert.equal(recipients.filter((r) => r.kind === "loa").length, 7);
 });
 
 // ── the loan officer is the destination ─────────────────────────────────────
 
 test("an assistant can no longer launder a busy loan officer into full credit", () => {
-  // Roughly a third of real rows name the LO's assistant as well. The old rule
-  // took the BEST of the two, so a transfer into the busiest desk in the company
-  // scored 100% because of who happened to sit next to him — the safeguard
-  // bypassed on a third of the data, and the score partly measuring which LOs
-  // have their assistant field filled in.
+  // Roughly a third of real rows name the LO's assistant as well. The oldest
+  // rule took the BEST of the two, so a transfer into the busiest desk in the
+  // company scored 100% because of who happened to sit next to him — the
+  // headline safeguard bypassed on a third of the data, and the score partly
+  // measuring which LOs have their assistant field filled in.
   const index = creditIndex(credits);
   assert.equal(creditOf("Christopher Redoble"), 0);
-  assert.equal(creditOf("Erik"), 1);
-  assert.equal(transferCredit({ clrId: "x", loId: REDOBLE, loaId: ERIK }, index), 0);
-  // The starved LO is still worth full credit whoever his assistant is.
-  assert.equal(transferCredit({ clrId: "x", loId: DEREK, loaId: JUSTIN }, index), 1);
+  assert.equal(transferCredit({ clrId: "x", loId: REDOBLE }, index), 0);
+  assert.equal(transferCredit({ clrId: "x", loId: DEREK }, index), 1);
+  // And the assistant is not read even when the row carries one anyway.
+  assert.equal(transferCredit(withLoa({ clrId: "x", loId: REDOBLE }, ERIK), index), 0);
+  assert.equal(transferCredit(withLoa({ clrId: "x", loId: DEREK }, JUSTIN), index), 1);
 });
 
-test("the assistant IS the destination when nobody else is named", () => {
-  // An LOA-only row is a real placement, and the LOA pool exists for exactly it.
+test("an assistant is never the destination, not even alone", () => {
+  // A row naming only an assistant used to be scored in the assistant pool. The
+  // transfer form cannot produce one — picking an assistant means picking that
+  // assistant's loan officer first — and reading it was worth up to a hundred
+  // points of CRM hygiene. It now reads as the record with no destination on it
+  // that it is, and lands in `unplaced` like any other.
   const index = creditIndex(credits);
-  assert.equal(transferCredit({ clrId: "x", loId: null, loaId: ERIK }, index), 1);
-  assert.equal(transferCredit({ clrId: "x", loaId: JUSTIN }, index), 0);
+  assert.equal(transferCredit(withLoa({ clrId: "x", loId: null }, ERIK), index), null);
+  assert.equal(transferCredit(withLoa({ clrId: "x" }, JUSTIN), index), null);
 });
 
 test("a transfer with nobody identifiable on it scores nothing — not zero", () => {
   const index = creditIndex(credits);
-  assert.equal(transferCredit({ clrId: "x", loId: null, loaId: null }, index), null);
+  assert.equal(transferCredit({ clrId: "x", loId: null }, index), null);
   assert.equal(transferCredit({ clrId: "x", loId: 9999 }, index), null, "an LO no longer on the roster");
   assert.equal(transferCredit({ clrId: "x", loId: ALEX_DEMO }, index), null, "a row nobody has ever transferred to");
 });
@@ -514,253 +543,389 @@ test("unknown eligibility falls back to the whole floor, and says so", () => {
   assert.equal(unresolvable.pct, 100);
 });
 
-// ── forced destinations: built, documented, and switched off ────────────────
+// ── the investment routing rule: flat 100, flat 0 ───────────────────────────
+//
+// Ethan's words, and the whole of the rule: "any investment qualification yes
+// should be 100 if transfers to chris LOA justin, mateo, or john. 0 if anything
+// else". He has been shown the gaming risk twice and reaffirmed it, so it is
+// implemented as given — including the half that stings, which is that a
+// flagged transfer with no assistant recorded scores 0 rather than being
+// treated as the missing field it would be anywhere else in this file.
 
-const INVESTMENT_SET = [recipientKey("loa", JUSTIN), recipientKey("loa", JOHN), recipientKey("loa", MATEO_LOA)];
+/** The three the rule names, as the module resolves them from the roster. */
+const THREE = [JUSTIN, JOHN, MATEO_LOA].map((id) => recipientKey("loa", id)).sort();
+const keysOf = (rows: RecipientRow[]): string[] =>
+  Array.from(investmentAssistantKeys(rows) ?? []).sort();
 
-test("HIGH — a compliance answer cannot launder the busiest desk in the building into 100%", () => {
-  // The inversion this replaced: a constrained row was scored on the ASSISTANT
-  // axis alone, so the loan officer — the destination, by this module's own
-  // headline rule — was not scored at all. Cal answers "Investment/2nd Home:
-  // Yes", names an allowed assistant, and pushes five leads onto Christopher
-  // Redoble, who took 282 of the 687 transfers in the fortnight. That printed
-  // 100%: a routing requirement turned into a way to score UP, which is the one
-  // thing a rule that exists to stop people being marked DOWN must never be.
-  const cal = (loaId: number | null): TransferRow[] => [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loId: REDOBLE, loaId, at: d, constrainedTo: INVESTMENT_SET }));
+/** Five transfers to one loan officer, with an assistant recorded or not. */
+const five = (clrId: string, loId: number | null, flagged: boolean, loaId: number | null = null): TransferRow[] =>
+  [D1, D1, D2, D2, D3].map((d) =>
+    ({ clrId, clrName: clrId, loId, at: d, loaId, investmentProperty: flagged }));
 
-  const laundered = scoreTransferPriority(cal(MATEO_LOA), recipients)[0];
-  assert.equal(laundered.pct, 0, "the loan officer is still the destination");
-  assert.equal(laundered.constrained, 5, "the rule did bind the row — it just did not excuse it");
-  assert.equal(laundered.breaches, 0, "and he obeyed it");
-
-  // Exactly what the same five are worth with no rule named at all. Obeying a
-  // routing requirement buys nothing extra; it only stops a charge.
-  assert.equal(
-    scoreTransferPriority(cal(MATEO_LOA).map(({ constrainedTo, ...row }) => row), recipients)[0].pct, 0);
+test("the three are resolved from the roster by identity, not by matching text", () => {
+  // The rule names three ASSISTANTS, so the roster is asked who they are once
+  // per scan and what travels on is IDS. Nothing downstream compares a name.
+  assert.deepEqual([...INVESTMENT_PROPERTY_LOAS], ["Justin", "John", "Mateo"]);
+  assert.deepEqual(keysOf(recipients), THREE);
+  // A loan officer's name is never read at all — there is a surname gate
+  // elsewhere in this app for LAP eligibility, and this must never become a
+  // second copy of it.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  assert.ok(!/redoble/i.test(code), "no code path matches a loan officer by name");
 });
 
-test("HIGH — ...and a compliant transfer onto a starved desk is still protected", () => {
-  // Dee is forced onto Justin — the busiest assistant on the floor, worth
-  // exactly 0 in his own pool — and puts the lead in front of Derek Bullen, the
-  // lightest loan officer there is. The forced assistant cannot drag her down:
-  // the axis the rule forced is compared with John and Mateo and with nobody
-  // else, and the axis she was free to choose is judged on its own merits.
-  assert.equal(creditOf("Justin"), 0, "the assistant she was sent to is the heaviest on the floor");
-  const dee: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Dee", clrName: "Dee", loId: DEREK, loaId: JUSTIN, at: d, constrainedTo: INVESTMENT_SET }));
-  const row = scoreTransferPriority(dee, recipients)[0];
-  assert.equal(row.pct, 100);
-  assert.equal(row.constrained, 5);
+test("HIGH — a rename moves the rule where the roster has an id, and stops it where it does not", () => {
+  // Rename the loan officer they sit with: nothing moves, because his name was
+  // never part of the answer — the desk is resolved from the three assistants'
+  // OWN rows, as an id.
+  const renamedLo = recipients.map((r) =>
+    (r.kind === "lo" && r.id === REDOBLE ? { ...r, name: "Christopher Somebodyelse" } : r));
+  assert.deepEqual(keysOf(renamedLo), THREE);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), renamedLo)[0].pct, 100);
+
+  // Give an assistant her surname, which is the rename that actually happens:
+  // the roster row is the same person, so the same id is admitted and the same
+  // five transfers are still worth 100.
+  const surnamed = recipients.map((r) =>
+    (r.kind === "loa" && r.id === MATEO_LOA ? { ...r, name: "Mateo Reyes" } : r));
+  assert.deepEqual(keysOf(surnamed), THREE);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), surnamed)[0].pct, 100);
+
+  // And what it does NOT survive, pinned here rather than promised away. A
+  // recorded first name is the only handle the roster offers for the three
+  // themselves — nobody has written their ids down anywhere this stat can read
+  // — so renaming one past recognition stops the rule. The cost is bounded on
+  // purpose: it stops for EVERYBODY, so a roster edit can switch the rule off
+  // and can never turn it into a false accusation against the other two.
+  const unrecognisable = recipients.map((r) =>
+    (r.kind === "loa" && r.id === MATEO_LOA ? { ...r, name: "Teo" } : r));
+  assert.equal(investmentAssistantKeys(unrecognisable), null);
+  assert.match(resolveInvestmentRouting(unrecognisable).problem ?? "",
+    /no active assistant named Mateo/);
+  const past = scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), unrecognisable)[0];
+  assert.equal(past.breaches, 0, "nobody is accused on the way past");
+  assert.equal(past.investmentUnscored, 5, "and the silence is counted, not swallowed");
+});
+
+test("HIGH — a name that resolves to NOBODY stops the rule, it does not score everybody 0", () => {
+  // Mateo leaves, or is respelled past recognition. Running the rule on the two
+  // names that still resolve would read every compliant transfer to the third
+  // as a flat zero — the sharpest verdict this file hands out, handed out
+  // because of a roster edit. So the rule stops for everybody instead.
+  const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
+  assert.equal(investmentAssistantKeys(gone), null);
+  assert.equal(investmentAssistantKeys(recipients.filter((r) => r.kind === "lo")), null);
+  assert.equal(investmentAssistantKeys([]), null);
+
+  // Cal's five went to Justin and are still compliant work; they are simply not
+  // judged by a rule nobody can resolve. They fall back to the placement their
+  // record shows, which onto the busiest desk in the building is 0 — and onto
+  // the lightest man on the floor is 100. Neither is a breach.
+  const onDesk = scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), gone)[0];
+  assert.equal(onDesk.investment, 0, "the rule was not applied to anybody");
+  assert.equal(onDesk.breaches, 0, "and nobody was accused of anything");
+  assert.equal(onDesk.pct, 0);
+  assert.equal(onDesk.unrestricted, 5, "scored against the floor, like any ordinary transfer");
+  const onStarved = scoreTransferPriority(five("Cal", DEREK, true, null), gone)[0];
+  assert.equal(onStarved.pct, 100);
+  assert.equal(onStarved.breaches, 0);
+});
+
+test("a name TWO people answer to admits both, rather than silently picking one", () => {
+  // A second Justin is hired. Choosing between them would be a guess, and a
+  // guess here can only fail one of two ways: a wrong 100 costs nobody
+  // anything, while a wrong 0 accuses somebody of ignoring a rule they obeyed.
+  const OTHER_JUSTIN = 108;
+  const twoJustins = [...recipients, loa(OTHER_JUSTIN, "Justin")];
+  assert.deepEqual(keysOf(twoJustins), [...THREE, recipientKey("loa", OTHER_JUSTIN)].sort());
+  for (const loaId of [JUSTIN, OTHER_JUSTIN]) {
+    assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, loaId), twoJustins)[0].pct, 100,
+      String(loaId));
+  }
+  // ...and admitting a fourth id does not admit a fourth PERSON: an assistant
+  // the rule does not name is still a breach.
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, ERIK), twoJustins)[0].pct, 0);
+});
+
+test("HIGH — \"Chris's\" is enforced: another loan officer's Justin is a different person", () => {
+  // Half of Ethan's rule is WHOSE assistants these are, and it is not
+  // decoration. Nathan Coutino hires a Justin of his own; she answers to the
+  // same first name, and admitting her would quietly widen "Chris's Justin,
+  // Mateo or John" into "anybody's Justin".
+  const OTHER_DESK_JUSTIN = 109;
+  const elsewhere = [...recipients, loa(OTHER_DESK_JUSTIN, "Justin", NATHAN)];
+  assert.deepEqual(keysOf(elsewhere), THREE, "she is not one of the three");
+  // The desk itself is resolved from the three's OWN rows — the one desk all of
+  // them point at — and never by matching a loan officer's name.
+  const routing = resolveInvestmentRouting(elsewhere);
+  assert.equal(routing.desk, recipientKey("lo", REDOBLE));
+  assert.equal(routing.problem, null);
+  // So a flagged transfer recording her is 0 by the same clause a blank is.
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, OTHER_DESK_JUSTIN), elsewhere)[0].pct, 0);
+  assert.equal(scoreTransferPriority(five("Cal", NATHAN, true, OTHER_DESK_JUSTIN), elsewhere)[0].breaches, 5);
+  // ...and Chris's Justin is untouched by hers existing.
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), elsewhere)[0].pct, 100);
+});
+
+test("HIGH — the desk is an id off the three's own rows, so the loan officer can be renamed", () => {
+  // There is a surname gate elsewhere in this app, for LAP eligibility, and a
+  // stat that judges people is the last place that pattern belongs. The desk
+  // half of this rule therefore hangs on nobody's spelling.
+  assert.equal(resolveInvestmentRouting(recipients).desk, recipientKey("lo", REDOBLE));
+  const renamed = recipients.map((r) =>
+    (r.kind === "lo" && r.id === REDOBLE ? { ...r, name: "Nobody At All" } : r));
+  assert.equal(resolveInvestmentRouting(renamed).desk, recipientKey("lo", REDOBLE));
+  assert.deepEqual(keysOf(renamed), THREE);
+  // His roster row is not even consulted: the three carry his id themselves.
+  assert.deepEqual(keysOf(recipients.filter((r) => !(r.kind === "lo" && r.id === REDOBLE))), THREE);
+});
+
+test("HIGH — every way the desk cannot be resolved STOPS the rule and names what failed", () => {
+  // A rule that stopped is never silent: the sentence is what the route logs
+  // and what the cell says, so "the rule is off" is never a thing somebody has
+  // to work out from a column full of zeroes.
+  const problemOf = (rows: RecipientRow[]): string => {
+    const r = resolveInvestmentRouting(rows);
+    assert.equal(r.keys, null, "applied to nobody");
+    assert.equal(r.desk, null);
+    assert.ok(r.problem, "and it says why");
+    return r.problem as string;
+  };
+  // A name nobody on the roster answers to.
+  assert.match(
+    problemOf(recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA))),
+    /no active assistant named Mateo/);
+  // One of them with no desk recorded at all.
+  assert.match(
+    problemOf(recipients.map((r) => (r.kind === "loa" && r.id === JOHN ? { ...r, deskId: null } : r))),
+    /no loan officer's desk for John/);
+  // Three of the right names who share no desk: "Chris's" names no one desk.
+  assert.match(
+    problemOf(recipients.map((r) => (r.kind === "loa" && r.id === JOHN ? { ...r, deskId: NATHAN } : r))),
+    /do not all sit at one loan officer's desk/);
+  // A full set at each of two desks — which one the rule means cannot be told.
+  assert.match(
+    problemOf([...recipients, loa(111, "Justin", NATHAN), loa(112, "John", NATHAN), loa(113, "Mateo", NATHAN)]),
+    /sit together at 2 different loan officers' desks/);
+});
+
+test("HIGH — a rule that stopped is COUNTED, so a 0% it caused is never printed", () => {
+  // The counter the dashboard's dash hangs on. Cal obeyed the rule perfectly:
+  // all five went to Justin. With the roster unable to resolve the three, those
+  // five are read as ordinary placement onto the busiest desk in the building
+  // and come out at 0% — a red cell that is an artefact of a roster edit.
+  const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
+  const row = scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), gone)[0];
+  assert.equal(row.investmentUnscored, 5, "every flagged transfer the rule did not judge");
+  assert.equal(row.investment, 0);
   assert.equal(row.breaches, 0);
+  assert.equal(row.pct, 0, "which is why the number must not be shown as it stands");
+  // A roster that CAN answer counts nothing unscored.
+  assert.equal(
+    scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), recipients)[0].investmentUnscored, 0);
 });
 
-test("the protection bites where the rule is the only thing that chose", () => {
-  // An LOA-only row has no free axis at all: the rule picked the destination,
-  // so the destination is judged inside the rule's own set. Cal sends five to
-  // Mateo — the lightest of the three he is allowed — and scores full marks for
-  // making the best choice left to him, against 60% for the same lead judged
-  // across the whole assistant pool where Mateo is only mid-table. That gap is
-  // the punishment the rule exists to remove.
-  const cal: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loaId: MATEO_LOA, at: d, constrainedTo: INVESTMENT_SET }));
-  const forced = scoreTransferPriority(cal, recipients)[0];
-  assert.equal(forced.pct, 100, "he made the best choice the rule left him");
-  assert.equal(forced.constrained, 5);
-  assert.equal(forced.unrestricted, 0);
-  const free = scoreTransferPriority(cal.map(({ constrainedTo, ...row }) => row), recipients)[0];
-  assert.equal(free.pct, 60);
-  assert.equal(free.constrained, 0);
-
-  // Protected is still not excused: inside the allowed three there is a choice,
-  // and taking the heaviest of them is worth less than taking the lightest.
-  const heaviest: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loaId: JUSTIN, at: d, constrainedTo: INVESTMENT_SET }));
-  assert.equal(scoreTransferPriority(heaviest, recipients)[0].pct, 40);
+test("HIGH — investment to Justin, Mateo or John is 100%, however busy that desk is", () => {
+  // The point of the rule. Christopher Redoble took 282 of the 687 transfers in
+  // the fortnight, so an ordinary transfer onto his desk is worth exactly 0 —
+  // the busiest choice there is. An investment property had to reach one of his
+  // three assistants, and reaching one is the correct behaviour, so it is worth
+  // exactly 100.
+  assert.equal(creditOf("Christopher Redoble"), 0);
+  for (const [who, loaId] of [["Justin", JUSTIN], ["Mateo", MATEO_LOA], ["John", JOHN]] as const) {
+    const row = scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0];
+    assert.equal(row.pct, 100, who);
+    assert.equal(row.mean, 1, `${who} — flat, not a ramp that happens to round to 100`);
+    assert.equal(row.investment, 5, `${who} — judged by the rule, not against the floor`);
+    assert.equal(row.breaches, 0, who);
+    assert.equal(row.scored, 5, who);
+    assert.equal(row.unrestricted, 0, `${who} — no pool was consulted at all`);
+  }
+  assert.equal(INVESTMENT_FOLLOWED_CREDIT, 1);
 });
 
-test("a forced set of one is not a placement decision at all", () => {
-  // No discretion, so no judgement: full credit, even though Justin is the
-  // busiest assistant on the floor.
-  const rows: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loaId: JUSTIN, at: d, constrainedTo: [recipientKey("loa", JUSTIN)] }));
-  const row = scoreTransferPriority(rows, recipients)[0];
-  assert.equal(row.pct, 100);
-  assert.equal(row.constrained, 5);
-  // Unconstrained, the same five leads are the heaviest assistant on the floor
-  // and the CLR is marked down to 16% for a decision they never made.
-  assert.equal(scoreTransferPriority(rows.map(({ constrainedTo, ...r }) => r), recipients)[0].pct, 16);
-});
+test("HIGH — investment recorded to anybody else is 0%, however starved that desk is", () => {
+  // Derek Bullen is the lightest man on the floor and worth a full 1.0 on any
+  // ordinary transfer. "0 if anything else" is the rule as it was given, twice,
+  // so none of that counts here: a different assistant, a blank, and a
+  // different loan officer are the same flat zero.
+  assert.equal(creditOf("Derek Bullen"), 1);
+  const cases: Array<[string, number | null, number | null]> = [
+    ["a different assistant", REDOBLE, ERIK],
+    ["no assistant recorded at all", REDOBLE, null],
+    ["a different loan officer, and somebody else's assistant", DEREK, RYAN_LOA],
+    ["a different loan officer, with nobody recorded", DEREK, null],
+    ["nobody recorded anywhere on the row", null, null],
+  ];
+  for (const [label, loId, loaId] of cases) {
+    const row = scoreTransferPriority(five("Cal", loId, true, loaId), recipients)[0];
+    assert.equal(row.pct, 0, label);
+    assert.equal(row.mean, 0, `${label} — flat, and the worst score there is`);
+    assert.equal(row.investment, 5, label);
+    assert.equal(row.breaches, 5, label);
+    assert.equal(row.scored, 5, `${label} — read, not dropped: a verdict is not a data gap`);
+    assert.equal(row.unplaced, 0, label);
+  }
+  assert.equal(INVESTMENT_IGNORED_CREDIT, 0);
 
-// ── the rule protects the transfer that obeyed it, and only that one ────────
-
-test("HIGH — ignoring the rule scores 0, and never better than an ordinary placement", () => {
-  // The inversion this replaced: the constrained pool holds only the three
-  // allowed assistants, so a transfer that went somewhere else fell out of the
-  // pool entirely, was counted UNREADABLE, and was valued at the floor mean.
-  // Answering "Investment/2nd Home: Yes" and then sending the lead to whoever
-  // you liked paid BETTER than the placement had earned — the rule erased a bad
-  // decision instead of protecting a forced one.
-  const rows = (loaId: number): TransferRow[] => [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loId: REDOBLE, loaId, at: d, constrainedTo: INVESTMENT_SET }));
-
-  // Erik is the LIGHTEST assistant on the floor — an excellent placement in any
-  // other week, and worth 1.0 unconstrained. Under a rule that did not allow
-  // him it is worth nothing at all.
-  assert.equal(creditOf("Erik"), 1);
-  const gone = scoreTransferPriority(rows(ERIK), recipients)[0];
-  assert.equal(gone.pct, 0);
-  assert.equal(gone.breaches, 5);
-  assert.equal(gone.scored, 5, "a breach is read, not dropped");
-  assert.equal(gone.unplaced, 0);
-  assert.equal(gone.constrained, 5, "the rule did bind it — that is why it counts against him");
-
-  // And the obedient version of the same five is not a breach — it is judged on
-  // the loan officer it landed on, exactly as it would have been with no rule
-  // named at all. Redoble is the busiest desk in the building either way, so
-  // this is 0 for the placement rather than 0 for the rule, and the counters
-  // are what tell a manager which of the two happened.
-  const obeyed = scoreTransferPriority(rows(MATEO_LOA), recipients)[0];
-  assert.equal(obeyed.pct, 0);
-  assert.equal(obeyed.breaches, 0);
-
-  // Sharper, on the same desk: Derek Bullen is the lightest man on the floor,
-  // so the placement is worth 1.0 — and a breach still takes it to 0, because
-  // ignoring a compliance rule is a verdict on the rule and not a reading of
-  // the pool.
-  const onDerek = (loaId: number): TransferRow[] => [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loId: DEREK, loaId, at: d, constrainedTo: INVESTMENT_SET }));
-  assert.equal(scoreTransferPriority(onDerek(ERIK), recipients)[0].pct, 0);
-  assert.equal(scoreTransferPriority(onDerek(MATEO_LOA), recipients)[0].pct, 100);
-
-  // A breach can never outscore a well-placed transfer, which was the whole
-  // complaint: it is the worst score available, not the floor's average.
+  // ...and it can never outscore a well-placed ordinary transfer, which is why
+  // it is 0 rather than the floor mean.
   const mixed = scoreTransferPriority(
-    [...rows(ERIK), ...[D1, D1, D2, D2, D3].map((d) => t("Ada", DEREK, d))], recipients);
+    [...five("Cal", DEREK, true), ...five("Ada", DEREK, false)], recipients);
   assert.deepEqual(mixed.map((s) => [s.name, s.pct]), [["Ada", 100], ["Cal", 0]]);
 });
 
-test("a flagged transfer with no LOA on it means WE CANNOT TELL, and is judged as it stands", () => {
-  // loa_id is filled on roughly a third of real rows, so a blank one is a field
-  // nobody wrote — not a lead that demonstrably went where it was not allowed.
-  // A compliance breach is the sharpest verdict this stat hands out and it is
-  // the last thing that may hang off a blank.
-  //
-  // But "we cannot tell whether the rule was followed" must not become "we
-  // cannot tell where this went". The rule steps aside and the transfer is
-  // judged as the placement the record does show — which is how a lead pushed
-  // onto the busiest desk in the building stops being laundered into the floor
-  // mean by an answer on a form.
-  const onto = (loId: number): TransferRow[] => [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loId, loaId: null, at: d, constrainedTo: INVESTMENT_SET }));
+test("HIGH — a blank assistant on a flagged row is the ANSWER, not a missing field", () => {
+  // The sharp edge of Ethan's rule, and the one place this file departs from
+  // its own habit. Everywhere else an unreadable record is valued at the floor
+  // mean, because a CRM field nobody wrote is not evidence anybody placed a
+  // lead badly. On an investment property the rule asks which of three people
+  // took the lead, and a record naming nobody does not say one of them did.
+  const blank = scoreTransferPriority(five("Cal", REDOBLE, true, null), recipients)[0];
+  assert.equal(blank.pct, 0);
+  assert.equal(blank.breaches, 5, "counted, so the cell can say what kind of 0 this is");
+  assert.equal(blank.unplaced, 0, "not read as a data gap");
 
-  const worst = scoreTransferPriority(onto(REDOBLE), recipients)[0];
-  assert.equal(worst.pct, 0, "the busiest desk in the building is still the busiest desk");
-  assert.equal(worst.unplaced, 0, "and it is no longer unreadable");
-  assert.equal(worst.breaches, 0, "nor is it called a breach");
-  assert.equal(worst.constrained, 0);
-  assert.equal(worst.unrestricted, 5, "reported as the free reading it fell back to");
+  // The same blank on an UNFLAGGED row is untouched by any of this: it is
+  // ordinary placement onto the busiest desk, and it is 0 for that reason
+  // instead — with no breach counted against anybody.
+  const plain = scoreTransferPriority(five("Ada", REDOBLE, false, null), recipients)[0];
+  assert.equal(plain.pct, 0);
+  assert.equal(plain.investment, 0);
+  assert.equal(plain.breaches, 0);
+});
 
-  // The same fallback is not a punishment either: a genuinely good placement
-  // with no assistant recorded still scores what it deserves.
-  const best = scoreTransferPriority(onto(DEREK), recipients)[0];
+test("a flagged row is judged on the assistant even where the loan officer cannot be read", () => {
+  // The loan officer is not a second gate. The record that decides is the
+  // assistant, so a flagged row whose loan officer is missing, off the roster,
+  // or a seeded placeholder is still answerable: it says whether one of the
+  // three got the lead, and that is the whole question.
+  for (const loId of [null, 9999, ALEX_DEMO]) {
+    const followed = scoreTransferPriority(five("Cal", loId, true, JOHN), recipients)[0];
+    assert.equal(followed.pct, 100, String(loId));
+    assert.equal(followed.investment, 5, String(loId));
+    assert.equal(followed.unplaced, 0, String(loId));
+    const breached = scoreTransferPriority(five("Cal", loId, true, null), recipients)[0];
+    assert.equal(breached.pct, 0, String(loId));
+    assert.equal(breached.breaches, 5, String(loId));
+  }
+  // The same rows UNFLAGGED are what they always were: unreadable, valued at
+  // the floor mean, and never a verdict.
+  const unreadable = scoreTransferPriority(
+    [...five("Cal", null, false, JOHN), ...five("Ada", DEREK, false)], recipients)
+    .filter((s) => s.name === "Cal")[0];
+  assert.equal(unreadable.scored, 0);
+  assert.equal(unreadable.unplaced, 5);
+  assert.equal(unreadable.breaches, 0);
+  assert.equal(unreadable.pct, null, "nothing readable at all is a null, not an accusation");
+});
+
+test("an UNFLAGGED transfer is scored exactly as it always was", () => {
+  // Nothing about ordinary placement changes. The busiest desk in the building
+  // is still 0, the lightest man on the floor is still 100, and the middle of
+  // the ramp is still the middle of the ramp.
+  const worst = scoreTransferPriority(five("Dana", REDOBLE, false), recipients)[0];
+  assert.equal(worst.pct, 0);
+  assert.equal(worst.investment, 0);
+  assert.equal(worst.unrestricted, 5, "compared with the whole floor, and says so");
+
+  const best = scoreTransferPriority(five("Riley", DEREK, false), recipients)[0];
   assert.equal(best.pct, 100);
+  assert.equal(best.investment, 0);
   assert.equal(best.unrestricted, 5);
 
-  // An eligible set that came with the row is honoured on the way down, rather
-  // than the whole floor being reached for.
-  const scoped = scoreTransferPriority(
-    onto(RYAN_A).map((r) => ({ ...r, eligible: HEAVY_STATE })), recipients)[0];
-  assert.equal(scoped.pct, 100);
-  assert.equal(scoped.unrestricted, 0);
+  assert.equal(scoreTransferPriority(five("Sam", NATHAN, false), recipients)[0].pct, 8);
 });
 
-test("an id nobody on the roster answers to is not evidence of a breach", () => {
-  // Same rule as everywhere else in this file: a thing we cannot resolve is
-  // missing information, never an accusation.
-  const rows: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loId: DEREK, loaId: 99999, at: d, constrainedTo: INVESTMENT_SET }));
-  const row = scoreTransferPriority(rows, recipients)[0];
-  assert.equal(row.breaches, 0);
-  assert.equal(row.unrestricted, 5, "read as unconstrained, and judged on the LO it names");
-  assert.equal(row.pct, 100);
-});
-
-test("HIGH — recording the LOA or leaving it blank is the same score for the same work", () => {
-  // `loa_id` is optional and blank on roughly two-thirds of real transfers, so
-  // whether the compliance rule can be read at all came down to whether
-  // somebody used the picker. While a constrained row was judged on the
-  // assistant ALONE that was worth a hundred points: two CLRs doing the
-  // identical, identically compliant thing came out 100% apart because one of
-  // them filled a field in. That is CRM hygiene, not placement, and the
-  // write-up completeness stat already charges for the gap exactly once.
-  const mix = [REDOBLE, NATHAN, KIM, SEAN, DEREK];
-  const days = [D1, D1, D2, D2, D3];
-  const rows = (clrId: string, loaId: number | null): TransferRow[] => mix.map((loId, i) =>
-    ({ clrId, clrName: clrId, loId, loaId, at: days[i], constrainedTo: INVESTMENT_SET }));
-
-  const both = scoreTransferPriority([...rows("Ivy", MATEO_LOA), ...rows("Jo", null)], recipients);
-  const ivy = both.filter((s) => s.name === "Ivy")[0];
-  const jo = both.filter((s) => s.name === "Jo")[0];
-  assert.equal(ivy.pct, 62);
-  assert.equal(jo.pct, 62);
-  // The stated tolerance is ONE POINT, and the actual difference is nothing at
-  // all: the score is taken from the same destination either way, and all the
-  // recorded field changes is which counter the row lands in.
-  assert.ok(Math.abs(ivy.pct! - jo.pct!) <= 1, "inside the one-point tolerance");
-  assert.equal(ivy.mean, jo.mean, "identical, not merely close");
-  assert.equal(ivy.constrained, 5);
-  assert.equal(jo.unrestricted, 5);
-
-  // And it holds at both ends of the scale, not only in the middle of it.
-  for (const [only, expected] of [[REDOBLE, 0], [DEREK, 100]] as const) {
-    const pair = scoreTransferPriority([
-      ...days.map((d) => ({ clrId: "Ivy", clrName: "Ivy", loId: only, loaId: MATEO_LOA, at: d, constrainedTo: INVESTMENT_SET })),
-      ...days.map((d) => ({ clrId: "Jo", clrName: "Jo", loId: only, loaId: null, at: d, constrainedTo: INVESTMENT_SET })),
-    ], recipients);
-    assert.deepEqual(pair.map((s) => s.pct), [expected, expected], String(only));
+test("HIGH — the assistant is worth nothing at all on an unflagged transfer, exactly", () => {
+  // loa_id is blank on roughly two thirds of real transfers. Read on the ramp,
+  // it would separate two CLRs doing the identical thing by up to a hundred
+  // points because one of them used the picker — CRM hygiene printed as a
+  // placement judgement, and the reason this column sat held back for a
+  // release. It is read on FLAGGED ROWS AND NOWHERE ELSE.
+  //
+  // EXACT equality, not a tolerance.
+  for (const [label, loId] of [["the busiest desk", REDOBLE], ["a starved LO", DEREK]] as const) {
+    const named = scoreTransferPriority(five("Ivy", loId, false, MATEO_LOA), recipients)[0];
+    const blank = scoreTransferPriority(five("Jo", loId, false, null), recipients)[0];
+    const other = scoreTransferPriority(five("Kit", loId, false, ERIK), recipients)[0];
+    for (const key of ["mean", "pct", "scored", "investment", "breaches", "unplaced", "unrestricted"] as const) {
+      assert.equal(named[key], blank[key], `${label} ${key}`);
+      assert.equal(other[key], blank[key], `${label} ${key}`);
+    }
   }
+  // The two numbers themselves, so this cannot pass by all three being null.
+  assert.deepEqual([REDOBLE, DEREK].map((loId) =>
+    scoreTransferPriority(five("Ivy", loId, false, MATEO_LOA), recipients)[0].pct), [0, 100]);
+
+  // ...and on a FLAGGED row the same field is the whole verdict, which is the
+  // pairing the boundary exists to keep apart.
+  assert.deepEqual([MATEO_LOA, ERIK, null].map((loaId) =>
+    scoreTransferPriority(five("Ivy", REDOBLE, true, loaId), recipients)[0].mean), [1, 0, 0]);
 });
 
-test("the three readings of a compliance rule are written down next to the arithmetic", () => {
-  assert.match(src, /WHAT "PROTECTED" MEANS, AND WHAT IT DOES NOT/);
-  assert.match(src, /PROTECTED DOES NOT MEAN the transfer is excused/);
-  assert.match(src, /THE THREE READINGS/);
-  assert.match(src, /WHAT AN INVESTMENT PROPERTY WITH NO loa_id MEANS/);
-  assert.match(src, /It means WE CANNOT TELL, and that is a different answer from "they broke the\n \* rule"/);
-  // And why a blank can no longer move a score by anything like a hundred.
-  assert.match(src, /AND WHY A BLANK BARELY MATTERS ANY MORE/);
+test("a mixed row carries both counters, which is what makes its number readable", () => {
+  // Cal made ten readable transfers: five investment properties, three of which
+  // reached Justin and two of which recorded nobody, and five ordinary ones
+  // onto the lightest man on the floor. 80% — and the 20% he lost is entirely
+  // the two breaches, which is a different conversation from 80% earned by
+  // middling placement. The counters are what let the cell say so.
+  const rows = [
+    ...five("Cal", REDOBLE, true, JUSTIN).slice(0, 3),
+    ...five("Cal", REDOBLE, true, null).slice(0, 2),
+    ...five("Cal", DEREK, false),
+  ];
+  const cal = scoreTransferPriority(rows, recipients)[0];
+  assert.equal(cal.transfers, 10);
+  assert.equal(cal.scored, 10);
+  assert.equal(cal.investment, 5, "judged on routing");
+  assert.equal(cal.breaches, 2, "and two of those went to nobody the rule names");
+  assert.equal(cal.pct, 80);
 });
 
-test("an unresolvable forced set is not a constraint, and is reported as the floor", () => {
-  const rows: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loaId: MATEO_LOA, at: d, constrainedTo: ["loa:99999"] }));
-  const row = scoreTransferPriority(rows, recipients)[0];
-  assert.equal(row.constrained, 0);
-  assert.equal(row.unrestricted, 5);
-  assert.equal(row.pct, 60, "scored exactly as if no rule had been named");
+test("the loan officer is not a second gate on a flagged row", () => {
+  // A row naming Justin at another loan officer's desk cannot come out of the
+  // transfer form — it only offers the chosen officer's own assistants — but if
+  // one ever did, it still says one of the three got the lead, and it is read
+  // that way. Pinned so that "0 if anything else" is not quietly widened into a
+  // second condition Ethan did not ask for.
+  assert.equal(scoreTransferPriority(five("Ivy", DEREK, true, JUSTIN), recipients)[0].pct, 100);
+  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, true, JUSTIN), recipients)[0].pct, 100);
 });
 
-test("the investment-property rule is switched ON, and still reads nothing itself", () => {
+test("the investment rule is switched ON, and the module still guesses nothing", () => {
   // It stayed inert for as long as the FACT did not exist in a form anybody
   // could trust — lead_goal is empty on every transfer in production and
   // lead_type has two rows in total. The qualification question is what
   // switched it on, because the app composes that answer itself.
   assert.equal(INVESTMENT_PROPERTY_INPUT_AVAILABLE, true);
-  assert.deepEqual([...INVESTMENT_PROPERTY_LOAS], ["Justin", "John", "Mateo"]);
-  // The constant still resolves against the ROSTER, and only against the roster.
-  assert.deepEqual(investmentPropertyKeys(recipients).sort(), [...INVESTMENT_SET].sort());
-  assert.deepEqual(investmentPropertyKeys([]), []);
 
-  // And the SCORING path still never calls it. A transfer that arrives with no
-  // `constrainedTo` is judged as the free choice it was, whatever might have
-  // been written anywhere else about it — switching the rule on moved the
-  // decision into the route, it did not move any guessing in here.
-  const rows: TransferRow[] = [D1, D1, D2, D2, D3].map((d) =>
-    ({ clrId: "Cal", clrName: "Cal", loaId: JUSTIN, at: d }));
-  const row = scoreTransferPriority(rows, recipients)[0];
-  assert.equal(row.constrained, 0);
-  assert.equal(row.pct, 16, "judged as a free choice, because nothing said otherwise");
+  // The SCORING path never guesses the flag. A transfer that arrives without
+  // one is an ordinary placement, whatever might have been written anywhere
+  // else about it: switching the rule on moved the decision into the route, it
+  // did not move any guessing in here.
+  for (const flag of [undefined, null, false] as const) {
+    const row = scoreTransferPriority(
+      five("Cal", REDOBLE, false, JUSTIN).map((r) => ({ ...r, investmentProperty: flag })), recipients)[0];
+    assert.equal(row.investment, 0, String(flag));
+    assert.equal(row.breaches, 0, String(flag));
+    assert.equal(row.pct, 0, String(flag));
+  }
+});
+
+test("the rules the flat verdicts rest on are written down next to the arithmetic", () => {
+  assert.match(src, /WHAT THE INVESTMENT RULE IS, AND WHAT IT IS NOT/);
+  assert.match(src, /THE ASSISTANT IS THE FACT THE RULE TURNS ON/);
+  assert.match(src, /WHEN A NAME DOES NOT RESOLVE TO ONE ASSISTANT/);
+  // Ethan's own words, so the next reader argues with the rule rather than with
+  // whoever implemented it.
+  assert.match(src, /0 if anything else/);
+  // The two-axis machinery is gone, not left lying about waiting to be revived,
+  // and neither is the version that decided the rule from the loan officer.
+  assert.doesNotMatch(src, /constrainedTo/);
+  assert.doesNotMatch(src, /constraintVerdict/);
+  assert.doesNotMatch(src, /investmentPropertyKeys/);
+  assert.doesNotMatch(src, /investmentDeskKey/);
 });
 
 // ── the fact the rule now hangs off ─────────────────────────────────────────
@@ -828,28 +993,29 @@ test("the answer is read at the START of a line, like every other marker", () =>
   assert.equal(isInvestmentProperty(`Second Investment/2nd Home: Yes`), false);
 });
 
-test("the constraint the parse feeds is the one the stat already tested", () => {
+test("the answer the app composed is what decides the flat verdict", () => {
   // The two halves joined up, on the route's own arithmetic. Cal sends five to
-  // Mateo — the lightest of the three the rule allows him. With an app-composed
-  // Yes he is judged against those three and scores 100% for making the best
-  // choice left to him. With a No, or with a sentence merely mentioning the
-  // word, the rule never bound him: the same five are a free choice across the
-  // whole assistant pool, where Mateo is mid-table, and score 60%. Nothing
-  // between those two readings is a guess.
-  const constrainedTo = investmentPropertyKeys(recipients);
-  const rows = (note: string): TransferRow[] => [D1, D1, D2, D2, D3].map((d) => ({
-    clrId: "Cal", clrName: "Cal", loaId: MATEO_LOA, at: d,
-    constrainedTo: isInvestmentProperty(note) ? constrainedTo : null,
-  }));
-  const yes = scoreTransferPriority(rows(composed("yes")), recipients)[0];
-  assert.equal(yes.constrained, 5);
-  assert.equal(yes.pct, 100);
-  const no = scoreTransferPriority(rows(composed("no")), recipients)[0];
-  assert.equal(no.constrained, 0);
-  assert.equal(no.pct, 60);
-  const chatter = scoreTransferPriority(rows("not an investment property"), recipients)[0];
-  assert.equal(chatter.constrained, 0, "a sentence about it is not an answer to it");
-  assert.equal(chatter.pct, 60);
+  // Christopher Redoble and records Justin on every one. With an app-composed
+  // Yes he is judged by the routing rule and scores 100% for reaching one of
+  // the three, even though that desk is the busiest in the building. With a No,
+  // or with a sentence merely mentioning the word, the rule never bound him:
+  // the same five are an ordinary placement onto the heaviest desk on the floor
+  // and score 0%, and the assistant on them is worth nothing. Nothing between
+  // those two readings is a guess.
+  const rows = (blob: string, loId: number, loaId: number | null): TransferRow[] =>
+    [D1, D1, D2, D2, D3].map((d) => ({
+      clrId: "Cal", clrName: "Cal", loId, at: d, loaId,
+      investmentProperty: isInvestmentProperty(blob),
+    }));
+  assert.equal(scoreTransferPriority(rows(composed("yes"), REDOBLE, JUSTIN), recipients)[0].pct, 100);
+  assert.equal(scoreTransferPriority(rows(composed("no"), REDOBLE, JUSTIN), recipients)[0].pct, 0);
+  assert.equal(scoreTransferPriority(rows("not an investment property", REDOBLE, JUSTIN), recipients)[0].pct, 0,
+    "a sentence about it is not an answer to it");
+  // ...and the other way round, so this is not just the desk being heavy: a Yes
+  // that reached nobody the rule names is 0 however starved that loan officer
+  // was, and the same rows with a No are 100.
+  assert.equal(scoreTransferPriority(rows(composed("yes"), DEREK, null), recipients)[0].pct, 0);
+  assert.equal(scoreTransferPriority(rows(composed("no"), DEREK, null), recipients)[0].pct, 100);
 });
 
 test("nothing in this module reads note text or matches a keyword", () => {
@@ -861,9 +1027,20 @@ test("nothing in this module reads note text or matches a keyword", () => {
   assert.ok(!literals.some((s) => /invest|property|goal|lead_?type/i.test(s)),
     "no string literal reaches for the fact this rule refuses to guess");
   assert.ok(!/\.includes\(\s*["'`]/.test(code), "no substring matching against a literal");
-  // The one place a name is compared is the roster resolver, and it is the only
-  // case-folding in the file.
-  assert.equal((code.match(/toLowerCase/g) ?? []).length, 2, "only investmentPropertyKeys folds case");
+  // The one place a name is compared is the assistant resolver, and it is the
+  // only case-folding in the file.
+  assert.equal((code.match(/toLowerCase/g) ?? []).length, 2,
+    "only resolveInvestmentRouting folds case");
+
+  // The assistant column IS read now — Ethan's rule names three assistants —
+  // but in exactly two places: the field on TransferRow, and the one read
+  // inside the flat verdict. Anywhere else it would be scoring CRM hygiene.
+  assert.match(code, /loaId\?: number \| string \| null;/, "declared on TransferRow");
+  assert.equal((code.match(/t\.loaId/g) ?? []).length, 2,
+    "and read on one line only, the flat verdict's own");
+  assert.match(code, /hasId\(t\.loaId\) \? recipientKey\("loa", t\.loaId\) : null/);
+  const ramp = src.slice(src.indexOf("function destinationKey"), src.indexOf("// ── the routing requirement"));
+  assert.ok(!/loaId/.test(ramp), "the ramp scores the loan officer and nothing else");
 });
 
 // ── the stat, over a floor of CLRs ──────────────────────────────────────────
@@ -947,6 +1124,57 @@ test("...and a data gap is never an accusation either", () => {
   assert.ok(row.mean! < row.unplacedValuedAt!, "and never the floor's own average either");
 });
 
+test("HIGH — one CLR's score cannot move on ANOTHER CLR's routing compliance", () => {
+  // What fills an unreadable record is the mean of every ORDINARY readable
+  // transfer the floor made, and that word is load-bearing. The flat routing
+  // verdicts are 0 and 1 with nothing between; folding them in moved Ola's
+  // number by tens of points depending on whether somebody else's investment
+  // transfers happened to obey the rule that fortnight — work she had no part
+  // in and could not have changed.
+  const olaIn = (rows: TransferRow[]) =>
+    scoreTransferPriority(rows, recipients).filter((s) => s.name === "Ola")[0];
+  const alone = olaIn(board);
+  const withCompliance = olaIn([...board, ...five("Cal", REDOBLE, true, JUSTIN)]);
+  const withBreaches = olaIn([...board, ...five("Cal", REDOBLE, true, ERIK)]);
+  for (const other of [withCompliance, withBreaches]) {
+    assert.equal(other.unplacedValuedAt, alone.unplacedValuedAt);
+    assert.equal(other.mean, alone.mean);
+    assert.equal(other.pct, alone.pct);
+  }
+  // ...and Cal's own two fortnights are nothing like each other, so this is not
+  // passing by the extra rows being ignored.
+  const calIn = (rows: TransferRow[]) =>
+    scoreTransferPriority(rows, recipients).filter((s) => s.name === "Cal")[0];
+  assert.equal(calIn([...board, ...five("Cal", REDOBLE, true, JUSTIN)]).pct, 100);
+  assert.equal(calIn([...board, ...five("Cal", REDOBLE, true, ERIK)]).pct, 0);
+});
+
+test("HIGH — every transfer behind the number is either scored or unplaced", () => {
+  // The invariant the cell's breakdown rests on. If a transfer could be
+  // neither, the tooltip would be presenting arithmetic that cannot reconcile
+  // with the percentage above it, whatever it chose to name.
+  const rows = [
+    ...board,
+    ...five("Cal", REDOBLE, true, JUSTIN).slice(0, 3),
+    ...five("Cal", DEREK, true, null).slice(0, 2),
+    ...five("Cal", null, false, null),
+  ];
+  const all = scoreTransferPriority(rows, recipients, { roster: [{ clrId: "Nia", name: "Nia" }] });
+  assert.ok(all.length >= 6);
+  for (const s of all) {
+    assert.equal(s.transfers, s.scored + s.unplaced, `${s.name} — nothing falls between the two`);
+    assert.ok(s.investment <= s.scored, s.name);
+    assert.ok(s.breaches <= s.investment, s.name);
+    assert.ok(s.investmentUnscored <= s.transfers, s.name);
+  }
+  // And the mean really is taken over both halves, not over the readable one.
+  const cal = all.filter((s) => s.name === "Cal")[0];
+  assert.equal(cal.transfers, 10);
+  assert.equal(cal.scored, 5);
+  assert.equal(cal.unplaced, 5);
+  assert.equal(cal.pct, Math.round(((3 + 0 * 2) + 5 * cal.unplacedValuedAt!) / 10 * 100));
+});
+
 test("a CLR with nothing readable at all scores null, not the floor's average", () => {
   const wes = clr("Wes");
   assert.deepEqual(
@@ -1016,7 +1244,7 @@ test("no transfers at all is an empty board, not a crash", () => {
   assert.deepEqual(scoreTransferPriority([], recipients), []);
   assert.deepEqual(scoreTransferPriority([], []), []);
   assert.deepEqual(recipientCredits([]), []);
-  assert.deepEqual(recipientCredits(recipients, { poolKeys: [] }).length, 26, "an empty pool is no pool");
+  assert.deepEqual(recipientCredits(recipients, { poolKeys: [] }).length, 19, "an empty pool is no pool");
 });
 
 // ── the small arithmetic, and the sharp edges ───────────────────────────────
@@ -1095,6 +1323,7 @@ test("the rules that judge people are written down next to the arithmetic", () =
   assert.match(src, /UNPLACED: WHAT AN UNREADABLE RECORD IS WORTH/);
   assert.match(src, /WHY THIS IS NOW SWITCHED ON/);
   assert.match(src, /Credit is a function of LOAD ALONE, and never increases with it/);
+  assert.match(src, /A FORCED ROUTE IS NOT A PLACEMENT DECISION/);
 });
 
 // ── wired up: the server row and the dashboard column ───────────────────────
@@ -1112,7 +1341,12 @@ function placementScan(): string {
 test("the server fills that column from this module, over the row's own window", () => {
   const scan = placementScan();
   assert.match(scan, /scoreTransferPriority\(/, "the rule is not reimplemented in the route");
-  assert.match(routes, /placementScore: placementByUser\.get\(u\.id\)\?\.ranked \? placementByUser\.get\(u\.id\)!\.pct : null/);
+  // Every reason the column withholds a number lives in ONE helper, so a third
+  // reason cannot be added to the cell and forgotten on the row. The rules it
+  // holds are pinned here: too thin a sample, and a routing rule that could not
+  // run at all.
+  assert.match(routes, /placementScore: placementPct\(placementByUser\.get\(u\.id\)\)/);
+  assert.match(routes, /!cell \|\| !cell\.ranked \|\| cell\.investmentUnscored > 0 \? null : cell\.pct/);
   // The transfers SCORED are startDate/endDate — the range every other cell on
   // that row is counted over. A second scoring window would put two different
   // fortnights on one line.
@@ -1134,9 +1368,11 @@ test("the recipients are counted over a RUN-UP, so nobody starts the window on z
   const scan = placementScan();
   assert.match(scan, /const placementFrom = starvedWindowStart\(startDate\);/,
     "the run-up is the same fortnight the TV's starved page measures");
-  // Both recipient queries are counted from it, and both still end at the range.
-  assert.equal(scan.split(").all(placementFrom, endDate").length - 1, 2,
-    "loan officers and assistants both reach back before the range");
+  // The loan officers are counted from it and still end at the range. The
+  // assistants are not counted at all any more: nothing scores an assistant, so
+  // there is no load of theirs to reconstruct.
+  assert.equal(scan.split(").all(placementFrom, endDate").length - 1, 1,
+    "the scored pool reaches back before the range");
   // ...and the transfers being judged are NOT widened with them.
   assert.ok(!/\.all\(placementOrg, placementFrom/.test(scan), "the run-up is never scored");
   // The reason is written where somebody would otherwise 'tidy' it away.
@@ -1145,7 +1381,7 @@ test("the recipients are counted over a RUN-UP, so nobody starts the window on z
 
 
 test("the module says out loud that the same window on both sides rebuilds zeroes", () => {
-  assert.match(src, /THAT SUBTRACTION IS ONLY HONEST IF THE COUNT REACHES FURTHER BACK THAN THE\n \* ROWS\./);
+  assert.match(src, /THAT SUBTRACTION IS ONLY HONEST IF THE COUNT REACHES FURTHER BACK THAN THE\r?\n \* ROWS\./);
   assert.match(src, /starvedWindowStart/, "and names the helper the caller uses");
 });
 
@@ -1205,39 +1441,83 @@ test("the scan is memoised, because one request builds ten windows", () => {
   assert.match(scan, /if \(cachedAt - v\.at >= PLACEMENT_CACHE_TTL_MS\) placementCache\.delete\(k\);/);
 });
 
-test("the placement column is held back, and says why in the source", () => {
-  // The scoring is finished and the server still computes placementScore, but
-  // the column is NOT rendered. Review found the compliance rule cannot protect
-  // anyone in production — an assistant belongs to exactly one loan officer and
-  // the transfer form only offers that LO's assistants — so the rule can only
-  // ever lower a score, and recording loa_id costs up to 100 points where
-  // leaving it blank does not. That rewards withholding data, which is the
-  // opposite of what a number managers judge people by should do.
-  //
-  // This test exists so the column cannot quietly reappear without the two
-  // things that would make it fair: loa_id required on a transfer, and state
-  // licensing supplying TransferRow.eligible.
+test("the placement column is SHOWN, and its tooltip is the stat that exists", () => {
+  // It was held back for a release, and the reason was real: the compliance
+  // rule hung on loa_id, which could protect nobody in production — an
+  // assistant belongs to one loan officer and the form only offers that
+  // officer's own — and cost up to 100 points for filling a field in. The rule
+  // now hangs on the loan officer and pays 100 for following it, so the column
+  // is live.
   const cols = mgr.slice(mgr.indexOf("const cols"), mgr.indexOf("];", mgr.indexOf("const cols")));
-  // Comments stripped first: the held-back entry is left commented in place,
-  // so a raw match would find the very string this test exists to forbid.
+  // Comments stripped first, so a commented-out entry could never pass for a
+  // rendered one.
   const live = cols
     .split(String.fromCharCode(10))
     .filter((l) => !l.trim().startsWith(String.fromCharCode(47, 47)))
     .join(String.fromCharCode(10));
-  assert.doesNotMatch(live, /key: "placement"/, "the Placed column must not be rendered yet");
-  assert.doesNotMatch(live, /label: "Placed"/);
-  assert.match(mgr, /HELD BACK, deliberately/, "and the source says why");
-  assert.match(mgr, /loa_id is required/, "naming what would unblock it");
-  // The write-up column it was meant to sit beside is untouched.
+  assert.match(live, /key: "placement"/, "the Placed column is rendered");
+  assert.match(live, /label: "Placed"/);
+  assert.match(live, /get: r => r\.placementScore \?\? null/);
+  assert.match(live, /cellTitle: placementNote/, "and a dash still says why it is a dash");
+  // The write-up column it sits beside is untouched.
   assert.match(cols, /key: "writeUp"/);
+  // Nothing is left claiming the hold is still in force.
+  assert.doesNotMatch(mgr, /HELD BACK, deliberately/);
 });
 
-test("the server still computes the placement score, ready to render", () => {
-  // Holding the column back is a UI decision, not a rollback: the scan, the
-  // cache and the module all stay, so re-adding one entry to `cols` is the
-  // whole job once the data supports it.
+test("the tooltip describes the stat the server actually computes", () => {
+  // A claim the route did not back has been caught on this column once already,
+  // so each half of what the server does is pinned here: the morning-before
+  // ramp, the flat investment rule, and the WHOLE floor as the comparison for
+  // everything else — never a licensing pool, which is never supplied.
+  const at = mgr.indexOf('key: "placement"');
+  assert.ok(at > 0, "the column exists");
+  const tip = /title: "([^"]*)"/.exec(mgr.slice(at));
+  assert.ok(tip, "the column carries a tooltip");
+  const text = tip![1];
+  assert.match(text, /morning it was made/, "judged on the floor from BEFORE the transfer");
+  assert.match(text, /Investment\/2nd Home/, "the flat rule is named");
+  // The three the rule is decided on, by name, because a manager cannot check a
+  // verdict against a rule the column will not state.
+  assert.match(text, /Justin, Mateo or John/);
+  assert.match(text, /100% when the transfer records one of those three and 0% for anything else/);
+  // ...including the half that stings, which is the half most likely to be
+  // quietly dropped from a tooltip.
+  assert.match(text, /no assistant recorded at all, scores zero/);
+  assert.match(text, /WHOLE floor/);
+  assert.doesNotMatch(text, /could have chosen/,
+    "no promise of an eligible set the route never supplies");
+  // The long-range caveat that the route's own comment says lives here.
+  assert.match(text, /fortnight PLUS the range/);
+  assert.match(routes, /tooltip spells the difference out/);
+});
+
+test("HIGH — the routing counters reach the cell, so a 0% can say which kind it is", () => {
+  // A 0% earned by breaching the investment routing rule is a far sharper
+  // accusation than a 0% earned by feeding a busy desk, and a manager reading
+  // the cell could not tell them apart: the module counted both and the route
+  // dropped them on the floor. They now travel with the number they explain.
+  const scan = placementScan();
+  assert.match(routes, /investment: number; breaches: number;/, "on the cell the column reads");
+  assert.match(scan, /investment: s\.investment, breaches: s\.breaches,/, "filled from the module");
+  assert.match(routes, /placementInvestment: placementByUser\.get\(u\.id\)\?\.investment \?\? 0/);
+  assert.match(routes, /placementBreaches: placementByUser\.get\(u\.id\)\?\.breaches \?\? 0/);
+  // ...and the cell reads them and says what they mean, in the tooltip.
+  assert.match(mgr, /const investment = Number\(r\.placementInvestment \?\? 0\);/);
+  assert.match(mgr, /Number\(r\.placementBreaches \?\? 0\)/);
+  assert.match(mgr, /recorded as Investment\/2nd Home and judged on routing alone/);
+  assert.match(mgr, /recorded Justin, Mateo or John and scored 100%/);
+  assert.match(mgr, /did not and scored 0%/);
+  // The note used to answer nothing at all whenever there WAS a number, which
+  // is exactly the case a sharp 0% falls into.
+  assert.doesNotMatch(mgr, /if \(r\.placementScore != null\) return undefined;/);
+});
+
+test("the server computes the placement score the column reads", () => {
   assert.match(routes, /placementScore/);
   assert.match(routes, /placementByUser/);
+  assert.match(routes, /placementScored: placementByUser\.get\(u\.id\)\?\.scored \?\? 0/);
+  assert.match(routes, /placementMinScored: MIN_SCORED_TRANSFERS/);
 });
 
 test("a snapshot is an array read, not a walk over the window", () => {
@@ -1271,17 +1551,35 @@ test("recipients are the ones actually receiving, and nobody is named to get the
   // Comments may DISCUSS the demo rows; the query may not know they exist.
   const code = scan.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
   assert.ok(!/Alex Thompson|Unknown LO|Jordan Rivera|Recovered/.test(code), "no row is excluded by name");
-  // Active only, and both kinds of recipient.
+  // Active only, and both kinds of roster row.
   assert.match(scan, /lo\.internal_status = 'active'/);
   assert.match(scan, /a\.active = 1/);
   assert.match(scan, /kind: "lo"/);
   assert.match(scan, /kind: "loa"/);
-  // The transfers themselves: org-scoped, the CLR is assistant_id, and the
-  // destination is the pair the module reads.
+  // An assistant is not a destination the ramp can score, so its query counts
+  // nothing: the row is on the roster for its identity, which is what resolves
+  // the three the investment rule names.
+  const loas = scan.slice(scan.indexOf("const placementLoas"), scan.indexOf("const placementRecipients"));
+  assert.match(loas, /SELECT a\.id AS id, a\.full_name AS name, a\.lo_id AS deskId/);
+  assert.match(loas, /receiving: false/);
+  assert.ok(!/lead_outcomes/.test(loas), "nothing counts transfers to an assistant");
+  // Her DESK does travel, and it has to. "CHRIS'S Justin, Mateo or John" is half
+  // the rule; another loan officer's Justin is a different person, and a.lo_id
+  // is the only way to tell the two apart without matching an officer's name.
+  // Leave it behind and resolveInvestmentRouting can never answer, so the rule
+  // stops for the whole floor -- which is what it did while this was missing.
+  assert.match(loas, /deskId: r\.deskId == null \? null : Number\(r\.deskId\)/);
+  assert.ok(!/lo\.full_name/.test(loas), "and it is the id, never the loan officer's name");
+  // The transfers themselves: org-scoped, the CLR is assistant_id, the
+  // destination of a PLACEMENT is the loan officer and only the loan officer...
   assert.match(scan, /outcome_type='transfer'/);
   assert.match(scan, /clrId: o\.assistant_id == null \? "" : Number\(o\.assistant_id\)/);
   assert.match(scan, /loId: o\.lo_id/);
-  assert.match(scan, /loaId: o\.loa_id/);
+  // ...and loa_id comes down with them, because Ethan's rule names three
+  // assistants. Which rows may read it is the module's rule to state, not this
+  // query's to pre-decide.
+  assert.match(scan, /SELECT assistant_id, lo_id, loa_id, date, conversation_notes/);
+  assert.match(scan, /loaId: o\.loa_id == null \? null : Number\(o\.loa_id\)/);
 });
 
 test("the placement scan reads EVERY transfer in the range, excluded CLRs included", () => {
@@ -1298,10 +1596,108 @@ test("the placement scan reads EVERY transfer in the range, excluded CLRs includ
 test("the route applies the investment rule; the module never guesses it", () => {
   const scan = placementScan();
   assert.match(scan, /INVESTMENT_PROPERTY_INPUT_AVAILABLE/, "one switch, honoured at the call site");
-  assert.match(scan, /investmentPropertyKeys\(placementRecipients\)/, "resolved from the roster");
-  assert.match(scan, /isInvestmentProperty\(o\.conversation_notes\)/, "and from the app's own answer");
-  assert.match(scan, /constrainedTo: investmentKeys\.length && isInvestmentProperty/);
+  assert.match(scan, /resolveInvestmentRouting\(placementRecipients\)/, "the three come from the roster");
+  assert.match(scan, /isInvestmentProperty\(o\.conversation_notes\)/, "the flag from the app's own answer");
+  // The FLAG travels whatever the roster managed to resolve. Gating it on the
+  // routing having resolved was the same thing as hiding the failure: the
+  // module then saw ordinary transfers, and a fortnight of perfect compliance
+  // onto the busiest desk in the building came out as a confident red 0%.
+  // Passed through, those rows are counted instead (`investmentUnscored`) and
+  // the column shows a dash. Only the module's own switch may unflag a row.
+  assert.match(scan, /investmentProperty: INVESTMENT_PROPERTY_INPUT_AVAILABLE && isInvestmentProperty/);
+  assert.ok(!/investmentProperty: investment\w* !== null/.test(scan),
+    "a roster that could not answer must not silently unflag the rows it failed on");
+  // A compliance rule that quietly stops running is exactly the kind of thing
+  // nobody notices, so it is said out loud -- and the sentence that travels is
+  // the module's own, which names what failed and which assistant it failed on.
+  assert.match(scan, /console\.warn\(\s*"\[manager-dashboard\] investment routing not scored: " \+/);
+  assert.match(scan, /investmentRouting\.problem \?\? "the roster resolves none of the named assistants"/);
   // The module stays clean: the guard test above proves it reads no stored
   // text, and this proves the reading happens somewhere that may.
   assert.ok(!/conversation_notes/.test(src), "server/transfer-priority.ts never sees the column");
+});
+
+test("the route's own doc block states the rename limit rather than promising past it", () => {
+  // The module says it: a first name is the only handle the roster offers for
+  // the three, and the desk is the half that is id-based. The route used to say
+  // the opposite of the first half — "renaming one of them moves the rule with
+  // her" — which is true of the loan officer and false of the three, and a
+  // comment that promises a safety the code does not have is worse than none.
+  assert.match(src, /THAT RESOLUTION IS NOT RENAME-SAFE/);
+  assert.match(src, /The DESK half of the rule IS id-based, and does survive a rename/);
+  const scan = placementScan();
+  assert.ok(!/renaming one of them moves the rule with her/.test(scan),
+    "the route must not promise rename-safety the roster cannot give");
+  assert.match(scan, /A recorded first name is the only handle the roster offers/);
+  assert.match(scan, /he can be renamed freely/);
+  // ...and the same block used to call the stop "one case only", which stopped
+  // being true the moment the desk became part of the answer.
+  assert.ok(!/which is one case only/.test(scan));
+  assert.match(scan, /there are four ways in/);
+});
+
+test("HIGH — the cell's breakdown is taken over EVERY transfer behind the number", () => {
+  // The share's denominator is the scored transfers PLUS the unreadable ones
+  // counted at the floor's average — see `unplacedValuedAt`. A breakdown over
+  // the scored half alone was arithmetic a manager could not reconcile with the
+  // percentage sitting above it: Ola's cell said "1 judged on ordinary
+  // placement" over a 68% that is the mean of five.
+  assert.match(routes, /placementUnplaced: placementByUser\.get\(u\.id\)\?\.unplaced \?\? 0/);
+  assert.match(routes, /placementUnplacedValuedAt: placementByUser\.get\(u\.id\)\?\.unplacedValuedAt \?\? null/);
+  assert.match(mgr, /const unplaced = Math\.max\(0, Number\(r\.placementUnplaced \?\? 0\)\);/);
+  assert.match(mgr, /const behind = scored \+ filled;/);
+  assert.match(mgr, /This share is the mean of \$\{behind\}/);
+  // All three parts are named, and they are the whole of it: routing, ordinary
+  // placement, and the unreadable records counted at the floor's own average.
+  assert.match(mgr, /judged on routing alone/);
+  assert.match(mgr, /judged on ordinary placement/);
+  assert.match(mgr, /counted at the floor's own/);
+  // The old sum, which counted the readable half and called it the total.
+  assert.doesNotMatch(mgr, /of \$\{scored\} scored/);
+  // An unreadable record the server left OUT of the mean — no ordinary
+  // placement on the floor to value it from — is said to be out, rather than
+  // folded into a sum that then does not add up.
+  assert.match(mgr, /const filled = valuedAt == null \? 0 : unplaced;/);
+  assert.match(mgr, /left out of the share/);
+});
+
+test("HIGH — a routing rule that could not run shows a dash and the reason, never a red 0%", () => {
+  // The rule stopping is a fact about the ROSTER, not about anybody's work.
+  // Those transfers were required to reach one desk, so ordinary placement
+  // scores perfect compliance at 0% — the sharpest verdict this column hands
+  // out, arrived at because somebody was renamed.
+  assert.match(routes, /placementUnscored: placementByUser\.get\(u\.id\)\?\.investmentUnscored \?\? 0/);
+  // The number is withheld, in the one helper that holds every such rule.
+  assert.match(routes, /const placementPct = \(cell\?: PlacementCell\): number \| null =>/);
+  assert.match(routes, /cell\.investmentUnscored > 0 \? null : cell\.pct/);
+  // ...and the dash says WHICH dash it is, ahead of every other reason, because
+  // each of those would explain a dash this one is not.
+  assert.match(mgr, /if \(unscored > 0\) \{/);
+  assert.match(mgr, /The investment routing rule is not running/);
+  assert.match(mgr, /roster cannot resolve Chris's/);
+  assert.match(mgr, /no share is shown until the roster answers/);
+  // The warn names what failed and which assistant: the module's own sentence,
+  // not a generic one this route made up.
+  const scan = placementScan();
+  assert.match(scan, /investmentRouting\.problem/);
+});
+
+test("HIGH — a routing 0% and a placement 0% are told apart by the CELL, not by hovering", () => {
+  // Two identical red boxes reading 0% are not the same accusation — one is
+  // "eleven investment leads went to the wrong people", the other is "your
+  // placement was poor" — and a colour-graded table may not leave the
+  // difference to whether somebody happened to hover.
+  assert.match(mgr, /const placementCellNote = \(r: any\): string \| null => \{/);
+  assert.match(mgr, /return breaches > 0 \? `\$\{breaches\} mis-routed` : `\$\{investment\} on routing`;/);
+  assert.match(mgr, /if \(Number\(r\.placementUnscored \?\? 0\) > 0\) return "routing rule off";/);
+  // An ordinary number says nothing extra, so an unmarked share is placement
+  // all the way down and the marker means what it says.
+  assert.match(mgr, /if \(investment <= 0\) return null;/);
+  // ...and it is RENDERED, not merely computed.
+  assert.match(mgr, /cellNote\?: \(r: any\) => string \| null;/);
+  assert.match(mgr, /cellNote: placementCellNote/);
+  assert.match(mgr, /const note = c\.cellNote\?\.\(r\);/);
+  // The column's own tooltip no longer sends the reader to a hover for the one
+  // thing the cell now says by itself.
+  assert.doesNotMatch(mgr, /Hover a cell to see how much of its number came from that routing rule/);
 });

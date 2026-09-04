@@ -35,7 +35,7 @@ import {
   UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE,
 } from "./tv-pages";
 import {
-  scoreTransferPriority, investmentPropertyKeys, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
+  scoreTransferPriority, resolveInvestmentRouting, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
   MIN_SCORED_TRANSFERS,
   type RecipientRow as PlacementRecipient, type TransferRow as PlacementTransfer,
 } from "./transfer-priority";
@@ -12534,7 +12534,38 @@ ${note}` : daysLine;
    * and yesterday's "Today" cannot be served as today's.
    */
   const PLACEMENT_CACHE_TTL_MS = 2 * 60 * 1000;
-  type PlacementCell = { pct: number | null; scored: number; ranked: boolean };
+  // `investment` and `breaches` ride along because a 0% has to be READABLE. A
+  // zero earned by breaching the investment routing rule is a far sharper
+  // accusation than one earned by feeding a busy desk, and a manager reading the
+  // cell cannot tell them apart from the percentage alone. Same for a 100%
+  // earned by compliance rather than by placement. The module counts both; this
+  // is where they used to be dropped.
+  // `unplaced` and `unplacedValuedAt` ride along for the same reason one step
+  // further on: they are most of what the cell's arithmetic is MADE of on a CLR
+  // with unreadable records, and a tooltip that breaks a number down without
+  // them cannot be reconciled with the number above it.
+  //
+  // `investmentUnscored` is the case where the rule did not run at all. Those
+  // transfers were required to reach the busiest desk on the floor, so reading
+  // them as ordinary placement scores perfect compliance at 0 — a confident red
+  // cell that is an artefact of a roster problem. The column shows a dash and
+  // the reason instead, which is what this count is for.
+  type PlacementCell = {
+    pct: number | null; scored: number; ranked: boolean;
+    investment: number; breaches: number;
+    unplaced: number; unplacedValuedAt: number | null;
+    investmentUnscored: number;
+  };
+  /**
+   * The percentage the Placed column may print, or null for a dash.
+   *
+   * Two suppressions, both of them the same bargain: a number nobody earned is
+   * worse than no number. `ranked` is the module's minimum-sample rule, and
+   * `investmentUnscored` is the routing rule having been switched off by a
+   * roster it could not resolve — see PlacementCell above.
+   */
+  const placementPct = (cell?: PlacementCell): number | null =>
+    !cell || !cell.ranked || cell.investmentUnscored > 0 ? null : cell.pct;
   const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell> }>();
 
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
@@ -13168,31 +13199,74 @@ ${note}` : daysLine;
         }));
         // loan_officer_assistants carries no org_id of its own; the parent loan
         // officer is the org scope, exactly as the starved page reads it.
+        //
+        // An assistant is NOT a destination the placement ramp scores — the loan
+        // officer is, and he is the only one. So this query does not count what
+        // an assistant received and does not ask whether anybody has ever
+        // transferred to one: `receiving: false` says exactly that, and the load
+        // is not read. The row is on the roster for its IDENTITY — the id, the
+        // name, and the DESK it sits at — because that is what resolves the
+        // three assistants the investment routing rule names.
+        //
+        // a.lo_id is the half of "CHRIS'S Justin, Mateo or John" that can be
+        // enforced without matching anybody's name. Other loan officers have a
+        // Justin of their own, and she is a different person; the rule admits
+        // only the assistants sitting at the one desk all three named rows point
+        // at, so the desk has to travel with them. Leave it behind and the
+        // roster can never answer the question, and the rule stops for the whole
+        // floor — which is what it did for as long as this query omitted it.
         const placementLoas = (sqlite.prepare(
-          `SELECT a.id AS id, a.full_name AS name,
-                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
-                  MAX(o.date) AS lastAt
+          `SELECT a.id AS id, a.full_name AS name, a.lo_id AS deskId
              FROM loan_officer_assistants a
              JOIN loan_officers lo ON lo.id = a.lo_id
-             LEFT JOIN lead_outcomes o
-               ON o.loa_id = a.id AND o.org_id = ? AND o.outcome_type = 'transfer'
-            WHERE a.active = 1 AND lo.org_id = ?
-            GROUP BY a.id, a.full_name`,
-        ).all(placementFrom, endDate, placementOrg, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+            WHERE a.active = 1 AND lo.org_id = ?`,
+        ).all(placementOrg) as any[]).map((r: any): PlacementRecipient => ({
           id: Number(r.id),
           kind: "loa",
           name: String(r.name ?? ""),
-          transfers: Number(r.transfers) || 0,
-          lastAt: r.lastAt ? String(r.lastAt) : null,
-          receiving: !!r.lastAt,
+          // Her own parent desk, as an id, so the loan officer it names can be
+          // renamed without the rule noticing.
+          deskId: r.deskId == null ? null : Number(r.deskId),
+          transfers: 0,
+          lastAt: null,
+          receiving: false,
         }));
         const placementRecipients = [...placementLos, ...placementLoas];
-        // The compliance rule, resolved from the ROSTER by name and never from
-        // stored text. An empty list means nobody on the roster answers to
-        // those names, and an empty list constrains nothing.
-        const investmentKeys = INVESTMENT_PROPERTY_INPUT_AVAILABLE
-          ? investmentPropertyKeys(placementRecipients)
-          : [];
+        // The routing requirement, resolved from the ROSTER: the ids of the
+        // three assistants an investment property was required to reach, and the
+        // one loan officer's desk all three of them sit at. Their first names
+        // are matched against the assistant roster once, here, and what travels
+        // on is ids. No loan officer's NAME is matched at any point — the desk
+        // comes from the assistants' own rows — so he can be renamed freely.
+        //
+        // The three themselves cannot, and this comment used to claim otherwise.
+        // A recorded first name is the only handle the roster offers for them,
+        // and it is mutable: rename one past recognition and the roster stops
+        // answering. What that costs is bounded on purpose — the rule stops for
+        // EVERYBODY rather than running on the two that still resolve — so a
+        // roster edit can switch the rule off but can never turn it into a false
+        // accusation against the third.
+        //
+        // Null means the roster cannot answer today, and there are four ways in:
+        // a name matches nobody, a matched assistant has no desk recorded, the
+        // three sit at no desk in common, or a full set of them sits at each of
+        // two. `problem` says which and names who, and it is logged, because a
+        // compliance rule that quietly stops running is exactly the kind of thing
+        // nobody notices.
+        //
+        // This call is the LOG, and nothing else hangs off it. The module
+        // resolves the same question from the same roster for the scoring, so
+        // there is no second answer here that could disagree with the one the
+        // numbers were built from.
+        const investmentRouting = INVESTMENT_PROPERTY_INPUT_AVAILABLE
+          ? resolveInvestmentRouting(placementRecipients)
+          : null;
+        if (investmentRouting && !investmentRouting.keys) {
+          console.warn(
+            "[manager-dashboard] investment routing not scored: " +
+            (investmentRouting.problem ?? "the roster resolves none of the named assistants"),
+          );
+        }
         // EVERY transfer in the range, deliberately including the CLRs the
         // scorecard leaves out. The stat rebuilds each morning's floor by
         // walking the received counts above backwards through these rows —
@@ -13214,30 +13288,59 @@ ${note}` : daysLine;
           // drops it rather than invent a person.
           clrId: o.assistant_id == null ? "" : Number(o.assistant_id),
           loId: o.lo_id == null ? null : Number(o.lo_id),
+          // The assistant the transfer recorded. The module reads it on FLAGGED
+          // ROWS AND NOWHERE ELSE — it is the compliance fact the routing rule
+          // asks about, and reading it on the ramp would score two thirds of the
+          // floor on whether somebody used the assistant picker. Handed over on
+          // every row all the same: which rows it applies to is the module's
+          // rule to state, not this query's to pre-decide.
           loaId: o.loa_id == null ? null : Number(o.loa_id),
           at: o.date ? String(o.date) : null,
-          // Compliance, not a choice. An investment property was only ever
-          // allowed to reach those three assistants, so it is judged against
-          // them alone rather than marked down for landing on the busiest.
-          // isInvestmentProperty reads the answer the app composed itself and
-          // fails closed on everything else — a sentence that merely mentions
-          // the word leaves the transfer unconstrained.
-          constrainedTo: investmentKeys.length && isInvestmentProperty(o.conversation_notes)
-            ? investmentKeys
-            : null,
+          // The FACT, never the text it came from. isInvestmentProperty reads
+          // the answer the app composed itself and fails closed on everything
+          // else — a sentence that merely mentions the word leaves the transfer
+          // unflagged. A flagged transfer is scored flat: 100% when it recorded
+          // one of the three assistants above, 0% for anything else.
+          //
+          // The flag travels even when the roster could NOT resolve those three.
+          // Withholding it here was the same thing as hiding the failure: the
+          // module then saw ordinary transfers, scored perfect compliance onto
+          // the busiest desk in the building as 0%, and the column printed a
+          // confident red cell that was an artefact of a roster problem. Passed
+          // through, the module counts them instead (`investmentUnscored`) and
+          // the column shows a dash and the reason. The one switch that may
+          // unflag a row is the module's own, honoured here at the call site.
+          investmentProperty: INVESTMENT_PROPERTY_INPUT_AVAILABLE && isInvestmentProperty(o.conversation_notes),
         }));
         // The roster, so a CLR who transferred nobody gets a null rather than
         // dropping off the column entirely.
         for (const s of scoreTransferPriority(placementRows, placementRecipients, {
           roster: countedClrs.map((u: any) => ({ clrId: u.id, name: u.name })),
         })) {
+          // Everything the cell needs to explain itself travels with the
+          // number, because the Placed column has two things to say that a
+          // percentage alone cannot.
+          //
           // `ranked` is the module's own minimum-sample rule (five readable
-          // transfers), and it is carried through rather than dropped. On a
-          // one-day window most CLRs are under it, and a share taken over one
-          // or two transfers is a coin toss printed as a judgement in a
-          // colour-graded table. The cell shows a dash and says why instead;
-          // see the Placed column in client/src/pages/manager-dashboard.tsx.
-          placementByUser.set(Number(s.clrId), { pct: s.pct, scored: s.scored, ranked: s.ranked });
+          // transfers). On a one-day window most CLRs are under it, and a share
+          // taken over one or two transfers is a coin toss printed as a
+          // judgement in a colour-graded table, so the cell shows a dash and
+          // says why instead.
+          //
+          // `investment` and `breaches` are the two routing counters: a 0% that
+          // is eleven breached investment transfers and a 0% that is a
+          // fortnight of bad placement are very different accusations, and a
+          // 100% earned by compliance is a different achievement from one
+          // earned by feeding the starved.
+          //
+          // Both are read by the Placed column in
+          // client/src/pages/manager-dashboard.tsx.
+          placementByUser.set(Number(s.clrId), {
+            pct: s.pct, scored: s.scored, ranked: s.ranked,
+            investment: s.investment, breaches: s.breaches,
+            unplaced: s.unplaced, unplacedValuedAt: s.unplacedValuedAt,
+            investmentUnscored: s.investmentUnscored,
+          });
         }
         const cached = new Map<number, PlacementCell>();
         placementByUser.forEach((v, k) => cached.set(k, v));
@@ -13293,11 +13396,14 @@ ${note}` : daysLine;
             // null when they logged no transfers in the range — nothing to
             // measure is not the same as measured badly.
             writeUpPct: writeUpByUser.has(u.id) ? writeUpByUser.get(u.id) : null,
-            // The same bargain for placement, twice over: null when nothing
-            // they sent could be read, because "we cannot say" is not "you
-            // placed badly" — and null again when too few of their transfers
-            // could be read to judge, because a share of two is not a verdict.
-            placementScore: placementByUser.get(u.id)?.ranked ? placementByUser.get(u.id)!.pct : null,
+            // The same bargain for placement, three times over: null when
+            // nothing they sent could be read, because "we cannot say" is not
+            // "you placed badly"; null again when too few of their transfers
+            // could be read to judge, because a share of two is not a verdict;
+            // and null once more when the investment routing rule could not run,
+            // because a red 0% that is really a roster problem is the sharpest
+            // lie this column could tell. All three live in placementPct.
+            placementScore: placementPct(placementByUser.get(u.id)),
             // How many of their transfers this stat could actually read, and
             // how many it needs, so the cell can explain a dash instead of
             // leaving a manager guessing. The threshold travels with the data
@@ -13305,6 +13411,26 @@ ${note}` : daysLine;
             // first time somebody moved the dial.
             placementScored: placementByUser.get(u.id)?.scored ?? 0,
             placementMinScored: MIN_SCORED_TRANSFERS,
+            // How much of that number came from the investment routing rule
+            // rather than from placement: how many of their scored transfers it
+            // judged, and how many of those went to somebody other than the
+            // three assistants it names (each one a flat 0). Without these the
+            // cell can print a 0% but never say what kind of 0% it is.
+            placementInvestment: placementByUser.get(u.id)?.investment ?? 0,
+            placementBreaches: placementByUser.get(u.id)?.breaches ?? 0,
+            // The rest of what the number is made of. Every transfer behind a
+            // Placed cell is either scored or unplaced, so without these the
+            // cell can only break the share down over the readable half and
+            // present a sum that does not reconcile with the percentage above
+            // it. `unplacedValuedAt` is null when the floor made no ordinary
+            // placement to value them from, in which case they are outside the
+            // mean altogether and the cell has to say so.
+            placementUnplaced: placementByUser.get(u.id)?.unplaced ?? 0,
+            placementUnplacedValuedAt: placementByUser.get(u.id)?.unplacedValuedAt ?? null,
+            // Flagged transfers the routing rule never judged, because the
+            // roster could not resolve it. Non-zero is why the score above is a
+            // dash, and the cell says which of the reasons it was.
+            placementUnscored: placementByUser.get(u.id)?.investmentUnscored ?? 0,
           };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);

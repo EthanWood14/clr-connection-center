@@ -262,22 +262,122 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No CLR activity in this {rangeLabel.toLowerCase()} range.</CardContent></Card>;
   }
   /**
-   * Why the Placed cell is a dash, in the cell's own tooltip.
+   * What the Placed cell is not saying out loud, in the cell's own tooltip.
    *
-   * A blank in a colour-graded table reads as a bug unless it says what it
+   * Two different jobs, and both are about a number that would otherwise be
+   * read as something it is not.
+   *
+   * A DASH in a colour-graded table reads as a bug unless it says what it
    * means, and the three reasons are genuinely different: nobody transferred
    * anybody, nothing they transferred could be traced to a desk, or the sample
    * is too thin to judge. The last one is the common case on the short ranges,
    * and it has an answer the manager can act on — pick a longer one.
+   *
+   * A NUMBER with investment transfers behind it is the other job, and it is
+   * the sharper one. Those transfers are not on the ramp at all: each is a flat
+   * 100 for recording one of the three named assistants or a flat 0 for
+   * anything else. So a 0% can mean "you fed the busiest desk in the building"
+   * or it can mean "eleven investment leads went to the wrong people", and a
+   * 100% can be a fortnight of feeding the starved or a fortnight of obeying
+   * one routing rule. The percentage alone cannot tell a manager which, and the
+   * difference is the whole of what they would do about it. The counts come
+   * from the scan itself (see placementInvestment / placementBreaches in
+   * server/routes.ts), so this is a reading of the number rather than a second
+   * calculation that could disagree with it.
    */
   const placementNote = (r: any): string | undefined => {
-    if (r.placementScore != null) return undefined;
     const scored = Number(r.placementScored ?? 0);
     const need = Number(r.placementMinScored ?? 0);
-    if (!r.transfers) return "No transfers logged in this range, so there is no placement to judge.";
-    if (!scored) return "None of this CLR's transfers in this range could be traced to a loan officer, so there is nothing to score.";
-    if (!need) return "Too few of this CLR's transfers in this range could be read to judge placement.";
-    return `Only ${scored} of this CLR's transfers in this range could be read, and ${need} are needed before a placement share means anything. Try a longer range.`;
+    const investment = Number(r.placementInvestment ?? 0);
+    const breaches = Math.min(investment, Number(r.placementBreaches ?? 0));
+    const followed = investment - breaches;
+    const unplaced = Math.max(0, Number(r.placementUnplaced ?? 0));
+    const valuedAt = r.placementUnplacedValuedAt == null ? null : Number(r.placementUnplacedValuedAt);
+    const unscored = Math.max(0, Number(r.placementUnscored ?? 0));
+    const ramped = Math.max(0, scored - investment);
+    // An unreadable record only enters the share when the floor made ordinary
+    // transfers to value it from. With none, the server leaves it out of the
+    // mean entirely, and a breakdown that counted it would not add up.
+    const filled = valuedAt == null ? 0 : unplaced;
+    const dropped = unplaced - filled;
+    const behind = scored + filled;
+
+    // The rule that did not run answers first. The cell is a dash because of
+    // it, and every other reason below would explain the wrong dash.
+    if (unscored > 0) {
+      return `The investment routing rule is not running: the roster cannot resolve Chris's`
+        + ` Justin, Mateo or John, so ${unscored} of this CLR's transfers that the app recorded as`
+        + ` Investment/2nd Home ${unscored === 1 ? "was" : "were"} not judged on routing at all.`
+        + ` Each of those had to reach one desk, so reading them as ordinary placement would score`
+        + ` obedience as 0% — no share is shown until the roster answers. The server log names what`
+        + ` failed.`;
+    }
+
+    // WHAT THE NUMBER IS MADE OF, and it has to add up to every transfer
+    // behind it. A breakdown taken over the readable half alone presented
+    // arithmetic a manager could not reconcile with the percentage above it:
+    // the mean's denominator is the scored transfers PLUS the unreadable ones
+    // counted at the floor's average, so all three parts are named or none is.
+    const pieces: string[] = [];
+    if (investment > 0) {
+      pieces.push(`${investment} recorded as Investment/2nd Home and judged on routing alone`
+        + ` (${followed} recorded Justin, Mateo or John and scored 100%, ${breaches} did not and scored 0%)`);
+    }
+    if (ramped > 0) pieces.push(`${ramped} judged on ordinary placement`);
+    if (filled > 0) {
+      pieces.push(`${filled} that could not be traced to a loan officer, counted at the floor's own`
+        + ` average of ${Math.round((valuedAt as number) * 100)}%`);
+    }
+    if (r.placementScore != null) {
+      const breakdown = pieces.length
+        ? `This share is the mean of ${behind} ${behind === 1 ? "transfer" : "transfers"}: ${pieces.join("; ")}.`
+        : "";
+      const left = dropped > 0
+        ? `${dropped} more could not be traced to a loan officer, and with no ordinary placement on the`
+          + ` floor to value them at they are left out of the share.`
+        : "";
+      return [breakdown, left].filter(Boolean).join(" ") || undefined;
+    }
+
+    // No number is shown, so nothing below describes one: breaking down a share
+    // that is not on the screen is the same failure to reconcile, in the other
+    // direction. The routing split is still worth saying, because it is the one
+    // half of this a manager can act on.
+    const why = !r.transfers
+      ? "No transfers logged in this range, so there is no placement to judge."
+      : !scored
+        ? "None of this CLR's transfers in this range could be traced to a loan officer, so there is nothing to score."
+        : !need
+          ? "Too few of this CLR's transfers in this range could be read to judge placement."
+          : `Only ${scored} of this CLR's transfers in this range could be read, and ${need} are needed before a placement share means anything. Try a longer range.`;
+    const routing = investment > 0
+      ? `${investment} of the ${scored} that could be read ${investment === 1 ? "was" : "were"} recorded as`
+        + ` Investment/2nd Home and judged on routing alone: ${followed} recorded Justin, Mateo or John`
+        + ` and scored 100%, ${breaches} did not and scored 0%.`
+      : "";
+    return [why, routing].filter(Boolean).join(" ");
+  };
+  /**
+   * WHAT KIND OF NUMBER THIS IS, said in the cell itself.
+   *
+   * A 0% earned by breaching the investment routing rule and a 0% earned by
+   * feeding the busiest desk in the building are the same two characters in the
+   * same red box, and they are not the same accusation — one is "eleven leads
+   * went to the wrong people", the other is "your placement was poor". Leaving
+   * that to the tooltip meant the two were told apart only by whether somebody
+   * happened to hover, which is not a thing a colour-graded table may rely on.
+   * So the cell carries a second line and says it.
+   *
+   * Null on an ordinary number, so nothing is added to a cell with nothing extra
+   * to say: an unmarked share is placement, all the way down.
+   */
+  const placementCellNote = (r: any): string | null => {
+    if (Number(r.placementUnscored ?? 0) > 0) return "routing rule off";
+    if (r.placementScore == null) return null;
+    const investment = Number(r.placementInvestment ?? 0);
+    if (investment <= 0) return null;
+    const breaches = Math.min(investment, Number(r.placementBreaches ?? 0));
+    return breaches > 0 ? `${breaches} mis-routed` : `${investment} on routing`;
   };
   // `get` may answer null, and null means "nothing to score" — never zero. It
   // is kept out of the heat range below and painted as a plain cell, because a
@@ -287,6 +387,10 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   const cols: Array<{
     key: string; label: string; get: (r: any) => number | null; better: boolean;
     fmt: (r: any) => string; title?: string; cellTitle?: (r: any) => string | undefined;
+    // A second line under the value, for a column whose number means different
+    // things on different rows. Optional, and omitted everywhere it would be
+    // decoration: see placementCellNote.
+    cellNote?: (r: any) => string | null;
   }> = [
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
@@ -303,25 +407,25 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // Write-up above — a share, higher is better, a dash when there is nothing
     // to score, because 0% is a verdict and an empty week has not earned one.
     //
-    // The tooltip says what the server actually does. It used to promise that
-    // each transfer was judged "only against the LOs the CLR could have
-    // chosen", and no eligible set is ever supplied: outside the one compliance
-    // rule, every transfer really is scored against the whole floor. Rather
-    // than leave a claim standing that the route does not back, the sentence
-    // now describes the two pools that exist. (Supplying state licensing as the
-    // eligible set is the mechanism this stat was built for — see
-    // TransferRow.eligible — but it needs a state per transfer, and most rows
-    // have no phone this app can parse one out of.)
-    // HELD BACK, deliberately. The scoring is finished and the server still
-    // computes it, but the column is not shown: review found the compliance
-    // rule cannot protect anybody in production (an assistant belongs to
-    // exactly one loan officer, and the transfer form only offers that LO's
-    // assistants), so the rule can only ever LOWER a score — and recording
-    // loa_id costs up to 100 points where leaving it blank does not, which
-    // rewards withholding data. A number a manager judges people by has to
-    // be right before it is shown. Re-add this entry once loa_id is required
-    // on a transfer and state licensing can supply TransferRow.eligible.
-    // { key: "placement",    label: "Placed",    get: r => r.placementScore  ... (see git history)
+    // The tooltip has to say what the server ACTUALLY does, and a test pins
+    // it, because a claim the code did not back has already been caught on
+    // this column twice. Once it promised that each transfer was judged "only
+    // against the LOs the CLR could have chosen", and no eligible set is ever
+    // supplied. (Supplying state licensing as the eligible set is the
+    // mechanism this stat was built for — see TransferRow.eligible — but it
+    // needs a state per transfer, and most rows have no phone this app can
+    // parse one out of.) Once it described the investment rule as a desk the
+    // transfer had to reach, which is not the rule Ethan gave.
+    //
+    // So the tooltip below names the three assistants, because that is what
+    // the rule is decided on, and it says out loud that a flagged transfer
+    // with none of them recorded scores zero — the sharpest thing this column
+    // does, and the last thing that should be a surprise. See
+    // INVESTMENT_PROPERTY_LOAS in server/transfer-priority.ts.
+    { key: "placement",    label: "Placed",    get: r => r.placementScore ?? null, better: true,
+      fmt: r => r.placementScore == null ? "—" : `${r.placementScore}%`,
+      title: "Where transfers were PUT, not how many. Each one is judged against the floor as it stood on the morning it was made: the lightest few loan officers actually taking work are worth 100%, the busiest is worth 0%, and everyone between them ramps. Transfers the app recorded as Investment/2nd Home are not ramped at all — they had to reach one of Chris's assistants Justin, Mateo or John, so they score 100% when the transfer records one of those three and 0% for anything else, however starved the loan officer was. A flagged transfer with a different assistant, or with no assistant recorded at all, scores zero. Everything else is compared with the WHOLE floor: nothing tells this stat which loan officers were licensed for the borrower's state. On any range longer than a day the floor is counted over a fortnight PLUS the range, so this column and the wall's Starved page can name different people as starved. If the roster cannot resolve those three, the rule stops for everybody and the column shows a dash rather than a 0% nobody earned. The cell itself says when a number came from that routing rule; hover it for the full breakdown of what the share is the mean of.",
+      cellTitle: placementNote, cellNote: placementCellNote },
   ];
   // Nulls are excluded, and a column with nothing but nulls has no range at all.
   const ranges = cols.map(c => {
@@ -365,6 +469,13 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
                       style={heat ? { backgroundColor: heat, color: "#1f2937" } : undefined}
                     >
                       {c.fmt(r)}
+                      {(() => {
+                        const note = c.cellNote?.(r);
+                        return note ? (
+                          <div className={"text-[10px] font-normal leading-tight whitespace-nowrap"
+                            + (heat ? " opacity-75" : " text-muted-foreground")}>{note}</div>
+                        ) : null;
+                      })()}
                     </td>
                   );
                 })}

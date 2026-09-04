@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.58.0",
+    headline: "A new Placed number on the Transfer Scorecard.",
+    items: [
+      { text: "The Transfer Scorecard has a new Placed number: not how many transfers somebody made, but where they went. Each one is judged on how busy that loan officer was the morning it landed, so feeding the people who need the work reads high and feeding the busiest desk reads low.", audience: "manager" },
+      { text: "An investment or second home scores full marks when it went to Justin, Mateo or John, and nothing when it went anywhere else \u2014 including when no assistant was recorded, since there is then nothing to show the routing was followed.", audience: "manager" },
+      { text: "A dash rather than a number means there was too little to judge fairly, or that the routing rule could not run. Hovering a Placed cell explains which, and how many of the transfers behind it were routing rather than ordinary placement.", audience: "manager" },
+      { text: "Whether the assistant was filled in changes nothing on an ordinary transfer, so the number cannot reward paperwork over placement.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.57.3",
     headline: "The office TV needs its display link again.",
     items: [
