@@ -661,7 +661,7 @@ test("the TV has no session and can only read", () => {
   assert.match(routes, /if \(req\.path\.startsWith\("\/tv\/"\)\) return next\(\);/);
   // Cut at the /pages route, not at the next section: the board pages are a
   // separate endpoint on purpose, and their queries are not the fast feed's.
-  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
   assert.match(feed, /tvLink\(req\.params\.token\)/);
   // The revocation check is in the helper every TV route resolves through.
   const helper = routes.slice(routes.indexOf("function tvLink("), routes.indexOf('app.get("/api/tv-links"'));
@@ -677,7 +677,7 @@ test("the TV has no session and can only read", () => {
 test("events come from an updated_at cursor, so a miss can animate", () => {
   // Cut at the /pages route, not at the next section: the board pages are a
   // separate endpoint on purpose, and their queries are not the fast feed's.
-  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
   assert.match(feed, /COALESCE\(o\.updated_at, o\.created_at\) > \?/);
   // First poll: no replaying history at the TV on boot.
   assert.match(feed, /First poll: no replaying history/);
@@ -694,24 +694,30 @@ test("links are manager-made, revocable, and audited; the page mounts outside th
   assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/);
 });
 
-test("the public /tv address opens directly while legacy token links keep working", () => {
-  assert.match(sidebar, /title: "Office TV",\s+url: "\/tv",\s+icon: MonitorPlay,\s+external: true/);
-  assert.ok(app.includes('if (/^\\/tv\\/?$/.test(window.location.pathname))'), "the physical /tv path is detected before the signed-in shell");
-  assert.match(app, /<TvBoard publicPath \/>/);
-  assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/, "old display links remain mounted");
-  assert.match(page, /const apiRoot = publicPath \? "\/api\/tv" : `\/api\/tv\/\$\{encodeURIComponent\(token\)\}`/);
-  assert.match(page, /if \(!token && !publicPath\) return/, "the missing-token warning is only for legacy token routes");
-  assert.match(routes, /app\.get\(\["\/api\/tv\/feed", "\/api\/tv\/:token\/feed"\]/);
-  assert.match(routes, /app\.get\(\["\/api\/tv\/pages", "\/api\/tv\/:token\/pages"\]/);
-  assert.match(routes, /const publicView = !req\.params\.token/);
+test("the board is reachable only through a display token", () => {
+  // A tokenless /tv briefly rendered the board from a plain pathname. It also
+  // served the board's DATA to anyone who typed that URL: staff names with
+  // their per-person numbers, borrower first names, and the times of upcoming
+  // appointments. Reducing a borrower to a first name did not fix that —
+  // "Edward, Fri 10:00 AM" is still somebody's client on a public address.
+  //
+  // The display link carries an unguessable token precisely so the WALL can be
+  // open without the DATA being open. Both endpoints require it again.
+  assert.match(routes, /app\.get\("\/api\/tv\/:token\/feed"/);
+  assert.match(routes, /app\.get\("\/api\/tv\/:token\/pages"/);
+  assert.doesNotMatch(routes, /"\/api\/tv\/feed"/, "no tokenless feed");
+  assert.doesNotMatch(routes, /"\/api\/tv\/pages"/, "no tokenless pages");
+  // Nothing may reintroduce an org fallback for a request that carried no token.
+  assert.doesNotMatch(routes, /publicView/);
+  assert.doesNotMatch(routes, /org_id: 1, id: null/);
+  // And the client has no tokenless entry point left to call them with.
+  assert.doesNotMatch(app, /publicPath/);
+  assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/, "the token route stays mounted");
 });
 
-test("the public wall limits borrower identity and keeps TV payloads out of logs", () => {
-  assert.match(routes, /function publicTvBorrower\(value: unknown\)/);
-  assert.match(routes, /events: publicView \? events\.map/);
-  assert.match(routes, /recent: publicView \? recent\.map/);
-  assert.match(routes, /newLeads: newLeadsSince\(since\)\.map/);
-  assert.match(routes, /borrower: publicView \? publicTvBorrower\(a\.borrower\) : a\.borrower/);
+test("TV payloads stay out of the request log", () => {
+  // The board carries borrower names and appointment times, so its responses
+  // must never be written to the log even now that a token is required.
   assert.ok(serverIndex.includes('^\\/api\\/tv(?:\\/|$)'), "TV responses are marked sensitive for request logging");
 });
 
@@ -784,7 +790,7 @@ test("the board pages come from their own endpoint, on their own clock", () => {
   // transfer being celebrated, so it does not ride the moment feed.
   assert.match(page, /const PAGES_POLL_MS = 30_000;/);
   assert.match(page, /queryKey: \[apiRoot, "pages"\]/);
-  assert.match(routes, /app\.get\(\["\/api\/tv\/pages", "\/api\/tv\/:token\/pages"\]/);
+  assert.match(routes, /app\.get\("\/api\/tv\/:token\/pages"/);
 });
 const hype = readFileSync(join(root, "client/src/components/tv/hype.tsx"), "utf8");
 
@@ -1141,7 +1147,7 @@ test("the feed hands the board only the leads after its cursor", async () => {
 
   // And the route feeds it the cursor the endpoint already takes, rather than
   // inventing a second one for the board to keep.
-  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
+  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
   assert.match(feed, /newLeads: newLeadsSince\(since\),/);
   assert.equal((feed.match(/const since = /g) ?? []).length, 1, "one cursor for the whole feed");
 });

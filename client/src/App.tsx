@@ -453,26 +453,13 @@ function RouteFallback() {
 }
 
 export default function App() {
-  // `/tv` is deliberately a real pathname rather than a hash route so the
-  // office can use one short, memorable URL on any screen without signing in.
-  // Existing tokenized `/#/tv/:token` links remain below for displays that
-  // already use them.
-  if (/^\/tv\/?$/.test(window.location.pathname)) {
-    document.title = "Office TV · WCLCC";
-    return (
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Router hook={useHashLocation}>
-            <Suspense fallback={<div className="min-h-screen bg-background" />}>
-              <TvBoard publicPath />
-            </Suspense>
-          </Router>
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
-    );
-  }
-
+  // A tokenless `/tv` pathname used to render the board here, so one short
+  // URL worked on any screen without signing in. It also handed the board's
+  // data to anyone who typed that URL: staff names with their per-person
+  // numbers, borrower first names, and the times of upcoming appointments.
+  // The display link carries a token precisely so the WALL can be open
+  // without the DATA being open, so the board is reached through
+  // `/#/tv/:token` only.
   return (
     <QueryClientProvider client={queryClient}>
       <SplashScreen />

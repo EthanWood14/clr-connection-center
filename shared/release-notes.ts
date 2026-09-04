@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.57.3",
+    headline: "The office TV needs its display link again.",
+    items: [
+      { text: "The wall was briefly reachable at a plain /tv address with no display link. That address also handed out what the board shows \u2014 CLR names with their numbers, borrower first names, and the times of upcoming appointments \u2014 to anyone who typed it. The board is back to opening only through its display link.", audience: "everyone" },
+      { text: "If a screen in the office was set to the short address it will need pointing back at its display link. Managers can copy one from Settings.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.57.2",
     headline: "The public Office TV opens all the way through.",
     items: [

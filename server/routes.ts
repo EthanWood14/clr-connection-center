@@ -20435,10 +20435,6 @@ ${note}` : daysLine;
   // The public wall never needs a borrower's full identity. Team names remain
   // intact because this is a performance board; borrower references are kept
   // to a first name anywhere the board displays one.
-  function publicTvBorrower(value: unknown): string {
-    return String(value ?? "").trim().split(/\s+/)[0] || "Lead";
-  }
-
   app.get("/api/tv-links", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -20492,9 +20488,8 @@ ${note}` : daysLine;
     res.json({ ok: true });
   });
 
-  app.get(["/api/tv/feed", "/api/tv/:token/feed"], (req: any, res) => {
-    const publicView = !req.params.token;
-    const link = publicView ? { org_id: 1, id: null } : tvLink(req.params.token);
+  app.get("/api/tv/:token/feed", (req: any, res) => {
+    const link = tvLink(req.params.token);
     if (!link) return res.status(404).json({ error: "This display link is no longer active." });
     const orgId = Number(link.org_id) || 1;
     const sqlite = storageExtra.getRawSqlite();
@@ -20669,16 +20664,14 @@ ${note}` : daysLine;
           missedToday: Number(teamRow?.missedToday) || 0,
         },
       },
-      events: publicView ? events.map((event: any) => ({ ...event, borrower: publicTvBorrower(event.borrower) })) : events,
-      recent: publicView ? recent.map((event: any) => ({ ...event, borrower: publicTvBorrower(event.borrower) })) : recent,
+      events,
+      recent,
       milestones, tip,
       // New leads ride the SAME cursor as the events above and follow the same
       // rule: no cursor is a TV that has just booted, and it is not shown what
       // it missed. They are deliberately not events — nothing here queues, the
       // deck does not pause, and the strip is gone in eight seconds.
-      newLeads: newLeadsSince(since).map((lead) => publicView
-        ? { ...lead, name: publicTvBorrower(lead.name) }
-        : lead),
+      newLeads: newLeadsSince(since),
     });
   });
 
@@ -20697,9 +20690,8 @@ ${note}` : daysLine;
    * pretending to be a fact. `failed` names them so a blank page can be told
    * apart from a quiet one.
    */
-  app.get(["/api/tv/pages", "/api/tv/:token/pages"], (req: any, res) => {
-    const publicView = !req.params.token;
-    const link = publicView ? { org_id: 1, id: null } : tvLink(req.params.token);
+  app.get("/api/tv/:token/pages", (req: any, res) => {
+    const link = tvLink(req.params.token);
     if (!link) return res.status(404).json({ error: "This display link is no longer active." });
     const orgId = Number(link.org_id) || 1;
 
@@ -21195,7 +21187,7 @@ ${note}` : daysLine;
           // bare new Date() on these strings put a 2:30 PM meeting on the wall
           // as 7:30 AM once already.
           appointments: upcoming.map((a) => ({
-            id: a.id, borrower: publicView ? publicTvBorrower(a.borrower) : a.borrower, clr: a.clr, lo: a.lo,
+            id: a.id, borrower: a.borrower, clr: a.clr, lo: a.lo,
             at: a.at, day: a.day, isToday: a.isToday,
             // Null for a row that names a day and no clock reading; the page
             // says "time not set" rather than inventing one.
