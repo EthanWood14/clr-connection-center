@@ -700,6 +700,7 @@ test("the public /tv address opens directly while legacy token links keep workin
   assert.match(app, /<TvBoard publicPath \/>/);
   assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/, "old display links remain mounted");
   assert.match(page, /const apiRoot = publicPath \? "\/api\/tv" : `\/api\/tv\/\$\{encodeURIComponent\(token\)\}`/);
+  assert.match(page, /if \(!token && !publicPath\) return/, "the missing-token warning is only for legacy token routes");
   assert.match(routes, /app\.get\(\["\/api\/tv\/feed", "\/api\/tv\/:token\/feed"\]/);
   assert.match(routes, /app\.get\(\["\/api\/tv\/pages", "\/api\/tv\/:token\/pages"\]/);
   assert.match(routes, /const publicView = !req\.params\.token/);

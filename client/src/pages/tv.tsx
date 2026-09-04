@@ -877,7 +877,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   const clock = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const dateLabel = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
-  if (!token) return <div className="flex h-screen items-center justify-center bg-[#0B1220] text-white/70">No display link.</div>;
+  if (!token && !publicPath) return <div className="flex h-screen items-center justify-center bg-[#0B1220] text-white/70">No display link.</div>;
 
   return (
     <div

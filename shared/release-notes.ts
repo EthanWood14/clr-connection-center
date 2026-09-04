@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.57.2",
+    headline: "The public Office TV opens all the way through.",
+    items: [
+      { text: "westcapitallending.center/tv now opens the live wallboard directly without a sign-in or a display-link warning.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.57.1",
     headline: "The Office TV now has one public address.",
     items: [
