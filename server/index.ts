@@ -27,6 +27,10 @@ const httpServer = createServer(app);
 app.set("trust proxy", 1);
 
 // ── Security headers ──────────────────────────────────────────────────────────
+// Dialpad sends signed events as a compact JWT, not a JSON object. Parse only
+// this endpoint as text; the route verifies the signature before using it.
+app.use("/api/webhooks/dialpad-sms", express.text({ type: ["text/plain", "application/jwt", "application/octet-stream", "application/json"], limit: "256kb" }));
+
 app.use(
   helmet({
     contentSecurityPolicy: false, // Vite handles this

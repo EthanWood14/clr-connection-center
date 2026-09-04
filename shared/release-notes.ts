@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.59.0",
+    headline: "Dialpad texts are now tracked automatically in C3.",
+    items: [
+      { text: "The Transfer Scorecard now shows each CLR's Dialpad outbound texts; message content is never stored.", audience: "manager" },
+      { text: "C>T% and appointment fall-throughs were removed from the Transfer Scorecard to keep it focused on the core activity numbers.", audience: "manager" },
+      { text: "The EOD page now shows automatic Dialpad calls and texts separately from any additional activity entered by hand." },
+    ],
+  },
+  {
     version: "4.58.1",
     headline: "Appointments can now be completed with the full transfer form.",
     items: [

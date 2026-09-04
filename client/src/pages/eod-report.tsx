@@ -150,7 +150,7 @@ export default function EodReport() {
   const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
-  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
+  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; texts: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
     refetchInterval: 10 * 60_000,
@@ -464,6 +464,7 @@ export default function EodReport() {
   // Dialpad calls for the same day. A submitted report shows the figure that was
   // snapshotted when it was filed, not whatever a later re-sync now says.
   const importedDialpadCalls = Number(report?.dialpad_calls ?? data?.dialpadActivity?.calls ?? 0);
+  const importedDialpadTexts = Number(data?.dialpadActivity?.texts ?? 0);
   const dialpadAgentName = data?.dialpadActivity?.agentName ?? null;
   const dialpadMatched = !!data?.dialpadActivity?.matched || Number(report?.dialpad_calls ?? 0) > 0;
 
@@ -790,7 +791,7 @@ export default function EodReport() {
                   <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 tabular-nums">{formatActiveTime(importedActiveSeconds)}</p>
                   <p className="text-[11px] text-muted-foreground">Imported automatically</p>
                 </div>
-                <div className="rounded-lg border bg-violet-50/60 dark:bg-violet-950/20 p-3 col-span-2" data-testid="dialpad-calls-tile">
+                <div className="rounded-lg border bg-violet-50/60 dark:bg-violet-950/20 p-3" data-testid="dialpad-calls-tile">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dialpad Calls</p>
                   <p className="text-2xl font-bold text-violet-700 dark:text-violet-300 tabular-nums">{importedDialpadCalls}</p>
                   <p className="text-[11px] text-muted-foreground">
@@ -798,6 +799,11 @@ export default function EodReport() {
                       ? <>Imported automatically{dialpadAgentName ? <> as "{dialpadAgentName}"</> : null}</>
                       : "Not linked to a Dialpad agent yet — ask a manager to map you"}
                   </p>
+                </div>
+                <div className="rounded-lg border bg-fuchsia-50/60 dark:bg-fuchsia-950/20 p-3" data-testid="dialpad-texts-tile">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dialpad Texts</p>
+                  <p className="text-2xl font-bold text-fuchsia-700 dark:text-fuchsia-300 tabular-nums">{importedDialpadTexts}</p>
+                  <p className="text-[11px] text-muted-foreground">Imported automatically</p>
                 </div>
               </div>
 

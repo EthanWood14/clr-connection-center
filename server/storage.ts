@@ -3279,6 +3279,24 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   )`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_dialpad_stats_user
     ON dialpad_daily_stats(org_id, user_id, stat_date)`);
+  // Content is intentionally absent: C3 only needs the unique message event,
+  // sender identity and date to report outbound-text counts.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS dialpad_sms_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    external_event_id TEXT NOT NULL,
+    agent_key TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    dialpad_user_id TEXT NOT NULL,
+    user_id INTEGER,
+    message_date TEXT NOT NULL,
+    status TEXT,
+    occurred_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    UNIQUE(org_id, external_event_id)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_dialpad_sms_user_date
+    ON dialpad_sms_events(org_id, user_id, message_date)`);
 
   // Every CallTools historical disposition is an immutable activity event.
   // Outcomes are a subset; keeping activity separate lets dashboards count
@@ -4945,6 +4963,46 @@ export function getUnmappedDialpadAgents(orgId: number, sinceDate: string): any[
       WHERE org_id=? AND user_id IS NULL AND stat_date >= ?
       GROUP BY agent_key, agent_name ORDER BY calls DESC`,
   ).all(orgId, sinceDate) as any[];
+}
+
+export function upsertDialpadSmsEvent(r: {
+  orgId: number; externalId: string; agentKey: string; agentName: string;
+  dialpadUserId: string; messageDate: string; occurredAt: string; status: string | null;
+}): { inserted: boolean; userId: number | null } {
+  const linked = sqlite.prepare(
+    `SELECT user_id FROM dialpad_agent_links WHERE org_id=? AND agent_key=? AND user_id IS NOT NULL`,
+  ).get(r.orgId, r.agentKey) as any;
+  const userId = linked?.user_id == null ? null : Number(linked.user_id);
+  const result = sqlite.prepare(
+    `INSERT INTO dialpad_sms_events
+       (org_id, external_event_id, agent_key, agent_name, dialpad_user_id, user_id, message_date, status, occurred_at, received_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(org_id, external_event_id) DO UPDATE SET
+       status=excluded.status, user_id=COALESCE(dialpad_sms_events.user_id, excluded.user_id), received_at=excluded.received_at`,
+  ).run(r.orgId, r.externalId, r.agentKey, r.agentName, r.dialpadUserId, userId,
+    r.messageDate, r.status, r.occurredAt, new Date().toISOString());
+  return { inserted: result.changes > 0, userId };
+}
+
+export function getDialpadTextsFor(orgId: number, userId: number, startDate: string, endDate: string): number {
+  const row = sqlite.prepare(
+    `SELECT COUNT(DISTINCT e.external_event_id) AS n
+       FROM dialpad_sms_events e
+       LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key
+      WHERE e.org_id=? AND COALESCE(e.user_id,l.user_id)=? AND e.message_date BETWEEN ? AND ?`,
+  ).get(orgId, userId, startDate, endDate) as any;
+  return Number(row?.n ?? 0);
+}
+
+export function getDialpadTextsByUser(orgId: number, startDate: string, endDate: string): Map<number, number> {
+  const rows = sqlite.prepare(
+    `SELECT COALESCE(e.user_id,l.user_id) AS user_id, COUNT(DISTINCT e.external_event_id) AS n
+       FROM dialpad_sms_events e
+       LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key
+      WHERE e.org_id=? AND e.message_date BETWEEN ? AND ? AND COALESCE(e.user_id,l.user_id) IS NOT NULL
+      GROUP BY COALESCE(e.user_id,l.user_id)`,
+  ).all(orgId, startDate, endDate) as any[];
+  return new Map(rows.map((r) => [Number(r.user_id), Number(r.n)]));
 }
 
 export function getWebhookSettings() {

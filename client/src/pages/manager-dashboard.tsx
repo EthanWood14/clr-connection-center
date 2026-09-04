@@ -76,7 +76,7 @@ type RangeBlock = {
   leaderboard: {
     userId: number; name: string; activeWorkdays: number; inTraining: boolean;
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
-    totalOutcomes: number; calls: number; messages: number; conversionRate: number;
+    totalOutcomes: number; calls: number; messages: number; dialpadTexts?: number; conversionRate: number;
     callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
@@ -394,13 +394,12 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   }> = [
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
+    { key: "dialpadTexts", label: "DP Texts",  get: r => r.dialpadTexts ?? 0,      better: true,  fmt: r => String(r.dialpadTexts ?? 0) },
     { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
     { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0) },
     { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m` },
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
-    { key: "fellThrough",  label: "Fell",      get: r => r.fellThrough ?? 0,       better: false, fmt: r => String(r.fellThrough ?? 0) },
-    { key: "ctt",          label: "C>T%",      get: r => r.callToTransferPct ?? null, better: true, fmt: r => r.callToTransferPct == null ? "—" : `${r.callToTransferPct}%` },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
     // Not a second transfer count: where each one was PUT. Same shape as

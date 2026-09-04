@@ -61,6 +61,7 @@ import { STATUS_HTML, runAllChecks, getOverallStatus, startUptimeCron, getProces
 import { runWithOrg, currentOrgId } from "./orgContext";
 import { npaToState } from "./npa-state";
 import { type DialpadAgentRow, agentKey, flattenAgentStats } from "./dialpad-stats";
+import { normalizeOutboundSms, verifyDialpadJwt } from "./dialpad-sms";
 import { foldLapNoteBatch, type LapNoteBatchEntry } from "./lap-note-batch";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
@@ -3525,6 +3526,25 @@ function buildTimeOffApprovalEmail(
 }
 
 export function registerRoutes(httpServer: Server, app: Express) {
+  app.post("/api/webhooks/dialpad-sms", (req: any, res) => {
+    const secret = String(process.env.DIALPAD_SMS_WEBHOOK_SECRET ?? "").trim();
+    if (!secret) return res.status(503).json({ error: "Dialpad SMS webhook is not configured" });
+    try {
+      const token = typeof req.body === "string"
+        ? req.body
+        : Buffer.isBuffer(req.rawBody) ? req.rawBody.toString("utf8") : "";
+      const payload = verifyDialpadJwt(token, secret);
+      const event = normalizeOutboundSms(payload);
+      if (!event) return res.status(202).json({ accepted: true, counted: false });
+      const orgId = Math.max(1, Number(process.env.DIALPAD_SMS_ORG_ID ?? 1) || 1);
+      const stored = storageExtra.upsertDialpadSmsEvent({ orgId, ...event });
+      return res.status(202).json({ accepted: true, counted: true, mapped: stored.userId != null });
+    } catch (error: any) {
+      console.warn("[dialpad-sms] rejected signed event:", error?.message ?? "invalid event");
+      return res.status(401).json({ error: "Invalid Dialpad webhook signature" });
+    }
+  });
+
   // ── One-time cleanup: scrub LO credentials accidentally saved as the
   // masked bullet placeholder. Earlier versions of the edit form could
   // round-trip the "••••••••" mask back into storage; the password reveal
@@ -13077,6 +13097,9 @@ ${note}` : daysLine;
       `).all(startDate, endDate) as any[];
       const lbMsgsByUser = new Map<number, number>();
       for (const r of lbMsgs) lbMsgsByUser.set(r.assistant_id, Number(r.messages) || 0);
+      const lbDialpadTextsByUser = storageExtra.getDialpadTextsByUser(
+        Number(currentOrgId() ?? 1), startDate, endDate,
+      );
       // Texting-sourced transfers (Bulk Texter) per CLR for this range.
       const lbTextByUser = new Map<number, number>();
       try {
@@ -13365,6 +13388,7 @@ ${note}` : daysLine;
           const activity = lbCallActivity.get(u.id) ?? { calls: 0, contacts: 0, conversations: 0, activeSeconds: 0 };
           const calls = (lbCallsByUser.get(u.id) ?? 0) + activity.calls;
           const messages = lbMsgsByUser.get(u.id) ?? 0;
+          const dialpadTexts = lbDialpadTextsByUser.get(u.id) ?? 0;
           const textTransfers = lbTextByUser.get(u.id) ?? 0;
           const conversionRate = s.total > 0 ? Math.round((s.transfers / s.total) * 100) : 0;
           // Outcome ratios as percentages of all logged outcomes (excludes pure call counts).
@@ -13385,6 +13409,7 @@ ${note}` : daysLine;
             calls,
             callToolsCalls: activity.calls,
             messages,
+            dialpadTexts,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,
@@ -19004,6 +19029,9 @@ ${note}` : daysLine;
     );
     const dialpadActivity = {
       calls: dialpadHit?.calls ?? 0,
+      texts: storageExtra.getDialpadTextsFor(
+        Number(req.session_user?.orgId ?? 1) || 1, Number(userId), date, date,
+      ),
       agentName: dialpadHit?.agentName ?? null,
       syncedAt: dialpadHit?.syncedAt ?? null,
       matched: !!dialpadHit,
