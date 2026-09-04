@@ -453,6 +453,26 @@ function RouteFallback() {
 }
 
 export default function App() {
+  // `/tv` is deliberately a real pathname rather than a hash route so the
+  // office can use one short, memorable URL on any screen without signing in.
+  // Existing tokenized `/#/tv/:token` links remain below for displays that
+  // already use them.
+  if (/^\/tv\/?$/.test(window.location.pathname)) {
+    document.title = "Office TV · WCLCC";
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Router hook={useHashLocation}>
+            <Suspense fallback={<div className="min-h-screen bg-background" />}>
+              <TvBoard publicPath />
+            </Suspense>
+          </Router>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <SplashScreen />
@@ -473,7 +493,7 @@ export default function App() {
               {/* Public share link: sets LO priority, needs no C3 login. */}
               <Route path="/lo-priority/:token" component={LoPriorityLink} />
               {/* Office TV wallboard: read-only, keyed by a display token, no login. */}
-              <Route path="/tv/:token" component={TvBoard} />
+              <Route path="/tv/:token"><TvBoard /></Route>
               <Route path="/lap" nest>
                 <LapApp product="lap" />
               </Route>

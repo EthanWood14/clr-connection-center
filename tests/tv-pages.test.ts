@@ -262,7 +262,7 @@ test("the count treats null as absent, never as zero seconds ago", () => {
 
 /** Just the /pages handler, cut at the route registered after it. */
 function pagesRoute(): string {
-  const start = routes.indexOf(`app.get("/api/tv/:token/pages"`);
+  const start = routes.indexOf(`app.get(["/api/tv/pages", "/api/tv/:token/pages"]`);
   assert.ok(start > 0, "the /pages route is registered");
   const end = routes.indexOf("// ── LO priority share link", start);
   assert.ok(end > start, "the handler is bounded by the next section");
@@ -270,8 +270,8 @@ function pagesRoute(): string {
 }
 
 test("the pages route exists, is token-checked, and cannot 500", () => {
-  const start = routes.indexOf(`app.get("/api/tv/:token/pages"`);
-  const feed = routes.indexOf(`app.get("/api/tv/:token/feed"`);
+  const start = routes.indexOf(`app.get(["/api/tv/pages", "/api/tv/:token/pages"]`);
+  const feed = routes.indexOf(`app.get(["/api/tv/feed", "/api/tv/:token/feed"]`);
   assert.ok(feed > 0 && feed < start, "it sits after the feed route");
   const body = pagesRoute();
   assert.match(body, /tvLink\(req\.params\.token\)/, "same token check as the feed");

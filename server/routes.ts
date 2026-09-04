@@ -5451,8 +5451,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // revocable, expiring token inside the handler before touching anything,
     // and the link can only move priority tiers.
     if (req.path.startsWith("/lo-priority/")) return next();
-    // Office TV wallboard — a screen cannot log in. Read-only, its own
-    // revocable token, resolved inside the handler before anything is read.
+    // Office TV wallboard — a screen cannot log in. `/tv` is the primary
+    // organization's public wall; legacy display links still resolve their
+    // revocable, organization-scoped token inside the handler.
     if (req.path.startsWith("/tv/")) return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
@@ -20431,6 +20432,13 @@ ${note}` : daysLine;
     } catch { return null; }
   }
 
+  // The public wall never needs a borrower's full identity. Team names remain
+  // intact because this is a performance board; borrower references are kept
+  // to a first name anywhere the board displays one.
+  function publicTvBorrower(value: unknown): string {
+    return String(value ?? "").trim().split(/\s+/)[0] || "Lead";
+  }
+
   app.get("/api/tv-links", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -20484,15 +20492,18 @@ ${note}` : daysLine;
     res.json({ ok: true });
   });
 
-  app.get("/api/tv/:token/feed", (req: any, res) => {
-    const link = tvLink(req.params.token);
+  app.get(["/api/tv/feed", "/api/tv/:token/feed"], (req: any, res) => {
+    const publicView = !req.params.token;
+    const link = publicView ? { org_id: 1, id: null } : tvLink(req.params.token);
     if (!link) return res.status(404).json({ error: "This display link is no longer active." });
     const orgId = Number(link.org_id) || 1;
     const sqlite = storageExtra.getRawSqlite();
-    try {
-      sqlite.prepare(`UPDATE tv_display_links SET use_count=use_count+1, last_used_at=? WHERE id=?`)
-        .run(new Date().toISOString(), link.id);
-    } catch { /* bookkeeping only */ }
+    if (link.id) {
+      try {
+        sqlite.prepare(`UPDATE tv_display_links SET use_count=use_count+1, last_used_at=? WHERE id=?`)
+          .run(new Date().toISOString(), link.id);
+      } catch { /* bookkeeping only */ }
+    }
 
     const tz = BUSINESS_DAY_DEFAULT_TZ;
     const today = businessTodayInTz(tz);
@@ -20658,12 +20669,16 @@ ${note}` : daysLine;
           missedToday: Number(teamRow?.missedToday) || 0,
         },
       },
-      events, recent, milestones, tip,
+      events: publicView ? events.map((event: any) => ({ ...event, borrower: publicTvBorrower(event.borrower) })) : events,
+      recent: publicView ? recent.map((event: any) => ({ ...event, borrower: publicTvBorrower(event.borrower) })) : recent,
+      milestones, tip,
       // New leads ride the SAME cursor as the events above and follow the same
       // rule: no cursor is a TV that has just booted, and it is not shown what
       // it missed. They are deliberately not events — nothing here queues, the
       // deck does not pause, and the strip is gone in eight seconds.
-      newLeads: newLeadsSince(since),
+      newLeads: newLeadsSince(since).map((lead) => publicView
+        ? { ...lead, name: publicTvBorrower(lead.name) }
+        : lead),
     });
   });
 
@@ -20682,8 +20697,9 @@ ${note}` : daysLine;
    * pretending to be a fact. `failed` names them so a blank page can be told
    * apart from a quiet one.
    */
-  app.get("/api/tv/:token/pages", (req: any, res) => {
-    const link = tvLink(req.params.token);
+  app.get(["/api/tv/pages", "/api/tv/:token/pages"], (req: any, res) => {
+    const publicView = !req.params.token;
+    const link = publicView ? { org_id: 1, id: null } : tvLink(req.params.token);
     if (!link) return res.status(404).json({ error: "This display link is no longer active." });
     const orgId = Number(link.org_id) || 1;
 
@@ -20707,10 +20723,12 @@ ${note}` : daysLine;
       const w = windows;
       // The feed already counts this TV's polls; counting them twice would
       // double every link's use_count. Only the liveness stamp is touched.
-      try {
-        sqlite.prepare(`UPDATE tv_display_links SET last_used_at=? WHERE id=?`)
-          .run(new Date().toISOString(), link.id);
-      } catch { /* bookkeeping only */ }
+      if (link.id) {
+        try {
+          sqlite.prepare(`UPDATE tv_display_links SET last_used_at=? WHERE id=?`)
+            .run(new Date().toISOString(), link.id);
+        } catch { /* bookkeeping only */ }
+      }
 
       // The roster, filtered EXACTLY as the fast feed filters it, so the two
       // endpoints can never disagree about who is on the wall.
@@ -21177,7 +21195,7 @@ ${note}` : daysLine;
           // bare new Date() on these strings put a 2:30 PM meeting on the wall
           // as 7:30 AM once already.
           appointments: upcoming.map((a) => ({
-            id: a.id, borrower: a.borrower, clr: a.clr, lo: a.lo,
+            id: a.id, borrower: publicView ? publicTvBorrower(a.borrower) : a.borrower, clr: a.clr, lo: a.lo,
             at: a.at, day: a.day, isToday: a.isToday,
             // Null for a row that names a day and no clock reading; the page
             // says "time not set" rather than inventing one.

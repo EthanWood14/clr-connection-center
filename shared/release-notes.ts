@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.57.1",
+    headline: "The Office TV now has one public address.",
+    items: [
+      { text: "Anyone can now open the live office wallboard at westcapitallending.center/tv, with no sign-in or display link required. Existing TV links still work, and the public board limits borrower references to first names.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.57.0",
     headline: "A tidier wall, and the boards read most to least.",
     items: [

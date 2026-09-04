@@ -643,9 +643,10 @@ const slide = (reduced: boolean) => ({
   exit:   { x: reduced ? 0 : "-6%", opacity: 0, scale: reduced ? 1 : 0.985, transition: { duration: 0.45, ease: "easeIn" } },
 });
 
-export default function TvBoard() {
+export default function TvBoard({ publicPath = false }: { publicPath?: boolean }) {
   const [, params] = useRoute("/tv/:token");
   const token = params?.token ?? "";
+  const apiRoot = publicPath ? "/api/tv" : `/api/tv/${encodeURIComponent(token)}`;
   const reduced = !!useReducedMotion();
   const now = useNow();
 
@@ -654,15 +655,15 @@ export default function TvBoard() {
   useEffect(() => { const id = setInterval(() => setTipSeed((s) => s + 1), TIP_MS); return () => clearInterval(id); }, []);
 
   const { data, isError } = useQuery<Feed>({
-    queryKey: ["/api/tv", token, "feed", tipSeed],
+    queryKey: ["/api/tv", publicPath ? "public" : token, "feed", tipSeed],
     queryFn: async () => {
       const q = new URLSearchParams({ tip: String(tipSeed) });
       if (cursorRef.current) q.set("since", cursorRef.current);
-      const r = await fetch(`/api/tv/${encodeURIComponent(token)}/feed?${q}`);
+      const r = await fetch(`${apiRoot}/feed?${q}`);
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     },
-    enabled: !!token,
+    enabled: publicPath || !!token,
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: false,
     retry: 2,
@@ -816,13 +817,13 @@ export default function TvBoard() {
   // it does not change out from beneath the card.
   // The heavier board data, on its own endpoint and its own clock.
   const { data: board } = useQuery<any>({
-    queryKey: [`/api/tv/${token}/pages`],
+    queryKey: [apiRoot, "pages"],
     queryFn: async () => {
-      const res = await fetch(`/api/tv/${token}/pages`);
+      const res = await fetch(`${apiRoot}/pages`);
       if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
-    enabled: !!token,
+    enabled: publicPath || !!token,
     refetchInterval: PAGES_POLL_MS,
     staleTime: PAGES_POLL_MS,
   });

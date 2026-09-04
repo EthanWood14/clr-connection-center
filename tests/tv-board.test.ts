@@ -15,6 +15,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const page = readFileSync(join(root, "client/src/pages/tv.tsx"), "utf8");
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
+const sidebar = readFileSync(join(root, "client/src/components/app-sidebar.tsx"), "utf8");
+const serverIndex = readFileSync(join(root, "server/index.ts"), "utf8");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 // The Outcomes page's edit dialog is the live surface that moves a meeting; the
 // Appointments page is where the mirroring convention it follows was set.
@@ -659,7 +661,7 @@ test("the TV has no session and can only read", () => {
   assert.match(routes, /if \(req\.path\.startsWith\("\/tv\/"\)\) return next\(\);/);
   // Cut at the /pages route, not at the next section: the board pages are a
   // separate endpoint on purpose, and their queries are not the fast feed's.
-  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
+  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
   assert.match(feed, /tvLink\(req\.params\.token\)/);
   // The revocation check is in the helper every TV route resolves through.
   const helper = routes.slice(routes.indexOf("function tvLink("), routes.indexOf('app.get("/api/tv-links"'));
@@ -675,7 +677,7 @@ test("the TV has no session and can only read", () => {
 test("events come from an updated_at cursor, so a miss can animate", () => {
   // Cut at the /pages route, not at the next section: the board pages are a
   // separate endpoint on purpose, and their queries are not the fast feed's.
-  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
+  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
   assert.match(feed, /COALESCE\(o\.updated_at, o\.created_at\) > \?/);
   // First poll: no replaying history at the TV on boot.
   assert.match(feed, /First poll: no replaying history/);
@@ -689,7 +691,27 @@ test("links are manager-made, revocable, and audited; the page mounts outside th
     assert.match(routes.slice(i, i + 300), /requireManagerOrAdmin\(req, res\)/);
   }
   assert.match(routes, /entityType: "tv_display_link"/);
-  assert.match(app, /<Route path="\/tv\/:token" component=\{TvBoard\} \/>/);
+  assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/);
+});
+
+test("the public /tv address opens directly while legacy token links keep working", () => {
+  assert.match(sidebar, /title: "Office TV",\s+url: "\/tv",\s+icon: MonitorPlay,\s+external: true/);
+  assert.ok(app.includes('if (/^\\/tv\\/?$/.test(window.location.pathname))'), "the physical /tv path is detected before the signed-in shell");
+  assert.match(app, /<TvBoard publicPath \/>/);
+  assert.match(app, /<Route path="\/tv\/:token"><TvBoard \/><\/Route>/, "old display links remain mounted");
+  assert.match(page, /const apiRoot = publicPath \? "\/api\/tv" : `\/api\/tv\/\$\{encodeURIComponent\(token\)\}`/);
+  assert.match(routes, /app\.get\(\["\/api\/tv\/feed", "\/api\/tv\/:token\/feed"\]/);
+  assert.match(routes, /app\.get\(\["\/api\/tv\/pages", "\/api\/tv\/:token\/pages"\]/);
+  assert.match(routes, /const publicView = !req\.params\.token/);
+});
+
+test("the public wall limits borrower identity and keeps TV payloads out of logs", () => {
+  assert.match(routes, /function publicTvBorrower\(value: unknown\)/);
+  assert.match(routes, /events: publicView \? events\.map/);
+  assert.match(routes, /recent: publicView \? recent\.map/);
+  assert.match(routes, /newLeads: newLeadsSince\(since\)\.map/);
+  assert.match(routes, /borrower: publicView \? publicTvBorrower\(a\.borrower\) : a\.borrower/);
+  assert.ok(serverIndex.includes('^\\/api\\/tv(?:\\/|$)'), "TV responses are marked sensitive for request logging");
 });
 
 test("the screen queues moments, plays a milestone once, and reloads on deploy", () => {
@@ -760,8 +782,8 @@ test("the board pages come from their own endpoint, on their own clock", () => {
   // A query that throws in the heavy payload must never be able to stop a
   // transfer being celebrated, so it does not ride the moment feed.
   assert.match(page, /const PAGES_POLL_MS = 30_000;/);
-  assert.match(page, /queryKey: \[`\/api\/tv\/\$\{token\}\/pages`\]/);
-  assert.match(routes, /app\.get\("\/api\/tv\/:token\/pages"/);
+  assert.match(page, /queryKey: \[apiRoot, "pages"\]/);
+  assert.match(routes, /app\.get\(\["\/api\/tv\/pages", "\/api\/tv\/:token\/pages"\]/);
 });
 const hype = readFileSync(join(root, "client/src/components/tv/hype.tsx"), "utf8");
 
@@ -1118,7 +1140,7 @@ test("the feed hands the board only the leads after its cursor", async () => {
 
   // And the route feeds it the cursor the endpoint already takes, rather than
   // inventing a second one for the board to keep.
-  const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
+  const feed = routes.slice(routes.indexOf('app.get(["/api/tv/feed", "/api/tv/:token/feed"]'), routes.indexOf('app.get(["/api/tv/pages", "/api/tv/:token/pages"]'));
   assert.match(feed, /newLeads: newLeadsSince\(since\),/);
   assert.equal((feed.match(/const since = /g) ?? []).length, 1, "one cursor for the whole feed");
 });
