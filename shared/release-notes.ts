@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.58.1",
+    headline: "Appointments can now be completed with the full transfer form.",
+    items: [
+      { text: "From an appointment's Complete menu, choose Fill Out Full Transfer Form to record all transfer details, qualification answers, notes, and Bonzo confirmation." },
+      { text: "The form starts with the appointment's CLR, loan officer, borrower, phone number, and notes, and updates that appointment instead of creating a duplicate." },
+      { text: "Quick Transfer remains available when the existing appointment details are already complete." },
+    ],
+  },
+  {
     version: "4.58.0",
     headline: "A new Placed number on the Transfer Scorecard.",
     items: [

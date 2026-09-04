@@ -255,7 +255,7 @@ const outcomeFormSchema = z.object({
     });
   }
 });
-type OutcomeFormValues = z.infer<typeof outcomeFormSchema>;
+export type OutcomeFormValues = z.infer<typeof outcomeFormSchema>;
 
 // Inline date editor for the Outcomes list. Click the date to edit it,
 // blur or press Enter to save, Escape to cancel.
@@ -356,7 +356,7 @@ function TransferTypeOption({
   );
 }
 
-function OutcomeFormDialog({
+export function OutcomeFormDialog({
   open,
   onClose,
   onSubmit,
@@ -366,6 +366,9 @@ function OutcomeFormDialog({
   todayCount = 0,
   todayRecent = [],
   resetSignal = 0,
+  initialValues,
+  title = "Log Outcome",
+  submitLabel = "Log Outcome",
 }: {
   open: boolean;
   onClose: () => void;
@@ -378,6 +381,9 @@ function OutcomeFormDialog({
   resetSignal?: number;
   users: any[];
   los: any[];
+  initialValues?: Partial<OutcomeFormValues>;
+  title?: string;
+  submitLabel?: string;
 }) {
   const { user: meUser } = useAuth();
   const meId = Number((meUser as any)?.id) || 0;
@@ -504,8 +510,19 @@ function OutcomeFormDialog({
   }, [watchedType, form]);
 
   useEffect(() => {
-    if (open) { setConfirmBonzo(false); if (meId) form.setValue("assistantId", meId, { shouldValidate: false }); }
-  }, [open]);
+    if (!open) return;
+    setConfirmBonzo(false);
+    setShowInfo(false);
+    if (initialValues) {
+      form.reset({
+        ...(form.formState.defaultValues as OutcomeFormValues),
+        assistantId: meId || 1,
+        ...initialValues,
+      });
+    } else if (meId) {
+      form.setValue("assistantId", meId, { shouldValidate: false });
+    }
+  }, [open, initialValues, meId, form]);
 
 
 
@@ -569,7 +586,7 @@ function OutcomeFormDialog({
       <DialogContent className="max-w-3xl p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden">
         <DialogHeader className="space-y-1 px-4 sm:px-5 pt-4 sm:pt-5 pb-2 shrink-0">
           <DialogTitle className="text-base">
-            {confirmBonzo ? "One last thing — Bonzo" : "Log Outcome"}
+            {confirmBonzo ? "One last thing — Bonzo" : title}
             {todayCount > 0 && (
               <span className="ml-2 align-middle text-[11px] font-normal text-muted-foreground" data-testid="text-today-count">
                 {todayCount} logged today
@@ -1074,7 +1091,7 @@ function OutcomeFormDialog({
                     }
                     data-testid="button-save-outcome"
                   >
-                    Log Outcome
+                    {submitLabel}
                   </Button>
                 </div>
               </>

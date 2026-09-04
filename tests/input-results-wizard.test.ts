@@ -202,3 +202,14 @@ test("short fields share a row instead of each taking the full width", () => {
   assert.match(entry, /grid gap-x-4 gap-y-2 sm:grid-cols-2/);
   assert.match(entry, /uppercase tracking-wide text-muted-foreground">\{f\.section\}/);
 });
+
+test("appointments offer the full transfer form without creating a duplicate outcome", () => {
+  assert.match(appts, /Fill Out Full Transfer Form/);
+  assert.match(appts, /<OutcomeFormDialog/);
+  assert.match(appts, /title="Complete Appointment as Transfer"/);
+  assert.match(appts, /transferType: "appointment"/);
+  assert.match(appts, /borrowerName: fullTransferTarget\.borrowerName/);
+  assert.match(appts, /phoneNumber: fullTransferTarget\.phoneNumber/);
+  assert.match(appts, /apiRequest\("PATCH", `\/api\/outcomes\/\$\{id\}`/,
+    "the detailed form must update the appointment instead of POSTing another outcome");
+});

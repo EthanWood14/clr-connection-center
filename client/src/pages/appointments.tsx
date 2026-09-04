@@ -69,6 +69,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { businessTodayClient } from "@/lib/business-day";
+import { OutcomeFormDialog, type OutcomeFormValues } from "@/pages/outcomes";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -294,6 +295,7 @@ function CompleteDialog({
   open,
   onClose,
   onComplete,
+  onFullTransfer,
   isPending,
 }: {
   outcome: Outcome;
@@ -301,6 +303,7 @@ function CompleteDialog({
   open: boolean;
   onClose: () => void;
   onComplete: (id: number, type: "transfer" | "fell_through", notes: string) => void;
+  onFullTransfer: (outcome: Outcome, notes: string) => void;
   isPending: boolean;
 }) {
   // Prefill with any note already on the appointment so existing context isn't
@@ -345,8 +348,8 @@ function CompleteDialog({
             className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-green-200 bg-green-50 hover:border-green-400 hover:bg-green-100 dark:bg-green-900/10 dark:border-green-800 dark:hover:border-green-600 transition-all"
           >
             <ArrowUpRight className="w-6 h-6 text-green-600 dark:text-green-400" />
-            <span className="text-sm font-semibold text-green-700 dark:text-green-400">Transfer</span>
-            <span className="text-xs text-muted-foreground text-center">Converted successfully</span>
+            <span className="text-sm font-semibold text-green-700 dark:text-green-400">Quick Transfer</span>
+            <span className="text-xs text-muted-foreground text-center">Save with current details</span>
           </button>
           <button
             onClick={() => onComplete(outcome.id, "fell_through", note)}
@@ -358,6 +361,18 @@ function CompleteDialog({
             <span className="text-xs text-muted-foreground text-center">Did not convert</span>
           </button>
         </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full gap-2"
+          onClick={() => onFullTransfer(outcome, note)}
+          disabled={isPending}
+          data-testid="button-full-transfer-form"
+        >
+          <Pencil className="w-4 h-4" />
+          Fill Out Full Transfer Form
+        </Button>
 
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={isPending}>Cancel</Button>
@@ -709,6 +724,8 @@ export default function Appointments() {
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [pendingRescheduleId, setPendingRescheduleId] = useState<number | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Outcome | null>(null);
+  const [fullTransferTarget, setFullTransferTarget] = useState<Outcome | null>(null);
+  const [fullTransferNotes, setFullTransferNotes] = useState("");
   const [editTarget, setEditTarget] = useState<Outcome | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Outcome | null>(null);
@@ -889,6 +906,34 @@ export default function Appointments() {
     },
   });
 
+  const fullTransferMutation = useMutation({
+    mutationFn: ({ id, values }: { id: number; values: OutcomeFormValues }) => {
+      setPendingCompleteId(id);
+      const normalized = {
+        ...values,
+        outcomeType: "transfer" as const,
+        transferType: values.transferType || "appointment",
+        followUpDate: null,
+        appointmentDatetime: null,
+        date: businessTodayClient(),
+        leadSource: values.leadSource === "other"
+          ? (values.leadSourceOther || "").trim() || null
+          : values.leadSource || null,
+      };
+      return apiRequest("PATCH", `/api/outcomes/${id}`, normalized);
+    },
+    onSuccess: () => {
+      refreshAll();
+      setPendingCompleteId(null);
+      setFullTransferTarget(null);
+      toast({ title: "Transfer details saved" });
+    },
+    onError: () => {
+      setPendingCompleteId(null);
+      toast({ title: "Error saving transfer", variant: "destructive" });
+    },
+  });
+
   // Notes-only mutation
   const [pendingNotesId, setPendingNotesId] = useState<number | null>(null);
   const notesMutation = useMutation({
@@ -977,6 +1022,11 @@ export default function Appointments() {
   });
 
   const handleComplete = (outcome: Outcome) => setCompleteTarget(outcome);
+  const handleFullTransfer = (outcome: Outcome, notes: string) => {
+    setFullTransferNotes(notes);
+    setCompleteTarget(null);
+    setFullTransferTarget(outcome);
+  };
   const handleQuickComplete = (id: number) => quickCompleteMutation.mutate(id);
   const handleConfirmComplete = (id: number, type: "transfer" | "fell_through", notes: string) => completeMutation.mutate({ id, type, notes });
   const handleReschedule = (id: number, date: string) => rescheduleMutation.mutate({ id, date });
@@ -1218,7 +1268,34 @@ export default function Appointments() {
           open={!!completeTarget}
           onClose={() => setCompleteTarget(null)}
           onComplete={handleConfirmComplete}
+          onFullTransfer={handleFullTransfer}
           isPending={completeMutation.isPending}
+        />
+      )}
+
+      {fullTransferTarget && (
+        <OutcomeFormDialog
+          open={!!fullTransferTarget}
+          onClose={() => setFullTransferTarget(null)}
+          onSubmit={(values) => fullTransferMutation.mutate({ id: fullTransferTarget.id, values })}
+          isPending={fullTransferMutation.isPending}
+          users={users}
+          los={los}
+          title="Complete Appointment as Transfer"
+          submitLabel="Save Transfer"
+          initialValues={{
+            date: businessTodayClient(),
+            assistantId: fullTransferTarget.assistantId,
+            loId: fullTransferTarget.loId,
+            outcomeType: "transfer",
+            transferType: "appointment",
+            borrowerName: fullTransferTarget.borrowerName ?? "",
+            journeyId: fullTransferTarget.journeyId ?? "",
+            phoneNumber: fullTransferTarget.phoneNumber ?? "",
+            notes: fullTransferNotes,
+            followUpDate: "",
+            appointmentDatetime: "",
+          }}
         />
       )}
 
