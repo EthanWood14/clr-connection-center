@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.59.1",
+    headline: "A clearer end-of-day report.",
+    items: [
+      { text: "EOD now walks through LO coverage, imported activity, and the daily checklist in separate sections, with a completion indicator and easier-to-find submission controls." },
+      { text: "Optional activity entries are grouped together, and date labels clearly describe the day you are reporting." },
+    ],
+  },
+  {
     version: "4.59.0",
     headline: "Dialpad texts are now tracked automatically in C3.",
     items: [

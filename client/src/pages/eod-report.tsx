@@ -469,7 +469,7 @@ export default function EodReport() {
   const dialpadMatched = !!data?.dialpadActivity?.matched || Number(report?.dialpad_calls ?? 0) > 0;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-2xl mx-auto print-report">
+    <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto print-report">
       {/* Print-only header (West Capital Lending) */}
       <div className="print-only print-header">
         <img src="/wcl-logo.png" alt="West Capital Lending" className="print-logo" />
@@ -510,7 +510,7 @@ export default function EodReport() {
               ? "Resubmit EOD Report"
               : isTomorrow && todaySubmitted
                 ? "EOD Reporting — Tomorrow"
-                : "EOD Reporting"}
+                : "End-of-day report"}
             <HelpIcon title="EOD Report">
               Submit your end-of-day summary. Include which LOs you called for, and add any notable notes. This sends an email to your managers. <strong>Due by 4:00 PM</strong> each day.
             </HelpIcon>
@@ -522,7 +522,7 @@ export default function EodReport() {
                 ? "Complete before you log off for the day"
                 : isTomorrow && todaySubmitted
                   ? "Anything you log now will count toward tomorrow's report."
-                  : "Viewing a past report"}
+                  : report ? "Review or update this day's report." : "Complete the report for the date shown below."}
           </p>
         </div>
 
@@ -583,6 +583,18 @@ export default function EodReport() {
         <div className="space-y-4 no-print">{[1, 2, 3].map(i => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
         <div className="no-print space-y-6">
+          <div className="rounded-xl border bg-primary/5 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">{report && !dirty ? "Report submitted" : "Wrap up your day"}</p>
+                <p className="text-sm text-muted-foreground mt-1">Review your numbers, confirm LO coverage, then finish the checklist and notes.</p>
+              </div>
+              <Badge variant="outline" className="bg-background px-3 py-1.5">{5 - missingParts.length} of 5 required items complete</Badge>
+            </div>
+            <div className="mt-4 h-1.5 rounded-full bg-primary/10 overflow-hidden" role="progressbar" aria-label="Required report items completed" aria-valuemin={0} aria-valuemax={5} aria-valuenow={5 - missingParts.length}>
+              <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${(5 - missingParts.length) * 20}%` }} />
+            </div>
+          </div>
           {/* Restored-draft banner — appears once per load if a draft was found */}
           {draftRestoredAt && !draftBannerDismissed && !report && (
             <Card className="border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
@@ -617,8 +629,8 @@ export default function EodReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <ClipboardList className="w-4 h-4" /> Logged Outcomes Today
-                <span className="text-xs font-normal text-muted-foreground ml-1">— pulled from your Lead Outcomes entries</span>
+                <ClipboardList className="w-4 h-4" /> Results for this day
+                <Badge variant="secondary" className="ml-auto text-xs">Automatic</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -630,7 +642,7 @@ export default function EodReport() {
                 <ReadOnlyStat icon={ClipboardList} label="No Answer"    value={autoNoAnswer}     color="text-muted-foreground" />
               </div>
               <div className="mt-3 flex items-center justify-between px-1 text-xs">
-                <span className="text-muted-foreground">Total logged today</span>
+                <span className="text-muted-foreground">Total outcomes for {format(parseISO(selectedDate), "MMM d")}</span>
                 <span className="font-semibold tabular-nums">{autoTotalLogged}</span>
               </div>
               {dayOutcomes.length === 0 && (
@@ -646,12 +658,12 @@ export default function EodReport() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Users className="w-4 h-4" /> LO Coverage
-                <span className="text-xs font-normal text-muted-foreground ml-1">— which LOs did you call for today?</span>
+                <Users className="w-4 h-4" /> 1. Confirm your LO coverage
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Assigned LOs checklist */}
+              <p className="text-sm text-muted-foreground">Select the loan officers you worked for on this date. Add anyone outside your assignments below.</p>
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your assigned LOs</p>
                 {myAssignments.length === 0 ? (
@@ -765,7 +777,7 @@ export default function EodReport() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <PhoneCall className="w-4 h-4" /> Daily Summary
+                  <PhoneCall className="w-4 h-4" /> 2. Review your activity
                 </CardTitle>
                 {report && !dirty && (
                   <Badge className="text-xs bg-green-600 gap-1">
@@ -780,6 +792,7 @@ export default function EodReport() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">These numbers come from your connected calling tools.</p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 p-3">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CallTools Conversations</p>
@@ -807,6 +820,11 @@ export default function EodReport() {
                 </div>
               </div>
 
+              <div className="border-t pt-4">
+                <p className="text-sm font-semibold">Additional activity <span className="font-normal text-muted-foreground">· Optional</span></p>
+                <p className="text-xs text-muted-foreground mt-1">Enter only activity missing from the imported figures above. Leave blank if there is nothing to add.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
               {/* Optional work completed outside CallTools. */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -814,7 +832,7 @@ export default function EodReport() {
                 </label>
                 <div className="flex items-center gap-3">
                   <Input
-                    type="number" min={0} placeholder="Calls made outside CallTools"
+                    type="number" min={0} placeholder="0"
                     value={callsMade}
                     onChange={e => { setCallsMade(e.target.value); setDirty(true); }}
                     className="h-9 max-w-[240px]"
@@ -829,7 +847,7 @@ export default function EodReport() {
                   <MessageSquare className="w-3.5 h-3.5" /> Additional Texts
                 </label>
                 <Input
-                  type="number" min={0} placeholder="Texts sent outside CallTools"
+                  type="number" min={0} placeholder="0"
                   value={messagesSent}
                   onChange={e => { setMessagesSent(e.target.value); setDirty(true); }}
                   className="h-9 max-w-[200px]"
@@ -842,7 +860,7 @@ export default function EodReport() {
                   <Users className="w-3.5 h-3.5" /> Additional Conversations
                 </label>
                 <Input
-                  type="number" min={0} placeholder="Conversations outside CallTools"
+                  type="number" min={0} placeholder="0"
                   value={additionalConversations}
                   onChange={e => { setAdditionalConversations(e.target.value); setDirty(true); }}
                   className="h-9 max-w-[200px]"
@@ -850,11 +868,21 @@ export default function EodReport() {
                 />
               </div>
 
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">3. Complete your checklist and notes</CardTitle>
+              <p className="text-sm text-muted-foreground">Answer all four questions and add a short summary before submitting.</p>
+            </CardHeader>
+            <CardContent className="space-y-5">
               {/* Daily accountability questions. Every one must be answered —
                   a blank on a checklist whose whole purpose is "did you do the
                   work" tells a manager nothing. */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">Today's checklist</label>
+                <p className="text-sm font-medium">Daily checklist</p>
                 <p className="text-[11px] text-muted-foreground -mt-1">
                   The first two are part of every day. The retail Bonzo questions are only for when a manager asks
                   you to work it, or you ask to — answering No there is expected.
@@ -881,7 +909,9 @@ export default function EodReport() {
                           type="button"
                           onClick={() => { (setter as any)(v); setDirty(true); }}
                           data-testid={`eod-${testId}-${text.toLowerCase()}`}
-                          className={`text-[11px] px-2.5 py-1 rounded-md border font-medium ${
+                          aria-pressed={value === v}
+                          aria-label={`${label} ${text}`}
+                          className={`text-sm min-h-10 min-w-12 px-3 py-2 rounded-md border font-medium transition-colors ${
                             value === v ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-border"
                           }`}
                         >{text}</button>
@@ -893,19 +923,19 @@ export default function EodReport() {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">
-                  Notes / Comments <span className="text-destructive">*</span>
+                  Day summary <span className="text-destructive">*</span>
                 </label>
                 <Textarea
-                  placeholder="Anything notable about today? Challenges, wins, feedback from LOs..."
+                  placeholder="What went well? What got in the way? What should your manager know or help with?"
                   value={notes}
                   onChange={e => { setNotes(e.target.value); setDirty(true); }}
-                  className="min-h-[80px] resize-none text-sm"
+                  className="min-h-[120px] text-sm"
                   data-testid="eod-notes"
                 />
                 {/* The numbers are captured automatically; the note is the only
                     part of the report a manager cannot reconstruct. */}
                 {!notes.trim() && (
-                  <p className="text-[11px] text-muted-foreground">Required — the rest of this report is counted for you.</p>
+                  <p className="text-xs text-muted-foreground">Required. A few useful sentences are enough.</p>
                 )}
               </div>
 
@@ -915,7 +945,7 @@ export default function EodReport() {
                 </p>
               )}
 
-              <div className="flex flex-wrap gap-2">
+              <div className="sticky bottom-3 z-10 flex flex-wrap gap-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur">
                 <Button
                   className="flex-1 min-w-[180px] gap-2"
                   onClick={() => saveMutation.mutate()}
@@ -958,8 +988,8 @@ export default function EodReport() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Plus className="w-4 h-4" /> Additional Activity Log
-                <span className="text-xs font-normal text-muted-foreground ml-1">— any other notable work done today not mentioned</span>
+                <Plus className="w-4 h-4" /> Other work
+                <Badge variant="secondary" className="ml-auto text-xs">Optional</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
