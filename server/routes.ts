@@ -12634,6 +12634,10 @@ ${note}` : daysLine;
     // out of scorecard metrics, leaderboard, and per-CLR aggregate cards.
     const excludedIds = storage.getExcludedClrIds();
     const countedClrs = allClrs.filter((u: any) => !excludedIds.has(u.id));
+    // Historical activity belongs to the people who did it, even after departure.
+    const historicalClrs = storage.getUsers().filter((u: any) =>
+      clrRoleMatches(u) && !excludedIds.has(u.id)
+    );
     const trainingByUser = clrTrainingByUser(Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1);
     // SQL fragment appended to raw team COUNT/aggregate queries.
     const exClause = excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
@@ -13522,7 +13526,7 @@ ${note}` : daysLine;
       }
       const clrTrend = {
         dates: clrTrendDates,
-        series: countedClrs.map((u: any) => {
+        series: historicalClrs.filter((u: any) => u.isActive || clrTrendMap[u.id]).map((u: any) => {
           const b = clrTrendMap[u.id];
           return {
             userId: u.id,

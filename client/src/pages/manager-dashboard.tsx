@@ -1394,7 +1394,7 @@ export default function ManagerDashboard() {
                       >
                         {t.name}
                         {t.total > 0 ? <span className="ml-1 opacity-80">· {t.total}</span> : null}
-                        {t.inTraining ? <span className="ml-1 opacity-90">· In training</span> : null}
+                        <ClrTrainingBadge inTraining={t.inTraining} activeWorkdays={t.activeWorkdays} className="ml-1" />
                       </button>
                     );
                   })}
@@ -1458,7 +1458,7 @@ export default function ManagerDashboard() {
                           stroke={colorForId(s.userId)}
                           strokeWidth={2}
                           dot={false}
-                          name={s.inTraining ? `${s.name} · In training` : s.name}
+                          name={s.inTraining ? `${s.name} · In training` : s.activeWorkdays < 20 ? `${s.name} · First month` : s.name}
                         />
                       ))}
                     {clrTrendShowAvg && (

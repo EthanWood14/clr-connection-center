@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.59.2",
+    headline: "Historical CLR trends include former teammates.",
+    items: [
+      { text: "Former CLRs with activity in the selected period now appear in the CLR trend comparison and its team calculations." },
+      { text: "CLRs count in averages after 10 completed business workdays. They carry a First month badge until 20 workdays." },
+    ],
+  },
+  {
     version: "4.59.1",
     headline: "A clearer end-of-day report.",
     items: [

@@ -1,9 +1,9 @@
 /**
- * A CLR remains in training until they have completed 20 business workdays.
+ * A CLR remains in training until they have completed 10 business workdays.
  * `activeWorkdays` is supplied by the lifetime activity query so calendar
  * tenure, weekends and days away never graduate someone early.
  */
-export const CLR_TRAINING_WORKDAY_THRESHOLD = 20;
+export const CLR_TRAINING_WORKDAY_THRESHOLD = 10;
 
 export type ClrTrainingStatus = {
   activeWorkdays: number;

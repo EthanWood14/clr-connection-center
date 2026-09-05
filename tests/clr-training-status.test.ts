@@ -18,9 +18,11 @@ const profile = readFileSync(join(root, "client/src/pages/clr-profile.tsx"), "ut
 const classic = readFileSync(join(root, "client/src/pages/leaderboard.tsx"), "utf8");
 const dashboard = readFileSync(join(root, "client/src/pages/dashboard.tsx"), "utf8");
 
-test("training ends exactly after 20 completed business workdays", () => {
-  assert.equal(CLR_TRAINING_WORKDAY_THRESHOLD, 20);
-  assert.deepEqual(clrTrainingStatus(19), { activeWorkdays: 19, inTraining: true });
+test("training ends exactly after 10 completed business workdays", () => {
+  assert.equal(CLR_TRAINING_WORKDAY_THRESHOLD, 10);
+  assert.deepEqual(clrTrainingStatus(9), { activeWorkdays: 9, inTraining: true });
+  assert.deepEqual(clrTrainingStatus(10), { activeWorkdays: 10, inTraining: false });
+  assert.deepEqual(clrTrainingStatus(19), { activeWorkdays: 19, inTraining: false });
   assert.deepEqual(clrTrainingStatus(20), { activeWorkdays: 20, inTraining: false });
   assert.deepEqual(clrTrainingStatus(21), { activeWorkdays: 21, inTraining: false });
   assert.deepEqual(clrTrainingStatus(-4), { activeWorkdays: 0, inTraining: true });
