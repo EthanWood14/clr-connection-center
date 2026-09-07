@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { registerBonzoReassignRoutes } from "../server/bonzo-reassign-routes";
+import { canUseReassignTool } from "../server/clr-roster";
 
 /**
  * The routes, driven through a stand-in Express and a fake Bonzo, so the rules
@@ -26,7 +27,7 @@ function harness(over: Partial<Parameters<typeof registerBonzoReassignRoutes>[1]
 
   const deps = {
     requireAuth: ((_q: any, _s: any, n: any) => n()) as any,
-    requireManagerOrAdmin: () => true,
+    requireAccess: () => true,
     bonzoConfigured: () => true,
     findProspectByPhone: async (_p: string) => ({ candidates: [] as any[] }),
     reassignProspectByEmail: async (prospectId: number, userEmail: string) => {
@@ -191,14 +192,16 @@ test("moving something to the person who already holds it is rejected", async ()
 
 // ── who may do this, and what is written down ───────────────────────────────
 
-test("only a manager or admin can look or move", async () => {
+test("both routes are gated, not just the one that writes", async () => {
+  // The check reads a borrower's name and who holds them out of the CRM, so it
+  // is not a free lookup just because it changes nothing.
   let refusedWith = 0;
   const h = harness({
-    requireManagerOrAdmin: (_req: any, res: any) => { refusedWith += 1; res.status(403).json({ error: "Manager or admin only" }); return false; },
+    requireAccess: (_req: any, res: any) => { refusedWith += 1; res.status(403).json({ error: "CLRs, managers and admins only" }); return false; },
   });
   assert.equal((await h.check(ASK)).code, 403);
   assert.equal((await h.move({ prospectId: 22, fromEmail: BILL, toEmail: CHRIS })).code, 403);
-  assert.equal(refusedWith, 2, "both routes are gated, not just the one that writes");
+  assert.equal(refusedWith, 2);
   assert.equal(h.calls.length, 0);
 });
 
@@ -224,4 +227,29 @@ test("a refused move is audited too, so a failure is not silent", async () => {
   await h.move({ prospectId: 22, fromEmail: BILL, toEmail: CHRIS });
   assert.equal(h.audits.length, 1);
   assert.equal(h.audits[0].details.ok, false);
+});
+
+// ── who the tool is open to ─────────────────────────────────────────────────
+
+test("CLRs can use it, not only managers", () => {
+  // Owner 9/7/26: a CLR working a list is usually the first to notice that a
+  // prospect is sitting in the wrong book.
+  assert.equal(canUseReassignTool({ role: "assistant" }), true);
+  assert.equal(canUseReassignTool({ role: "assistant", isManager: 1 }), true);
+  assert.equal(canUseReassignTool({ role: "admin" }), true);
+  assert.equal(canUseReassignTool({ role: "assistant", superAdmin: true }), true);
+  // An admin flagged as also doing CLR work is in on either count.
+  assert.equal(canUseReassignTool({ role: "admin", isClr: true }), true);
+});
+
+test("viewers and the LOA portal stay out", () => {
+  // A viewer is read-only by definition; the LAP/LOP portals are a different
+  // product and their sessions resolve to a shared user row, so the portal has
+  // to be checked rather than inferred from the role.
+  assert.equal(canUseReassignTool({ role: "viewer" }), false);
+  assert.equal(canUseReassignTool({ role: "assistant", portal: "lap" }), false);
+  assert.equal(canUseReassignTool({ role: "admin", portal: "lap" }), false);
+  assert.equal(canUseReassignTool({ role: "assistant", portal: "lop" }), false);
+  assert.equal(canUseReassignTool(null), false);
+  assert.equal(canUseReassignTool({}), false);
 });

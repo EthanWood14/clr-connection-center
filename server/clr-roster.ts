@@ -25,5 +25,23 @@ export function clrRoleMatches(user: any): boolean {
   return role === "assistant" || (role === "admin" && !!(user?.isClr ?? user?.is_clr));
 }
 
+
+/**
+ * May this account use the Bonzo reassign tool?
+ *
+ * CLRs, managers and admins (owner 9/7/26 — a CLR working a list is usually
+ * the first to notice a prospect sitting in the wrong book). Viewers are
+ * read-only by definition and the LAP/LOP portals are a different product, so
+ * both stay out. Every move is written to the audit trail regardless.
+ */
+export function canUseReassignTool(user: any): boolean {
+  if (!user || isPortalAccount(user)) return false;
+  if (user.role === "viewer") return false;
+  if (user.role === "admin") return true;
+  if (user.isManager ?? user.is_manager) return true;
+  if (user.superAdmin ?? user.super_admin) return true;
+  return clrRoleMatches(user);
+}
+
 /** SQL twin, for raw roster queries. Matches the convention Shotgun already uses. */
 export const CLR_PORTAL_SQL = "(portal IS NULL OR portal = 'c3')";

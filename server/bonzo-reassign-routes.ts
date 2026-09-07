@@ -18,12 +18,21 @@ import {
  *
  * One at a time, per Ethan. A bulk version of this would turn a mistyped
  * column into forty misplaced borrowers.
+ *
+ * OPEN TO CLRs, not just managers (Ethan, 7 Sep 2026) — they are the ones who
+ * find a prospect sitting in the wrong book while working a list. Viewers and
+ * the LOA portal stay out: one is read-only by definition and the other is a
+ * different product. Every move is audited either way, which is what makes
+ * widening the door safe rather than merely convenient.
  */
 
 export interface BonzoReassignDeps {
   requireAuth: RequestHandler;
-  /** Manager-or-admin gate; writes to the response and returns false on refusal. */
-  requireManagerOrAdmin: (req: any, res: Response) => boolean;
+  /**
+   * Who may use this at all. CLRs, managers and admins — not viewers and not
+   * the LOA portal. Writes to the response and returns false on refusal.
+   */
+  requireAccess: (req: any, res: Response) => boolean;
   bonzoConfigured: () => boolean;
   findProspectByPhone: (phone: string) => Promise<{ candidates: ReassignCandidate[] }>;
   reassignProspectByEmail: (
@@ -46,7 +55,7 @@ function summarize(candidates: ReassignCandidate[]) {
 
 export function registerBonzoReassignRoutes(app: Express, deps: BonzoReassignDeps): void {
   const {
-    requireAuth, requireManagerOrAdmin, bonzoConfigured,
+    requireAuth, requireAccess, bonzoConfigured,
     findProspectByPhone, reassignProspectByEmail, getProspectAssigneeEmail, audit,
   } = deps;
 
@@ -54,7 +63,7 @@ export function registerBonzoReassignRoutes(app: Express, deps: BonzoReassignDep
    * Step one: look, decide, and explain. Changes nothing.
    */
   app.post("/api/bonzo/reassign/check", requireAuth, async (req: any, res: Response) => {
-    if (!requireManagerOrAdmin(req, res)) return;
+    if (!requireAccess(req, res)) return;
     if (!bonzoConfigured()) {
       return res.status(503).json({ error: "Bonzo is not connected. Add the API token on the Integrations page." });
     }
@@ -95,7 +104,7 @@ export function registerBonzoReassignRoutes(app: Express, deps: BonzoReassignDep
    * work without either person knowing.
    */
   app.post("/api/bonzo/reassign", requireAuth, async (req: any, res: Response) => {
-    if (!requireManagerOrAdmin(req, res)) return;
+    if (!requireAccess(req, res)) return;
     if (!bonzoConfigured()) {
       return res.status(503).json({ error: "Bonzo is not connected." });
     }

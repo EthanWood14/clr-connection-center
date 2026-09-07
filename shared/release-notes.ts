@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.64.1",
+    headline: "Reassign Prospect moved to Tools, and CLRs can use it.",
+    items: [
+      { text: "Reassign Prospect now sits under Tools in the sidebar, next to State Lookup, instead of being buried in Advanced Settings.", audience: "everyone" },
+      { text: "CLRs can use it, not just managers — you are usually the first to spot a prospect sitting in the wrong person's book while working a list. Same two clicks, and every move is still recorded.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.64.0",
     headline: "Move a Bonzo prospect between two people, knowing only the phone number.",
     items: [

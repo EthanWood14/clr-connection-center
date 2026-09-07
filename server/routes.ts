@@ -19,7 +19,7 @@ import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
 
-import { isPortalAccount, clrRoleMatches, CLR_PORTAL_SQL } from "./clr-roster";
+import { isPortalAccount, clrRoleMatches, canUseReassignTool, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { summarizeCompleteness, isInvestmentProperty, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
@@ -21299,7 +21299,21 @@ ${note}` : daysLine;
   // cannot say which record is meant. See bonzo-reassign-routes.
   registerBonzoReassignRoutes(app, {
     requireAuth,
-    requireManagerOrAdmin,
+    // CLRs too, not just managers (owner 9/7/26): they are the ones who find a
+    // prospect in the wrong book while working a list. Viewers are read-only
+    // by definition and the LOA portal is a different product, so both stay
+    // out. Every move is audited.
+    requireAccess: (req: any, res: Response) => {
+      const u = storage.getUserById(Number(req.session_user?.userId)) as any;
+      // The session's portal wins: a LAP device session resolves to a shared
+      // C3 user row, so reading the role off that row alone would let the LOA
+      // portal through.
+      if (!canUseReassignTool({ ...u, portal: req.session_user?.portal ?? u?.portal })) {
+        res.status(403).json({ error: "CLRs, managers and admins only" });
+        return false;
+      }
+      return true;
+    },
     bonzoConfigured,
     findProspectByPhone: (phone: string) => findProspectByPhone(phone),
     reassignProspectByEmail,

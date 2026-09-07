@@ -229,6 +229,9 @@ const toolItems: NavItem[] = [
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
+  // CLRs too (owner 9/7/26) — they are the ones who find a prospect sitting in
+  // the wrong book while working a list.
+  { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },
 ];
 
 // Reference material and manager tooling, moved into Advanced Settings to keep
@@ -243,7 +246,6 @@ const referenceItems: NavItem[] = [
 
 const referenceManagerItems: NavItem[] = [
   { title: "CLR Profiles",    url: "/clr-profiles",  icon: UserCheck },
-  { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },
 ];
 
 // LO management tools — parked in Advanced Settings for now, pending a
