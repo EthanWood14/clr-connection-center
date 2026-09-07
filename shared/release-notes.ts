@@ -29,6 +29,20 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.63.0",
+    headline: "Read what was actually written on any transfer, and a shotgun transfer now counts half each.",
+    items: [
+      { text: "New Transfer Write-Ups page. Every transfer, with everything that was entered on it — the answers, the blanks, and the notes in the CLR's own words. Until now you could see that somebody's write-ups scored 76% and never see what they wrote. Open a row to read it; search covers the text, not just the names.", audience: "everyone" },
+      { text: "A CLR sees their own write-ups on that page and managers see everybody's. Blank qualification answers are called out in red; a section marked n/a is shown as not applicable rather than as a gap, so the page and the percentage always agree.", audience: "everyone" },
+      { text: "A transfer taken off a Shotgun lead now counts as half for whoever put the lead up and half for whoever closed it — everywhere, pay included. Counts can now read 4.5, and that is the real number.", audience: "everyone" },
+      { text: "The half only goes to another CLR. Leads put up by a manager or an admin still count as a whole transfer for the CLR who closed them, because managers are not on transfer comp and half the pay would otherwise go nowhere.", audience: "manager" },
+      { text: "The Reporting page's per-CLR transfer total was the last one still counting whole rows, so it disagreed with the wall boards and with people's pay. It now matches everything else.", audience: "manager" },
+      { text: "The transfer number on a filed EOD report is worked out when it is filed rather than when the page was opened. A shotgun half created later by the other CLR used to be missing from the manager digest and EOD Analytics permanently.", audience: "manager" },
+      { text: "Correction to the last release: a repeating task with pay attached now pays EVERY occurrence — a monthly $5 task pays $5 a month. The previous note said it paid only once.", audience: "manager" },
+      { text: "Money in the comp summary emails always shows cents now, so the same table no longer mixes \"$245\" and \"$222.50\".", audience: "manager" },
+    ],
+  },
+  {
     version: "4.62.0",
     headline: "A call SOP, a test that asks what you would do, and pay you can attach to a task.",
     items: [

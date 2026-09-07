@@ -273,3 +273,27 @@ test("weekly goals stop being scaled once the window is too long to mean anythin
   assert.match(page, /const goalsTooLong = \(data\?\.periodWeeks \?\? 1\) > 9/);
   assert.match(page, /weeklyGoal > 0 && !goalsTooLong/, "the bars must be gated, not just the footnote");
 });
+
+// ── transfer credit on the roster ───────────────────────────────────────────
+test("the CLR list shows transfer CREDIT, formatted so a half is visible", () => {
+  // A transfer off a shotgun lead is half for the CLR who published it and half
+  // for the one who claimed it, so this cell can legitimately read 4.5 and must
+  // never be rounded to a whole. See shared/transfer-credit.ts.
+  assert.match(listPage, /import \{ formatTransferCount \} from "@shared\/transfer-credit";/);
+  assert.match(listPage, /formatTransferCount\(c\.metrics\.transfers\)/);
+  assert.doesNotMatch(listPage, /\{c\.metrics\.transfers\}<\/p>/, "the raw number must not be rendered");
+});
+
+test("transfers per working day is fed credit rather than a row count", () => {
+  const fn = routes.slice(
+    routes.indexOf("function clrWorkdayRatesByUser"),
+    routes.indexOf('app.get("/api/clr-profiles"'),
+  );
+  assert.match(fn, /TRANSFER_CREDIT_SQL/);
+  assert.match(fn, /credit: Number\(row\.credit\) \|\| 0/);
+  assert.doesNotMatch(
+    fn,
+    /SELECT assistant_id, date FROM lead_outcomes WHERE org_id=\? AND outcome_type='transfer'/,
+    "the old one-row-per-transfer read must be gone",
+  );
+});

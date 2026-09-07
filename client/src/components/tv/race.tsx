@@ -43,6 +43,7 @@
  */
 import type { CSSProperties } from "react";
 import { useReducedMotion } from "framer-motion";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 /**
  * A local copy of hype.tsx's helper, deliberately not imported: the two scenes
@@ -342,6 +343,11 @@ export function RaceScene({ passerName, passedName, count, reduced: reducedProp 
     ? { ...car, zIndex: 20, transform: `translate(12vw, ${lift})` }
     : { ...car, zIndex: 20, ...anim("race-passed", 6.45, 0.15, "linear") };
 
+  // `count` is transfer CREDIT — half a transfer each when a shotgun lead is
+  // published by one CLR and closed by another — so the caption can honestly
+  // read "4.5 transfers today" and must never round. See
+  // shared/transfer-credit.ts.
+  const countLabel = formatTransferCount(count);
   const plural = count === 1 ? "transfer" : "transfers";
 
   return (
@@ -488,7 +494,7 @@ export function RaceScene({ passerName, passedName, count, reduced: reducedProp 
           {passerName}
         </div>
         <div className="mt-[1vw] text-[2.4vw] font-bold uppercase tracking-[0.2em]" style={{ color: PASSER.main }}>
-          {count} {plural} today
+          {countLabel} {plural} today
         </div>
         <div className="mt-[0.5vw] truncate text-[2vw] font-semibold text-white/75">
           just moved ahead of {passedName}

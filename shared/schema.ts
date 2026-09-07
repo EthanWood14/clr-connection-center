@@ -240,6 +240,13 @@ export const leadOutcomes = sqliteTable("lead_outcomes", {
   prequalificationNotes: text("prequalification_notes"),
   missedReason: text("missed_reason"),
   rescheduled: integer("rescheduled"),
+  /**
+   * Who published the shotgun lead this transfer came off, if it came off
+   * one. NULL on an ordinary transfer. A stamped row counts HALF for this
+   * person and half for the CLR who made the transfer — everywhere, pay
+   * included. See shared/transfer-credit.ts.
+   */
+  shotgunSenderId: integer("shotgun_sender_id"),
   rescheduleDatetime: text("reschedule_datetime"),
   nextSteps: text("next_steps"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),

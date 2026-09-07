@@ -31,6 +31,9 @@ import {
 // The office business day the completion route books this pay to — the same
 // helper processRecurringComp and every other comp filer in this app uses.
 import { businessTodayInTz, BUSINESS_DAY_DEFAULT_TZ } from "../server/business-day";
+// The recurrence engine itself. Pay now travels to the successor, so "a monthly
+// task pays every month" is a claim about THIS function, not about a constant.
+import { spawnNextTaskOccurrence } from "../server/clr-task-scheduler";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -600,29 +603,68 @@ test("the completion must belong to the task, to the same org, and to a real cyc
 // RULE 6 — RECURRING TASKS ARE THE DANGEROUS CASE.
 // ────────────────────────────────────────────────────────────────────────────
 
-test("the recurring DEFAULT pays this occurrence only", () => {
-  assert.equal(TASK_COMP_RECURRING_MODE, "this-occurrence-only");
-  assert.equal(TASK_COMP_SPAWN_COPIES_AMOUNT, false, "the successor row must not inherit the amount");
+test("pay on a repeating task belongs to the SERIES — every occurrence pays", () => {
+  // Ethan read the old pre-save warning — the one that said a repeating task
+  // paid a single time and that the amount did not travel to the next
+  // occurrence — quoted it back, and answered it: "Change this, so monthly it
+  // would pay $5". He was shown the risk twice. This is that decision.
+  assert.equal(TASK_COMP_RECURRING_MODE, "every-occurrence");
+  assert.equal(TASK_COMP_SPAWN_COPIES_AMOUNT, true, "the successor row inherits the amount, and that is the mechanism");
 });
 
-test("a daily paid task files ONE request, and the next occurrence files nothing", () => {
+test("THE SENTENCE ETHAN REJECTED SURVIVES NOWHERE", () => {
+  // He read it, disagreed with it, and pasted it back. It is not allowed to
+  // exist in the module, in the wiring, or on any screen — a rule that has been
+  // reversed but is still being announced is worse than one that was never
+  // written down.
+  const dead = [
+    "ONLY THIS occurrence pays",
+    "not copied onto the next occurrence",
+    "this-occurrence-only",
+    "For scale only",
+  ];
+  const uiSource = readFileSync(new URL("client/src/pages/clr-tasks.tsx", ROOT), "utf8");
+  for (const phrase of dead) {
+    for (const [name, source] of [["server/task-comp.ts", moduleSource], ["server/routes.ts", routesSource],
+      ["server/clr-task-scheduler.ts", schedulerSource], ["client/src/pages/clr-tasks.tsx", uiSource]] as const) {
+      assert.ok(source.indexOf(phrase) < 0, `"${phrase}" still appears in ${name}`);
+    }
+  }
+});
+
+test("a daily paid task files a request for EVERY occurrence, one each", () => {
   const monday = paidTask({ id: 12, recurrence: "daily" });
   const plan = planFor(monday);
   assert.ok(plan.file);
   assert.equal(plan.file!.amountCents, 5000);
 
-  // spawnNextTaskOccurrence creates a NEW clr_tasks row and does not copy the
-  // comp columns, so Tuesday arrives unpaid.
-  const tuesday = paidTask({ id: 13, recurrence: "daily", compAmountCents: null, compReason: null, compSetByUserId: null, compSetAt: null, compSetForUserId: null });
+  // spawnNextTaskOccurrence creates a NEW clr_tasks row and now DOES copy the
+  // comp columns, so Tuesday arrives carrying the same pay — and files its own
+  // request, which Monday's request does not block because it is a different
+  // task id.
+  const tuesday = paidTask({ id: 13, recurrence: "daily" });
   const next = planTaskCompFiling({
     task: tuesday,
     completion: completion({ taskId: 13, dueAt: "2026-09-09T17:00:00.000Z" }),
+    existing: [],
+    payeeActive: true,
+    ...NAMES,
+  });
+  assert.ok(next.file, "a daily paid task pays daily — that is what Ethan asked for");
+  assert.equal(next.file!.amountCents, 5000);
+  assert.equal(next.file!.taskId, 13, "each occurrence pays under its OWN task id");
+  assert.notEqual(next.file!.key, plan.file!.key);
+
+  // But Monday's own request still blocks a SECOND Monday payment.
+  const mondayAgain = planTaskCompFiling({
+    task: monday,
+    completion: completion({ taskId: 12 }),
     existing: [taskCompRequestRow(plan.file!, 501)],
     payeeActive: true,
     ...NAMES,
   });
-  assert.equal(next.file, null, "a daily paid task must not quietly pay every day");
-  assert.equal(next.skipped, "no-amount");
+  assert.equal(mondayAgain.file, null);
+  assert.equal(mondayAgain.skipped, "already-filed");
 });
 
 test("the exposure warning describes the mode that is ACTUALLY in force", () => {
@@ -630,13 +672,60 @@ test("the exposure warning describes the mode that is ACTUALLY in force", () => 
   assert.equal(exposure.recurs, true);
   assert.equal(exposure.known, true);
   assert.equal(exposure.perMonth, 30);
-  assert.equal(exposure.monthlyCents, 150000, "the monthly figure is still computed for a UI that wants the scale");
-  // Under "pay once", the sentence must not assert a monthly commitment.
-  assert.match(exposure.warning, /ONLY THIS occurrence pays \$50\.00/);
-  assert.match(exposure.warning, /not copied onto the next occurrence/);
-  assert.doesNotMatch(exposure.warning, /At \$50\.00 a time that is about \$1,500\.00 a month/,
-    "the shipped default does not pay $1,500 a month, and the warning may not say it does");
-  assert.match(exposure.warning, /For scale only/, "the monthly number, if shown at all, is marked hypothetical");
+  assert.equal(exposure.monthlyCents, 150000);
+  assert.equal(exposure.perYear, 360);
+  assert.equal(exposure.yearlyCents, 1800000);
+  // The commitment is stated, and so is its size — a checkbox now commits money
+  // indefinitely, so the annual number goes on screen before the save.
+  assert.match(exposure.warning, /EVERY occurrence pays \$50\.00/);
+  assert.match(exposure.warning, /\$50\.00 per occurrence/);
+  assert.match(exposure.warning, /about 30 occurrences a month/);
+  assert.match(exposure.warning, /about \$1,500\.00 a month/);
+  assert.match(exposure.warning, /about \$18,000\.00 a year/);
+  assert.match(exposure.warning, /Clear the pay to stop it/, "and how to stop it");
+  // The yearly figure is the monthly one times twelve, so a manager can check
+  // the arithmetic instead of wondering which of two numbers is wrong.
+  assert.equal(exposure.yearlyCents, exposure.monthlyCents! * 12);
+});
+
+test("A MONTHLY $5 TASK READS AS $5 AN OCCURRENCE, $5 A MONTH, $60 A YEAR", () => {
+  // Ethan's own example, and the number that makes the warning worth reading:
+  // this one is unremarkable, and the sentence says so plainly rather than
+  // shouting. The daily $50 above is the same sentence saying $18,000.
+  const exposure = recurringCompExposure("monthly", 500);
+  assert.equal(exposure.perMonth, 1, "a MONTHLY task fires once a month — not four, and not 22");
+  assert.equal(exposure.monthlyCents, 500);
+  assert.equal(exposure.perYear, 12);
+  assert.equal(exposure.yearlyCents, 6000);
+  assert.match(exposure.warning, /\$5\.00 per occurrence/);
+  assert.match(exposure.warning, /about \$5\.00 a month/);
+  assert.match(exposure.warning, /about \$60\.00 a year/);
+});
+
+test("the count is written as English — 'about 1 occurrence a month', not '1 occurrences'", () => {
+  assert.match(recurringCompExposure("monthly", 500).warning, /about 1 occurrence a month/);
+  assert.doesNotMatch(recurringCompExposure("monthly", 500).warning, /1 occurrences/);
+  assert.match(recurringCompExposure("weekly", 500).warning, /about 4 occurrences a month/);
+  assert.match(recurringCompExposure("custom_weekly", 500, [5]).warning, /about 4 occurrences a month/);
+  // A single-day custom_weekly is the other place the singular could break.
+  assert.doesNotMatch(recurringCompExposure("custom_weekly", 500, [1, 3, 5]).warning, /\b1 occurrences\b/);
+});
+
+test("the sentence on a FILED request is for the approver, and fits the note whole", () => {
+  const exposure = recurringCompExposure("custom_weekly", 50000, [0, 1, 2, 3, 4, 5, 6]);
+  assert.match(exposure.requestWarning, /EVERY occurrence pays \$500\.00/);
+  assert.match(exposure.requestWarning, /This request is one of them/);
+  // It is clamped into the note at WARNING_IN_NOTE, so the worst case — the
+  // longest label and the largest amount the cap allows — must still fit. A
+  // recurring-pay warning cut off mid-number is not a fact.
+  assert.ok(exposure.requestWarning.length <= 240, `requestWarning is ${exposure.requestWarning.length} characters`);
+  const note = buildTaskCompNote({
+    taskId: 12, title: "Call the Q3 renewals list", dueAt: DUE_AT, amountCents: 50000,
+    reason: "Extra evening calling block", payeeUserId: 4, completedByUserId: 4,
+    completedAt: COMPLETED_AT, warnings: [exposure.requestWarning],
+  });
+  assert.ok(note.indexOf(`WARNING: ${exposure.requestWarning}`) > 0, "the whole warning reaches the approver, untruncated");
+  assert.ok(note.length <= TASK_COMP_MAX_NOTE_LENGTH);
 });
 
 test("attaching pay to a repeating task shows the exposure BEFORE saving", () => {
@@ -649,7 +738,9 @@ test("attaching pay to a repeating task shows the exposure BEFORE saving", () =>
   assert.equal(occurrencesPerMonth("weekdays"), 22);
   assert.equal(occurrencesPerMonth("none"), 0);
 
-  assert.deepEqual(recurringCompExposure("none", 5000), { recurs: false, known: true, perMonth: 0, monthlyCents: 0, warning: "" });
+  assert.deepEqual(recurringCompExposure("none", 5000), {
+    recurs: false, known: true, perMonth: 0, monthlyCents: 0, perYear: 0, yearlyCents: 0, warning: "", requestWarning: "",
+  });
 
   const change = parseTaskCompChange(MANAGER, paidTask({ recurrence: "daily", compAmountCents: null }), { amountCents: 5000, reason: "nightly list" }, SET_AT);
   assert.equal(change.ok, true);
@@ -667,7 +758,8 @@ test("A PATCH THAT SETS THE REPEAT AND THE PAY TOGETHER STILL WARNS", () => {
   assert.equal(change.ok, true);
   const warned = change.warnings.filter((w) => /repeats daily/.test(w));
   assert.equal(warned.length, 1, "the manager must see the repeat they are creating in this very request");
-  assert.match(String(warned[0]), /ONLY THIS occurrence pays \$50\.00/);
+  assert.match(String(warned[0]), /EVERY occurrence pays \$50\.00/);
+  assert.match(String(warned[0]), /about \$18,000\.00 a year/, "the annual cost of the box being ticked, before it is ticked");
 
   // And the days come from the same patch too.
   const custom = parseTaskCompChange(MANAGER, oneOffTask, { recurrence: "custom_weekly", scheduleDays: [1, 3, 5], amountCents: 5000, reason: "MWF block" }, SET_AT);
@@ -881,6 +973,8 @@ test("a stored amount that is not valid money never becomes money", () => {
 const ROOT = new URL("../", import.meta.url);
 const routesSource = readFileSync(new URL("server/routes.ts", ROOT), "utf8");
 const storageSource = readFileSync(new URL("server/storage.ts", ROOT), "utf8");
+const moduleSource = readFileSync(new URL("server/task-comp.ts", ROOT), "utf8");
+const schedulerSource = readFileSync(new URL("server/clr-task-scheduler.ts", ROOT), "utf8");
 
 /** Every `ALTER TABLE <table> ADD COLUMN …` this repo runs at boot, in order. */
 function bootAlters(source: string, table: string): string[] {
@@ -1165,6 +1259,161 @@ test("END TO END: pay travels with the task, and the request says whose it becam
   const row = compRows(db)[0];
   assert.equal(row.user_id, 5, "whoever holds the task at completion is paid");
   assert.match(String(row.note), /reassigned after the pay was attached/);
+  db.close();
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// RULE 6, WIRED UP — a repeating paid task pays EVERY occurrence, and each
+// occurrence pays EXACTLY ONCE. Both halves are load-bearing now: the first is
+// what Ethan asked for, the second is the only thing standing between "pays
+// every month" and "paid twice this month".
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Give the row the series_id POST /api/clr-tasks stamps on it after insert. */
+function seedSeries(db: any, over: Record<string, unknown> = {}): number {
+  const id = seedTask(db, over);
+  db.prepare(`UPDATE clr_tasks SET series_id=? WHERE id=?`).run(id, id);
+  return id;
+}
+
+/** One completion per month, in the months a monthly series from DUE_AT actually lands in. */
+const MONTHLY_COMPLETIONS = ["2026-09-08T16:31:00.000Z", "2026-10-08T16:31:00.000Z", "2026-11-08T16:31:00.000Z"];
+
+const taskRowOf = (db: any, id: number) => db.prepare(`SELECT * FROM clr_tasks WHERE id=?`).get(id) as any;
+
+test("END TO END: THREE occurrences of a monthly series file THREE requests", () => {
+  const db = bootedDb();
+  const first = seedSeries(db, { recurrence: "monthly" });
+  attachPay(db, first, MANAGER, { amountCents: 500, reason: "Monthly pipeline scrub" });
+
+  const ids = [first];
+  for (let i = 0; i < 3; i += 1) {
+    const done = completeTask(db, { taskId: ids[i], byUserId: 4, completedAt: MONTHLY_COMPLETIONS[i] });
+    assert.ok(done.file, `occurrence ${i + 1} must file its own request — this is the whole change`);
+    assert.equal(done.file!.amountCents, 500);
+    if (i === 2) break;
+    const child = spawnNextTaskOccurrence(db as any, ids[i]);
+    assert.ok(child, "the series must produce a successor");
+    ids.push(Number(child.id));
+  }
+
+  assert.equal(ids.length, 3);
+  assert.equal(new Set(ids).size, 3, "every occurrence is its OWN clr_tasks row");
+
+  const rows = compRows(db);
+  assert.equal(rows.length, 3, "three completed occurrences, three comp requests");
+  assert.deepEqual(rows.map((r: any) => Number(r.task_comp_task_id)), ids, "one request per occurrence, keyed on its own task id");
+  assert.deepEqual(rows.map((r: any) => Number(r.amount_cents)), [500, 500, 500]);
+  assert.deepEqual(rows.map((r: any) => String(r.status)), ["pending", "pending", "pending"],
+    "nothing auto-approves — three occurrences is three separate human decisions");
+  assert.deepEqual(rows.map((r: any) => Number(r.user_id)), [4, 4, 4]);
+  assert.equal(new Set(rows.map((r: any) => String(r.task_comp_key))).size, 3, "and three distinct cycles");
+
+  // The amount and the AUTHORISATION travelled: every occurrence still names
+  // the manager who signed off and the moment they did, never the scheduler.
+  for (const id of ids) {
+    const row = taskRowOf(db, id);
+    assert.equal(row.comp_amount_cents, 500);
+    assert.equal(row.comp_reason, "Monthly pipeline scrub");
+    assert.equal(Number(row.comp_set_by_user_id), MANAGER.userId, "the audit trail names the human, on every occurrence");
+    assert.equal(String(row.comp_set_at), SET_AT, "and it is not restamped to the spawn");
+    assert.equal(Number(row.comp_set_for_user_id), 4);
+  }
+
+  // The approver of any one of them is told it is one of a series, and how big.
+  assert.match(String(rows[1].note), /WARNING: This task repeats monthly and EVERY occurrence pays \$5\.00/);
+  assert.match(String(rows[1].note), /\$60\.00 a year/);
+  db.close();
+});
+
+test("END TO END: re-completing an occurrence of a paying series still files nothing extra", () => {
+  const db = bootedDb();
+  const first = seedSeries(db, { recurrence: "monthly" });
+  attachPay(db, first, MANAGER, { amountCents: 500, reason: "Monthly pipeline scrub" });
+  const ids = [first];
+  for (let i = 0; i < 3; i += 1) {
+    completeTask(db, { taskId: ids[i], byUserId: 4, completedAt: MONTHLY_COMPLETIONS[i] });
+    if (i === 2) break;
+    ids.push(Number(spawnNextTaskOccurrence(db as any, ids[i])!.id));
+  }
+  assert.equal(compRows(db).length, 3);
+
+  // (a) The same cycle again — a retry, a double-click, the loser of a race.
+  // The completion's own UNIQUE(task_id, due_at) rolls the money back with it.
+  db.prepare(`UPDATE clr_tasks SET status='active' WHERE id=?`).run(ids[1]);
+  assert.throws(() => completeTask(db, { taskId: ids[1], byUserId: 4, completedAt: "2026-10-09T09:00:00.000Z" }), /UNIQUE/);
+  assert.equal(compRows(db).length, 3, "still three");
+
+  // (b) The harder one: re-opened AND re-deadlined, which manufactures a cycle
+  // key the completions index has never seen. The per-TASK guard catches it.
+  db.prepare(`UPDATE clr_tasks SET status='active', due_at=? WHERE id=?`).run("2026-10-20T17:00:00.000Z", ids[1]);
+  const again = completeTask(db, { taskId: ids[1], byUserId: 4, completedAt: "2026-10-20T16:00:00.000Z" });
+  assert.equal(again.file, null);
+  assert.equal(again.skipped, "already-filed");
+  assert.equal(compRows(db).length, 3, "still three — a paying series never double-pays one occurrence");
+  assert.equal(completionCount(db, ids[1]), 2, "the extra work was still recorded; only the money was not repeated");
+
+  // And the database would have refused anyway, whatever any caller believed.
+  assert.throws(() => db.prepare(`INSERT INTO comp_requests (org_id,user_id,description,category,amount_cents,status,task_comp_task_id)
+    VALUES (1,4,'second helping','bonus',500,'pending',?)`).run(ids[1]), /UNIQUE/);
+  assert.equal(compRows(db).length, 3);
+  db.close();
+});
+
+test("END TO END: comp_set_for_user_id follows the successor's OWN assignee", () => {
+  const db = bootedDb();
+  const first = seedSeries(db, { recurrence: "monthly" });
+  attachPay(db, first, MANAGER, { amountCents: 500, reason: "Monthly pipeline scrub" });
+  // Another manager hands the series to a different CLR. On THIS row the swap
+  // is real and must stay visible.
+  assert.equal(attachPay(db, first, OTHER_MANAGER, { assignedUserId: 5 }).ok, true);
+  assert.equal(Number(taskRowOf(db, first).comp_set_for_user_id), 4, "this row's pay really was set for somebody else");
+  const filed = completeTask(db, { taskId: first, byUserId: 5 });
+  assert.match(String(filed.file!.note), /reassigned after the pay was attached/);
+
+  // The successor was never reassigned — it was born assigned to user 5 — so it
+  // must not inherit a warning about a swap that did not happen to it.
+  const child = spawnNextTaskOccurrence(db as any, first)!;
+  assert.equal(Number(child.assigned_user_id), 5);
+  assert.equal(Number(child.comp_set_for_user_id), 5, "who this occurrence's pay is for");
+  assert.equal(Number(child.comp_set_by_user_id), MANAGER.userId, "still the manager who authorised the money");
+  assert.equal(String(child.comp_set_at), SET_AT);
+  const next = completeTask(db, { taskId: Number(child.id), byUserId: 5 });
+  assert.ok(next.file);
+  assert.ok(String(next.file!.note).indexOf("reassigned after the pay was attached") < 0,
+    "otherwise every occurrence of a reassigned series shouts a stale warning forever");
+  db.close();
+});
+
+test("END TO END: an UNPAID repeating task spawns an unpaid successor — all five columns or none", () => {
+  const db = bootedDb();
+  const first = seedSeries(db, { recurrence: "monthly", title: "Tidy the lead queue" });
+  completeTask(db, { taskId: first, byUserId: 4 });
+  const child = spawnNextTaskOccurrence(db as any, first)!;
+  for (const column of TASK_COMP_TASK_COLUMNS) {
+    assert.equal((child as any)[column.column] ?? null, null, `${column.column} must not appear from nowhere`);
+  }
+  assert.equal(completeTask(db, { taskId: Number(child.id), byUserId: 4 }).skipped, "no-amount");
+  assert.equal(compRows(db).length, 0);
+  db.close();
+});
+
+test("END TO END: clearing the pay stops the series at the next occurrence", () => {
+  // The only brake there is, and Ethan did not ask for another one. It has to
+  // actually work, so it is pinned.
+  const db = bootedDb();
+  const first = seedSeries(db, { recurrence: "monthly" });
+  attachPay(db, first, MANAGER, { amountCents: 500, reason: "Monthly pipeline scrub" });
+  completeTask(db, { taskId: first, byUserId: 4 });
+  const second = Number(spawnNextTaskOccurrence(db as any, first)!.id);
+  assert.equal(taskRowOf(db, second).comp_amount_cents, 500);
+
+  assert.equal(attachPay(db, second, MANAGER, { amountCents: null }).ok, true);
+  assert.equal(taskRowOf(db, second).comp_amount_cents, null);
+  assert.equal(completeTask(db, { taskId: second, byUserId: 4, completedAt: "2026-10-08T16:31:00.000Z" }).skipped, "no-amount");
+  const third = spawnNextTaskOccurrence(db as any, second)!;
+  assert.equal(third.comp_amount_cents ?? null, null, "and it stays stopped");
+  assert.equal(compRows(db).length, 1, "one payment, for the one occurrence that carried pay");
   db.close();
 });
 

@@ -101,10 +101,32 @@
  *    this. A token attached by a later UPDATE can be lost between the commit and
  *    that update, leaving a pending request no approval email can ever reach.
  *
- * 6. server/clr-task-scheduler.ts spawnNextTaskOccurrence() must NOT copy the
- *    comp columns onto the successor row (see TASK_COMP_SPAWN_COPIES_AMOUNT).
- *    Today it copies an explicit column list and would not pick them up, which
- *    is the behaviour we want — but it is now load-bearing, so it is stated.
+ * 6. server/clr-task-scheduler.ts spawnNextTaskOccurrence() MUST copy the comp
+ *    columns onto the successor row (see TASK_COMP_SPAWN_COPIES_AMOUNT). Its
+ *    INSERT names its columns explicitly, so pay that is not listed there is
+ *    pay the next occurrence silently does not carry — which is the whole of
+ *    TASK_COMP_RECURRING_MODE. Which values travel is not uniform:
+ *
+ *      comp_amount_cents, comp_reason  — copied verbatim. This is the pay the
+ *                                        manager authorised for the series.
+ *      comp_set_by_user_id, comp_set_at — copied verbatim, NOT restamped to the
+ *                                        spawn. They name the human who
+ *                                        authorised the money and the moment
+ *                                        they did it, and that is the audit
+ *                                        trail behind EVERY payment the series
+ *                                        ever makes. Restamping them to "the
+ *                                        scheduler, just now" would erase the
+ *                                        only record of who signed off.
+ *      comp_set_for_user_id            — follows the assignee the SUCCESSOR
+ *                                        actually has, because that is what it
+ *                                        means: who the pay was set for on this
+ *                                        row. Copying the parent's stale value
+ *                                        would make every occurrence of a
+ *                                        reassigned series shout "reassigned
+ *                                        after the pay was attached" forever.
+ *
+ *    A successor that carries no pay carries none of the five: they are written
+ *    together or not at all.
  */
 import { formatMoneyCents, roundCents } from "./comp-auto-file";
 
@@ -119,9 +141,9 @@ export { formatMoneyCents, roundCents };
 export const TASK_COMP_TASK_COLUMNS: Array<{ column: string; type: string; why: string }> = [
   { column: "comp_amount_cents", type: "INTEGER", why: "the pay, in whole cents; NULL means this task pays nothing" },
   { column: "comp_reason", type: "TEXT", why: "the short reason an approver reads on the request" },
-  { column: "comp_set_by_user_id", type: "INTEGER", why: "which manager attached it — the request says so out loud" },
-  { column: "comp_set_at", type: "TEXT", why: "when they attached it" },
-  { column: "comp_set_for_user_id", type: "INTEGER", why: "who was assigned AT THE TIME, so a later reassignment is visible rather than silent" },
+  { column: "comp_set_by_user_id", type: "INTEGER", why: "which manager attached it — the request says so out loud, and a successor occurrence keeps naming them rather than the scheduler" },
+  { column: "comp_set_at", type: "TEXT", why: "when they attached it — never restamped when the series spawns, because this is the audit trail for every payment the series makes" },
+  { column: "comp_set_for_user_id", type: "INTEGER", why: "who was assigned AT THE TIME on THIS row, so a later reassignment is visible rather than silent; a spawned successor sets it to its own assignee" },
 ];
 
 /**
@@ -143,6 +165,13 @@ export const TASK_COMP_REQUEST_COLUMNS: Array<{ column: string; type: string; wh
  * At most one comp request per task, enforced by the database and not only by
  * this module. Partial, so the hand-typed rows (task_comp_task_id NULL) are
  * untouched.
+ *
+ * This is what keeps TASK_COMP_RECURRING_MODE honest. A repeating task pays
+ * EVERY occurrence, and every occurrence is its own clr_tasks row (see
+ * spawnNextTaskOccurrence), so "one request per task id" is exactly "one
+ * request per occurrence". A monthly series files twelve requests a year and
+ * cannot file thirteen — "pays every month" never quietly becomes "paid twice
+ * this month", whoever re-opens, re-completes or re-deadlines a row.
  *
  * It agrees with TASK_COMP_COVERING_STATUSES exactly: comp_requests.status is
  * CHECK-constrained to draft/pending/approved/denied and all four cover, so a
@@ -509,7 +538,9 @@ export const TASK_COMP_COVERING_STATUSES: string[] = ["draft", "pending", "appro
  * let it complete and pay a second time. Because a recurring series gives every
  * occurrence its OWN clr_tasks row (spawnNextTaskOccurrence INSERTs a new id),
  * "at most one request per task id" is also exactly "at most one per
- * occurrence" — so (b) costs a legitimate recurring series nothing.
+ * occurrence" — so (b) costs a legitimate recurring series nothing, even now
+ * that every occurrence of one carries pay. A monthly series files once a
+ * month because it has one row a month, not because anything counts months.
  *
  * BOTH tests read COLUMNS — task_comp_task_id and task_comp_key — and nothing
  * here looks at description or note. That is the whole point. The note is built
@@ -541,35 +572,52 @@ export function taskCompAlreadyFiled(
 // ── RULE 6 — recurring tasks ────────────────────────────────────────────────
 
 /**
- * THE DANGEROUS ONE, and the default is the quiet one.
+ * THE EXPENSIVE ONE, and Ethan has decided it.
  *
- * "this-occurrence-only": the amount belongs to the single task ROW it was
- * attached to. When that occurrence is completed it files once, and the
- * successor occurrence the scheduler spawns carries NO pay until a manager
- * attaches it again.
+ * "every-occurrence": pay attached to a repeating task belongs to the SERIES.
+ * Every occurrence carries the amount, and completing any occurrence files that
+ * occurrence's own request. A monthly $5 task pays $5 a month, every month, for
+ * as long as the series runs.
  *
- * Why this way round: a paid task set to repeat daily under the other reading
- * files a request EVERY DAY, for as long as the series lives, with no ceiling
- * and no second human decision. $50 a day is $18,250 a year off one checkbox.
- * The failure mode of this default is that somebody is under-paid and says so
- * within a day; the failure mode of the other is that nobody notices until
- * payroll. Under-paying is recoverable. Over-paying, at that scale, is not.
+ * This is what he asked for. He read the old pre-save warning — the one that
+ * announced that a repeating task paid a single time and that the amount did
+ * not travel to the next occurrence — quoted it back, and answered it in his
+ * own words: "Change this, so monthly it would pay $5".
  *
- * THIS IS A GUESS AT WHAT ETHAN WANTS AND IT IS THE FIRST OPEN QUESTION. If he
- * wants a daily paid task to pay daily, flip this constant to
- * "every-occurrence", make spawnNextTaskOccurrence copy the comp columns, and
- * put a ceiling on the series before it ships. recurringCompExposure already
- * carries the other wording for that day.
+ * He was shown the risk twice and chose anyway, so it is built the way he
+ * asked rather than hedged into something that looks like it obeyed him. Say
+ * plainly what that costs: one checkbox now commits money indefinitely. A daily
+ * $50 task is about $1,500 a month and about $18,000 a year, and nothing stops
+ * it except a manager clearing the pay.
+ *
+ * The safeguards are the honest ones, and they are the ones that were already
+ * here — no invented ceiling, no second approval gate nobody asked for:
+ *
+ *   - the NUMBER IS ON SCREEN BEFORE ANYONE SAVES. recurringCompExposure states
+ *     the per-occurrence amount, how often it fires, the monthly cost AND the
+ *     yearly cost, and the task editor shows that sentence above the save
+ *     button. $18,000 a year belongs in front of the person ticking the box,
+ *     not in a comment in this file;
+ *   - EVERY occurrence is still one request, filed PENDING, that a human
+ *     approves individually (rule 8). The series commits asks, not payments;
+ *   - and each occurrence still pays AT MOST ONCE (rule 5), because every
+ *     occurrence is its own clr_tasks row and comp_requests.task_comp_task_id
+ *     is UNIQUE. "Pays every month" never becomes "pays twice this month".
  */
-export const TASK_COMP_RECURRING_MODE: "this-occurrence-only" = "this-occurrence-only";
+export const TASK_COMP_RECURRING_MODE: "every-occurrence" = "every-occurrence";
 
 /**
  * Whether the recurrence engine copies the amount onto the next occurrence.
- * False, and it is the mechanism behind TASK_COMP_RECURRING_MODE: an unpaid
- * successor is unpaid because the column was never copied, not because some
- * later check remembered to skip it.
+ * True, and it is the MECHANISM behind TASK_COMP_RECURRING_MODE: the successor
+ * pays because spawnNextTaskOccurrence writes the comp columns onto it, not
+ * because some later check remembered to charge for it.
+ *
+ * Its INSERT names every column explicitly, so this is not automatic and cannot
+ * be left to inheritance — a column dropped from that list is a series that
+ * silently stops paying after its first occurrence, with nothing anywhere
+ * saying so. tests/clr-tasks.test.ts pins the list for exactly that reason.
  */
-export const TASK_COMP_SPAWN_COPIES_AMOUNT = false;
+export const TASK_COMP_SPAWN_COPIES_AMOUNT = true;
 
 /**
  * Recurrences that repeat at all — anything but "none".
@@ -585,6 +633,17 @@ export function taskRecurs(recurrence: unknown): boolean {
 
 /** Weeks in a month. Deliberately rough, and used for every weekly-ish schedule. */
 const WEEKS_PER_MONTH = 4;
+
+/**
+ * Months in a year, and the ONLY way the yearly figure is reached.
+ *
+ * The yearly number is deliberately the monthly number times twelve rather than
+ * a second table of per-year rates. A manager reading "about $1,500.00 a month
+ * and about $18,000.00 a year" can check that arithmetic in their head, and two
+ * independently-derived figures that do not multiply out look like a bug in the
+ * warning — which is exactly the reaction that teaches people to skim it.
+ */
+const MONTHS_PER_YEAR = 12;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -641,64 +700,86 @@ export function occurrencesPerMonth(recurrence: unknown, scheduleDays?: unknown)
 
 export interface RecurringExposure {
   recurs: boolean;
-  /** False when C3 does not recognise the schedule — then both numbers are null. */
+  /** False when C3 does not recognise the schedule — then every number is null. */
   known: boolean;
   /** Null — never 0 — when the schedule is not recognised. */
   perMonth: number | null;
   /** Null — never 0 — when the schedule is not recognised. */
   monthlyCents: number | null;
+  /** perMonth × 12. Null — never 0 — when the schedule is not recognised. */
+  perYear: number | null;
+  /** monthlyCents × 12. Null — never 0 — when the schedule is not recognised. */
+  yearlyCents: number | null;
   /** The sentence to show the manager BEFORE they save. Empty when not recurring. */
   warning: string;
+  /**
+   * The shorter sentence that goes on EACH filed request, for the approver
+   * looking at one occurrence of a series. Empty when not recurring.
+   */
+  requestWarning: string;
+}
+
+/** "1 occurrence", "12 occurrences" — the grammar the old sentence got wrong. */
+function occurrenceCount(n: number): string {
+  return `${String(n)} occurrence${n === 1 ? "" : "s"}`;
 }
 
 /**
- * What a repeating paid task commits the CLR to, said in the terms of the mode
- * that is ACTUALLY in force.
+ * What a repeating paid task commits the CLR to, in the terms of the mode that
+ * is ACTUALLY in force — which is now "every occurrence pays".
  *
- * Under "this-occurrence-only" — today's default — attaching $50 to a daily task
- * commits $50, once. The old wording announced "about $1,500.00 a month" on
- * every one of those requests, which was false, and false in the direction that
- * teaches an approver to skim the next warning too. The monthly figure is still
- * computed and returned for a UI that wants to show the scale, but the sentence
- * a human reads leads with what is actually being committed.
+ * This sentence is the safeguard. TASK_COMP_RECURRING_MODE means one checkbox
+ * commits money for as long as the series runs, and the only thing standing
+ * between a manager and that commitment is knowing the size of it while they can
+ * still change their mind. So the warning says all five things a person needs
+ * and none of them is left as an exercise: that EVERY occurrence pays, what one
+ * occurrence costs, how often it fires, what that is a month, and what it is a
+ * YEAR. A monthly $5 comes out at $60 a year and nobody blinks; a daily $50
+ * comes out at about $18,000 a year, and that number belongs on screen before
+ * the save, not in a code comment afterwards.
+ *
+ * Two sentences, because there are two readers. `warning` is for the manager
+ * about to save, and it says what they are committing to. `requestWarning` is
+ * for the approver holding ONE filed request months later, and it says that
+ * this is one occurrence of a paying series rather than the whole of it — it is
+ * also the shorter of the two, because it is clamped into the request note.
  */
 export function recurringCompExposure(recurrence: unknown, amountCents: number, scheduleDays?: unknown): RecurringExposure {
   const recurs = taskRecurs(recurrence);
   const amount = Math.max(0, roundCents(amountCents));
-  if (!recurs) return { recurs: false, known: true, perMonth: 0, monthlyCents: 0, warning: "" };
+  if (!recurs) {
+    return { recurs: false, known: true, perMonth: 0, monthlyCents: 0, perYear: 0, yearlyCents: 0, warning: "", requestWarning: "" };
+  }
 
   const perMonth = occurrencesPerMonth(recurrence, scheduleDays);
   const known = perMonth !== null;
   const monthlyCents = perMonth === null ? null : roundCents(perMonth * amount);
+  const perYear = perMonth === null ? null : perMonth * MONTHS_PER_YEAR;
+  const yearlyCents = monthlyCents === null ? null : roundCents(monthlyCents * MONTHS_PER_YEAR);
   const raw = String(recurrence ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
   const days = normalizeTaskCompScheduleDays(scheduleDays);
   const label = raw.toLowerCase() === "custom_weekly" && days.length
     ? `${raw} (${days.map((d) => WEEKDAY_LABELS[d]).join(", ")})`
     : raw;
   const money = formatMoneyCents(amount);
-  const unknownTail = ` C3 does not recognise the schedule "${label}", so it CANNOT say how often this repeats — treat the monthly exposure as UNKNOWN and work it out by hand before saving.`;
-
-  // Typed as boolean deliberately: TASK_COMP_RECURRING_MODE is a literal type,
-  // and comparing it against the other value directly is a compile error, which
-  // would leave the "every-occurrence" wording unwritten until the day somebody
-  // flips the constant and ships the wrong sentence with it.
-  const thisOccurrenceOnly: boolean = TASK_COMP_RECURRING_MODE === "this-occurrence-only";
+  const unknownTail = ` C3 does not recognise the schedule "${label}", so it CANNOT say how often this repeats — treat the monthly and yearly exposure as UNKNOWN and work it out by hand before saving.`;
 
   let warning: string;
-  if (thisOccurrenceOnly) {
-    warning = `This task repeats ${label}, but ONLY THIS occurrence pays ${money}. The amount is not copied onto the next occurrence, so what you are attaching is ${money} once — not ${money} every time. Any later occurrence a manager wants paid needs pay attached to it again.`;
-    if (perMonth !== null && monthlyCents !== null && perMonth > 0) {
-      warning += ` (For scale only, if that default were ever changed: about ${String(perMonth)} occurrences a month would be ${formatMoneyCents(monthlyCents)}.)`;
-    } else if (perMonth === null) {
-      warning += unknownTail;
-    }
-  } else if (perMonth !== null && monthlyCents !== null) {
-    warning = `This task repeats ${label} and EVERY occurrence pays ${money} — about ${String(perMonth)} times a month, roughly ${formatMoneyCents(monthlyCents)} a month, with no ceiling.`;
+  let requestWarning: string;
+  if (perMonth !== null && monthlyCents !== null && yearlyCents !== null) {
+    warning = `This task repeats ${label} and EVERY occurrence pays ${money}, not only this one.`
+      + ` That is ${money} per occurrence, about ${occurrenceCount(perMonth)} a month:`
+      + ` about ${formatMoneyCents(monthlyCents)} a month and about ${formatMoneyCents(yearlyCents)} a year,`
+      + ` for as long as this task keeps repeating. Each one is filed as its own request for a human to approve.`
+      + ` Clear the pay to stop it.`;
+    requestWarning = `This task repeats ${label} and EVERY occurrence pays ${money} — about ${occurrenceCount(perMonth)} a month,`
+      + ` about ${formatMoneyCents(monthlyCents)} a month and ${formatMoneyCents(yearlyCents)} a year. This request is one of them.`;
   } else {
-    warning = `This task repeats ${label} and EVERY occurrence pays ${money}.${unknownTail}`;
+    warning = `This task repeats ${label} and EVERY occurrence pays ${money}, not only this one — for as long as this task keeps repeating.${unknownTail}`;
+    requestWarning = `This task repeats ${label} and EVERY occurrence pays ${money}. This request is one of them, and C3 cannot say how many more there will be.`;
   }
 
-  return { recurs: true, known, perMonth, monthlyCents, warning };
+  return { recurs: true, known, perMonth, monthlyCents, perYear, yearlyCents, warning, requestWarning };
 }
 
 // ── attaching / changing the amount ─────────────────────────────────────────
@@ -961,7 +1042,11 @@ const REASON_IN_DESCRIPTION = 90;
 const TITLE_IN_NOTE = 70;
 const NAME_IN_NOTE = 40;
 const STAMP_IN_NOTE = 32;
-const WARNING_IN_NOTE = 180;
+// Wide enough to hold recurringCompExposure().requestWarning whole, including
+// the longest label (a custom_weekly naming every weekday) and the largest
+// amount the cap allows. A recurring-pay warning that is cut off mid-number is
+// worse than useless to the approver reading it: "about $1,10…" is not a fact.
+const WARNING_IN_NOTE = 240;
 const NOTE_TRUNCATED_LINE = "… (note truncated — the rest is on the task and in the audit log)";
 
 /**
@@ -1256,8 +1341,12 @@ export function planTaskCompFiling(input: {
   if (setFor && setFor !== payeeUserId) {
     warnings.push(`This task was reassigned after the pay was attached — it was set for user #${setFor} and is being paid to user #${payeeUserId}.`);
   }
+  // RULE 6. Every occurrence of a repeating task pays, so the approver holding
+  // ONE of these must be told it is one of a series and roughly how big that
+  // series is — otherwise "$5.00, fine" is approved twelve times a year by
+  // twelve people who each thought they were looking at the only one.
   if (taskRecurs(task?.recurrence)) {
-    warnings.push(recurringCompExposure(task?.recurrence, amount.amountCents, task?.scheduleDays).warning);
+    warnings.push(recurringCompExposure(task?.recurrence, amount.amountCents, task?.scheduleDays).requestWarning);
   }
 
   return {

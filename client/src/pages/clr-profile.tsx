@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { PERIODS, LONG_PERIODS, fmtStartDate, fmtTenure, effectiveStart } from "./clr-profiles";
 import { TRAINING_DAY_RATES, trainingAmountCents, type TrainingRate } from "@shared/training-comp";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 /** How a pinned note is drawn. Warnings and PIPs must not look like context. */
 const NOTE_STYLES = {
@@ -43,7 +44,8 @@ const DAILY_SERIES = [
   { key: "dialpadCalls" as const, label: "Dialpad calls", color: "hsl(199 89% 48%)", format: (v: number) => `${v}` },
   { key: "callToolsCalls" as const, label: "CallTools calls", color: "hsl(258 90% 66%)", format: (v: number) => `${v}` },
   { key: "conversations" as const, label: "Conversations", color: "hsl(43 96% 46%)", format: (v: number) => `${v}` },
-  { key: "transfers" as const, label: "Transfers", color: "hsl(142 71% 45%)", format: (v: number) => `${v}` },
+  // Transfer CREDIT — half a transfer each on a shotgun lead, so never rounded.
+  { key: "transfers" as const, label: "Transfers", color: "hsl(142 71% 45%)", format: (v: number) => formatTransferCount(v) },
   { key: "appointments" as const, label: "Appointments", color: "hsl(280 65% 60%)", format: (v: number) => `${v}` },
 ];
 type DailySeriesKey = (typeof DAILY_SERIES)[number]["key"];
@@ -406,8 +408,8 @@ export default function ClrProfile() {
 
           {/* Headline production */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Stat icon={PhoneForwarded} label="Transfers" value={m!.transfers}
-                  sub={`${m!.transfersDirect} direct · ${m!.transfersAppointment} appt`} />
+            <Stat icon={PhoneForwarded} label="Transfers" value={formatTransferCount(m!.transfers)}
+                  sub={`${formatTransferCount(m!.transfersDirect)} direct · ${formatTransferCount(m!.transfersAppointment)} appt`} />
             <Stat icon={PhoneCall} label="Calls" value={m!.calls.toLocaleString()}
                   sub={`${m!.daysWithCalls} day${m!.daysWithCalls === 1 ? "" : "s"} logged`} />
             <Stat icon={Percent} label="Transfer ratio" value={`${m!.transferRate}%`} sub="transfers ÷ calls" />
@@ -426,7 +428,7 @@ export default function ClrProfile() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                  <Stat icon={PhoneForwarded} label="Transfers (all time)" value={data.lifetime.totals.transfers.toLocaleString()}
+                  <Stat icon={PhoneForwarded} label="Transfers (all time)" value={formatTransferCount(data.lifetime.totals.transfers)}
                         sub={`${data.lifetime.rates.transfersPerDay} per active day`} />
                   {/* The fair rate: only normal working days count — the first
                       20 training days and any trainer days are excluded from

@@ -391,6 +391,11 @@ export interface RecipientRow extends StarvedRow {
    * Transfers received across the WHOLE window — the figure the TV's Starved
    * page shows. Per-transfer scoring walks backwards from it; see
    * `snapshotLoads`. Read on a loan officer, and only on a loan officer.
+   *
+   * A COUNT, and unaffected by the shotgun split. The split shares one transfer
+   * between two CLRs; the loan officer at the other end received one lead
+   * either way, and how starved he is cannot depend on who is being paid for
+   * sending it.
    */
   transfers: number;
   /**
@@ -402,9 +407,42 @@ export interface RecipientRow extends StarvedRow {
   receiving: boolean;
 }
 
-/** One transfer, reduced to who made it, where it went, and when. */
+/**
+ * One transfer, reduced to who made it, where it went, and when.
+ *
+ * ── WHY THE SHOTGUN SPLIT DOES NOT REACH THIS FILE ─────────────────────────
+ *
+ * Everywhere else in C3 a transfer that came off a shotgun lead counts HALF for
+ * the CLR who published it and half for the one who claimed it — the wall, the
+ * goals, the tiers, the pay (shared/transfer-credit.ts). This stat is the one
+ * place that split is deliberately NOT applied, and the reason is what the stat
+ * measures.
+ *
+ * It is not a tally of work done. It is a JUDGEMENT ON A DECISION: given the
+ * loan officers this lead could legitimately have gone to, how starved was the
+ * one it was sent to? Exactly one person made that decision — the CLR who made
+ * the transfer. The publisher put the lead on the shotgun; they did not pick
+ * the desk, and on a lead somebody else claimed hours later they could not
+ * have. Splitting the row would score half of a placement onto a person who
+ * made no placement, which is the same mistake this file already refuses
+ * elsewhere (see `unplacedValuedAt`: a CLR's score must never move on somebody
+ * else's choices).
+ *
+ * So one transfer stays one row, credited to `clrId`, and the score stays a
+ * mean over the decisions a CLR actually made. `scored` and MIN_SCORED_TRANSFERS
+ * are sample sizes for that mean — how much evidence there is — and halving a
+ * sample would only make a coin toss look like a verdict sooner.
+ *
+ * The consequence is stated rather than hidden: on a dashboard row the Placed
+ * column's sample can be a whole number while the Transfers column beside it
+ * reads 4.5. They are counting different things — one counts decisions made,
+ * the other counts credit earned — and that is why.
+ */
 export interface TransferRow {
-  /** The CLR who made the transfer (lead_outcomes.assistant_id). */
+  /**
+   * The CLR who made the transfer (lead_outcomes.assistant_id) — the one who
+   * CHOSE the destination. Never the shotgun publisher; see the note above.
+   */
   clrId: number | string;
   clrName?: string | null;
   /**
@@ -504,7 +542,14 @@ export interface RecipientCredit {
 export interface ClrPriorityScore {
   clrId: number | string;
   name: string;
-  /** Transfers made in the window. */
+  /**
+   * Transfers this CLR MADE in the window — placement decisions, counted whole.
+   *
+   * Deliberately not transfer credit, and so deliberately not the same number
+   * as the Transfers column beside it on the dashboard, which is credit and can
+   * read 4.5. This one is the denominator of a mean over decisions; see the
+   * note on TransferRow for why a shotgun lead's publisher is not in it.
+   */
   transfers: number;
   /** How many landed on a destination this rule could read. */
   scored: number;

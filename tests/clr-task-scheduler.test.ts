@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt } from "../server/clr-task-scheduler";
+import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "../server/clr-task-scheduler";
 
 function dbWithTask(recurrence: string, dueAt: string, scheduleDays = "[]") {
   const db = new DatabaseSync(":memory:");
@@ -32,7 +32,12 @@ function dbWithTask(recurrence: string, dueAt: string, scheduleDays = "[]") {
     series_id INTEGER,
     spawned_next_task_id INTEGER,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    comp_amount_cents INTEGER,
+    comp_reason TEXT,
+    comp_set_by_user_id INTEGER,
+    comp_set_at TEXT,
+    comp_set_for_user_id INTEGER
   );
   CREATE UNIQUE INDEX idx_series_due ON clr_tasks(series_id,due_at) WHERE series_id IS NOT NULL;`);
   db.prepare(`INSERT INTO clr_tasks
@@ -94,6 +99,31 @@ test("an org-scoped task read never advances another organization's series", () 
   assert.deepEqual(counts.map((row) => [Number(row.org_id), Number(row.count)]), [[1, 3], [2, 1]]);
 });
 
+test("a paid series carries its pay onto every successor, and its audit trail unchanged", () => {
+  // TASK_COMP_RECURRING_MODE is "every-occurrence": pay attached to a repeating
+  // task belongs to the SERIES, and this INSERT is the only thing that makes
+  // that true. Values are not all treated alike — who authorised the money and
+  // when are copied verbatim, because that is the audit trail behind every
+  // payment the series makes; who the pay is FOR follows the assignee that row actually has.
+  const db = dbWithTask("monthly", "2026-08-21T17:00:00.000Z");
+  db.prepare(`UPDATE clr_tasks SET comp_amount_cents=500,comp_reason=?,comp_set_by_user_id=9,comp_set_at=?,comp_set_for_user_id=10 WHERE id=1`)
+    .run("Monthly pipeline scrub", "2026-08-01T15:00:00.000Z");
+  const child = spawnNextTaskOccurrence(db as any, 1) as any;
+  assert.ok(child);
+  assert.equal(Number(child.comp_amount_cents), 500, "the successor pays too, or the series pays once");
+  assert.equal(String(child.comp_reason), "Monthly pipeline scrub");
+  assert.equal(Number(child.comp_set_by_user_id), 9, "still the manager who authorised it, not the scheduler");
+  assert.equal(String(child.comp_set_at), "2026-08-01T15:00:00.000Z", "and not restamped to the spawn");
+  assert.equal(Number(child.comp_set_for_user_id), Number(child.assigned_user_id), "the pay on this row is for the person holding this row");
+});
+
+test("an unpaid series stays unpaid — the comp columns move together or not at all", () => {
+  const db = dbWithTask("monthly", "2026-08-21T17:00:00.000Z");
+  const child = spawnNextTaskOccurrence(db as any, 1) as any;
+  for (const column of ["comp_amount_cents", "comp_reason", "comp_set_by_user_id", "comp_set_at", "comp_set_for_user_id"]) {
+    assert.equal(child[column] ?? null, null, `${column} must not appear from nowhere`);
+  }
+});
 test("weekly recurrences keep the assignee's local time across daylight saving", () => {
   assert.equal(nextTaskOccurrenceForRow({
     due_at: "2026-10-31T00:00:00.000Z", // Fri Oct 30, 5:00 PM PDT

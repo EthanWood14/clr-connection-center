@@ -29,6 +29,7 @@ import { copyToClipboard } from "@/lib/utils";
 import ManagerDashboard from "./manager-dashboard";
 import { businessTodayClient } from "@/lib/business-day";
 import { shiftWeekendBucketsToMonday } from "@/lib/weekday-date";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const COLORS = ["#01696f","#437a22","#964219","#a12c7b","#006494","#d19900","#7a39bb","#da7101","#a13544"];
@@ -113,7 +114,7 @@ function GoalStripe() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-medium">{r.label}</span>
                   <span className={met ? "text-green-600 font-semibold" : "text-muted-foreground"}>
-                    {r.cur} / {r.goal} ({pct}%){met ? " ✓" : ""}
+                    {formatTransferCount(r.cur)} / {r.goal} ({pct}%){met ? " ✓" : ""}
                   </span>
                 </div>
                 <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
@@ -122,7 +123,7 @@ function GoalStripe() {
                 {r.key === "appointments" && (
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground pt-0.5">
                     <span>Appointments: <span className="font-semibold text-foreground tabular-nums">{wtd.appointments ?? 0}</span></span>
-                    <span>Transfers: <span className="font-semibold text-foreground tabular-nums">{wtd.transfers ?? 0}</span></span>
+                    <span>Transfers: <span className="font-semibold text-foreground tabular-nums">{formatTransferCount(wtd.transfers ?? 0)}</span></span>
                     <span>Fell Throughs: <span className="font-semibold text-foreground tabular-nums">{wtd.fellThrough ?? 0}</span></span>
                   </div>
                 )}
@@ -1130,7 +1131,8 @@ function ClrDashboard() {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard title="Transfers" value={displayStats?.transfers} icon={ArrowUpRight} color="success" accent="green" sub={subLabel} href="/outcomes" />
+            {/* Credit, so a shotgun transfer reads as the half it is worth. */}
+            <StatCard title="Transfers" value={displayStats?.transfers == null ? undefined : formatTransferCount(displayStats.transfers)} icon={ArrowUpRight} color="success" accent="green" sub={subLabel} href="/outcomes" />
             <StatCard
               title="Upcoming Appointments"
               value={displayStats?.upcomingAppointments ?? 0}

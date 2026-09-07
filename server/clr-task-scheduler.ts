@@ -53,6 +53,25 @@ export function nextTaskOccurrenceForRow(row: any): string | null {
  * Every occurrence remains its own row, so a missed Monday does not disappear
  * when Tuesday arrives. The guarded parent pointer and series/deadline index
  * make this safe when a completion and the minute scheduler race each other.
+ *
+ * THE PAY TRAVELS (server/task-comp.ts, TASK_COMP_SPAWN_COPIES_AMOUNT). Pay put
+ * on a repeating task belongs to the SERIES: every occurrence carries the
+ * amount and every completed occurrence files its own comp request. That is
+ * only true because the five comp columns are named in the INSERT below — it
+ * lists its columns explicitly, so a column left out here is a series that
+ * quietly stops paying after its first occurrence and says so nowhere.
+ *
+ * Which value each column gets is NOT uniform, and the difference is the audit
+ * trail: comp_set_by_user_id and comp_set_at are copied UNCHANGED, because they
+ * name the manager who authorised this money and the moment they did it, and
+ * that authorisation stands behind every payment the series makes. Restamping
+ * them here would credit the scheduler with a decision a person made.
+ * comp_set_for_user_id, by contrast, is written as the SUCCESSOR's own
+ * assignee, because it means "who the pay on this row was set for" — copying
+ * the parent's stale value would make a reassigned series warn "reassigned
+ * after the pay was attached" on every occurrence, forever.
+ *
+ * A successor that carries no pay carries none of the five.
  */
 export function spawnNextTaskOccurrence(db: TaskDb, taskId: number): any | null {
   return db.transaction(() => {
@@ -64,15 +83,26 @@ export function spawnNextTaskOccurrence(db: TaskDb, taskId: number): any | null 
     const seriesId = Number(task.series_id ?? task.id);
     let childId: number;
     try {
+      // Null means "this task pays nothing", so the five comp columns move
+      // together: never a reason without an amount, never an amount whose
+      // authorising manager has been lost.
+      const pays = task.comp_amount_cents != null;
       const created = db.prepare(`INSERT INTO clr_tasks
-        (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,series_id,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?,?)`).run(
+        (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,series_id,created_at,updated_at,comp_amount_cents,comp_reason,comp_set_by_user_id,comp_set_at,comp_set_for_user_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?,?)`).run(
           task.org_id, task.title, task.description, task.assigned_user_id,
           task.created_by_user_id, task.priority, task.recurrence,
           // The successor inherits a zone that has been through the same check,
           // so one bad row cannot seed a whole series of them.
           task.schedule_days ?? "[]", normalizeTimezone(task.recurrence_timezone),
           nextDue, seriesId, now, now,
+          pays ? task.comp_amount_cents : null,
+          pays ? (task.comp_reason ?? null) : null,
+          // Unchanged: WHO authorised the money, and WHEN. Not the spawn.
+          pays ? (task.comp_set_by_user_id ?? null) : null,
+          pays ? (task.comp_set_at ?? null) : null,
+          // This row's own assignee — the person this occurrence's pay is for.
+          pays ? task.assigned_user_id : null,
         );
       childId = Number(created.lastInsertRowid);
     } catch (error: any) {

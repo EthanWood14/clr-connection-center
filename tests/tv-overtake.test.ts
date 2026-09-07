@@ -161,3 +161,19 @@ test("the key is stable across identical polls, and changes with the day", () =>
   );
   assert.equal(odd[0].key, "overtake-2026-09-02-1-mary-jo-o-brien-7");
 });
+
+// ── credit, not rows ────────────────────────────────────────────────────────
+test("an overtake is decided on credit, and its key survives a half", () => {
+  // detectOvertakes compares numbers and never rounds, so a CLR who climbs from
+  // 3 to 3.5 has genuinely scored and genuinely passed a 3.
+  const moves = detectOvertakes(
+    [{ id: 1, name: "Ana", transfersToday: 3 }, { id: 2, name: "Ben", transfersToday: 3 }],
+    [{ id: 2, name: "Ben", transfersToday: 3.5 }, { id: 1, name: "Ana", transfersToday: 3 }],
+    "2026-09-07",
+  );
+  assert.equal(moves.length, 1);
+  assert.equal(moves[0].passerName, "Ben");
+  assert.equal(moves[0].passedName, "Ana");
+  assert.equal(moves[0].count, 3.5);
+  assert.match(moves[0].key, /-3\.5$/, "the key carries the exact credit, so it plays once");
+});

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { formatTransferCount, transferCreditByUser } from "@shared/transfer-credit";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -236,11 +237,27 @@ export default function Reporting() {
       };
     }
     clrStats[id].total++;
-    if (o.outcomeType === "transfer") clrStats[id].transfer++;
-    else if (o.outcomeType === "appointment") clrStats[id].appointment++;
+    if (o.outcomeType === "appointment") clrStats[id].appointment++;
     else if (o.outcomeType === "fell_through") clrStats[id].fell_through++;
 
   });
+  // Transfers are credit, not rows. A shotgun transfer is half the publisher's
+  // and half the claimer's, and the publisher's half sits on a row carrying
+  // somebody ELSE's assistantId — so it has to be summed over every outcome in
+  // the window rather than counted inside the per-person loop above. Counting
+  // rows here made this the one board that disagreed with people's pay.
+  {
+    const credit = transferCreditByUser(filtered);
+    credit.forEach((amount, id) => {
+      if (!clrStats[id]) {
+        clrStats[id] = {
+          name: userMap[id] ?? `CLR #${id}`,
+          transfer: 0, appointment: 0, fell_through: 0, total: 0,
+        };
+      }
+      clrStats[id].transfer = amount;
+    });
+  }
   const clrRows = Object.values(clrStats).sort((a, b) => b.transfer - a.transfer);
 
   // ── per-LO breakdown ──
@@ -578,8 +595,8 @@ export default function Reporting() {
                 {clrRows.map((row) => (
                   <TableRow key={row.name}>
                     <TableCell className="font-medium">{row.name}</TableCell>
-                    <TableCell className="text-right font-mono text-sm text-primary font-semibold">
-                      {row.transfer}
+                    <TableCell className="text-right font-mono text-sm text-primary font-semibold" data-testid="reporting-clr-transfers">
+                      {formatTransferCount(row.transfer)}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
                       {row.appointment}

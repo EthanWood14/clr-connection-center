@@ -93,3 +93,60 @@ test("empty input is quiet, not a crash", () => {
   assert.equal(r.ratePerWorkingDay, null);
   assert.equal(r.graduated, false);
 });
+
+// ── transfer credit ─────────────────────────────────────────────────────────
+//
+// The numerator is CREDIT, not a row count: a transfer off a shotgun lead is
+// half a transfer for the CLR who published it and half for the one who
+// claimed it. See shared/transfer-credit.ts.
+
+test("a shared transfer contributes half to the rate, not a whole one", () => {
+  const r = transfersPerWorkingDay({
+    activeDates: days(28),
+    trainerDates: new Set(),
+    transferDates: [{ date: "2026-06-22", credit: 0.5 }],
+    threshold: 20,
+  });
+  assert.equal(r.workingDays, 8);
+  assert.equal(r.transfers, 0.5);
+  assert.equal(r.ratePerWorkingDay, Number((0.5 / 8).toFixed(2)));
+});
+
+test("a bare date is still one whole transfer", () => {
+  const weighted = transfersPerWorkingDay({
+    activeDates: days(28), trainerDates: new Set(),
+    transferDates: [{ date: "2026-06-22" }], threshold: 20,
+  });
+  const bare = transfersPerWorkingDay({
+    activeDates: days(28), trainerDates: new Set(),
+    transferDates: ["2026-06-22"], threshold: 20,
+  });
+  assert.equal(bare.transfers, 1);
+  assert.equal(weighted.transfers, 1, "a weighted entry with no credit named means one whole transfer");
+});
+
+test("halves that add to a whole stay exact, and a trainer day still drops its half", () => {
+  const r = transfersPerWorkingDay({
+    activeDates: days(28),
+    trainerDates: new Set(["2026-06-23"]),
+    transferDates: [
+      { date: "2026-06-22", credit: 0.5 },
+      { date: "2026-06-24", credit: 0.5 },
+      { date: "2026-06-23", credit: 0.5 }, // trainer day: out of both sides
+    ],
+    threshold: 20,
+  });
+  assert.equal(r.trainerDays, 1);
+  assert.equal(r.workingDays, 7);
+  assert.equal(r.transfers, 1, "0.5 + 0.5 is exactly 1, and the trainer day's half is excluded");
+});
+
+test("a long month of halves does not drift on floating-point addition", () => {
+  const r = transfersPerWorkingDay({
+    activeDates: days(28),
+    trainerDates: new Set(),
+    transferDates: Array.from({ length: 21 }, () => ({ date: "2026-06-22", credit: 0.5 })),
+    threshold: 20,
+  });
+  assert.equal(r.transfers, 10.5);
+});

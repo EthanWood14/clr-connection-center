@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { formatTransferCount } from "@shared/transfer-credit";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
   CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, Timer, Award, Laptop, BookOpen, Repeat,
@@ -290,7 +291,9 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
   // Flat $/transfer rate for this CLR (null = none). When set, comp auto-fills
   // to count × rate.
   const rateCents: number | null = data?.transferRateCents ?? null;
-  const useLabel = (p: any) => "Monthly transfer request — " + p.month + " (" + p.transfers + " transfer" + (p.transfers === 1 ? "" : "s") + (rateCents != null ? " @ " + money(rateCents) : "") + ")";
+  // formatTransferCount: a transfer off the shotgun is worth half to each CLR,
+  // so "4.5 transfers" is a real request and 4 or 5 would be the wrong money.
+  const useLabel = (p: any) => "Monthly transfer request — " + p.month + " (" + formatTransferCount(p.transfers) + " transfer" + (p.transfers === 1 ? "" : "s") + (rateCents != null ? " @ " + money(rateCents) : "") + ")";
   const plural = (n: number) => (n === 1 ? "" : "s");
   // Label whose transfers these are — when filing on behalf of another CLR the
   // numbers are THEIRS, not the viewer's, so don't call it "Your transfers".
@@ -307,7 +310,7 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
         <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
           <div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-3xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300" data-testid="prev-transfer-count">{prev?.transfers ?? 0}</span>
+              <span className="text-3xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300" data-testid="prev-transfer-count">{formatTransferCount(prev?.transfers ?? 0)}</span>
               <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300">in {prev?.month ?? "last month"}</span>
             </div>
             <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
@@ -316,7 +319,7 @@ function TransferStatsHint({ forUserId, forUserName, onUse }: { forUserId?: numb
             </div>
           </div>
           <div className="text-xs text-muted-foreground">
-            <span className="tabular-nums font-semibold text-foreground">{cur?.transfers ?? 0}</span> so far in {cur?.month ?? "this month"}
+            <span className="tabular-nums font-semibold text-foreground">{formatTransferCount(cur?.transfers ?? 0)}</span> so far in {cur?.month ?? "this month"}
             {rateCents != null && cur != null && <> · <span className="font-semibold text-foreground">{money(cur.amountCents ?? 0)}</span></>}
           </div>
         </div>

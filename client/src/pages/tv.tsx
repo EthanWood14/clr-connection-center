@@ -39,11 +39,14 @@ import {
 } from "@/components/tv/pages";
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 // ── types (mirror server/tv-board.ts) ───────────────────────────────────────
 type Kind = "transfer" | "appointment" | "rescheduled" | "fell_through" | "missed_appointment";
 interface TvEvent { id: string; kind: Kind; at: string; borrower: string; who: string; lo: string | null; detail: string | null }
 interface Person {
+  // Transfer CREDIT, in halves — see shared/transfer-credit.ts. Print it
+  // through CountUp or formatTransferCount, never Math.round.
   id: number; name: string; transfersToday: number; transfersWeek: number;
   appointmentsToday: number; appointmentsWeek: number; goalTransfersWeekly: number; goalAppointmentsWeekly: number;
   lastTransferAt?: string | null; lastCallAt?: string | null;
@@ -256,14 +259,19 @@ function CountUp({ value, className, from = 0 }: { value: number; className?: st
     const step = (t: number) => {
       const p = Math.min(1, (t - t0) / dur);
       const eased = 1 - Math.pow(1 - p, 3);
-      const v = Math.round(start + delta * eased);
+      // To the nearest HALF, not the nearest whole. Transfer figures are credit
+      // — a shotgun transfer is half for the CLR who published the lead and
+      // half for the one who claimed it — so 4.5 is a real number on this wall
+      // and rounding it to 5 would show a CLR a transfer they did not make.
+      // Every other value on the board is a whole number and is unaffected.
+      const v = Math.round((start + delta * eased) * 2) / 2;
       setShown(v); cur.current = v;
       if (p < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [value, reduced]);
-  return <span className={className}>{shown}</span>;
+  return <span className={className}>{formatTransferCount(shown)}</span>;
 }
 
 function timeAgo(iso: string, now: Date): string {
@@ -359,7 +367,7 @@ function ScorecardPage({ people, reduced, now, checkins, dwellMs }: {
               <div className="min-w-0">
                 <div className="flex items-baseline justify-between gap-4">
                   <span className="truncate text-[clamp(1.8rem,3vw,3.2rem)] font-bold leading-tight">{p.name}</span>
-                  <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] text-white/45">{p.transfersWeek} this week</span>
+                  <span className="shrink-0 text-[clamp(1rem,1.4vw,1.4rem)] text-white/45">{formatTransferCount(p.transfersWeek)} this week</span>
                 </div>
                 <div className="mt-2 h-5 overflow-hidden rounded-full bg-white/10">
                   <motion.div

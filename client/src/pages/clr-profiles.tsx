@@ -8,6 +8,7 @@ import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Users, CalendarDays, PhoneForwarded, PhoneCall, Percent, ChevronRight, ClipboardCheck, TrendingUp } from "lucide-react";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 export const PERIODS = [
   { value: "week", label: "This week" },
@@ -128,7 +129,11 @@ export default function ClrProfiles() {
 
               <div className="grid grid-cols-5 gap-2 mt-3 pt-3 border-t">
                 <div>
-                  <p className="text-lg font-bold tabular-nums leading-none">{c.metrics.transfers}</p>
+                  {/* CREDIT: a transfer off a shotgun lead is half for the CLR
+                      who published it and half for the one who claimed it, so a
+                      half must print as 4.5 rather than round to a whole. See
+                      shared/transfer-credit.ts. */}
+                  <p className="text-lg font-bold tabular-nums leading-none" data-testid="clr-list-transfers">{formatTransferCount(c.metrics.transfers)}</p>
                   <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-0.5"><PhoneForwarded className="w-2.5 h-2.5" /> Transfers</p>
                 </div>
                 <div>

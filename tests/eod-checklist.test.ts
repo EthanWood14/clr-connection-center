@@ -127,3 +127,59 @@ test("the retail Bonzo questions are ask-only, so No is not a failure", () => {
   assert.match(routes, /const anyNo = q\.some\(\(\[, v, askOnly\]\) => v === 0 && !askOnly\)/);
   assert.match(routes, /only when asked/);
 });
+
+// ── transfer credit on the EOD lane ─────────────────────────────────────────
+//
+// Four surfaces show one CLR their own day: the form, the history list, the
+// print sheet and the email. A transfer off a shotgun lead is half for the CLR
+// who published it and half for the one who claimed it, so all four have to
+// read CREDIT — and the publisher's half sits on a row carrying the claimer's
+// assistant_id, which no query filtered by name can reach.
+// See shared/transfer-credit.ts.
+
+test("the EOD email's Transfers cell reads credit, not the CLR's own rows", () => {
+  const email = routes.slice(
+    routes.indexOf("const xfers = Number(report?.transfers ?? transfers ?? 0);"),
+    routes.indexOf("const subject = `EOD Report:"),
+  );
+  assert.notEqual(email.length, 0, "the EOD email body must still be findable");
+  // The row loop must skip transfers rather than counting them...
+  assert.match(email, /if \(t !== "transfer" && t in outcomeCounts\)/);
+  // ...and the cell is filled from the credit expansion instead.
+  assert.match(email, /outcomeCounts\.transfer = storageExtra\.getTransferCreditForUser\(/);
+  // Printed through the shared formatter, so half a transfer shows as 0.5.
+  assert.match(email, /\$\{formatTransferCount\(outcomeCounts\.transfer\)\}/);
+  assert.match(email, /const xfersLabel = formatTransferCount\(xfers\);/);
+});
+
+test("the EOD email's total is still a count of the rows that CLR filed", () => {
+  // It covers outcome types with no column of their own, so it was never the
+  // sum of the cells beside it and must not be turned into one.
+  assert.match(routes, /outcomeCounts\.total \+= 1;/);
+});
+
+test("the EOD form seeds transfers from credit and shows the half", () => {
+  assert.match(form, /transferCreditIn\(dayAllOutcomes, user\?\.id \?\? 0\)/);
+  assert.match(form, /value=\{formatTransferCount\(autoTransfers\)\}/);
+  // The value that is filed is the credit, unrounded.
+  assert.match(form, /transfers:\s+autoTransfers,/);
+  // The submit route does not trust the browser's figure at all: it recomputes
+  // credit for that date, because a partner's shotgun claim can land after the
+  // form was loaded and the filed number is what three manager surfaces read
+  // forever.
+  assert.match(routes, /transfers: storageExtra\.getTransferCreditForUser\(Number\(userId\), \{/);
+  assert.doesNotMatch(routes, /transfers: Number\(transfers \?\? 0\),/);
+  // And the email prints what was stored, so its two transfer figures agree.
+  assert.match(routes, /const xfers = Number\(report\?\.transfers \?\? transfers \?\? 0\);/);
+});
+
+test("both EOD read endpoints hand back credit for the Transfers breakdown", () => {
+  const credited = routes.match(/outcomeBreakdown\.transfer = storageExtra\.getTransferCreditForUser\(/g) ?? [];
+  assert.equal(credited.length, 2, "the history list and the single-report print view");
+  // Both GROUP BY reads that feed them leave transfers out on purpose, so a
+  // row count can never overwrite the credit that is filled in afterwards.
+  const grouped = routes.match(/GROUP BY outcome_type/g) ?? [];
+  const excluded = routes.match(/WHERE assistant_id=\? AND date=\? AND outcome_type <> 'transfer'/g) ?? [];
+  assert.equal(excluded.length, 2);
+  assert.ok(grouped.length >= 2);
+});

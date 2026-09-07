@@ -62,3 +62,23 @@ test("trainees remain visible but do not enter the rolling team average", () => 
   assert.match(average, /if \(s\.inTraining\) \{ teamTrainingExcluded\+\+; continue; \}/);
   assert.match(manager, /In-training CLRs stay visible but are excluded from that average/);
 });
+
+// ── transfer credit on the same surfaces ────────────────────────────────────
+test("every CLR stats surface prints transfer counts through the shared formatter", () => {
+  // A transfer off a shotgun lead is half for the CLR who published it and half
+  // for the one who claimed it, so a per-CLR figure is a multiple of 0.5 and
+  // "4.5" must reach the screen intact. See shared/transfer-credit.ts.
+  for (const [label, source] of [
+    ["team stats", stats],
+    ["manager stats", manager],
+    ["CLR profile list", profiles],
+    ["CLR profile", profile],
+  ] as const) {
+    assert.match(source, /formatTransferCount/, `${label} must not render a raw transfer count`);
+  }
+});
+
+test("the team-stats per-CLR table and its goal column both format the credit", () => {
+  assert.match(stats, /data-testid="team-stats-clr-transfers">\{formatTransferCount\(row\.transfers\)\}/);
+  assert.match(stats, /\{formatTransferCount\(row\.transfers\)\}\/\{row\.transfersGoal\}/);
+});

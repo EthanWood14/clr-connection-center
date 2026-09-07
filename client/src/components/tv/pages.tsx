@@ -25,6 +25,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy } from "lucide-react";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 // ── local twins of the tv.tsx pieces ────────────────────────────────────────
 // Same look, same timings. tv.tsx does not export them, and a near-miss on a
@@ -56,14 +57,19 @@ function CountUp({ value, className, from = 0 }: { value: number; className?: st
     const step = (t: number) => {
       const p = Math.min(1, (t - t0) / dur);
       const eased = 1 - Math.pow(1 - p, 3);
-      const v = Math.round(start + delta * eased);
+      // To the nearest HALF, not the nearest whole. Transfer figures are credit
+      // — a shotgun transfer is half for the CLR who published the lead and
+      // half for the one who claimed it — so 4.5 is a real number on this wall
+      // and rounding it to 5 would show a CLR a transfer they did not make.
+      // Every other value on the board is a whole number and is unaffected.
+      const v = Math.round((start + delta * eased) * 2) / 2;
       setShown(v); cur.current = v;
       if (p < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [value, reduced]);
-  return <span className={className}>{shown}</span>;
+  return <span className={className}>{formatTransferCount(shown)}</span>;
 }
 
 // ── shared page furniture ───────────────────────────────────────────────────
@@ -292,6 +298,7 @@ function shortDay(date: string | null | undefined): string | null {
 }
 
 // ── transfers ───────────────────────────────────────────────────────────────
+/** `count` is transfer CREDIT — a multiple of 0.5. See shared/transfer-credit.ts. */
 export interface TvTransferPerson { id: number; name: string; count: number }
 /** Someone whose transfers are inside the team total but who is not on the list. */
 export interface TvExcluded { name: string; count: number }
@@ -321,7 +328,9 @@ export function TransfersPage({ window: win, people, team, excluded, reduced }: 
   // own, or the line asserts a total nobody in the room can account for.
   const hiddenNames = hidden.length === 1
     ? hidden[0].name
-    : nameList(hidden.map((e) => `${e.name} (${Number(e.count) || 0})`));
+    // formatTransferCount, because a hidden CLR's share can be a half and this
+    // line has to add up against the team number beside it.
+    : nameList(hidden.map((e) => `${e.name} (${formatTransferCount(Number(e.count) || 0)})`));
 
   return (
     <div className={PAGE} data-testid="tv-page-transfers">
@@ -361,7 +370,7 @@ export function TransfersPage({ window: win, people, team, excluded, reduced }: 
           <Eyebrow>The floor</Eyebrow>
           {hidden.length > 0 && hiddenTotal > 0 && (
             <p className="mt-2 text-[clamp(1.1rem,1.6vw,1.7rem)] leading-snug text-white/50" data-testid="tv-transfers-excluded">
-              {hiddenTotal} of these {hiddenTotal === 1 ? "is" : "are"} {hiddenNames}, who {hidden.length === 1 ? "is" : "are"} not listed
+              {formatTransferCount(hiddenTotal)} of these {hiddenTotal === 1 ? "is" : "are"} {hiddenNames}, who {hidden.length === 1 ? "is" : "are"} not listed
             </p>
           )}
         </div>

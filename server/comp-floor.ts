@@ -53,7 +53,8 @@
  *     between two CLRs who were off for different amounts of it.
  *
  *  4. Met means transfers >= adjusted floor. Exactly equal is MET: a floor is a
- *     minimum, and hitting it is hitting it.
+ *     minimum, and hitting it is hitting it. A full month's bar of exactly 75
+ *     is met by exactly 75 credit — including a 75 built entirely of halves.
  *
  * ── WHAT THIS DOES NOT DO ──────────────────────────────────────────────────
  *
@@ -66,11 +67,22 @@
  * ── ROUNDING, and why DOWN ─────────────────────────────────────────────────
  *
  * The exact floor is usually fractional (18 of 22 weekdays worked = 61.36
- * transfers) and transfers are whole numbers, so a whole-number bar has to be
- * chosen. It rounds DOWN, so the published bar is never HIGHER than the exact
- * proportional share. This affects pay; when the arithmetic has to give, it
- * gives in the CLR's favour. `adjustedFloorExact` carries the unrounded number
- * for anyone who wants to show the working.
+ * transfers), so a round bar has to be chosen. It rounds DOWN to a whole
+ * transfer, so the published bar is never HIGHER than the exact proportional
+ * share. This affects pay; when the arithmetic has to give, it gives in the
+ * CLR's favour. `adjustedFloorExact` carries the unrounded number for anyone
+ * who wants to show the working.
+ *
+ * The COUNT it is compared against is not rounded at all. Transfer counts are
+ * CREDIT now — a transfer off a shotgun lead is half for the CLR who published
+ * it and half for the one who claimed it (shared/transfer-credit.ts) — so they
+ * arrive in halves and are kept in halves. Truncating them here would take up
+ * to half a transfer off a real person's month for no reason, and could drop
+ * somebody who was over the bar to just under it.
+ *
+ * Rounding the BAR down to a whole while the count keeps its halves is
+ * deliberate, and it is the generous direction on both sides: 61.5 credit
+ * clears a 61.36 share, and so does a bar of 61.
  *
  * ── ERRING TOWARD "WORKED", and its one limit ──────────────────────────────
  *
@@ -100,7 +112,12 @@ import { businessTodayInTz, BUSINESS_DAY_DEFAULT_TZ, BUSINESS_DAY_ROLLOVER_HOUR 
 
 // ── the constants ───────────────────────────────────────────────────────────
 
-/** Ethan: "the minimum floor of 75". Transfers, for a full month of weekdays. */
+/**
+ * Ethan: "the minimum floor of 75". Transfers, for a full month of weekdays.
+ *
+ * Compared against transfer CREDIT, so it can be met on halves: 74.5 misses,
+ * 75 exactly meets it. See shared/transfer-credit.ts.
+ */
 export const FULL_MONTH_TRANSFER_FLOOR = 75;
 
 /** Halves and every other fraction go DOWN — never round a pay bar upward. */
@@ -609,7 +626,11 @@ export function unionActiveDates(
 export interface ClrMonthActivity {
   userId: number;
   name?: string | null;
-  /** Transfers logged in the period — the number the floor is compared to. */
+  /**
+   * Transfer CREDIT logged in the period — the number the floor is compared to.
+   * A shotgun transfer is half for the publisher and half for the claimer, so
+   * this is a multiple of 0.5 and is NOT rounded on the way in.
+   */
   transfers: number;
   /**
    * Every date this CLR left a trace of being present, from every source the
@@ -662,7 +683,7 @@ export interface CompFloorOptions {
 export interface CompFloorRow {
   userId: number;
   name: string;
-  /** Transfers in the period, as given (coerced to a whole number >= 0). */
+  /** Transfer credit in the period, as given (coerced to a multiple of 0.5 >= 0). */
   transfers: number;
   /** The unpro-rated floor — 75 unless the caller overrode it. Always finite. */
   baseFloor: number;
@@ -692,7 +713,7 @@ export interface CompFloorRow {
   activeDatesAfterThrough: string[];
   /** transfers >= adjustedFloor. Exactly equal counts as met. */
   met: boolean;
-  /** How many transfers short they were; 0 when met. */
+  /** How much short they were, in credit — so it can be a half. 0 when met. */
   shortBy: number;
   /** No trace at all on any weekday of the month. Their floor is 0 — read the note. */
   noActivityAllMonth: boolean;
@@ -721,6 +742,20 @@ function wholeCount(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.trunc(n));
+}
+
+/**
+ * A transfer count as it actually comes: credit, in halves.
+ *
+ * Snapped to the nearest half rather than truncated, because every legal credit
+ * total IS a multiple of a half and floating-point addition of 0.5s can land a
+ * hair off one. Truncating instead would quietly dock half a transfer from
+ * every CLR who worked the shotgun.
+ */
+function creditCount(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n * 2) / 2);
 }
 
 /**
@@ -790,7 +825,7 @@ export function compFloorForClr(
   const baseFloor = base.baseFloor;
   const monthDays = monthWeekdays(period);
   const weekdaysInMonth = monthDays.length;
-  const transfers = wholeCount(clr?.transfers);
+  const transfers = creditCount(clr?.transfers);
   const name = String(clr?.name ?? "").trim() || `CLR #${Number(clr?.userId) || 0}`;
   const notes: string[] = [];
   if (base.note) notes.push(base.note);
@@ -881,7 +916,8 @@ export function compFloorForClr(
     offDates,
     activeDatesAfterThrough,
     met,
-    shortBy: Math.max(0, floor - transfers),
+    // In credit, so a CLR half a transfer under their bar is told so.
+    shortBy: Math.max(0, Math.round((floor - transfers) * 2) / 2),
     noActivityAllMonth,
     partialMonth,
     excludeFromStats: !!clr?.excludeFromStats,

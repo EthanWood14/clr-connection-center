@@ -637,7 +637,12 @@ test("the description carries the month, so the next run can read it back", () =
 // ────────────────────────────────────────────────────────────────────────────
 
 test("a CLR with zero transfers gets no request at all", () => {
-  assert.equal(AUTO_FILE_MIN_TRANSFERS, 1);
+  // HALF a transfer, not one. Counts are transfer CREDIT now — a shotgun
+  // transfer pays half to the CLR who published the lead and half to the one
+  // who claimed it — so half is the smallest count that can exist, and it is
+  // real money ($2.50 at the entry rate). A whole-number floor here would
+  // silently refuse to file for somebody whose month was all shotgun halves.
+  assert.equal(AUTO_FILE_MIN_TRANSFERS, 0.5);
   const stats = nineClrs({ writeUp: DESC, placement: DESC });
   stats.push({ userId: 10, name: "No transfers", transfers: 0, writeUpPct: null, placementScore: null });
   const plan = planTransferCompAutoFile({ period: "2026-10", today: "2026-11-02", stats, existing: [] });

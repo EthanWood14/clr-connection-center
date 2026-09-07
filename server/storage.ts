@@ -4,6 +4,7 @@ import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { applyW2OnlyExclusions } from "@shared/w2-only-states";
+import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
@@ -534,6 +535,13 @@ try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN lead_goal TEXT`); } catc
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN prequalification_notes TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN missed_reason TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN rescheduled INTEGER`); } catch {}
+  // Who published the shotgun lead this transfer came off, when it came off
+  // one at all. Stamped once by the shotgun result route and never changed:
+  // a transfer's origin is a fact about the past. NULL on every ordinary
+  // transfer, which is almost all of them. See shared/transfer-credit.ts —
+  // a stamped row counts HALF for this person and half for the CLR who made
+  // the transfer, everywhere, pay included.
+  try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN shotgun_sender_id INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN reschedule_datetime TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN next_steps TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE lead_outcomes ADD COLUMN phone_number TEXT`); } catch {}
@@ -2132,7 +2140,14 @@ export class Storage implements IStorage {
     const outcomes = sqlite.prepare(`SELECT * FROM lead_outcomes WHERE date >= ? AND date <= ?${orgWhere}${userWhere}${excludeWhere}`).all(startDate, endDate) as any[];
 
     const total = outcomes.length;
-    const transfers = outcomes.filter((o: any) => o.outcome_type === "transfer").length;
+    // A PERSONAL scorecard counts transfer CREDIT — a shotgun transfer is half
+    // for the CLR who published the lead and half for the one who claimed it.
+    // The TEAM figure stays a row count: one transfer is one transfer however
+    // it is shared, and summing credit here would lose the half belonging to a
+    // partner the exclude-from-stats filter above has already dropped.
+    const transfers = assistantId != null
+      ? getTransferCreditForUser(Number(assistantId), { startDate, endDate, orgId: oid ?? null })
+      : outcomes.filter((o: any) => o.outcome_type === "transfer").length;
     const appointments = outcomes.filter((o: any) => o.outcome_type === "appointment").length;
     const fellThrough = outcomes.filter((o: any) => o.outcome_type === "fell_through").length;
     const noAnswer = outcomes.filter((o: any) => o.outcome_type === "no_answer").length;
@@ -2142,6 +2157,10 @@ export class Storage implements IStorage {
     outcomes.forEach((o: any) => {
       outcomesByType[o.outcome_type] = (outcomesByType[o.outcome_type] || 0) + 1;
     });
+    // Keep the breakdown saying the same thing as the headline figure above.
+    if (assistantId != null && (transfers > 0 || outcomesByType.transfer != null)) {
+      outcomesByType.transfer = transfers;
+    }
 
     // Today's call totals (scoped to user when assistantId provided)
     // Uses business-day rollover (7pm forward) in the caller's timezone.
@@ -2180,7 +2199,10 @@ export class Storage implements IStorage {
 
     const stats = allUsers.map((user: any) => {
       const userOutcomes = outcomes.filter((o: any) => (o.assistant_id ?? o.assistantId) === user.id);
-      const transfers = userOutcomes.filter((o: any) => (o.outcome_type ?? o.outcomeType) === "transfer").length;
+      // Credit, not rows: the shotgun half this CLR earned on somebody else's
+      // row is not in userOutcomes at all, so it is summed over every transfer
+      // in the window rather than over the ones bearing their name.
+      const transfers = transferCreditIn(outcomes, user.id);
       const appointments = userOutcomes.filter((o: any) => (o.outcome_type ?? o.outcomeType) === "appointment").length;
       const total = userOutcomes.length;
       const rate = total > 0 ? Math.round((transfers / total) * 100) : 0;
@@ -2272,6 +2294,116 @@ export const storage = new Storage();
 
 // Raw sqlite access for features that need direct SQL (super-admin, invites, etc.)
 export function getRawSqlite() { return sqlite; }
+
+// ── transfer credit ────────────────────────────────────────────────────────
+//
+// Every PER-PERSON transfer figure in C3 counts CREDIT, not rows. A transfer
+// that came off a shotgun lead is half a transfer for the CLR who published it
+// and half for the CLR who claimed it and got it over the line; every other
+// transfer is a whole one for the person who made it. The rule is written once,
+// in shared/transfer-credit.ts, and every reader below goes through
+// TRANSFER_CREDIT_SQL so no query can drift from it.
+//
+// COMPANY TOTALS DO NOT USE THESE. One transfer is still one transfer — a
+// split shares it, it never creates a second one — so a team total stays a
+// COUNT over lead_outcomes. Summing per-person credit would be equal only when
+// both halves belong to people inside the same filter, which is exactly the
+// assumption that silently breaks when somebody is excluded from stats.
+
+/** Which rows a credit read covers. Every field is optional and ANDed. */
+export interface TransferCreditFilters {
+  startDate?: string | null;
+  endDate?: string | null;
+  /** Defaults to the request's org when one is in scope. Pass null for all orgs. */
+  orgId?: number | null;
+  /** One person only. */
+  userId?: number | null;
+}
+
+function transferCreditQuery(f: TransferCreditFilters, select: string, groupBy: string) {
+  const wheres: string[] = [];
+  const params: any[] = [];
+  if (f.startDate) { wheres.push(`tc.date >= ?`); params.push(f.startDate); }
+  if (f.endDate) { wheres.push(`tc.date <= ?`); params.push(f.endDate); }
+  const oid = f.orgId === undefined ? currentOrgId() : f.orgId;
+  if (oid != null) { wheres.push(`tc.org_id = ?`); params.push(Number(oid)); }
+  if (f.userId != null) { wheres.push(`tc.user_id = ?`); params.push(Number(f.userId)); }
+  // user_id IS NULL happens on a transfer nobody is named on. It credits
+  // nobody, exactly as the old COUNT ... GROUP BY assistant_id skipped it.
+  wheres.push(`tc.user_id IS NOT NULL`);
+  const sqlText = `SELECT ${select} FROM (${TRANSFER_CREDIT_SQL}) tc WHERE ${wheres.join(" AND ")}${groupBy}`;
+  return sqlite.prepare(sqlText).all(...params) as any[];
+}
+
+/** Credit per user over a window. A person who earned none is simply absent. */
+export function getTransferCreditByUser(f: TransferCreditFilters = {}): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const r of transferCreditQuery(f, `tc.user_id AS uid, SUM(tc.credit) AS credit`, ` GROUP BY tc.user_id`)) {
+    out.set(Number(r.uid), Number(r.credit) || 0);
+  }
+  return out;
+}
+
+/** Credit per user per day, keyed `${userId}|${date}` — for daily series. */
+export function getTransferCreditByUserDate(f: TransferCreditFilters = {}): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of transferCreditQuery(
+    f, `tc.user_id AS uid, tc.date AS d, SUM(tc.credit) AS credit`, ` GROUP BY tc.user_id, tc.date`,
+  )) {
+    out.set(`${Number(r.uid)}|${String(r.d)}`, Number(r.credit) || 0);
+  }
+  return out;
+}
+
+/** One person's credit over a window. */
+export function getTransferCreditForUser(userId: number, f: TransferCreditFilters = {}): number {
+  const rows = transferCreditQuery({ ...f, userId }, `SUM(tc.credit) AS credit`, ``);
+  return Number(rows[0]?.credit) || 0;
+}
+
+/**
+ * Every transfer that credits one person, as the outcome row plus the credit it
+ * carries FOR THEM (1, or 0.5 on a shotgun lead).
+ *
+ * This is the general reader. Anything that needs more of a transfer than its
+ * date — its type, its timeframe, the hour it landed — sums `credit` over these
+ * rows instead of counting a list filtered by assistant_id, which cannot see
+ * the half a publisher earned on somebody else's row.
+ *
+ * Rows come back in the same snake_case shape as getLeadOutcomes.
+ */
+export function getCreditedTransfers(
+  userId: number,
+  f: TransferCreditFilters = {},
+): Array<Record<string, any> & { credit: number }> {
+  const wheres: string[] = [`tc.user_id = ?`];
+  const params: any[] = [Number(userId)];
+  if (f.startDate) { wheres.push(`tc.date >= ?`); params.push(f.startDate); }
+  if (f.endDate) { wheres.push(`tc.date <= ?`); params.push(f.endDate); }
+  const oid = f.orgId === undefined ? currentOrgId() : f.orgId;
+  if (oid != null) { wheres.push(`tc.org_id = ?`); params.push(Number(oid)); }
+  return sqlite.prepare(
+    `SELECT o.*, tc.credit AS credit
+       FROM (${TRANSFER_CREDIT_SQL}) tc
+       JOIN lead_outcomes o ON o.id = tc.outcome_id
+      WHERE ${wheres.join(" AND ")}
+      ORDER BY o.date DESC, o.id DESC`,
+  ).all(...params) as any[];
+}
+
+/**
+ * Every date a person earned credit on, with how much — for streaks and
+ * personal bests, which ask "which days" as well as "how many".
+ */
+export function getTransferCreditDates(userId: number, f: TransferCreditFilters = {}): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of transferCreditQuery(
+    { ...f, userId }, `tc.date AS d, SUM(tc.credit) AS credit`, ` GROUP BY tc.date`,
+  )) {
+    out.set(String(r.d), Number(r.credit) || 0);
+  }
+  return out;
+}
 
 // ── Migrations for new tables ──────────────────────────────────────────────────
 function runNewMigrations() {

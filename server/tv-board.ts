@@ -19,6 +19,7 @@
  *     which ids it has already played.
  */
 import { TRAINING_DAYS, type TrainingDay } from "@shared/clr-training";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 export type TvEventKind =
   | "transfer"
@@ -284,6 +285,12 @@ export interface Milestone {
 export interface PersonStats {
   id: number;
   name: string;
+  /**
+   * Transfer CREDIT, not a row count. A transfer that came off a shotgun lead
+   * is half a transfer for the CLR who published it and half for the one who
+   * claimed it, so these are multiples of 0.5 and a name on the wall can read
+   * 4.5. See shared/transfer-credit.ts, and print with formatTransferCount.
+   */
   transfersToday: number;
   transfersWeek: number;
   appointmentsToday: number;
@@ -293,7 +300,7 @@ export interface PersonStats {
   /** ISO stamps, or null when it has never happened. */
   lastTransferAt?: string | null;
   lastCallAt?: string | null;
-  /** Their best single day before today, for the personal-best check. */
+  /** Their best single day before today, in credit, for the personal-best check. */
   bestDayBefore: number;
 }
 
@@ -302,6 +309,20 @@ export interface BoardInput {
   /** Monday of the current week, YYYY-MM-DD. */
   weekStart: string;
   people: PersonStats[];
+  /**
+   * The floor's transfers today and this week, as a COUNT of transfers.
+   *
+   * Deliberately not the sum of everyone's credit: a shotgun transfer is one
+   * transfer shared between two CLRs, and if either of them is off the
+   * scorecard (excluded from stats, archived, no longer a CLR) their half is
+   * not in `people` and the sum comes up short. "50 transfers today" is a fact
+   * about the floor, so the caller passes what the floor actually did.
+   *
+   * Omitted, the sum of `people` stands in — which is exactly the old
+   * behaviour, and correct whenever every partner is on the board.
+   */
+  teamTransfersToday?: number;
+  teamTransfersWeek?: number;
 }
 
 const TEAM_DAY_STEPS = [10, 25, 50, 75, 100, 150];
@@ -321,8 +342,8 @@ function crossed(n: number, steps: number[]): number | null {
  */
 export function detectMilestones(input: BoardInput): Milestone[] {
   const out: Milestone[] = [];
-  const teamDay = input.people.reduce((n, p) => n + p.transfersToday, 0);
-  const teamWeek = input.people.reduce((n, p) => n + p.transfersWeek, 0);
+  const teamDay = input.teamTransfersToday ?? input.people.reduce((n, p) => n + p.transfersToday, 0);
+  const teamWeek = input.teamTransfersWeek ?? input.people.reduce((n, p) => n + p.transfersWeek, 0);
 
   const d = crossed(teamDay, TEAM_DAY_STEPS);
   if (d) out.push({
@@ -338,7 +359,7 @@ export function detectMilestones(input: BoardInput): Milestone[] {
   for (const p of input.people) {
     if (p.goalTransfersWeekly > 0 && p.transfersWeek >= p.goalTransfersWeekly) out.push({
       id: `goal-transfers-${p.id}-${input.weekStart}`, kind: "goal_transfers", weight: 2,
-      headline: `${p.name} hit their weekly goal`, detail: `${p.transfersWeek} of ${p.goalTransfersWeekly} transfers`,
+      headline: `${p.name} hit their weekly goal`, detail: `${formatTransferCount(p.transfersWeek)} of ${p.goalTransfersWeekly} transfers`,
     });
     if (p.goalAppointmentsWeekly > 0 && p.appointmentsWeek >= p.goalAppointmentsWeekly) out.push({
       id: `goal-appointments-${p.id}-${input.weekStart}`, kind: "goal_appointments", weight: 1,
@@ -348,7 +369,8 @@ export function detectMilestones(input: BoardInput): Milestone[] {
     // a two-transfer record is not a moment. Three or more, and strictly more.
     if (p.bestDayBefore >= 3 && p.transfersToday > p.bestDayBefore) out.push({
       id: `personal-best-${p.id}-${input.today}-${p.transfersToday}`, kind: "personal_best", weight: 3,
-      headline: `${p.name} — personal best`, detail: `${p.transfersToday} transfers today. Old record was ${p.bestDayBefore}.`,
+      headline: `${p.name} — personal best`,
+      detail: `${formatTransferCount(p.transfersToday)} transfers today. Old record was ${formatTransferCount(p.bestDayBefore)}.`,
     });
   }
 

@@ -11,6 +11,7 @@ import {
   Trophy, Medal, TrendingUp, BarChart2, Users, ArrowUpRight,
 } from "lucide-react";
 import { HelpIcon } from "@/components/onboarding";
+import { formatTransferCount } from "@shared/transfer-credit";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   LineChart, Line, CartesianGrid, Legend, AreaChart, Area,
@@ -50,7 +51,8 @@ function MedalCard({ entry, rank }: { entry: any; rank: number }) {
         </div>
         <div className="grid grid-cols-4 gap-2 mt-4">
           <div className="text-center">
-            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{entry.transfers}</p>
+            {/* Credit — a shotgun transfer is half each, so 4.5 is a real score. */}
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{formatTransferCount(entry.transfers)}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Transfers</p>
           </div>
           <div className="text-center">
@@ -93,7 +95,7 @@ function LeaderboardRow({ entry, rank }: { entry: any; rank: number }) {
       </div>
       <div className="flex items-center gap-4 text-sm text-right">
         <div className="w-16">
-          <p className="font-bold text-green-600 dark:text-green-400">{entry.transfers}</p>
+          <p className="font-bold text-green-600 dark:text-green-400">{formatTransferCount(entry.transfers)}</p>
           <p className="text-[10px] text-muted-foreground">transfers</p>
         </div>
         <div className="w-12">
@@ -179,7 +181,7 @@ function IndividualStats({ clr, periods, range, onRangeChange }: { clr: any; per
           {bestPeriod && bestPeriod.transfers > 0 && (
             <div className="mt-3 px-3 py-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg text-xs text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
               <Trophy className="w-3.5 h-3.5 flex-shrink-0" />
-              Best period: <span className="font-semibold">{bestPeriod.label}</span> — {bestPeriod.transfers} transfers ({bestPeriod.convRate}% conv.)
+              Best period: <span className="font-semibold">{bestPeriod.label}</span> — {formatTransferCount(bestPeriod.transfers)} transfers ({bestPeriod.convRate}% conv.)
             </div>
           )}
         </CardContent>
@@ -261,7 +263,7 @@ function IndividualStats({ clr, periods, range, onRangeChange }: { clr: any; per
                 {[...periods].reverse().map((p: any, i: number) => (
                   <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
                     <td className="px-4 py-2.5 font-medium">{p.label}</td>
-                    <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{p.transfers}</td>
+                    <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{formatTransferCount(p.transfers)}</td>
                     <td className="px-4 py-2.5 text-right">{p.appointments}</td>
                     <td className="px-4 py-2.5 text-right">{p.total}</td>
                     <td className="px-4 py-2.5 text-right text-blue-600 dark:text-blue-400 font-semibold">{p.convRate}%</td>
@@ -369,7 +371,7 @@ export default function TeamStats() {
           </Select>
           {selectedClrId === "all" && (
             <>
-              <Badge variant="secondary" className="gap-1"><ArrowUpRight className="w-3 h-3" />{totalTransfers} transfers</Badge>
+              <Badge variant="secondary" className="gap-1"><ArrowUpRight className="w-3 h-3" />{formatTransferCount(totalTransfers)} transfers</Badge>
               <Badge variant="outline" className="gap-1"><Users className="w-3 h-3" />{leaderboard.length} CLRs</Badge>
             </>
           )}
@@ -560,7 +562,7 @@ export default function TeamStats() {
                           {[...periods].reverse().map((p: any, i: number) => (
                             <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
                               <td className="px-4 py-2.5 font-medium">{p.label}</td>
-                              <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{p.transfers}</td>
+                              <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-semibold">{formatTransferCount(p.transfers)}</td>
                               <td className="px-4 py-2.5 text-right">{p.appointments}</td>
                               <td className="px-4 py-2.5 text-right">{p.total}</td>
                               <td className="px-4 py-2.5 text-right text-blue-600 dark:text-blue-400 font-semibold">{p.convRate}%</td>

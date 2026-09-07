@@ -6,12 +6,19 @@
 // appointments as the tiebreaker, then calls — an emailed snapshot and the
 // on-screen board must never disagree about who is on top.
 import { addIsoDays } from "./business-day";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 export type ScorecardDigestKind = "midday" | "eod" | "midweek" | "eow";
 
 export type ScorecardRow = {
   name: string;
   calls: number;
+  /**
+   * Transfer CREDIT, not a row count: a transfer off a shotgun lead is half for
+   * the CLR who published it and half for the one who claimed it, so this is a
+   * multiple of 0.5 and prints through formatTransferCount. The ranking and the
+   * ratio below are unaffected — they only ever compare and divide.
+   */
   transfers: number;
   appointments: number;
   fellThrough: number;
@@ -57,7 +64,7 @@ export function buildScorecardDigestHtml(windowLabel: string, dateLabel: string,
       <td style="padding:8px 12px;font-size:13px;color:#64748b">${i + 1}</td>
       <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#1e293b">${esc(r.name)}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
-      <td style="padding:8px 12px;font-size:13px;text-align:center;font-weight:700;color:#16a34a">${r.transfers}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;font-weight:700;color:#16a34a">${formatTransferCount(r.transfers)}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#2563eb">${r.appointments}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#dc2626">${r.fellThrough}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#64748b">${pct(r)}</td>
@@ -81,7 +88,7 @@ export function buildScorecardDigestHtml(windowLabel: string, dateLabel: string,
         <td style="padding:8px 12px"></td>
         <td style="padding:8px 12px;font-size:13px">Team</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("calls")}</td>
-        <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("transfers")}</td>
+        <td style="padding:8px 12px;font-size:13px;text-align:center">${formatTransferCount(tot("transfers"))}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("appointments")}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("fellThrough")}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${pct({ transfers: tot("transfers"), calls: tot("calls") })}</td>

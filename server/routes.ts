@@ -44,6 +44,11 @@ import {
   type RecipientRow as PlacementRecipient, type TransferRow as PlacementTransfer,
 } from "./transfer-priority";
 import { pickQuote } from "@shared/tv-quotes";
+import {
+  shotgunSenderToStamp, transferCreditIn, transferCreditByUser, transferCreditFor,
+  formatTransferCount,
+  TRANSFER_CREDIT_SQL,
+} from "@shared/transfer-credit";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import { filterRecipients } from "./deliverable-email";
 import {
@@ -107,6 +112,25 @@ import {
 } from "./task-comp";
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
+import { registerTransferDetailRoutes } from "./transfer-detail-routes";
+
+/**
+ * Is this person on the CLR roster — the group transfer comp is paid to?
+ *
+ * The same predicate the CLR reports use: an assistant, or an admin who is
+ * flagged as also doing CLR work. It gates the shotgun half: a lead published
+ * by a plain admin stays a whole transfer for the CLR who closed it, because
+ * handing half to somebody outside the comp pool would delete that half
+ * rather than move it.
+ */
+function publisherIsOnClrRoster(userId: unknown): boolean {
+  const id = Number(userId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  const u = storage.getUserById(id) as any;
+  if (!u) return false;
+  if (u.role === "assistant") return true;
+  return u.role === "admin" && !!(u.isClr ?? u.is_clr);
+}
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const COOKIE_NAME = "clr_session";
@@ -926,16 +950,33 @@ function eodActivityEsc(s: string): string {
 function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projected?: boolean } = {}): string {
   try {
     const sqlite = storageExtra.getRawSqlite();
+    // Transfer CREDIT per CLR, not a row count: a shotgun transfer pays half to
+    // the CLR who published the lead and half to the one who claimed it, so the
+    // money follows the same split as the wall. See shared/transfer-credit.ts.
     const rows = sqlite.prepare(`
-      SELECT lo.assistant_id AS uid, COUNT(*) AS transfers, u.name AS name,
+      SELECT tc.user_id AS uid, SUM(tc.credit) AS transfers, u.name AS name,
              u.transfer_comp_cents AS transferCompCents
-      FROM lead_outcomes lo
-      LEFT JOIN users u ON u.id = lo.assistant_id
-      WHERE lo.outcome_type = 'transfer' AND lo.date >= ? AND lo.date <= ?
-      GROUP BY lo.assistant_id
+      FROM (${TRANSFER_CREDIT_SQL}) tc
+      LEFT JOIN users u ON u.id = tc.user_id
+      WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL
+      GROUP BY tc.user_id
       ORDER BY transfers DESC
     `).all(startDate, endDate) as any[];
-    const money = (c: number) => "$" + (Number(c) || 0).toLocaleString("en-US");
+    // Halves make half-dollars: half a transfer at $10 is $5, and at $5 it is
+    // $2.50. Always to the cent — dropping ".00" from the whole amounts put
+    // "$245" and "$222.50" in the same column of the same table, and made the
+    // emailed figure look unlike the auto-filed request describing the same
+    // money.
+    const money = (c: number) => {
+      const n = Number(c) || 0;
+      return "$" + n.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    };
+    /** Dollars, to the cent — never a floating-point tail on an emailed figure. */
+    const priceTransfers = (count: number, rateDollars: number) =>
+      Math.round(count * rateDollars * 100) / 100;
 
     // Projected mode (Wednesday MTD): extrapolate each CLR's transfers to
     // month-end at their current daily pace, then price the projected count.
@@ -946,19 +987,22 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
       // slower than they are and understated the month-end estimate.
       const weekdaysElapsed = Math.max(1, countWeekdaysInMonth(ey, em, ed)); // window starts on the 1st
       const weekdaysInMonth = countWeekdaysInMonth(ey, em);
-      const projectCount = (mtd: number) => Math.round((mtd / weekdaysElapsed) * weekdaysInMonth);
+      // To the nearest HALF, because a half is a real transfer count now — a
+      // projection landing on a number a CLR could not actually reach would be
+      // a worse estimate, not a tidier one.
+      const projectCount = (mtd: number) => Math.round((mtd / weekdaysElapsed) * weekdaysInMonth * 2) / 2;
       let totMtd = 0, totProj = 0, totComp = 0;
       const pbody = rows.map((r: any) => {
         const mtd = Number(r.transfers) || 0;
         const proj = projectCount(mtd);
         const rate = resolveEmailTransferCompRateCents(proj, r.name, r.transferCompCents) / 100;
-        const comp = proj * rate;
+        const comp = priceTransfers(proj, rate);
         totMtd += mtd; totProj += proj; totComp += comp;
         const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
         return `<tr>
           <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${name}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${mtd}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${proj}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${formatTransferCount(mtd)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${formatTransferCount(proj)}</td>
           <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">$${rate}/ea</td>
           <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${money(comp)}</td>
         </tr>`;
@@ -978,8 +1022,8 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
           <tbody>${pbody || `<tr><td colspan="5" style="padding:12px;text-align:center;color:#94a3b8">No transfers logged this month yet.</td></tr>`}</tbody>
           <tfoot><tr style="background:#f8fafc;font-weight:700">
             <td style="padding:8px 12px">Total</td>
-            <td style="padding:8px 12px;text-align:center">${totMtd}</td>
-            <td style="padding:8px 12px;text-align:center">${totProj}</td>
+            <td style="padding:8px 12px;text-align:center">${formatTransferCount(totMtd)}</td>
+            <td style="padding:8px 12px;text-align:center">${formatTransferCount(totProj)}</td>
             <td style="padding:8px 12px"></td>
             <td style="padding:8px 12px;text-align:right">${money(totComp)}</td>
           </tr></tfoot>
@@ -991,12 +1035,12 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
     const body = rows.map((r: any) => {
       const t = Number(r.transfers) || 0;
       const rate = resolveEmailTransferCompRateCents(t, r.name, r.transferCompCents) / 100;
-      const comp = t * rate;
+      const comp = priceTransfers(t, rate);
       totalTransfers += t; totalComp += comp;
       const name = eodActivityEsc(r.name || `CLR #${r.uid}`);
       return `<tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${name}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${t}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${formatTransferCount(t)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">$${rate}/ea</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${money(comp)}</td>
       </tr>`;
@@ -1015,7 +1059,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
         <tbody>${body || `<tr><td colspan="4" style="padding:12px;text-align:center;color:#94a3b8">No transfers logged this month yet.</td></tr>`}</tbody>
         <tfoot><tr style="background:#f8fafc;font-weight:700">
           <td style="padding:8px 12px">Total</td>
-          <td style="padding:8px 12px;text-align:center">${totalTransfers}</td>
+          <td style="padding:8px 12px;text-align:center">${formatTransferCount(totalTransfers)}</td>
           <td style="padding:8px 12px"></td>
           <td style="padding:8px 12px;text-align:right">${money(totalComp)}</td>
         </tr></tfoot>
@@ -1249,7 +1293,12 @@ async function sendReport(
     // Outcomes
     const myOutcomes = outcomes.filter((o: any) => (o.assistantId || o.assistant_id) === uid);
     const outcomeTypeOf = (o: any) => (o.outcomeType || o.outcome_type) as string;
-    const myTransfers       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "transfer").length;
+    // Transfer CREDIT, not rows: a shotgun transfer is half for the CLR who
+    // published the lead and half for the one who claimed it. Summed over
+    // outcomesAll rather than myOutcomes because the publisher's half sits on a
+    // row whose assistant_id is the OTHER person — filtering by name first
+    // throws exactly that half away. Everything else stays a plain count.
+    const myTransfers       = transferCreditIn(outcomesAll as any[], uid);
     const myAppointments    = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "appointment").length;
     const myFellThrough     = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "fell_through").length;
     const myCallbacks       = myOutcomes.filter((o: any) => outcomeTypeOf(o) === "callback_requested" || outcomeTypeOf(o) === "deferral").length;
@@ -1309,7 +1358,14 @@ async function sendReport(
   // Team totals
   const teamCalls          = clrStats.reduce((s, r) => s + r.calls, 0);
   const teamMessages       = clrStats.reduce((s, r) => s + r.messages, 0);
-  const teamTransfers      = clrStats.reduce((s, r) => s + r.transfers, 0);
+  // The team total is the number of TRANSFERS, not the sum of everyone's
+  // credit. One transfer is one transfer however it is shared, and summing
+  // credit would quietly drop the half belonging to anybody who is not on the
+  // CLR list above. A single-CLR report has no team but that CLR, so there it
+  // IS their credit and the two readings agree by construction.
+  const teamTransfers      = scopedClrId
+    ? clrStats.reduce((s, r) => s + r.transfers, 0)
+    : (outcomes as any[]).filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer").length;
   const teamAppointments   = clrStats.reduce((s, r) => s + r.appointments, 0);
   const teamFellThrough    = clrStats.reduce((s, r) => s + r.fellThrough, 0);
   const teamCallbacks      = clrStats.reduce((s, r) => s + r.callbacks, 0);
@@ -1430,7 +1486,7 @@ async function sendReport(
         <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
         ${cell(r.calls, "#0369a1", true)}
         ${cell(r.messages, "#0d9488", true)}
-        ${cell(r.transfers, "#1A2B4A", true)}
+        ${cell(formatTransferCount(r.transfers), "#1A2B4A", true)}
         ${cell(r.appointments, "#0f766e")}
         ${cell(r.fellThrough, "#b45309")}
         ${cell(r.callbacks, "#7c3aed")}
@@ -1443,7 +1499,7 @@ async function sendReport(
       <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Totals</td>
       ${cell(teamCalls, "#0369a1", true)}
       ${cell(teamMessages, "#0d9488", true)}
-      ${cell(teamTransfers, "#1A2B4A", true)}
+      ${cell(formatTransferCount(teamTransfers), "#1A2B4A", true)}
       ${cell(teamAppointments, "#0f766e", true)}
       ${cell(teamFellThrough, "#b45309", true)}
       ${cell(teamCallbacks, "#7c3aed", true)}
@@ -1519,7 +1575,7 @@ async function sendReport(
     return `<tr style="background:${bg}">
       <td style="padding:10px 12px;font-size:13px">${medal}</td>
       <td style="padding:10px 12px;font-size:13px;font-weight:600;color:#1e293b">${row.name}</td>
-      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${row.transfers}</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${formatTransferCount(row.transfers)}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0369a1">${row.calls}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;color:#0d9488">${row.messages}</td>
       <td style="padding:10px 12px;font-size:13px;text-align:center;font-weight:600;color:${ratioColor}">${row.ratio}</td>
@@ -1556,6 +1612,26 @@ async function sendReport(
     rows: DailyClrRow[];
   }
 
+  // Per-CLR transfer CREDIT for every day in the range, built once. A shotgun
+  // transfer is half for the publisher and half for the claimer, and the
+  // publisher's half rides on a row bearing the claimer's assistant_id — so
+  // each day is scored over ALL of that day's outcomes rather than over the
+  // subset filtered to one person. Key: `${userId}|${date}`.
+  const dayTransferCredit = new Map<string, number>();
+  {
+    const byDate = new Map<string, any[]>();
+    for (const o of outcomesAll as any[]) {
+      const d = String((o as any).date ?? (o as any).report_date ?? "");
+      if (!d) continue;
+      const list = byDate.get(d) ?? [];
+      list.push(o);
+      byDate.set(d, list);
+    }
+    byDate.forEach((rows, d) => {
+      transferCreditByUser(rows).forEach((credit, uid) => dayTransferCredit.set(`${uid}|${d}`, credit));
+    });
+  }
+
   const daySections: DaySection[] = datesInRange.map(dateStr => {
     const rows: DailyClrRow[] = clrs.map((u: any) => {
       const uid = u.id;
@@ -1563,7 +1639,7 @@ async function sendReport(
       const dayOutcomes = outcomes.filter((o: any) =>
         (o.assistantId || o.assistant_id) === uid && (o.date || o.report_date) === dateStr,
       );
-      const dayTransfersFromOutcomes = dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === "transfer").length;
+      const dayTransfersFromOutcomes = dayTransferCredit.get(`${uid}|${dateStr}`) ?? 0;
       const dayApptsFromOutcomes = dayOutcomes.filter((o: any) => {
         const t = o.outcomeType || o.outcome_type;
         return t === "appointment" || t === "callback_requested" || t === "deferral" || t === "future_contact";
@@ -1614,7 +1690,7 @@ async function sendReport(
         <td style="padding:9px 12px;font-size:13px;font-weight:600;color:#1e293b">${r.name}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0d9488">${r.messages}</td>
-        <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${r.transfers}</td>
+        <td style="padding:9px 12px;font-size:13px;text-align:center;font-weight:700;color:#1A2B4A">${formatTransferCount(r.transfers)}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#0f766e">${r.appointments}</td>
         <td style="padding:9px 12px;font-size:13px;text-align:center;color:#b45309">${r.fellThrough}</td>
       </tr>${noteRow}`;
@@ -1648,7 +1724,7 @@ async function sendReport(
   const totalsRow = `<tr style="background:#f0f4ff;border-top:2px solid #e2e8f0">
     <td style="padding:10px 12px;font-size:12px;color:#94a3b8"></td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0F182D">Team Total</td>
-    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${teamTransfers}</td>
+    <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1A2B4A;text-align:center">${formatTransferCount(teamTransfers)}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0369a1;text-align:center">${teamCalls}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#0d9488;text-align:center">${teamMessages}</td>
     <td style="padding:10px 12px;font-size:13px;font-weight:700;text-align:center;color:${teamRatioColor}">${teamRatio}</td>
@@ -1687,7 +1763,7 @@ async function sendReport(
     <!-- Team summary stat cards -->
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px">
       <tr>
-        ${statCard(teamTransfers, "Transfers", "#1A2B4A")}
+        ${statCard(formatTransferCount(teamTransfers), "Transfers", "#1A2B4A")}
         ${statCard(teamCalls, "Total Calls", "#0369a1")}
         ${statCard(teamMessages, "Messages", "#0d9488")}
         ${statCard(teamRatio, "Transfer / Call %", teamRatioColor)}
@@ -1711,7 +1787,7 @@ async function sendReport(
         </thead>
         <tbody>
           <tr style="background:#ffffff">
-            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${teamTransfers}</td>
+            <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${formatTransferCount(teamTransfers)}</td>
             <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${teamAppointments}</td>
             <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${teamFellThrough}</td>
             <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${teamCallbacks}</td>
@@ -1720,7 +1796,7 @@ async function sendReport(
           </tr>
         </tbody>
       </table>
-      <p style="margin:8px 0 0;font-size:12px;color:#475569;text-align:right"><strong>Total:</strong> ${teamTransfers + teamAppointments + teamFellThrough + teamCallbacks + teamFutureContacts + teamNoAnswers} outcomes · <strong>${teamCalls}</strong> calls</p>
+      <p style="margin:8px 0 0;font-size:12px;color:#475569;text-align:right"><strong>Total:</strong> ${formatTransferCount(teamTransfers + teamAppointments + teamFellThrough + teamCallbacks + teamFutureContacts + teamNoAnswers)} outcomes · <strong>${teamCalls}</strong> calls</p>
     </div>
     <!--/SEC:summary-->
 
@@ -1962,7 +2038,7 @@ async function sendReport(
   }
 
   const wrappedCallNotes = callNotesHtml ? `<!--SEC:callNotes-->${callNotesHtml}<!--/SEC:callNotes-->` : "";
-  const html = buildEmail({ subject, preheader: `${teamTransfers} transfers · ${teamRatio} transfer/call ratio`, body: (opts.prependBodyHtml ?? "") + stripDisabledSections(body + wrappedCallNotes) + (opts.appendBodyHtml ?? "") });
+  const html = buildEmail({ subject, preheader: `${formatTransferCount(teamTransfers)} transfers · ${teamRatio} transfer/call ratio`, body: (opts.prependBodyHtml ?? "") + stripDisabledSections(body + wrappedCallNotes) + (opts.appendBodyHtml ?? "") });
   if (opts.renderOnly) {
     console.log(`[sendReport] type=${type} renderOnly window=${startDate}..${endDate}`);
     return { id: null, recipients: [], html, subject, startDate, endDate };
@@ -2413,12 +2489,17 @@ function runGoalAutoAdjust() {
 
       const outcomeRow = sqlite.prepare(`
         SELECT
-          SUM(CASE WHEN outcome_type = 'transfer' THEN 1 ELSE 0 END) AS transfers,
           SUM(CASE WHEN outcome_type = 'appointment' THEN 1 ELSE 0 END) AS appointments
         FROM lead_outcomes
         WHERE assistant_id = ? AND date BETWEEN ? AND ?
       `).get(userId, startDate, endDate) as any;
-      const actualTransfers = outcomeRow?.transfers ?? 0;
+      // A goal is a personal target, so it is measured against personal CREDIT:
+      // a shotgun transfer is half for the publisher and half for the claimer.
+      // A weekly transfer goal can therefore now be met on a half — 9.5 does
+      // not reach a goal of 10, and 10 exactly still does.
+      const actualTransfers = storageExtra.getTransferCreditForUser(Number(userId), {
+        startDate, endDate, orgId: null,
+      });
       const actualAppointments = outcomeRow?.appointments ?? 0;
 
       let newCalls = g.calls_goal;
@@ -7779,6 +7860,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({
       ok: true, recurs: exposure.recurs, known: exposure.known,
       perMonth: exposure.perMonth, monthlyCents: exposure.monthlyCents,
+      // The YEARLY figure travels too. A repeating paid task pays every
+      // occurrence, so the number that actually decides whether this is a
+      // reasonable idea is the annual one — $60 a year is nothing, $18,000 a
+      // year off the same checkbox is not, and only one of those is obvious
+      // from the monthly line.
+      perYear: exposure.perYear, yearlyCents: exposure.yearlyCents,
       warning: exposure.warning, amountLabel: formatMoneyCents(amount.amountCents),
     });
   });
@@ -8654,6 +8741,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             notes,
             conversationNotes: notes,
             leadSource: String(current.source ?? "").trim() || "Shotgun",
+            // Half of this belongs to whoever put the lead up — but only when
+            // they are another CLR. A manager or admin publishing a lead is
+            // the ordinary case here, and they are not on transfer comp, so
+            // stamping them would delete half the CLR's pay rather than move
+            // it. Not stamped when the publisher claimed their own lead
+            // either. See shotgunSenderToStamp.
+            shotgunSenderId: shotgunSenderToStamp(
+              current.created_by_user_id,
+              userId,
+              publisherIsOnClrRoster(current.created_by_user_id),
+            ),
           } as any);
         }
         const update = db.prepare(`UPDATE shotgun_leads SET called=?,texted=?,result_notes=?,transfer_outcome_id=?,status=?,done_at=?,updated_at=?
@@ -9848,15 +9946,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: targetId }) as any[]);
         const transfersList = outcomes.filter(o => (o.outcomeType ?? o.outcome_type) === "transfer");
         const tt = (o: any) => o.transferType ?? o.transfer_type;
-        const transfers = transfersList.length;
+        // What this CLR is OWED for, so it is credit: a shotgun transfer pays
+        // half to the publisher and half to the claimer. Their half of a lead
+        // somebody else closed sits on a row that is not in `outcomes` at all,
+        // which is why the figure is read straight from the credit expansion
+        // rather than counted here. The direct/appointment split below stays a
+        // count of their own rows — it describes what they logged, not what
+        // they are paid.
+        const transfers = storageExtra.getTransferCreditForUser(targetId, { startDate, endDate });
         return {
           month: monthName(y, m),
           startDate, endDate,
           transfers,
           direct: transfersList.filter(o => tt(o) === "direct").length,
           appointment: transfersList.filter(o => tt(o) === "appointment").length,
-          // Auto-computed comp when a flat rate is set for this CLR.
-          amountCents: transferRateCents != null ? transfers * transferRateCents : null,
+          // Auto-computed comp when a flat rate is set for this CLR. Rounded to
+          // the cent: half a transfer at an odd rate is a half-cent otherwise.
+          amountCents: transferRateCents != null ? Math.round(transfers * transferRateCents) : null,
         };
       };
       res.json({ userId: targetId, transferRateCents, previous: build(py, pm), current: build(ty, tm) });
@@ -11640,6 +11746,10 @@ ${note}` : daysLine;
         loaId: o.loaId ?? o.loa_id ?? null,
         outcomeType: o.outcomeType ?? o.outcome_type,
         transferType: o.transferType ?? o.transfer_type ?? null,
+        // Who published the shotgun lead this transfer came off, if any. The
+        // client needs it to work out transfer credit — half a transfer each
+        // for the publisher and the claimer. See shared/transfer-credit.ts.
+        shotgunSenderId: o.shotgunSenderId ?? o.shotgun_sender_id ?? null,
         bulkTexter: (o.bulkTexter ?? o.bulk_texter) == null ? null : !!(o.bulkTexter ?? o.bulk_texter),
         helperAssisted: (o.helperAssisted ?? o.helper_assisted) == null ? null : !!(o.helperAssisted ?? o.helper_assisted),
         borrowerName: o.borrowerName ?? o.borrower_name ?? null,
@@ -11705,10 +11815,16 @@ ${note}` : daysLine;
     const sqlite = storageExtra.getRawSqlite();
     const orgRow = sqlite.prepare(`SELECT org_id FROM lead_outcomes WHERE assistant_id=? AND date=? AND outcome_type='transfer' ORDER BY id DESC LIMIT 1`).get(assistantId, date) as any;
     const orgId = Number(orgRow?.org_id ?? 1) || 1;
-    const daily = sqlite.prepare(`SELECT COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND assistant_id=? AND date=? AND outcome_type='transfer'`).get(orgId, assistantId, date) as any;
+    // Everything this popup says about a person is CREDIT: a shotgun transfer
+    // is half for the CLR who published the lead and half for the one who
+    // claimed it, so the daily count, the month, and the race for the lead all
+    // read the same halves the wall and the pay run read.
     const month = String(date).slice(0, 7);
-    const monthly = sqlite.prepare(`SELECT COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND assistant_id=? AND substr(date,1,7)=? AND outcome_type='transfer'`).get(orgId, assistantId, month) as any;
-    const leaders = sqlite.prepare(`SELECT assistant_id,COUNT(*) AS total FROM lead_outcomes WHERE org_id=? AND date=? AND outcome_type='transfer' GROUP BY assistant_id ORDER BY total DESC,assistant_id ASC`).all(orgId, date) as any[];
+    const daily = { total: storageExtra.getTransferCreditForUser(assistantId, { startDate: date, endDate: date, orgId }) };
+    const monthly = { total: storageExtra.getTransferCreditForUser(assistantId, { startDate: `${month}-01`, endDate: `${month}-31`, orgId }) };
+    const leaders = Array.from(storageExtra.getTransferCreditByUser({ startDate: date, endDate: date, orgId }))
+      .map(([id, total]) => ({ assistant_id: id, total }))
+      .sort((a, b) => b.total - a.total || a.assistant_id - b.assistant_id);
     const dailyTotal = Number(daily?.total ?? 0);
     const monthlyTotal = Number(monthly?.total ?? 0);
     const dailyRank = Math.max(1, leaders.findIndex((row: any) => Number(row.assistant_id) === assistantId) + 1);
@@ -12537,7 +12653,11 @@ ${note}` : daysLine;
       contactsReachedPeriod = myRaw.reduce((s, l) => s + (l.contacts_reached ?? 0), 0);
       dncHitsPeriod = myRaw.reduce((s, l) => s + (l.dnc_hits ?? 0), 0);
       messagesSentPeriod = sumMessagesSql(` AND assistant_id = ?`, [userId]);
-      bulkTexterTransfers = countBulkTexterSql(` AND assistant_id = ?`, [userId]);
+      // One person's own figure, so it is credit: half a transfer each when a
+      // bulk-texted lead went out on the shotgun and somebody else closed it.
+      bulkTexterTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate })
+        .filter((o: any) => Number(o.bulk_texter) === 1)
+        .reduce((n: number, o: any) => n + (Number(o.credit) || 0), 0);
       // Elleine's count is org-wide: she assists on other CLRs' transfers too,
       // so scoping it to the viewer would under-report what she is owed.
       helperTransfers = countHelperSql("", []);
@@ -12618,6 +12738,31 @@ ${note}` : daysLine;
     const ot = (o: any) => o.outcomeType ?? o.outcome_type;
     const isAppt = (t: string) => t === "appointment" || t === "callback_requested" || t === "deferral";
 
+    // Transfers, the one figure on this page that is not a plain row count.
+    //
+    // Viewed as a TEAM the answer is how many transfers happened — a shotgun
+    // transfer is one transfer shared, never two. Viewed as ONE CLR it is that
+    // person's CREDIT: half a transfer for publishing a shotgun lead somebody
+    // else closed, half for closing somebody else's. The credit reading is
+    // taken over the UNFILTERED window on purpose — a publisher's half rides on
+    // a row carrying the claimer's assistant_id, so the by-name filter above
+    // has already thrown it away.
+    const transferTotalIn = (scoped: any[], unscoped: any[]) =>
+      clrId === undefined
+        ? scoped.filter((o: any) => ot(o) === "transfer").length
+        : transferCreditIn(unscoped, clrId);
+    const creditByDay = (unscoped: any[]) => {
+      const m = new Map<string, number>();
+      if (clrId === undefined) return m;
+      for (const o of unscoped) {
+        if (ot(o) !== "transfer") continue;
+        const c = transferCreditFor(o, clrId);
+        if (c) m.set(o.date, (m.get(o.date) ?? 0) + c);
+      }
+      return m;
+    };
+    const dailyTransferCredit = creditByDay(outcomesAll as any[]);
+
     const sumCalls = (logs: any[]) => logs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
     const sumContacts = (logs: any[]) => logs.reduce((s, l) => s + (l.contactsReached ?? l.contacts_reached ?? 0), 0);
     const sumDnc = (logs: any[]) => logs.reduce((s, l) => s + (l.dncHits ?? l.dnc_hits ?? 0), 0);
@@ -12635,13 +12780,13 @@ ${note}` : daysLine;
     const callToolsByUser = callSyncActivityByUser(startDate, endDate);
     const callToolsByDay = callSyncActivityByDay(startDate, endDate, clrId, clrId === undefined ? excluded : new Set());
     const totalCalls = additionalCalls + callToolsActivity.calls;
-    const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
+    const totalTransfers = transferTotalIn(outcomes, outcomesAll as any[]);
     const totalAppointments = outcomes.filter(o => isAppt(ot(o))).length;
     const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
     const transferRate = totalCalls > 0 ? (totalTransfers / totalCalls) * 100 : 0;
 
     const prevCalls = sumCalls(callLogsPrevFiltered) + previousCallToolsActivity.calls;
-    const prevTransfers = outcomesPrevFiltered.filter(o => ot(o) === "transfer").length;
+    const prevTransfers = transferTotalIn(outcomesPrevFiltered, outcomesPrev as any[]);
     const prevAppointments = outcomesPrevFiltered.filter(o => isAppt(ot(o))).length;
     const prevTransferRate = prevCalls > 0 ? (prevTransfers / prevCalls) * 100 : 0;
 
@@ -12672,7 +12817,9 @@ ${note}` : daysLine;
       const dayLogs = callLogs.filter((l: any) => (l.logDate ?? l.log_date) === day);
       const activity = callToolsByDay.get(day) ?? { calls: 0, contacts: 0, conversations: 0, activeSeconds: 0 };
       const calls = sumCalls(dayLogs) + activity.calls;
-      const transfers = dayOutcomes.filter(o => ot(o) === "transfer").length;
+      const transfers = clrId === undefined
+        ? dayOutcomes.filter(o => ot(o) === "transfer").length
+        : (dailyTransferCredit.get(day) ?? 0);
       const appointments = dayOutcomes.filter(o => isAppt(ot(o))).length;
       const fellThrough = dayOutcomes.filter(o => ot(o) === "fell_through").length;
       const rate = calls > 0 ? (transfers / calls) * 100 : 0;
@@ -12681,7 +12828,8 @@ ${note}` : daysLine;
 
     // Outcome breakdown (for donut)
     const breakdown = {
-      transfer: outcomes.filter(o => ot(o) === "transfer").length,
+      // The donut has to say the same thing as the headline above it.
+      transfer: totalTransfers,
       appointment: outcomes.filter(o => ot(o) === "appointment").length,
       callback_requested: outcomes.filter(o => ot(o) === "callback_requested").length,
       deferral: outcomes.filter(o => ot(o) === "deferral").length,
@@ -12715,7 +12863,9 @@ ${note}` : daysLine;
       const uDnc = sumDnc(uRawLogs);
       const uCallTools = callToolsByUser.get(u.id) ?? { calls: 0, contacts: 0, conversations: 0, activeSeconds: 0 };
       const uCalls = uAdditionalCalls + uCallTools.calls;
-      const uTransfers = uOutcomes.filter(o => ot(o) === "transfer").length;
+      // Credit, over every outcome in the window rather than this CLR's own —
+      // their half of somebody else's shotgun close is on the other row.
+      const uTransfers = transferCreditIn(outcomesAll as any[], u.id);
       const uAppointments = uOutcomes.filter(o => isAppt(ot(o))).length;
       const uFellThrough = uOutcomes.filter(o => ot(o) === "fell_through").length;
       const uDeferrals = uOutcomes.filter(o => ot(o) === "deferral").length;
@@ -12804,14 +12954,29 @@ ${note}` : daysLine;
     } catch { /* no assistants configured: the LOA field is simply never expected */ }
 
     // Helper: build a single bucket result from an array of outcomes
-    function buildBucket(label: string, startDate: string, endDate: string, outcomes: any[]) {
-      const transfers = outcomes.filter((o: any) => o.outcomeType === "transfer" || o.outcome_type === "transfer").length;
+    // `allOutcomes` is EVERY outcome in the bucket, never pre-filtered to one
+    // CLR, because a shotgun transfer credits half to the CLR who published the
+    // lead and that half lives on a row carrying the claimer's assistant_id. A
+    // list narrowed by name before it gets here has already lost it. When
+    // `assistantId` is given the bucket is scoped to that person HERE instead:
+    // by name for every ordinary count, by credit for transfers.
+    function buildBucket(label: string, startDate: string, endDate: string, allOutcomes: any[], assistantId?: number) {
+      const aidOf = (o: any) => o.assistantId ?? o.assistant_id;
+      const isTransfer = (o: any) => (o.outcomeType ?? o.outcome_type) === "transfer";
+      const outcomes = assistantId == null
+        ? allOutcomes
+        : allOutcomes.filter((o: any) => aidOf(o) === assistantId);
+      const creditByUser = transferCreditByUser(allOutcomes);
+      // One person: their credit. The whole floor: how many transfers happened,
+      // which a split shares and never doubles.
+      const transfers = assistantId == null
+        ? allOutcomes.filter(isTransfer).length
+        : (creditByUser.get(Number(assistantId)) ?? 0);
       const appointments = outcomes.filter((o: any) => o.outcomeType === "appointment" || o.outcome_type === "appointment").length;
       const total = outcomes.length;
       const convRate = total > 0 ? Math.round((transfers / total) * 100) : 0;
       const tally: Record<number, { userId: number; transfers: number; total: number; name: string; activeWorkdays: number; inTraining: boolean }> = {};
-      for (const o of outcomes) {
-        const aid = o.assistantId || o.assistant_id;
+      const ensure = (aid: number) => {
         if (!tally[aid]) {
           const u = users.find((u: any) => u.id === aid);
           tally[aid] = {
@@ -12822,15 +12987,21 @@ ${note}` : daysLine;
             ...trainingForUser(trainingByUser, aid),
           };
         }
-        tally[aid].total++;
-        if (o.outcomeType === "transfer" || o.outcome_type === "transfer") tally[aid].transfers++;
-      }
+        return tally[aid];
+      };
+      for (const o of outcomes) ensure(o.assistantId || o.assistant_id).total++;
+      // Credit, not a per-row increment — and a CLR whose only stake in this
+      // bucket is half of somebody else's shotgun close still gets a row.
+      creditByUser.forEach((credit, uid) => {
+        if (assistantId != null && uid !== Number(assistantId)) return;
+        ensure(uid).transfers = credit;
+      });
       const clrStats = Object.values(tally).sort((a: any, b: any) => b.transfers - a.transfers);
       // How completely the transfers in this bucket were written up. Scored
       // from the outcomes already in hand, so this costs no extra query.
       const writeUp = summarizeCompleteness(
         outcomes
-          .filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer")
+          .filter(isTransfer)
           .map((o: any) => ({
             borrowerName: o.borrowerName ?? o.borrower_name,
             phoneNumber: o.phoneNumber ?? o.phone_number,
@@ -12863,7 +13034,7 @@ ${note}` : daysLine;
       // 24 hourly buckets for today
       const todayStr = toISODate(now);
       // Fetch all outcomes for today by date field
-      const dayOutcomes = storage.getLeadOutcomes({ startDate: todayStr, endDate: todayStr, assistantId });
+      const dayOutcomes = storage.getLeadOutcomes({ startDate: todayStr, endDate: todayStr });
       for (let h = 0; h < 24; h++) {
         const label = h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`;
         // Filter by hour using created_at timestamp
@@ -12875,7 +13046,7 @@ ${note}` : daysLine;
             return d.getHours() === h;
           } catch { return false; }
         });
-        results.push(buildBucket(label, todayStr, todayStr, hourOutcomes));
+        results.push(buildBucket(label, todayStr, todayStr, hourOutcomes, assistantId));
       }
 
     } else if (range === "1w") {
@@ -12888,12 +13059,15 @@ ${note}` : daysLine;
         day.setDate(monday.getDate() + i);
         const dateStr = toISODate(day);
         const label = day.toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
-        const outcomes = storage.getLeadOutcomes({ startDate: dateStr, endDate: dateStr, assistantId });
-        results.push(buildBucket(label, dateStr, dateStr, outcomes));
+        const outcomes = storage.getLeadOutcomes({ startDate: dateStr, endDate: dateStr });
+        results.push(buildBucket(label, dateStr, dateStr, outcomes, assistantId));
       }
 
     } else if (range === "all") {
       // Group by month from earliest outcome to today; bucket by quarter if > 24 months
+      // Only used to find where this history should START, so it stays scoped
+      // to the CLR being viewed — the buckets themselves are built unfiltered
+      // below so transfer credit can see both halves of a shotgun row.
       const allOutcomes = storage.getLeadOutcomes({ assistantId });
       if (allOutcomes.length === 0) {
         return res.json({ periods: [] });
@@ -12921,8 +13095,8 @@ ${note}` : daysLine;
           const startDate = toISODate(bucketStart);
           const endDate = toISODate(bucketEnd);
           const label = bucketStart.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-          const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
-          results.push(buildBucket(label, startDate, endDate, outcomes));
+          const outcomes = storage.getLeadOutcomes({ startDate, endDate });
+          results.push(buildBucket(label, startDate, endDate, outcomes, assistantId));
         }
       } else {
         // Quarterly buckets
@@ -12939,8 +13113,8 @@ ${note}` : daysLine;
           const startDate = toISODate(bucketStart);
           const endDate = toISODate(bucketEnd);
           const label = `Q${q + 1} ${year}`;
-          const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
-          results.push(buildBucket(label, startDate, endDate, outcomes));
+          const outcomes = storage.getLeadOutcomes({ startDate, endDate });
+          results.push(buildBucket(label, startDate, endDate, outcomes, assistantId));
         }
       }
 
@@ -12953,8 +13127,8 @@ ${note}` : daysLine;
         const startDate = periodStart.toISOString().split("T")[0];
         const endDate = periodEnd.toISOString().split("T")[0];
         const label = periodEnd.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-        const outcomes = storage.getLeadOutcomes({ startDate, endDate, assistantId });
-        results.push(buildBucket(label, startDate, endDate, outcomes));
+        const outcomes = storage.getLeadOutcomes({ startDate, endDate });
+        results.push(buildBucket(label, startDate, endDate, outcomes, assistantId));
       }
       return res.json({ periods: results.reverse() });
     }
@@ -13117,6 +13291,11 @@ ${note}` : daysLine;
     // SQL fragment appended to raw team COUNT/aggregate queries.
     const exClause = excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
     const exClauseO = excludedIds.size ? ` AND o.assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
+    // The same exclusion said in the credit expansion's own column name. A
+    // per-person transfer figure on this page is CREDIT — half a transfer each
+    // to the CLR who published a shotgun lead and the one who claimed it — and
+    // the expansion names its person `user_id`, not `assistant_id`.
+    const exClauseTc = excludedIds.size ? ` AND tc.user_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
     const todayReports = (storageExtra.getEodReportsByRange(todayStr, todayStr) as any[]);
     const reportByUser = new Map<number, any>();
     for (const r of todayReports) {
@@ -13269,6 +13448,21 @@ ${note}` : daysLine;
       if (!uid) continue;
       if (!outcomesByUser[uid]) outcomesByUser[uid] = {};
       outcomesByUser[uid][r.outcome_type] = Number(r.count) || 0;
+    }
+    // Transfers alone are re-read as CREDIT and overwrite the count above: a
+    // shotgun transfer is half for the publisher and half for the claimer, and
+    // the publisher's half lives on a row whose assistant_id is somebody else,
+    // so GROUP BY assistant_id could never have found it.
+    for (const r of sqlite.prepare(`
+      SELECT tc.user_id AS uid, SUM(tc.credit) AS credit
+      FROM (${TRANSFER_CREDIT_SQL}) tc
+      WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+      GROUP BY tc.user_id
+    `).all(month.startDate, month.endDate) as any[]) {
+      const uid = Number(r.uid);
+      if (!uid) continue;
+      if (!outcomesByUser[uid]) outcomesByUser[uid] = {};
+      outcomesByUser[uid].transfer = Number(r.credit) || 0;
     }
     const monthCallsRows = sqlite.prepare(`
       SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
@@ -13558,6 +13752,20 @@ ${note}` : daysLine;
         if (r.outcome_type === "appointment") lbByUser[uid].appointments = c;
         if (r.outcome_type === "fell_through") lbByUser[uid].fellThrough = c;
       }
+      // Transfers become CREDIT — half each on a shotgun lead. `total` stays a
+      // count of the rows this CLR logged, because it is the denominator of the
+      // outcome-mix percentages below and those describe what a person filed.
+      for (const r of sqlite.prepare(`
+        SELECT tc.user_id AS uid, SUM(tc.credit) AS credit
+        FROM (${TRANSFER_CREDIT_SQL}) tc
+        WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+        GROUP BY tc.user_id
+      `).all(startDate, endDate) as any[]) {
+        const uid = Number(r.uid);
+        if (!uid) continue;
+        if (!lbByUser[uid]) lbByUser[uid] = { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
+        lbByUser[uid].transfers = Number(r.credit) || 0;
+      }
       const lbCalls = sqlite.prepare(`
         SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
@@ -13582,11 +13790,15 @@ ${note}` : daysLine;
       // Texting-sourced transfers (Bulk Texter) per CLR for this range.
       const lbTextByUser = new Map<number, number>();
       try {
+        // Credit again, and joined back to the row for the bulk_texter flag —
+        // the expansion carries who is owed, the outcome carries what it was.
         const lbText = sqlite.prepare(`
-          SELECT assistant_id, COUNT(*) AS n
-          FROM lead_outcomes
-          WHERE outcome_type='transfer' AND bulk_texter=1 AND date >= ? AND date <= ?${exClause}
-          GROUP BY assistant_id
+          SELECT tc.user_id AS assistant_id, SUM(tc.credit) AS n
+          FROM (${TRANSFER_CREDIT_SQL}) tc
+          JOIN lead_outcomes o ON o.id = tc.outcome_id
+          WHERE o.bulk_texter=1 AND tc.date >= ? AND tc.date <= ?
+            AND tc.user_id IS NOT NULL${exClauseTc}
+          GROUP BY tc.user_id
         `).all(startDate, endDate) as any[];
         for (const r of lbText) lbTextByUser.set(r.assistant_id, Number(r.n) || 0);
       } catch { /* bulk_texter column may not exist on older DBs */ }
@@ -13958,12 +14170,22 @@ ${note}` : daysLine;
 
       // Per-CLR daily trend (transfers / appointments / fell-through, plus calls)
       // Used by the "CLR trend comparison" chart.
-      const clrOutcomeRows = sqlite.prepare(`
-        SELECT assistant_id, date, outcome_type, COUNT(*) AS count
-        FROM lead_outcomes
-        WHERE date >= ? AND date <= ?${exClause}
-        GROUP BY assistant_id, date, outcome_type
-      `).all(startDate, endDate) as any[];
+      // Transfers come out of the credit expansion (halves on a shotgun lead);
+      // everything else stays a plain count of the rows a CLR logged.
+      const clrOutcomeRows = ([] as any[]).concat(
+        sqlite.prepare(`
+          SELECT assistant_id, date, outcome_type, COUNT(*) AS count
+          FROM lead_outcomes
+          WHERE date >= ? AND date <= ? AND outcome_type <> 'transfer'${exClause}
+          GROUP BY assistant_id, date, outcome_type
+        `).all(startDate, endDate) as any[],
+        (sqlite.prepare(`
+          SELECT tc.user_id AS assistant_id, tc.date AS date, SUM(tc.credit) AS count
+          FROM (${TRANSFER_CREDIT_SQL}) tc
+          WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+          GROUP BY tc.user_id, tc.date
+        `).all(startDate, endDate) as any[]).map((r: any) => ({ ...r, outcome_type: "transfer" })),
+      );
       const clrCallRows = sqlite.prepare(`
         SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
         FROM daily_call_logs
@@ -15928,8 +16150,12 @@ ${note}` : daysLine;
     const sqlite = storageExtra.getRawSqlite();
     const clrs = (storage.getUsers() as any[])
       .filter((u) => u.isActive && !u.excludeFromStats && clrRoleMatches(u));
+    // shotgun_sender_id rides along because the transfer column below is
+    // CREDIT, not a row count: half a transfer each to the CLR who published a
+    // shotgun lead and the one who claimed it. See shared/transfer-credit.ts.
     const outcomes = sqlite.prepare(
-      `SELECT assistant_id, outcome_type FROM lead_outcomes WHERE org_id=? AND date >= ? AND date <= ?`,
+      `SELECT assistant_id, outcome_type, shotgun_sender_id
+         FROM lead_outcomes WHERE org_id=? AND date >= ? AND date <= ?`,
     ).all(orgId, from, to) as any[];
     const callsByUser = new Map<number, number>();
     for (const r of sqlite.prepare(
@@ -15943,7 +16169,10 @@ ${note}` : daysLine;
       return {
         name: String(u.name ?? ""),
         calls: (callsByUser.get(Number(u.id)) ?? 0) + (activity.get(Number(u.id))?.calls ?? 0),
-        transfers: count("transfer"),
+        // Over EVERY outcome in the window, not `mine`: a publisher's half sits
+        // on a row carrying the claimer's assistant_id, so filtering by name
+        // first would drop exactly the half being credited.
+        transfers: transferCreditIn(outcomes, Number(u.id)),
         appointments: count("appointment"),
         fellThrough: count("fell_through"),
       };
@@ -15965,14 +16194,14 @@ ${note}` : daysLine;
     if (!managers.length) return "skipped";
     const dateLabel = w.from === w.to ? w.from : `${w.from} → ${w.to}`;
     const totalTransfers = rows.reduce((s, r) => s + r.transfers, 0);
-    const subject = `Transfer Scorecard — ${w.label} · ${dateLabel} (${totalTransfers} transfers)`;
+    const subject = `Transfer Scorecard — ${w.label} · ${dateLabel} (${formatTransferCount(totalTransfers)} transfers)`;
     const html = buildEmail({
       subject,
-      preheader: `${totalTransfers} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
+      preheader: `${formatTransferCount(totalTransfers)} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
       body: buildScorecardDigestHtml(w.label, dateLabel, rows),
     });
     await sendEmail({ to: managers, subject, html });
-    console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${totalTransfers} transfers ${w.from}..${w.to}`);
+    console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${formatTransferCount(totalTransfers)} transfers ${w.from}..${w.to}`);
     return "sent";
   }
 
@@ -19453,7 +19682,7 @@ ${note}` : daysLine;
         const breakdownRows = sqlite.prepare(`
           SELECT outcome_type, COUNT(*) as n
           FROM lead_outcomes
-          WHERE assistant_id=? AND date=?
+          WHERE assistant_id=? AND date=? AND outcome_type <> 'transfer'
           GROUP BY outcome_type
         `).all(userId, date) as any[];
         const outcomeBreakdown: Record<string, number> = {};
@@ -19461,6 +19690,10 @@ ${note}` : daysLine;
           const k = String(row.outcome_type || "").trim();
           if (k) outcomeBreakdown[k] = Number(row.n) || 0;
         }
+        // Transfers are CREDIT — see shared/transfer-credit.ts.
+        outcomeBreakdown.transfer = storageExtra.getTransferCreditForUser(
+          Number(userId), { startDate: date, endDate: date, orgId: null },
+        );
         (report as any).outcomeBreakdown = outcomeBreakdown;
 
         // Transfer prospects (with LO name + transfer type)
@@ -19944,7 +20177,7 @@ ${note}` : daysLine;
       const breakdownRows = sqlite.prepare(`
         SELECT outcome_type, COUNT(*) as n
         FROM lead_outcomes
-        WHERE assistant_id=? AND date=?
+        WHERE assistant_id=? AND date=? AND outcome_type <> 'transfer'
         GROUP BY outcome_type
       `).all(r.assistant_id, r.report_date) as any[];
       const outcomeBreakdown: Record<string, number> = {};
@@ -19952,6 +20185,12 @@ ${note}` : daysLine;
         const k = String(row.outcome_type || "").trim();
         if (k) outcomeBreakdown[k] = Number(row.n) || 0;
       }
+      // Transfers are CREDIT — half each when a shotgun lead is published by one
+      // CLR and closed by another — so they come from the expansion, which can
+      // see the half sitting on the other person's row.
+      outcomeBreakdown.transfer = storageExtra.getTransferCreditForUser(
+        Number(r.assistant_id), { startDate: r.report_date, endDate: r.report_date, orgId: null },
+      );
 
       const rows = sqlite.prepare(`
         SELECT o.borrower_name, o.transfer_type, lo.full_name as lo_full_name
@@ -20071,7 +20310,16 @@ ${note}` : daysLine;
       dialpadCalls: storageExtra.getDialpadCallsFor(
         Number(req.session_user?.orgId ?? 1) || 1, Number(userId), reportDate,
       )?.calls ?? 0,
-      transfers: Number(transfers ?? 0),
+      // Recomputed here rather than trusting what the browser sent. The
+      // browser worked this out when the page loaded; a shotgun half can be
+      // created afterwards by the OTHER CLR claiming a lead this person
+      // published, and the filed figure is what the manager digest, the
+      // manager dashboard and EOD Analytics read forever. Those three would
+      // otherwise be permanently short by a half that every other surface
+      // shows, because they are the only readers that do not recompute.
+      transfers: storageExtra.getTransferCreditForUser(Number(userId), {
+        startDate: reportDate, endDate: reportDate, orgId: null,
+      }),
       appointments: Number(appointments ?? 0),
       notes: notes ?? null,
       assignedLosCalled: assignedIds,
@@ -20149,11 +20397,15 @@ ${note}` : daysLine;
 
         const wkOutcomes = sqlite2.prepare(`
           SELECT
-            SUM(CASE WHEN outcome_type='transfer' THEN 1 ELSE 0 END) AS transfers,
             SUM(CASE WHEN outcome_type='appointment' THEN 1 ELSE 0 END) AS appointments
           FROM lead_outcomes WHERE assistant_id=? AND date BETWEEN ? AND ?
         `).get(userId, wkStartStr, wkEndStr) as any;
-        const wkTransfers = wkOutcomes?.transfers ?? 0;
+        // Personal credit, so a shotgun transfer counts a half toward the goal
+        // for each of the two CLRs. A goal of 10 is now reachable at exactly
+        // 10, and 9.5 still misses it.
+        const wkTransfers = storageExtra.getTransferCreditForUser(Number(userId), {
+          startDate: wkStartStr, endDate: wkEndStr, orgId: null,
+        });
         const wkAppts = wkOutcomes?.appointments ?? 0;
 
         const hitCalls = goalRow.calls_goal > 0 && wkCalls >= goalRow.calls_goal;
@@ -20264,7 +20516,15 @@ ${note}` : daysLine;
         const calls = callsNum;
         const conversations = importedActivity.conversations + additionalConversationsNum;
         const activeMinutes = Math.round(importedActivity.activeSeconds / 60);
-        const xfers = Number(transfers ?? 0);
+        // CREDIT, as filed: the form is seeded from the same expansion, so half
+        // a transfer off a shotgun lead arrives here as 0.5 and must print as
+        // 0.5. See shared/transfer-credit.ts.
+        // Read back what was actually stored rather than what the browser
+        // sent, so the stat block at the top of this email and the Outcome
+        // Breakdown further down cannot print two different numbers when a
+        // partner's shotgun claim lands mid-form.
+        const xfers = Number(report?.transfers ?? transfers ?? 0);
+        const xfersLabel = formatTransferCount(xfers);
         const appts = Number(appointments ?? 0);
         const safeNotes = (notes ?? "").toString().trim();
 
@@ -20364,9 +20624,25 @@ ${note}` : daysLine;
               .filter((p: any) => p.name.length > 0);
             for (const r of dayRows) {
               const t = String(r.outcome_type ?? "");
-              if (t in outcomeCounts) (outcomeCounts as any)[t] += 1;
+              // Transfers are overwritten with CREDIT below; counting the rows
+              // here would put the wrong number in the cell.
+              if (t !== "transfer" && t in outcomeCounts) (outcomeCounts as any)[t] += 1;
               outcomeCounts.total += 1;
             }
+            // The Transfers cell reads CREDIT, exactly as the EOD history page,
+            // the print sheet and this CLR's own scorecard do: a transfer off a
+            // shotgun lead is half for the CLR who published it and half for
+            // the one who claimed it, and the publisher's half lives on a row
+            // whose assistant_id is somebody else — which `dayRows` above,
+            // filtered by name, can never contain. See
+            // shared/transfer-credit.ts.
+            //
+            // `total` stays a count of the rows this CLR filed. It already
+            // covers outcome types with no column of their own, so it was
+            // never the sum of the cells beside it.
+            outcomeCounts.transfer = storageExtra.getTransferCreditForUser(
+              Number(userId), { startDate: reportDate, endDate: reportDate, orgId: null },
+            );
           } catch {}
         }
 
@@ -20400,7 +20676,11 @@ ${note}` : daysLine;
         const wtdLogs = (storage.getCallLogsByRange(wkStartStr, wkEndStr) as any[])
           .filter((l: any) => (l.assistantId ?? l.assistant_id) === userId);
         const wtdCalls = wtdLogs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
-        const wtdTransfers = wtdOutcomes.filter((o: any) => (o.outcomeType ?? o.outcome_type) === "transfer").length;
+        // The CLR's own week, so credit — the same number their goal, the wall
+        // and their pay are measured on.
+        const wtdTransfers = storageExtra.getTransferCreditForUser(userId, {
+          startDate: wkStartStr, endDate: wkEndStr,
+        });
         const wtdAppointments = wtdOutcomes.filter((o: any) => (o.outcomeType ?? o.outcome_type) === "appointment").length;
 
         const goalCalls = Number((clrUser as any)?.goalCallsWeekly ?? (clrUser as any)?.goal_calls_weekly ?? 0);
@@ -20449,7 +20729,7 @@ ${note}` : daysLine;
             <tr>
               ${statBlock("Conversations", conversations, "#0891b2", `${importedActivity.conversations} CallTools + ${additionalConversationsNum} added`)}
               ${statBlock("Active Time", `${activeMinutes}m`, "#0891b2", "from CallTools")}
-              ${statBlock("Transfers", xfers, "#059669", xfers === 1 ? "1 lead transferred" : `${xfers} leads transferred`)}
+              ${statBlock("Transfers", xfersLabel, "#059669", xfers === 1 ? "1 lead transferred" : `${xfersLabel} leads transferred`)}
               ${statBlock("Appointments", appts, "#2563eb")}
             </tr>
           </table>
@@ -20471,7 +20751,7 @@ ${note}` : daysLine;
               </thead>
               <tbody>
                 <tr style="background:#ffffff">
-                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${outcomeCounts.transfer}</td>
+                  <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#1A2B4A">${formatTransferCount(outcomeCounts.transfer)}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#2563eb">${outcomeCounts.appointment}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#dc2626">${outcomeCounts.fell_through}</td>
                   <td style="padding:14px 6px;text-align:center;font-size:22px;font-weight:800;color:#7c3aed">${outcomeCounts.deferral}</td>
@@ -20486,7 +20766,7 @@ ${note}` : daysLine;
           ${xfers > 0 ? `
           <!-- Transfer prospects -->
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin-bottom:20px">
-            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfers (${xfers})</p>
+            <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#166534">💰 Transfers (${xfersLabel})</p>
             ${transferProspects.length > 0
               ? transferProspects.map((p, i) => {
                   const escHtml = (s: string) => s.replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
@@ -20673,7 +20953,7 @@ ${note}` : daysLine;
         const subject = `EOD Report: ${clrName} — ${reportDateShort}`;
         const html = buildEmail({
           subject,
-          preheader: `${calls} calls · ${xfers} transfers · ${appts} appointments · ${fellThroughCount} fell through`,
+          preheader: `${calls} calls · ${xfersLabel} transfers · ${appts} appointments · ${fellThroughCount} fell through`,
           body,
         });
         await sendEmail({ to: allRecipients, subject, html });
@@ -20818,13 +21098,18 @@ ${note}` : daysLine;
     const ot = (o: any) => o.outcomeType ?? o.outcome_type;
     const tt = (o: any) => o.transferType ?? o.transfer_type;
     const calls = callLogs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
-    const transfersList = outcomes.filter((o) => ot(o) === "transfer");
-    const transfers = transfersList.length;
+    // Transfer CREDIT, and its direct/appointment split taken from the same
+    // rows, so the two add back to the headline instead of overshooting it by
+    // the halves. A shotgun transfer is half for the publisher and half for the
+    // claimer; the publisher's half is on a row `outcomes` never sees.
+    const transfersList = storageExtra.getCreditedTransfers(userId, { startDate, endDate }) as any[];
+    const credit = (rows: any[]) => rows.reduce((n, o) => n + (Number(o.credit) || 0), 0);
+    const transfers = credit(transfersList);
     return {
       calls,
       transfers,
-      transfersDirect: transfersList.filter((o) => tt(o) === "direct").length,
-      transfersAppointment: transfersList.filter((o) => tt(o) === "appointment").length,
+      transfersDirect: credit(transfersList.filter((o) => tt(o) === "direct")),
+      transfersAppointment: credit(transfersList.filter((o) => tt(o) === "appointment")),
       appointments: outcomes.filter((o) => ot(o) === "appointment").length,
       callbacks: outcomes.filter((o) => ot(o) === "callback_requested").length,
       deferrals: outcomes.filter((o) => ot(o) === "deferral").length,
@@ -20848,12 +21133,21 @@ ${note}` : daysLine;
 
     const outcomeRows = sqlite.prepare(
       `SELECT assistant_id,
-              SUM(CASE WHEN outcome_type='transfer' THEN 1 ELSE 0 END)     AS transfers,
               SUM(CASE WHEN outcome_type='appointment' THEN 1 ELSE 0 END)  AS appointments,
               SUM(CASE WHEN outcome_type='fell_through' THEN 1 ELSE 0 END) AS fell_through,
               MIN(date) AS first_day, MAX(date) AS last_day
          FROM lead_outcomes WHERE org_id=? GROUP BY assistant_id`,
     ).all(orgId) as any[];
+    // Lifetime transfers are CREDIT — half each on a shotgun lead — and come
+    // from the expansion rather than a GROUP BY assistant_id, which cannot see
+    // the half a publisher earned on the claimer's row.
+    const lifetimeCredit = storageExtra.getTransferCreditByUser({ orgId });
+    for (const r of outcomeRows) r.transfers = lifetimeCredit.get(Number(r.assistant_id)) ?? 0;
+    lifetimeCredit.forEach((credit, uid) => {
+      if (!outcomeRows.some((r: any) => Number(r.assistant_id) === uid)) {
+        outcomeRows.push({ assistant_id: uid, transfers: credit, appointments: 0, fell_through: 0, first_day: null, last_day: null });
+      }
+    });
     const callRows = sqlite.prepare(
       `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS calls, MIN(log_date) AS first_day, MAX(log_date) AS last_day
          FROM daily_call_logs WHERE org_id=? GROUP BY assistant_id`,
@@ -20957,14 +21251,22 @@ ${note}` : daysLine;
       if (!Number.isFinite(id)) continue;
       (activeByUser.get(id) ?? activeByUser.set(id, []).get(id)!).push(String(row.d));
     }
+    // Transfers per working day is a PER-CLR rate, so the numerator is CREDIT:
+    // a transfer off a shotgun lead is half for the CLR who published it and
+    // half for the one who claimed it. Read from the expansion rather than
+    // GROUP BY assistant_id, which cannot see the half a publisher earned on
+    // the claimer's row. See shared/transfer-credit.ts.
     const transferRows = sqlite.prepare(
-      `SELECT assistant_id, date FROM lead_outcomes WHERE org_id=? AND outcome_type='transfer'`,
+      `SELECT tc.user_id AS assistant_id, tc.date AS date, tc.credit AS credit
+         FROM (${TRANSFER_CREDIT_SQL}) tc
+        WHERE tc.org_id=? AND tc.user_id IS NOT NULL`,
     ).all(orgId) as any[];
-    const transfersByUser = new Map<number, string[]>();
+    const transfersByUser = new Map<number, Array<{ date: string; credit: number }>>();
     for (const row of transferRows) {
       const id = Number(row.assistant_id);
       if (!Number.isFinite(id)) continue;
-      (transfersByUser.get(id) ?? transfersByUser.set(id, []).get(id)!).push(String(row.date));
+      (transfersByUser.get(id) ?? transfersByUser.set(id, []).get(id)!)
+        .push({ date: String(row.date), credit: Number(row.credit) || 0 });
     }
     // Same live/paid predicate as compClaimedTrainingDates, org-wide in one pass.
     const trainerRows = sqlite.prepare(
@@ -20990,6 +21292,25 @@ ${note}` : daysLine;
     }
     return out;
   }
+
+  // Reading back what was written on each transfer. Registered from its own
+  // file so the whole feature stays in one place; see transfer-detail-routes.
+  registerTransferDetailRoutes(app, {
+    requireAuth,
+    db: () => storageExtra.getRawSqlite(),
+    userFor: (req: any) => {
+      const uid = req.session_user?.userId;
+      if (!uid) return null;
+      const u = storage.getUserById(uid) as any;
+      if (!u) return null;
+      return {
+        id: Number(u.id),
+        role: u.role,
+        isManager: u.isManager ?? u.is_manager,
+        superAdmin: u.superAdmin ?? u.super_admin,
+      };
+    },
+  });
 
   app.get("/api/clr-profiles", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
@@ -21173,18 +21494,36 @@ ${note}` : daysLine;
     const ids = clrs.map((c) => Number(c.id));
     const counts = new Map<string, number>();
     if (ids.length) {
+      // Appointments are counted; TRANSFERS ARE CREDITED. A shotgun transfer is
+      // half a transfer for the CLR who published the lead and half for the one
+      // who claimed it, so a name on the wall can legitimately read 4.5 — and
+      // the query has to reach rows the CLR's own assistant_id is not on, which
+      // an `assistant_id IN (...)` filter over lead_outcomes cannot do.
       const rows = sqlite.prepare(
         `SELECT assistant_id, outcome_type,
                 SUM(CASE WHEN date = ? THEN 1 ELSE 0 END) AS today,
                 SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS week
            FROM lead_outcomes
-          WHERE org_id=? AND date >= ? AND outcome_type IN ('transfer','appointment')
+          WHERE org_id=? AND date >= ? AND outcome_type = 'appointment'
             AND assistant_id IN (${ids.map(() => "?").join(",")})
           GROUP BY assistant_id, outcome_type`,
       ).all(today, weekStart, orgId, weekStart, ...ids) as any[];
       for (const r of rows) {
         counts.set(`${r.assistant_id}:${r.outcome_type}:today`, Number(r.today) || 0);
         counts.set(`${r.assistant_id}:${r.outcome_type}:week`, Number(r.week) || 0);
+      }
+      const xfer = sqlite.prepare(
+        `SELECT tc.user_id AS assistant_id,
+                SUM(CASE WHEN tc.date = ? THEN tc.credit ELSE 0 END) AS today,
+                SUM(tc.credit) AS week
+           FROM (${TRANSFER_CREDIT_SQL}) tc
+          WHERE tc.org_id=? AND tc.date >= ?
+            AND tc.user_id IN (${ids.map(() => "?").join(",")})
+          GROUP BY tc.user_id`,
+      ).all(today, orgId, weekStart, ...ids) as any[];
+      for (const r of xfer) {
+        counts.set(`${r.assistant_id}:transfer:today`, Number(r.today) || 0);
+        counts.set(`${r.assistant_id}:transfer:week`, Number(r.week) || 0);
       }
     }
     // When each person last logged a transfer, and when they were last on a
@@ -21196,10 +21535,15 @@ ${note}` : daysLine;
     if (ids.length) {
       const holes = ids.map(() => "?").join(",");
       try {
+        // "How long since your last transfer" asks when this person last
+        // EARNED one, so a publisher's shotgun half counts as their moment too
+        // — the credit expansion names both people on such a row.
         for (const r of sqlite.prepare(
-          `SELECT assistant_id, MAX(created_at) AS at FROM lead_outcomes
-            WHERE org_id=? AND outcome_type='transfer' AND assistant_id IN (${holes})
-            GROUP BY assistant_id`,
+          `SELECT tc.user_id AS assistant_id, MAX(o.created_at) AS at
+             FROM (${TRANSFER_CREDIT_SQL}) tc
+             JOIN lead_outcomes o ON o.id = tc.outcome_id
+            WHERE tc.org_id=? AND tc.user_id IN (${holes})
+            GROUP BY tc.user_id`,
         ).all(orgId, ...ids) as any[]) if (r.at) lastTransfer.set(Number(r.assistant_id), String(r.at));
       } catch { /* no history is fine */ }
       try {
@@ -21214,11 +21558,15 @@ ${note}` : daysLine;
     // Best day before today, per person — the bar a personal best has to clear.
     const best = new Map<number, number>();
     try {
+      // The record to beat is a day's CREDIT, on the same scale as
+      // transfersToday above — otherwise a CLR whose old record was built from
+      // whole transfers could never beat it with shared ones.
       const rows = sqlite.prepare(
         `SELECT assistant_id, MAX(c) AS best FROM (
-           SELECT assistant_id, date, COUNT(*) AS c FROM lead_outcomes
-            WHERE org_id=? AND outcome_type='transfer' AND date < ?
-            GROUP BY assistant_id, date
+           SELECT tc.user_id AS assistant_id, tc.date AS date, SUM(tc.credit) AS c
+             FROM (${TRANSFER_CREDIT_SQL}) tc
+            WHERE tc.org_id=? AND tc.date < ?
+            GROUP BY tc.user_id, tc.date
          ) GROUP BY assistant_id`,
       ).all(orgId, today) as any[];
       for (const r of rows) best.set(Number(r.assistant_id), Number(r.best) || 0);
@@ -21277,7 +21625,15 @@ ${note}` : daysLine;
       .all(orgId, weekStart) as any[]).map(classifyOutcome).filter(Boolean);
 
     // ── milestones + a tip ───────────────────────────────────────────────
-    const milestones = detectMilestones({ today, weekStart, people });
+    // The team steps ("50 transfers today") are the floor's TRANSFER COUNT, not
+    // the sum of the credit above: one transfer is one transfer however it is
+    // shared, and a partner who is off the scorecard would otherwise take half
+    // of it out of the team's own total. teamRow is that count.
+    const milestones = detectMilestones({
+      today, weekStart, people,
+      teamTransfersToday: Number(teamRow?.transfersToday) || 0,
+      teamTransfersWeek: Number(teamRow?.transfersWeek) || 0,
+    });
     let days = TRAINING_DAYS;
     let author = TRAINING_AUTHOR;
     try {
@@ -21387,15 +21743,35 @@ ${note}` : daysLine;
 
       // ── transfers: three windows, per person and for the team ────────────
       section("transfers", () => {
+        // Per person this is CREDIT: a shotgun transfer is half for the CLR
+        // who published the lead and half for the one who claimed it, so a name
+        // here can read 4.5. The TEAM row below stays a plain count — a shared
+        // transfer is still one transfer, and the `excluded` reconciliation
+        // underneath only balances because both sides count the same halves.
         const rows = sqlite.prepare(
-          `SELECT o.assistant_id AS id, u.name AS name,
+          `SELECT tc.user_id AS id, u.name AS name,
+                  SUM(CASE WHEN tc.date = ?  THEN tc.credit ELSE 0 END) AS today,
+                  SUM(CASE WHEN tc.date >= ? THEN tc.credit ELSE 0 END) AS week,
+                  SUM(CASE WHEN tc.date >= ? THEN tc.credit ELSE 0 END) AS month
+             FROM (${TRANSFER_CREDIT_SQL}) tc LEFT JOIN users u ON u.id = tc.user_id
+            WHERE tc.org_id = ? AND tc.date >= ? AND tc.user_id IS NOT NULL
+            GROUP BY tc.user_id
+           UNION ALL
+           SELECT NULL AS id, NULL AS name,
                   SUM(CASE WHEN o.date = ?  THEN 1 ELSE 0 END) AS today,
                   SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS week,
                   SUM(CASE WHEN o.date >= ? THEN 1 ELSE 0 END) AS month
-             FROM lead_outcomes o LEFT JOIN users u ON u.id = o.assistant_id
+             FROM lead_outcomes o
             WHERE o.org_id = ? AND o.outcome_type = 'transfer' AND o.date >= ?
-            GROUP BY o.assistant_id`,
-        ).all(w.today, w.weekStart, w.monthStart, orgId, w.from) as any[];
+              AND o.assistant_id IS NULL AND o.shotgun_sender_id IS NULL`,
+        ).all(
+          w.today, w.weekStart, w.monthStart, orgId, w.from,
+          // A transfer naming NOBODY credits nobody, so the expansion above
+          // cannot see it — and without this second half the team total would
+          // exceed everything listed under it with nothing to explain the gap,
+          // which is the exact failure `excluded` exists to prevent.
+          w.today, w.weekStart, w.monthStart, orgId, w.from,
+        ) as any[];
         const counts = (r: any) => ({
           today: Number(r?.today) || 0, week: Number(r?.week) || 0, month: Number(r?.month) || 0,
         });
@@ -22236,12 +22612,13 @@ ${note}` : daysLine;
       const DAILY_TREND_MAX_DAYS = 120;
       const outcomes = (storage.getLeadOutcomes({ startDate, endDate, assistantId: userId }) as any[]);
       const ot = (o: any) => o.outcomeType ?? o.outcome_type;
-      const transfersByDay = new Map<string, number>();
+      // Transfers per day are this CLR's CREDIT (halves on a shotgun lead) and
+      // are read from the expansion, which reaches the rows their assistant_id
+      // is not on. Appointments stay a count of their own rows.
+      const transfersByDay = storageExtra.getTransferCreditDates(userId, { startDate, endDate });
       const apptsByDay = new Map<string, number>();
       for (const o of outcomes) {
-        const t = ot(o);
-        if (t === "transfer") transfersByDay.set(o.date, (transfersByDay.get(o.date) ?? 0) + 1);
-        else if (t === "appointment") apptsByDay.set(o.date, (apptsByDay.get(o.date) ?? 0) + 1);
+        if (ot(o) === "appointment") apptsByDay.set(o.date, (apptsByDay.get(o.date) ?? 0) + 1);
       }
 
       // The daily series used to be dominated by daily_call_logs.calls_made —
@@ -22543,8 +22920,16 @@ ${note}` : daysLine;
     const leadTf = (o: any) => o.leadTimeframe ?? o.lead_timeframe;
     const sumCalls = (logs: any[]) => logs.reduce((s, l) => s + (l.callsMade ?? l.calls_made ?? 0), 0);
 
+    // Every transfer that CREDITS this CLR, each carrying what it is worth to
+    // them: 1 normally, 0.5 when it came off a shotgun lead (the other half
+    // goes to the CLR at the other end). This list is read instead of the
+    // transfers inside `outcomes`, because `outcomes` is filtered by
+    // assistant_id and a publisher's half sits on the claimer's row.
+    const creditedTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate }) as any[];
+    const sumCredit = (rows: any[]) => rows.reduce((n, o) => n + (Number(o.credit) || 0), 0);
+
     const totalCalls = sumCalls(callLogs);
-    const totalTransfers = outcomes.filter(o => ot(o) === "transfer").length;
+    const totalTransfers = sumCredit(creditedTransfers);
     const totalAppointments = outcomes.filter(o => ot(o) === "appointment").length;
     const totalFellThrough = outcomes.filter(o => ot(o) === "fell_through").length;
     const totalDeferrals = outcomes.filter(o => ot(o) === "deferral").length;
@@ -22572,13 +22957,18 @@ ${note}` : daysLine;
     for (let d = new Date(start); d <= end; d = new Date(d.getTime() + dayMs)) {
       days.push(d.toISOString().split("T")[0]);
     }
+    const creditByDate = new Map<string, number>();
+    for (const o of creditedTransfers) {
+      const d = String(o.date ?? "");
+      if (d) creditByDate.set(d, (creditByDate.get(d) ?? 0) + (Number(o.credit) || 0));
+    }
     const daily = days.map(day => {
       const dayOutcomes = outcomes.filter((o: any) => o.date === day);
       const dayLogs = callLogs.filter((l: any) => (l.logDate ?? l.log_date) === day);
       return {
         date: day,
         calls: sumCalls(dayLogs),
-        transfers: dayOutcomes.filter(o => ot(o) === "transfer").length,
+        transfers: creditByDate.get(day) ?? 0,
         appointments: dayOutcomes.filter(o => ot(o) === "appointment").length,
         fellThrough: dayOutcomes.filter(o => ot(o) === "fell_through").length,
         callbacks: dayOutcomes.filter(o => ot(o) === "callback_requested").length,
@@ -22608,12 +22998,19 @@ ${note}` : daysLine;
         }
         return new Date().getHours();
       };
+      for (const o of creditedTransfers) {
+        if (o.date !== todayStr) continue;
+        const h = hourOf(o);
+        if (h < 0 || h > 23) continue;
+        buckets[h].transfers += Number(o.credit) || 0;
+      }
       for (const o of outcomes) {
         if (o.date !== todayStr) continue;
         const h = hourOf(o);
         if (h < 0 || h > 23) continue;
         const t = ot(o);
-        if (t === "transfer") buckets[h].transfers++;
+        // Transfers are already in, as credit, from the loop above.
+        if (t === "transfer") continue;
         else if (t === "appointment") buckets[h].appointments++;
         else if (t === "fell_through") buckets[h].fellThrough++;
         else if (t === "callback_requested") buckets[h].callbacks++;
@@ -22636,16 +23033,18 @@ ${note}` : daysLine;
       : 0;
 
     // Transfer breakdown: direct vs. appointment, + timeframe buckets
-    const transferOutcomes = outcomes.filter(o => ot(o) === "transfer");
+    // Split by credit as well, so direct + appointment + unspecified adds back
+    // to the headline figure instead of quietly exceeding it by the halves.
+    const transferOutcomes = creditedTransfers;
     const transferByType = {
-      direct: transferOutcomes.filter(o => transferType(o) === "direct").length,
-      appointment: transferOutcomes.filter(o => transferType(o) === "appointment").length,
-      unspecified: transferOutcomes.filter(o => !transferType(o)).length,
+      direct: sumCredit(transferOutcomes.filter(o => transferType(o) === "direct")),
+      appointment: sumCredit(transferOutcomes.filter(o => transferType(o) === "appointment")),
+      unspecified: sumCredit(transferOutcomes.filter(o => !transferType(o))),
     };
     const transferByTimeframe: Record<string, number> = {};
     for (const t of transferOutcomes) {
       const tf = String(leadTf(t) ?? "unspecified");
-      transferByTimeframe[tf] = (transferByTimeframe[tf] || 0) + 1;
+      transferByTimeframe[tf] = (transferByTimeframe[tf] || 0) + (Number(t.credit) || 0);
     }
 
     // Appointments summary — include all active appointment-like types:
@@ -22688,14 +23087,13 @@ ${note}` : daysLine;
 
     // Current streak: consecutive weekdays (Mon-Fri) up to today with >=1 transfer
     let streak = 0;
+    // Credit by day, all time. A day carried by half a shotgun transfer is a
+    // day this CLR moved a lead, so it keeps a streak alive — the test below is
+    // ">= 1", which a lone half would fail, so the halves are summed first.
     const transfersByDate: Record<string, number> = {};
-    const allMyOutcomes = storage.getLeadOutcomes({ assistantId: userId }) as any[];
-    for (const o of allMyOutcomes) {
-      if (ot(o) === "transfer") {
-        const d = (o.date || "").slice(0, 10);
-        if (d) transfersByDate[d] = (transfersByDate[d] || 0) + 1;
-      }
-    }
+    storageExtra.getTransferCreditDates(userId).forEach((credit, d) => {
+      transfersByDate[d.slice(0, 10)] = credit;
+    });
     const toPrevWeekday = (d: Date): Date => {
       const r = new Date(d);
       r.setDate(r.getDate() - 1);
@@ -22725,7 +23123,7 @@ ${note}` : daysLine;
       startDate: wtd.startDate,
       endDate: wtd.endDate,
       calls: sumCalls(wtdLogs),
-      transfers: wtdOutcomes.filter((o: any) => ot(o) === "transfer").length,
+      transfers: storageExtra.getTransferCreditForUser(userId, { startDate: wtd.startDate, endDate: wtd.endDate }),
       appointments: wtdOutcomes.filter((o: any) => ot(o) === "appointment").length,
       fellThrough: wtdOutcomes.filter((o: any) => ot(o) === "fell_through").length,
     };

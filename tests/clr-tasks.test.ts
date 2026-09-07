@@ -190,14 +190,37 @@ test("a payee cannot delete the request that stops their task paying twice", () 
   assert.ok(remove.indexOf("task_comp_task_id != null") < remove.indexOf("DELETE FROM comp_requests"));
 });
 
-test("the recurrence engine still does not copy the pay onto the next occurrence", () => {
-  // TASK_COMP_RECURRING_MODE is "this-occurrence-only", and this is the
-  // mechanism behind it: an unpaid successor is unpaid because the column was
-  // never copied, not because a later check remembered to skip it.
+test("the recurrence engine COPIES the pay onto the next occurrence", () => {
+  // TASK_COMP_RECURRING_MODE is "every-occurrence" — Ethan's decision — and
+  // this INSERT is the mechanism behind it. It names its columns explicitly,
+  // so a paying successor pays because the column is listed here; a column
+  // dropped from this list is a series that silently stops paying after its
+  // first occurrence, with nothing anywhere saying so.
   const spawn = scheduler.slice(scheduler.indexOf("export function spawnNextTaskOccurrence"), scheduler.indexOf("export function ensureRecurringTaskOccurrences"));
   assert.match(spawn, /INSERT INTO clr_tasks/);
-  assert.ok(spawn.indexOf("comp_amount_cents") < 0, "a daily paid task would otherwise file a request every day, with no ceiling");
-  assert.ok(spawn.indexOf("comp_") < 0, "the successor is unpaid because no comp column is ever copied");
+  for (const column of ["comp_amount_cents", "comp_reason", "comp_set_by_user_id", "comp_set_at", "comp_set_for_user_id"]) {
+    assert.ok(spawn.indexOf(column) > 0, `the successor must inherit ${column}`);
+  }
+  // All five move together — an amount whose authorising manager was lost is
+  // money nobody can account for.
+  assert.ok(spawn.indexOf("const pays = task.comp_amount_cents != null") > 0);
+  // WHO authorised it and WHEN are copied unchanged, never restamped to the
+  // spawn: that pair is the audit trail behind every payment the series makes.
+  assert.ok(spawn.indexOf("pays ? (task.comp_set_by_user_id ?? null) : null") > 0);
+  assert.ok(spawn.indexOf("pays ? (task.comp_set_at ?? null) : null") > 0);
+  // But "who the pay is for" follows the row's own assignee.
+  assert.ok(spawn.indexOf("pays ? task.assigned_user_id : null") > 0, "who the pay is for follows the successor’s own assignee");
+  assert.ok(spawn.indexOf("comp_set_for_user_id: task.comp_set_for_user_id") < 0);
+});
+
+test("the successor's pay columns really exist in the schema the INSERT names", () => {
+  // The INSERT lists these columns by name, so a deployment missing them would
+  // not merely lose the pay — it would throw, and take every recurring series
+  // (and the task list that catches them up) down with it.
+  for (const column of ["comp_amount_cents", "comp_reason", "comp_set_by_user_id", "comp_set_at", "comp_set_for_user_id"]) {
+    assert.ok(storage.indexOf(`ALTER TABLE clr_tasks ADD COLUMN ${column}`) > 0,
+      `clr_tasks.${column} must be added at boot — spawnNextTaskOccurrence names it`);
+  }
 });
 
 test("only a manager sees the pay field, and it states the cap before anything is typed", () => {
@@ -214,6 +237,14 @@ test("only a manager sees the pay field, and it states the cap before anything i
 test("a repeating paid task shows the module's own exposure sentence before saving", () => {
   assert.ok(page.indexOf("/api/clr-tasks/comp-preview") > 0);
   assert.ok(page.indexOf("Before you save:") > 0);
+  // Every occurrence pays now, so the editor says so on its own face too —
+  // before an amount is typed, and again once one is.
+  assert.ok(page.indexOf("every occurrence pays this amount") > 0, "the rule is stated where the amount is typed");
+  assert.ok(page.indexOf("and again on every occurrence after it") > 0, "and restated against the amount actually entered");
+  // A locked occurrence is locked; the SERIES is not, and saying only the
+  // first half is how somebody believes they have stopped the money.
+  assert.ok(page.indexOf("is locked on this occurrence") > 0);
+  assert.ok(page.indexOf("open the next occurrence and clear its pay") > 0, "the one brake there is, named");
   assert.ok(page.indexOf('data-testid="task-pay-exposure"') > 0);
   // It is the server's sentence, not a copy kept over here that can drift from
   // the rule it describes.

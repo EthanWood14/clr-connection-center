@@ -36,6 +36,7 @@
  * — only that a HIGHER score is better (PLACEMENT_SCORE_HIGHER_IS_BETTER).
  */
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
+import { SHOTGUN_SENDER_CREDIT, formatTransferCount } from "@shared/transfer-credit";
 
 // ── what a transfers request is ─────────────────────────────────────────────
 
@@ -85,8 +86,17 @@ export const AUTO_FILE_CATCHUP_MONTHS = 3;
  */
 export const AUTO_FILE_EARLIEST_PERIOD = "2026-09";
 
-/** Below this, nothing is filed — a $0.00 request is noise, not pay. */
-export const AUTO_FILE_MIN_TRANSFERS = 1;
+/**
+ * Below this, nothing is filed — a $0.00 request is noise, not pay.
+ *
+ * HALF a transfer, not one. Transfer counts here are CREDIT: a transfer that
+ * came off a shotgun lead is worth half to the CLR who published it and half to
+ * the one who claimed it (shared/transfer-credit.ts). Half a transfer is real
+ * money — $2.50 at the entry rate — so the smallest count that can exist is the
+ * smallest count worth filing, and a whole-number floor would silently refuse
+ * to pay somebody whose entire month was shotgun halves.
+ */
+export const AUTO_FILE_MIN_TRANSFERS = SHOTGUN_SENDER_CREDIT;
 
 // ── the bumps ───────────────────────────────────────────────────────────────
 
@@ -96,10 +106,16 @@ export const BUMP_EFFECTIVE_FROM_PERIOD = "2026-10";
 /**
  * Transfers needed to be ranked at all. Ethan: "37.5 transfers or more".
  *
- * Transfer counts are whole numbers, so the half is what makes the line
- * unambiguous: 37 is out, 38 is in, and nobody sits exactly on it. Below the
- * line a CLR is neither bumped up nor down — a light month should not earn a
- * +/-10% verdict off a handful of write-ups.
+ * The line was written when transfer counts were whole, and the half was what
+ * made it unambiguous: 37 was out, 38 was in, and nobody could sit exactly on
+ * it. Transfer counts are now CREDIT and come in halves — a shotgun transfer is
+ * half for the CLR who published the lead and half for the one who claimed it
+ * (shared/transfer-credit.ts) — so a CLR CAN now land on exactly 37.5. The
+ * comparison is ">=", so exactly 37.5 is IN, which is both the plain reading of
+ * "37.5 transfers or more" and the direction that favours the CLR.
+ *
+ * Below the line a CLR is neither bumped up nor down — a light month should not
+ * earn a +/-10% verdict off a handful of write-ups.
  */
 export const BUMP_MIN_TRANSFERS = 37.5;
 
@@ -381,7 +397,12 @@ export interface ClrMonthStats {
   name?: string | null;
   /** Explicit false pauses this CLR. Undefined is treated as active. */
   active?: boolean;
-  /** Transfers logged in the period. */
+  /**
+   * Transfer CREDIT logged in the period — half a transfer each when a shotgun
+   * lead is published by one CLR and closed by another, so this is a multiple
+   * of 0.5 and must NOT be truncated anywhere downstream. It is both what the
+   * base pay is priced off and what BUMP_MIN_TRANSFERS is compared against.
+   */
   transfers: number;
   /** summarizeCompleteness().pct — 0-100, or null when there was nothing to score. */
   writeUpPct?: number | null;
@@ -629,8 +650,10 @@ export function buildAutoFileDescription(args: {
   bumps: BumpDetail[];
   amount: BumpedAmount;
 }): string {
-  const n = Math.trunc(Number(args.transfers) || 0);
-  const head = `Monthly transfer request — ${monthLabel(args.period)} (${n} transfer${n === 1 ? "" : "s"} @ ${formatMoneyCents(args.rateCents)})`;
+  // Printed, never rounded: "37.5 transfers @ $10.00" is what was paid for, and
+  // an approver who counts the wall must find the same number here.
+  const n = Math.max(0, Number(args.transfers) || 0);
+  const head = `Monthly transfer request — ${monthLabel(args.period)} (${formatTransferCount(n)} transfer${n === 1 ? "" : "s"} @ ${formatMoneyCents(args.rateCents)})`;
   const tags = args.bumps.map((b) => `${formatBps(b.bps)} ${b.metricLabel}`).join(", ");
   const adj = args.bumps.length > 0 ? `${tags} · net ${formatBps(args.amount.totalBps)}` : "no adjustment";
   return `${head} — auto-filed · ${adj} · ${formatMoneyCents(args.amount.amountCents)}`.slice(0, 300);
@@ -655,10 +678,10 @@ export function buildAutoFileNote(args: {
   warnings: string[];
 }): string {
   const label = monthLabel(args.period);
-  const n = Math.trunc(Number(args.transfers) || 0);
+  const n = Math.max(0, Number(args.transfers) || 0);
   const lines: string[] = [];
   lines.push(`Auto-filed ${args.today} for ${label} (the previous calendar month).`);
-  lines.push(`Base: ${n} transfer${n === 1 ? "" : "s"} x ${formatMoneyCents(args.rateCents)} = ${formatMoneyCents(args.amount.baseCents)}.`);
+  lines.push(`Base: ${formatTransferCount(n)} transfer${n === 1 ? "" : "s"} x ${formatMoneyCents(args.rateCents)} = ${formatMoneyCents(args.amount.baseCents)}.`);
   if (args.bumps.length > 0) {
     lines.push(`Adjustments — each is ${formatBps(BUMP_STEP_BPS)} of the BASE, added together, never compounded:`);
     for (let i = 0; i < args.bumps.length; i += 1) {
@@ -780,14 +803,18 @@ export function planTransferCompAutoFile(input: {
     const s = stats[i];
     const userId = Number(s.userId);
     const userName = String(s.name ?? "").trim() || `User #${userId}`;
-    const transfers = Math.max(0, Math.trunc(Number(s.transfers ?? 0) || 0));
+    // NOT truncated. This is credit, and truncating it would round 37.5 down
+    // to 37 — under the bump pool minimum this file is built around — and pay
+    // half a transfer less than was earned, every month, to everybody who
+    // worked the shotgun.
+    const transfers = Math.max(0, Number(s.transfers ?? 0) || 0);
     const plural = transfers === 1 ? "" : "s";
 
     if (!isActive(s)) {
-      skipped.push({ userId, userName, reason: "inactive", detail: `inactive — ${transfers} transfer${plural} in ${label} were not filed` });
+      skipped.push({ userId, userName, reason: "inactive", detail: `inactive — ${formatTransferCount(transfers)} transfer${plural} in ${label} were not filed` });
       // Loud, because this is earned money nobody is being asked to approve.
       if (transfers >= AUTO_FILE_MIN_TRANSFERS) {
-        warnings.push(`${userName} logged ${transfers} transfer${plural} in ${label} but is inactive — nothing was filed. File by hand if they are still owed.`);
+        warnings.push(`${userName} logged ${formatTransferCount(transfers)} transfer${plural} in ${label} but is inactive — nothing was filed. File by hand if they are still owed.`);
       }
       continue;
     }
@@ -812,7 +839,7 @@ export function planTransferCompAutoFile(input: {
     if (bumps.length === 0) {
       if (!bumpsActive) noBumpReason = `the write-up and placement bumps start with transfer month ${monthLabel(BUMP_EFFECTIVE_FROM_PERIOD)}`;
       else if (poolTooSmall) noBumpReason = `the bump pool had ${pool.length} CLR${pool.length === 1 ? "" : "s"}, under the ${BUMP_MIN_POOL} needed`;
-      else if (!inPool) noBumpReason = `${transfers} transfer${plural} is under the ${BUMP_MIN_TRANSFERS}-transfer pool minimum`;
+      else if (!inPool) noBumpReason = `${formatTransferCount(transfers)} transfer${plural} is under the ${BUMP_MIN_TRANSFERS}-transfer pool minimum`;
       else noBumpReason = `in the pool of ${pool.length} but in neither the top ${BUMP_GROUP_SIZE} nor the bottom ${BUMP_GROUP_SIZE} on either metric`;
     }
 

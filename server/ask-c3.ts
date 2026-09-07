@@ -28,6 +28,7 @@ import {
   getBonzoProspects,
   getCallStatsByRange,
 } from "./storage";
+import { transferCreditByUser, transferCreditFor } from "@shared/transfer-credit";
 
 // ── Model tiers ──────────────────────────────────────────────────────────────
 // Entry order is the client dropdown order. Fable runs at effort "high": its
@@ -335,10 +336,23 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         entry.total++;
         entry.days.add(String(row.date));
         const type = String(row.outcome_type ?? row.outcomeType ?? "");
-        if (type === "transfer") entry.transfers++;
-        else if (type === "appointment") entry.appointments++;
+        if (type === "appointment") entry.appointments++;
         else if (type === "fell_through") entry.fellThrough++;
+        // Transfers are filled in below, as CREDIT rather than a row count.
       }
+      // A transfer off a shotgun lead is half a transfer for the CLR who
+      // published it and half for the one who claimed it, so the assistant must
+      // quote the same numbers the wall, the goals and the pay run do. The map
+      // is built over EVERY outcome in the window, because the publisher's half
+      // rides on a row carrying the claimer's assistant_id — a GROUP BY on the
+      // loop above could never have found it. Summed over everyone the halves
+      // add back to one per transfer, so `totalTransfers` below is unchanged.
+      // See shared/transfer-credit.ts.
+      transferCreditByUser(outcomes).forEach((credit, id) => {
+        let entry = statsByClr.get(id);
+        if (!entry) { entry = { transfers: 0, appointments: 0, fellThrough: 0, total: 0, days: new Set() }; statsByClr.set(id, entry); }
+        entry.transfers = credit;
+      });
       const callsByClr = new Map<number, any>(calls.map((row) => [Number(row.assistant_id ?? row.assistantId), row]));
 
       // Rows = the CLR roster UNION anyone with activity in the range, so a
@@ -376,7 +390,10 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         };
       }).sort((a, b) => b.transfers - a.transfers);
 
-      const active = perClr.filter((row) => row.totalOutcomes > 0 || row.callsMade > 0);
+      // `transfers > 0` earns a place here on its own: a CLR who published a
+      // shotgun lead somebody else closed logged no outcome of their own that
+      // day, and dropping them would leave half a transfer out of the averages.
+      const active = perClr.filter((row) => row.totalOutcomes > 0 || row.callsMade > 0 || row.transfers > 0);
       const avg = (values: number[]) => (values.length ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2)) : 0);
       const median = (values: number[]) => {
         if (!values.length) return 0;
@@ -436,9 +453,25 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         if (!bucket) continue;
         bucket.outcomes++;
         const type = String(row.outcome_type ?? row.outcomeType ?? "");
-        if (type === "transfer") bucket.transfers++;
+        // One CLR's transfers are CREDIT and are added in the pass below; the
+        // whole team's are a plain count of transfers, because a shotgun
+        // transfer is one transfer shared and never two.
+        if (type === "transfer") { if (!assistantId) bucket.transfers++; }
         else if (type === "appointment") bucket.appointments++;
         else if (type === "fell_through") bucket.fellThrough++;
+      }
+      if (assistantId) {
+        // Unfiltered on purpose: the half this CLR earned by publishing a
+        // shotgun lead sits on the row of whoever claimed it, which the
+        // assistantId-filtered read above cannot see. See
+        // shared/transfer-credit.ts.
+        for (const row of storage.getLeadOutcomes({ startDate: start, endDate: today } as any) as any[]) {
+          if (String(row.outcome_type ?? row.outcomeType ?? "") !== "transfer") continue;
+          const credit = transferCreditFor(row, assistantId);
+          if (!credit) continue;
+          const bucket = buckets.get(weekOf(String(row.date)));
+          if (bucket) bucket.transfers += credit;
+        }
       }
       const callLogs = (storage.getCallLogsByRange(start, today) as any[])
         .filter((row) => !assistantId || Number(row.assistantId ?? row.assistant_id) === assistantId);
@@ -493,6 +526,7 @@ function buildSystemPrompt(user: AskUser): string {
     `- You cannot change any data. If asked to modify something, explain where in C3 to do it.\n` +
     `- Amounts in tool results named *_cents are integer cents — divide by 100 and present as dollars.\n` +
     `- "Transfers" and "appointments" are rows in lead outcomes; a transfer is a live handoff of a borrower call to a loan officer (LO). CLRs are the callers; LOs are the loan officers they transfer to.\n` +
+    `- A PER-CLR transfer figure is CREDIT, not a row count: a transfer taken off a shotgun lead counts half a transfer for the CLR who published the lead and half for the CLR who claimed it, everywhere including pay. So a person's total can legitimately be a half (4.5). Report it as it comes back — never round it. A TEAM total is still the number of transfers, because a shared transfer is one transfer, not two.\n` +
     `- For averages, rates, per-CLR comparisons, or trends, call get_team_metrics or get_clr_trends — they compute the math server-side. Never hand-compute an average from raw rows when a computed tool covers it.\n` +
     `- FORMAT for scanning. Open with one plain sentence stating the headline result. When the answer covers three or more people or rows, present them as a markdown table whose columns fit the question — never a long run of bullets. Use short bullets for 1-2 items. Bold each key name or number. Never write paragraph walls.\n` +
     `- Be concise and specific. If the data is thin, say so.`

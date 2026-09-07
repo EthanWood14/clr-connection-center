@@ -14,6 +14,7 @@ import {
   PieChart, Pie, Cell, LineChart, Line, CartesianGrid,
 } from "recharts";
 import { shiftWeekendBucketsToMonday } from "@/lib/weekday-date";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 const COLORS = {
   calls: "#3B82F6",
@@ -486,11 +487,14 @@ export default function TeamStats() {
                     <td className="px-4 py-2.5 text-amber-700 dark:text-amber-300">{row.callToolsConversations ?? 0}</td>
                     <td className="px-4 py-2.5 text-cyan-700 dark:text-cyan-300">{Math.floor((row.callToolsActiveSeconds ?? 0) / 3600)}h {Math.floor(((row.callToolsActiveSeconds ?? 0) % 3600) / 60)}m</td>
                     <td className="px-4 py-2.5 text-teal-600 dark:text-teal-400">{row.messages ?? 0}</td>
-                    <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400">{row.transfers}</td>
+                    {/* CREDIT, not a row count: half a transfer each when a shotgun lead is
+                        published by one CLR and closed by another, so this cell can read
+                        4.5 and must never round. See shared/transfer-credit.ts. */}
+                    <td className="px-4 py-2.5 font-semibold text-green-600 dark:text-green-400" data-testid="team-stats-clr-transfers">{formatTransferCount(row.transfers)}</td>
                     <td className="px-4 py-2.5">
                       {Number(row.transfersGoal ?? 0) > 0 ? (
                         <span className={(row.transfers >= row.transfersGoal) ? "text-green-600 dark:text-green-400 font-semibold" : "text-muted-foreground"}>
-                          {row.transfers}/{row.transfersGoal} ({Math.round((row.transfers / row.transfersGoal) * 100)}%)
+                          {formatTransferCount(row.transfers)}/{row.transfersGoal} ({Math.round((row.transfers / row.transfersGoal) * 100)}%)
                           {row.goalSource === "default" ? <span className="ml-1 text-[10px] opacity-70">(default)</span> : null}
                         </span>
                       ) : (

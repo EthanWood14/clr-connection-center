@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { aggregateByWeekday } from "@/lib/weekday-date";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 type Period = "today" | "week" | "month" | "30days" | "90days" | "alltime" | "period";
 
@@ -125,7 +126,7 @@ function GoalProgressRow({ label, current, goal, color }: { label: string; curre
       <div className="flex items-center justify-between text-xs">
         <span className="font-medium">{label}</span>
         <span className={met ? "text-green-600 font-semibold" : "text-muted-foreground"}>
-          {current} / {goal} goal {goal > 0 ? `(${pct}%)` : ""}
+          {formatTransferCount(current)} / {goal} goal {goal > 0 ? `(${pct}%)` : ""}
           {met && " ✓"}
         </span>
       </div>
@@ -392,7 +393,7 @@ export default function MyReport() {
             <StatCard
               icon={TrendingUp}
               label="Transfers"
-              value={data.totals.transfers}
+              value={formatTransferCount(data.totals.transfers)}
               color="text-green-600 dark:text-green-400"
               sub={data.totals.transferRate > 0 ? `${data.totals.transferRate}% transfer rate` : undefined}
             />
@@ -591,7 +592,7 @@ export default function MyReport() {
               <CardContent>
                 {data.bestDay ? (
                   <p className="text-sm">
-                    <span className="text-2xl font-bold text-amber-500">{data.bestDay.transfers}</span>{" "}
+                    <span className="text-2xl font-bold text-amber-500">{formatTransferCount(data.bestDay.transfers)}</span>{" "}
                     <span className="text-muted-foreground">transfers on </span>
                     <span className="font-semibold">{format(parseISO(data.bestDay.date), "EEEE, MMM d")}</span>
                   </p>

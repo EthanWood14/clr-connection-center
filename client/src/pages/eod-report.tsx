@@ -23,6 +23,7 @@ import { HelpIcon, markStep } from "@/components/onboarding";
 import { format, subDays, addDays, parseISO } from "date-fns";
 import { parseServerTimestamp } from "@/lib/dates";
 import { businessTodayInTz } from "@/lib/business-day";
+import { formatTransferCount, transferCreditIn } from "@shared/transfer-credit";
 
 const ACTIVITY_TYPES = [
   { value: "follow_up",          label: "Follow-Up Call" },
@@ -48,7 +49,7 @@ const ACTIVITY_COLORS: Record<string, string> = {
   other:             "bg-muted text-muted-foreground",
 };
 
-function ReadOnlyStat({ icon: Icon, label, value, color }: { icon: any; label: string; value: number; color: string }) {
+function ReadOnlyStat({ icon: Icon, label, value, color }: { icon: any; label: string; value: number | string; color: string }) {
   return (
     <div className="flex flex-col items-center gap-1 p-3 rounded-lg bg-muted/50 border border-border/50 flex-1 min-w-[90px]">
       <Icon className={`w-4 h-4 ${color}`} />
@@ -212,9 +213,17 @@ export default function EodReport() {
     [allOutcomes, selectedDate, user?.id]
   );
 
+  // Every outcome logged on this date by ANYONE — needed for transfer credit,
+  // because the half this CLR earned by publishing a shotgun lead sits on the
+  // row of whoever claimed it. See shared/transfer-credit.ts.
+  const dayAllOutcomes = useMemo(() =>
+    (allOutcomes as any[]).filter((o: any) => (o.date || o.createdAt || "").slice(0, 10) === selectedDate),
+    [allOutcomes, selectedDate]
+  );
+
   const outcomeCount = (t: string) =>
     dayOutcomes.filter((o: any) => (o.outcomeType || o.outcome_type) === t).length;
-  const autoTransfers    = outcomeCount("transfer");
+  const autoTransfers    = transferCreditIn(dayAllOutcomes, user?.id ?? 0);
   const autoAppointments = outcomeCount("appointment");
   const autoFellThrough  = outcomeCount("fell_through");
   const autoCallbacks    = outcomeCount("callback_requested");
@@ -635,7 +644,10 @@ export default function EodReport() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                <ReadOnlyStat icon={TrendingUp}    label="Transfers"    value={autoTransfers}    color="text-green-600 dark:text-green-400" />
+                {/* CREDIT, printed through formatTransferCount: half a transfer off a
+                    shotgun lead is 0.5 here, the same figure the wall, the goal and
+                    the pay run use. See shared/transfer-credit.ts. */}
+                <ReadOnlyStat icon={TrendingUp}    label="Transfers"    value={formatTransferCount(autoTransfers)} color="text-green-600 dark:text-green-400" />
                 <ReadOnlyStat icon={Calendar}      label="Appointments" value={autoAppointments} color="text-blue-600 dark:text-blue-400" />
                 <ReadOnlyStat icon={XCircle}       label="Fell Through" value={autoFellThrough}  color="text-orange-500 dark:text-orange-400" />
                 <ReadOnlyStat icon={Clock}         label="Future"       value={autoFuture}       color="text-indigo-600 dark:text-indigo-400" />
@@ -1178,8 +1190,10 @@ function EodPrintSheet({
     (coverage?.additional?.length ?? 0);
   const hasCoverage = !!coverage && (coverageCount > 0 || !!coverage.otherNotes);
 
-  const outcomeRows: Array<{ label: string; count: number }> = [
-    { label: "Transfers",            count: transfers },
+  const outcomeRows: Array<{ label: string; count: string | number }> = [
+    // formatTransferCount: transfers are credit, and half of one is a real
+    // number a CLR can check against their own day.
+    { label: "Transfers",            count: formatTransferCount(transfers) },
     { label: "Appointments Set",     count: appointments },
     { label: "Fell Through",         count: fellThrough },
     { label: "Deferrals",            count: deferrals },
@@ -1438,12 +1452,15 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
           const activeSeconds = Number(r.calltools_active_seconds ?? 0);
           const future = breakdown.future_contact ?? 0;
           const noAnswer = breakdown.no_answer ?? 0;
-          const summaryChips: Array<{ label: string; val: number; cls: string }> = [
+          const summaryChips: Array<{ label: string; val: number; cls: string; text?: string }> = [
             { label: "conversations",          val: conversations,        cls: "text-cyan-700 font-medium" },
             { label: "active min",             val: Math.round(activeSeconds / 60), cls: "text-cyan-700" },
             { label: "extra calls",            val: calls,                cls: "text-muted-foreground" },
             { label: "extra texts",            val: messages,             cls: "text-muted-foreground" },
-            { label: "transfers",              val: xfers,                cls: "text-emerald-600 font-medium" },
+            // `text` overrides the printed value: transfers are credit and half of
+            // one must show as 0.5, not vanish into a whole. `val` stays numeric
+            // because the filter below drops any chip that is zero.
+            { label: "transfers",              val: xfers,                cls: "text-emerald-600 font-medium", text: formatTransferCount(xfers) },
             { label: "appts",                  val: appts,                cls: "text-blue-600" },
             { label: "fell through",           val: fellThrough,          cls: "text-rose-600" },
             { label: "deferrals",              val: deferrals,            cls: "text-amber-600" },
@@ -1473,7 +1490,7 @@ function ReportHistory({ isAdmin }: { isAdmin: boolean }) {
                         <span className="text-xs text-muted-foreground">No activity</span>
                       ) : (
                         summaryChips.map(c => (
-                          <span key={c.label} className={`text-xs ${c.cls}`}>{c.val} {c.label}</span>
+                          <span key={c.label} className={`text-xs ${c.cls}`}>{c.text ?? c.val} {c.label}</span>
                         ))
                       )}
                     </div>

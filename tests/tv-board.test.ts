@@ -963,7 +963,12 @@ test("the scorecard says how long since each person's last transfer and call", (
   // Calls come from CallTools, which stores a per-call occurred_at. Dialpad
   // only syncs a daily total, so it cannot answer "how long since" and must
   // not be mixed in — a stale daily number would read as a fresh call.
-  assert.match(routes, /MAX\(created_at\) AS at FROM lead_outcomes/);
+  // The stamp is still lead_outcomes.created_at — but read through the transfer
+  // credit expansion, so a CLR who PUBLISHED a shotgun lead somebody else
+  // closed has earned their half and their "last transfer" says so. Counting
+  // only rows carrying their own assistant_id would show them as idle.
+  assert.match(routes, /MAX\(o\.created_at\) AS at/);
+  assert.match(routes, /JOIN lead_outcomes o ON o\.id = tc\.outcome_id/);
   assert.match(routes, /MAX\(occurred_at\) AS at FROM callsync_activity_events/);
   assert.doesNotMatch(
     routes.slice(routes.indexOf("const lastTransfer = new Map"), routes.indexOf("const best = new Map")),
@@ -1281,7 +1286,7 @@ test("the upcoming slot is in the deck AND has something to render", () => {
   assert.match(page, /\{ id: "upcoming",\s+dwellMs: 13_000 \}/);
   assert.match(page, /page === "upcoming"/, "the deck id has a renderer");
   assert.match(page, /<UpcomingPage/);
-  assert.match(page, /StarvedPage, UpcomingPage,\n\} from "@\/components\/tv\/pages"/);
+  assert.match(page, /StarvedPage, UpcomingPage,\r?\n\} from "@\/components\/tv\/pages"/);
   assert.match(tvPages, /export function UpcomingPage/);
   assert.match(tvPages, /data-testid="tv-page-upcoming"/);
   // Its dwell and its pan have to agree, the way every other page's do.
@@ -1509,7 +1514,7 @@ test("the progress dots and click-to-advance both still work from inside the str
   assert.match(strip, /aria-hidden="true" data-testid="tv-progress"/);
   // Click-to-advance is still on the root, so a tap anywhere \u2014 the strip
   // included \u2014 moves the deck on.
-  assert.match(page, /onClick=\{advance\}\n\s+role="button"/);
+  assert.match(page, /onClick=\{advance\}\r?\n\s+role="button"/);
   assert.match(page, /if \(e\.key === "Enter" \|\| e\.key === " " \|\| e\.key === "ArrowRight"\) advance\(\);/);
 });
 
@@ -1585,4 +1590,18 @@ test("a missing check-in never hides anybody from the scorecard", () => {
   assert.equal(here({ Ada: true }, "Ada", false), true);
   assert.equal(here({ Ada: false }, "Ada", false), false, "checked in nowhere and did nothing");
   assert.equal(here({ Ada: false }, "Ada", true), true, "but work today speaks for itself");
+});
+
+// ── the race caption counts credit ──────────────────────────────────────────
+test("the race caption prints a shared transfer as a half, never rounded", () => {
+  const race = readFileSync(join(root, "client/src/components/tv/race.tsx"), "utf8");
+  // `count` is the passer's transfersToday, which is CREDIT: a transfer off a
+  // shotgun lead is half for the CLR who published it and half for the one who
+  // claimed it. "4.5 transfers today" is a true sentence on this wall.
+  // See shared/transfer-credit.ts.
+  assert.match(race, /formatTransferCount/);
+  assert.match(race, /const countLabel = formatTransferCount\(count\);/);
+  assert.match(race, /\{countLabel\} \{plural\} today/);
+  assert.doesNotMatch(race, /\{count\} \{plural\} today/, "the raw number must not be rendered");
+  assert.doesNotMatch(race, /Math\.round\(count/);
 });

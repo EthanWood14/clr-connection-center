@@ -16,6 +16,13 @@
  * Transfers logged ON an excluded day are excluded from the numerator too:
  * a trainer who grabs one call between sessions must not score it against
  * a shrunken denominator.
+ *
+ * The numerator is transfer CREDIT, not a count of rows. A transfer that came
+ * off a shotgun lead is half a transfer for the CLR who published it and half
+ * for the one who claimed it (shared/transfer-credit.ts), so an entry may carry
+ * a fractional weight and the resulting `transfers` may be a multiple of 0.5.
+ * A bare date string still means one whole transfer, which is what every
+ * ordinary transfer is.
  */
 import { CLR_TRAINING_WORKDAY_THRESHOLD } from "./clr-training-status";
 
@@ -25,7 +32,7 @@ export const MIN_WORKING_DAYS_FOR_RATE = 5;
 export type ClrWorkdayRate = {
   /** Post-training active weekdays that were not trainer days. */
   workingDays: number;
-  /** Transfers that landed on those working days. */
+  /** Transfer CREDIT earned on those working days — a multiple of 0.5. */
   transfers: number;
   /** transfers / workingDays, 2dp — null under MIN_WORKING_DAYS_FOR_RATE. */
   ratePerWorkingDay: number | null;
@@ -42,8 +49,12 @@ export function transfersPerWorkingDay(input: {
   activeDates: readonly string[];
   /** Dates claimed on live/paid training comp requests. */
   trainerDates: ReadonlySet<string>;
-  /** One entry per transfer: the transfer's date. */
-  transferDates: readonly string[];
+  /**
+   * One entry per transfer this CLR earned credit on: the transfer's date, or
+   * `{ date, credit }` when the transfer was shared. A bare string is one whole
+   * transfer. See shared/transfer-credit.ts.
+   */
+  transferDates: readonly (string | { date: string; credit?: number })[];
   threshold?: number;
   minDays?: number;
 }): ClrWorkdayRate {
@@ -54,7 +65,15 @@ export function transfersPerWorkingDay(input: {
   const postTraining = active.slice(trainingDays);
   const workingSet = new Set(postTraining.filter((date) => !input.trainerDates.has(date)));
   const trainerDays = postTraining.length - workingSet.size;
-  const transfers = input.transferDates.filter((date) => workingSet.has(date)).length;
+  // Sum of credit, not a row count — and rounded back to the nearest half so a
+  // long month of 0.5s cannot drift on floating-point addition.
+  const transfers = Math.round(input.transferDates.reduce((sum, entry) => {
+    const date = typeof entry === "string" ? entry : entry?.date;
+    if (!date || !workingSet.has(String(date))) return sum;
+    if (typeof entry === "string") return sum + 1;
+    const credit = Number(entry.credit);
+    return sum + (Number.isFinite(credit) ? credit : 1);
+  }, 0) * 2) / 2;
   return {
     workingDays: workingSet.size,
     transfers,

@@ -206,7 +206,8 @@ function TaskEditor({ open, onClose, task, payload }: {
           </div>
           {payLocked && !!task?.compAmountCents && (
             <p className="rounded-xl border bg-muted/25 p-3 text-xs text-muted-foreground" data-testid="task-pay-locked">
-              Pay of {money(task.compAmountCents)} is locked — this task is {task.status}. If the amount was wrong, deny the comp request and file the right one by hand.
+              Pay of {money(task.compAmountCents)} is locked on this occurrence — this task is {task.status}. If the amount was wrong, deny the comp request and file the right one by hand.
+              {task.recurrence !== "none" && " This task repeats and the pay repeats with it: every later occurrence carries the same amount and files its own request. To stop the series, open the next occurrence and clear its pay."}
             </p>
           )}
           {mayAttachPay && (
@@ -216,6 +217,7 @@ function TaskEditor({ open, onClose, task, payload }: {
                 <p className="text-xs text-muted-foreground">
                   Completing it files a comp request for the assignee — pending, exactly like a hand-typed one, so somebody still approves it.
                   Enter <strong>dollars</strong>, up to {money(maxCents)} per task.
+                  {recurrence !== "none" && <> On a repeating task the pay repeats too — <strong>every occurrence pays this amount</strong>, for as long as the task keeps repeating.</>}
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
@@ -232,7 +234,7 @@ function TaskEditor({ open, onClose, task, payload }: {
                 </div>
               </div>
               {payError && <p className="text-xs font-semibold text-destructive" data-testid="task-pay-error">{payError}</p>}
-              {!payError && !parsedPay.blank && <p className="text-xs text-muted-foreground">Files {money(parsedPay.cents)} for the assignee when this task is completed.</p>}
+              {!payError && !parsedPay.blank && <p className="text-xs text-muted-foreground">Files {money(parsedPay.cents)} for the assignee when this task is completed{recurrence === "none" ? "" : " — and again on every occurrence after it"}.</p>}
               {exposure && (
                 <p className="rounded-lg border border-amber-400 bg-amber-50 p-2 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200" data-testid="task-pay-exposure">
                   Before you save: {exposure}

@@ -24,6 +24,7 @@ import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
 import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
 import { countNonSundaysInMonth } from "@shared/pace-days";
+import { formatTransferCount } from "@shared/transfer-credit";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -398,7 +399,10 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
     { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0) },
     { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m` },
-    { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => String(r.transfers ?? 0) },
+    // Transfer CREDIT — half a transfer each when a shotgun lead is published by
+    // one CLR and closed by another — so this cell can legitimately read 4.5 and
+    // must never be rounded to a whole. See shared/transfer-credit.ts.
+    { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => formatTransferCount(r.transfers ?? 0) },
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
@@ -948,7 +952,7 @@ export default function ManagerDashboard() {
           <KpiTile label="Contacts" value={callActivity.today.contacts} icon={Users} color={CYAN} />
           <KpiTile label="Conversations" value={callActivity.today.conversations} icon={Activity} color={AMBER} />
           <KpiTile label="Active Time" value={`${Math.floor(callActivity.today.activeSeconds / 3600)}h ${Math.floor((callActivity.today.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
-          <KpiTile label="Transfers" value={stats.today?.transfers ?? 0} icon={ArrowUpRight} color={GREEN} />
+          <KpiTile label="Transfers" value={formatTransferCount(stats.today?.transfers ?? 0)} icon={ArrowUpRight} color={GREEN} />
           <KpiTile label="Appointments" value={stats.today?.appointments ?? 0} icon={Calendar} color={BLUE} />
           <KpiTile label="Fell through" value={stats.today?.fellThrough ?? 0} icon={XCircle} color={RED} />
         </div>
@@ -965,7 +969,7 @@ export default function ManagerDashboard() {
           <KpiTile label="Conversations" value={callActivity.week.conversations} icon={Activity} color={AMBER}
                    delta={<DeltaArrow {...conversationsDeltaWk} />} />
           <KpiTile label="Active Time" value={`${Math.floor(callActivity.week.activeSeconds / 3600)}h ${Math.floor((callActivity.week.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
-          <KpiTile label="Transfers" value={stats.week?.transfers ?? 0} icon={ArrowUpRight} color={GREEN}
+          <KpiTile label="Transfers" value={formatTransferCount(stats.week?.transfers ?? 0)} icon={ArrowUpRight} color={GREEN}
                    delta={<DeltaArrow {...transferDeltaWk} />} />
           <KpiTile label="Appointments" value={stats.week?.appointments ?? 0} icon={Calendar} color={BLUE}
                    delta={<DeltaArrow {...apptDeltaWk} />} />
@@ -983,7 +987,7 @@ export default function ManagerDashboard() {
           <KpiTile label="Conversations" value={callActivity.month.conversations} icon={Activity} color={AMBER}
                    delta={<DeltaArrow {...conversationsDeltaMo} />} />
           <KpiTile label="Active Time" value={`${Math.floor(callActivity.month.activeSeconds / 3600)}h ${Math.floor((callActivity.month.activeSeconds % 3600) / 60)}m`} icon={Clock} color={CYAN} />
-          <KpiTile label="Transfers" value={stats.month?.transfers ?? 0} sub={`Conv ${stats.month?.conversionRate ?? 0}%`}
+          <KpiTile label="Transfers" value={formatTransferCount(stats.month?.transfers ?? 0)} sub={`Conv ${stats.month?.conversionRate ?? 0}%`}
                    icon={ArrowUpRight} color={GREEN} delta={<DeltaArrow {...transferDeltaMo} />} />
           <KpiTile label="Appointments" value={stats.month?.appointments ?? 0} icon={Calendar} color={BLUE}
                    delta={<DeltaArrow {...apptDeltaMo} />} />
