@@ -37,6 +37,7 @@ const Directory = lazy(() => import("@/pages/directory"));
 const Assignments = lazy(() => import("@/pages/assignments"));
 const Outcomes = lazy(() => import("@/pages/outcomes"));
 const TransferDetails = lazy(() => import("@/pages/transfer-details"));
+const BonzoReassign = lazy(() => import("@/pages/bonzo-reassign"));
 const LoPriorityLink = lazy(() => import("@/pages/lo-priority-link"));
 const TvBoard = lazy(() => import("@/pages/tv"));
 const Leaderboard = lazy(() => import("@/pages/leaderboard"));
@@ -189,6 +190,7 @@ function AppRouter() {
       <Route path="/assignments" component={Assignments} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/transfer-details" component={TransferDetails} />
+      <Route path="/bonzo-reassign" component={BonzoReassign} />
       <Route path="/appointments" component={Appointments} />
       <Route path="/fall-throughs" component={FallThroughs} />
       <Route path="/leaderboard" component={TeamStats} />

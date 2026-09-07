@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.64.0",
+    headline: "Move a Bonzo prospect between two people, knowing only the phone number.",
+    items: [
+      { text: "New Reassign Prospect page for managers. Type the phone number, who has it now, and who should have it — C3 finds the record in Bonzo and moves it. No hunting for the prospect first.", audience: "manager" },
+      { text: "It asks who has it now for a reason: several prospects often share one phone, so the number alone cannot say which record you mean. Saying who holds it picks the right one out of the pile, and if nobody on that number is theirs it stops and tells you who does have them.", audience: "manager" },
+      { text: "Two clicks, never one. Check shows you the exact prospect that will move and everyone else on that number; Move it does that one record. If somebody moves the prospect in between, the move is refused rather than undoing their work.", audience: "manager" },
+      { text: "Use email addresses, not names. Bonzo display names are not always the person they look like, so a name could move the wrong book.", audience: "manager" },
+      { text: "One at a time, on purpose — and every move is recorded in the audit trail, including the ones Bonzo refuses.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.63.0",
     headline: "Read what was actually written on any transfer, and a shotgun transfer now counts half each.",
     items: [

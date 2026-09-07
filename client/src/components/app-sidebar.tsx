@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck, Sparkles,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch, ArrowRightLeft
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -243,6 +243,7 @@ const referenceItems: NavItem[] = [
 
 const referenceManagerItems: NavItem[] = [
   { title: "CLR Profiles",    url: "/clr-profiles",  icon: UserCheck },
+  { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },
 ];
 
 // LO management tools — parked in Advanced Settings for now, pending a

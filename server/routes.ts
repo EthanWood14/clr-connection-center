@@ -83,7 +83,7 @@ import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowSt
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz, isValidTimezone, normalizeTimezone } from "./business-day";
 import { createBackup, listBackups } from "./backup";
-import { bonzoConfigured, findProspectByPhone, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
+import { bonzoConfigured, findProspectByPhone, reassignProspectByEmail, getProspectAssigneeEmail, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBonzoSource } from "./shotgun-bonzo";
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "./clr-task-scheduler";
@@ -113,6 +113,7 @@ import {
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 import { registerTransferDetailRoutes } from "./transfer-detail-routes";
+import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -21292,6 +21293,30 @@ ${note}` : daysLine;
     }
     return out;
   }
+
+  // Moving one prospect between two books in Bonzo, from a phone number and
+  // two email addresses. Two steps — look, then move — because the phone alone
+  // cannot say which record is meant. See bonzo-reassign-routes.
+  registerBonzoReassignRoutes(app, {
+    requireAuth,
+    requireManagerOrAdmin,
+    bonzoConfigured,
+    findProspectByPhone: (phone: string) => findProspectByPhone(phone),
+    reassignProspectByEmail,
+    getProspectAssigneeEmail,
+    audit: (req: any, entry) => {
+      const u = storage.getUserById(Number(req.session_user?.userId)) as any;
+      audit({
+        userId: Number(req.session_user?.userId) || 0,
+        userName: u?.name ?? "Unknown",
+        action: "update",
+        entityType: "bonzo_prospect",
+        entityId: Number(entry.details?.prospectId) || 0,
+        entityLabel: `Bonzo prospect reassigned: ${entry.details?.fromEmail} → ${entry.details?.toEmail}`,
+        details: JSON.stringify(entry.details),
+      } as any);
+    },
+  });
 
   // Reading back what was written on each transfer. Registered from its own
   // file so the whole feature stays in one place; see transfer-detail-routes.

@@ -367,6 +367,52 @@ export async function reassignProspect(
   }
 }
 
+/**
+ * Who holds this prospect, by EMAIL.
+ *
+ * getProspectAssignee returns Bonzo's numeric user id, which is the right key
+ * when you already have it. The reassign tool does not: it is handed two email
+ * addresses and nothing else, and C3 has no email → Bonzo-user-id lookup. So
+ * the move is verified by reading the assignment back and comparing the
+ * address, which is what the caller actually asked for anyway.
+ */
+export async function getProspectAssigneeEmail(prospectId: number): Promise<string | null> {
+  const r = await req("GET", `/prospects/${prospectId}`, undefined, orgToken());
+  const d = r.json?.data ?? r.json;
+  if (!r.ok || !d) return null;
+  const email = String(d.assigned_user?.email ?? "").trim().toLowerCase();
+  return email || null;
+}
+
+/**
+ * Move one prospect to whoever owns this email address.
+ *
+ * POST /prospects/{id}/reassign {user_email} under the ORG token — the only
+ * call that crosses teams, which is exactly what this is for: the two people
+ * are usually on different books.
+ *
+ * A 2xx does NOT prove the move landed (the same hard-won rule as
+ * moveProspectStage), so the assignment is always read back. `verified` is the
+ * field to trust; `ok` only means Bonzo accepted the request.
+ */
+export async function reassignProspectByEmail(
+  prospectId: number,
+  userEmail: string,
+): Promise<{ ok: boolean; verified: boolean; nowEmail: string | null; error?: string }> {
+  const want = String(userEmail ?? "").trim().toLowerCase();
+  if (!want) return { ok: false, verified: false, nowEmail: null, error: "No address to move it to." };
+
+  const r = await req("POST", `/prospects/${prospectId}/reassign`, { user_email: want }, orgToken());
+  if (!r.ok) {
+    return {
+      ok: false, verified: false, nowEmail: null,
+      error: `${r.status} ${JSON.stringify(r.json).slice(0, 200)}`,
+    };
+  }
+  const nowEmail = await getProspectAssigneeEmail(prospectId);
+  return { ok: true, verified: nowEmail === want, nowEmail };
+}
+
 // The prospect's note feed — used to avoid double-posting transfer notes when a
 // CLR has already pasted the same text by hand.
 export async function getProspectNotes(prospectId: number): Promise<{ id: number; content: string }[]> {
