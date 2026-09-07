@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.60.0",
+    headline: "Placed now judges which assistant took it.",
+    items: [
+      { text: "A transfer to a loan officer the floor has been told to feed is no longer judged on how busy that officer is \u2014 it is judged on which of their assistants took it. The assistant carrying the least scores full marks, the one carrying the most scores 60, and nothing on that desk can score below 60.", audience: "manager" },
+      { text: "Sending to a desk you were told to send to is not a bad placement, so it can never read as one. Leaving the assistant blank is not punished either \u2014 it simply sits at the 60 mark.", audience: "manager" },
+      { text: "An investment or second home also sits at 60 or above wherever it went, because that one is routed by rule rather than chosen.", audience: "manager" },
+      { text: "Everything else is unchanged: transfers to officers with no assistants, and to officers nobody has been told to feed, are still judged on how badly that officer needed the work.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.59.2",
     headline: "Historical CLR trends include former teammates.",
     items: [

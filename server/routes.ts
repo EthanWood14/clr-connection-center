@@ -13242,20 +13242,35 @@ ${note}` : daysLine;
         // at, so the desk has to travel with them. Leave it behind and the
         // roster can never answer the question, and the rule stops for the whole
         // floor — which is what it did for as long as this query omitted it.
+        // An assistant's OWN load, counted over the same run-up and range the
+        // loan officers are counted over. On a prioritised desk the assistant
+        // is the destination that gets ranked, so this column is what the
+        // 60-100 ladder is built from — hand it over as zero and every
+        // assistant ties, which puts the whole desk at the top of the band.
+        //
+        // `receiving` stays false all the same: an assistant is never a
+        // destination on the ORDINARY ramp, and this load is read only by the
+        // desk ladder. The two questions are different and the flag answers
+        // the first one.
         const placementLoas = (sqlite.prepare(
-          `SELECT a.id AS id, a.full_name AS name, a.lo_id AS deskId
+          `SELECT a.id AS id, a.full_name AS name, a.lo_id AS deskId,
+                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
+                  MAX(o.date) AS lastAt
              FROM loan_officer_assistants a
              JOIN loan_officers lo ON lo.id = a.lo_id
-            WHERE a.active = 1 AND lo.org_id = ?`,
-        ).all(placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+             LEFT JOIN lead_outcomes o
+               ON o.loa_id = a.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
+            WHERE a.active = 1 AND lo.org_id = ?
+            GROUP BY a.id, a.full_name, a.lo_id`,
+        ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
           id: Number(r.id),
           kind: "loa",
           name: String(r.name ?? ""),
           // Her own parent desk, as an id, so the loan officer it names can be
           // renamed without the rule noticing.
           deskId: r.deskId == null ? null : Number(r.deskId),
-          transfers: 0,
-          lastAt: null,
+          transfers: Number(r.transfers) || 0,
+          lastAt: r.lastAt ? String(r.lastAt) : null,
           receiving: false,
         }));
         const placementRecipients = [...placementLos, ...placementLoas];

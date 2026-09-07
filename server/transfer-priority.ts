@@ -313,6 +313,23 @@ export const MIN_SCORED_TRANSFERS = 5;
 export const INVESTMENT_PROPERTY_LOAS = ["Justin", "John", "Mateo"] as const;
 
 /** What a transfer that obeyed the routing requirement is worth. Flat. */
+/**
+ * The bottom of the ramp for a transfer nobody should be marked down for.
+ *
+ * Two cases share it, and they share it for the same reason: the CLR did not
+ * choose the desk. A loan officer flagged `needs_transfers` is one the floor
+ * has been TOLD to feed, and an investment or second home is routed by rule,
+ * not by judgement. Neither is a placement decision, so neither may score like
+ * a bad one — but they are not all equal either, so the scale is compressed
+ * into 60-100 rather than flattened to a single number.
+ *
+ * Ethan: "the LOA that gets it should be prioritized like an LO (one with the
+ * fewest transfers is at 100, one with the most at 0) unless the LO is marked
+ * as prioritized, then everyone gets 60 no matter what (the floor starts at
+ * 60) or if its an investment/commercial property".
+ */
+export const PRIORITY_FLOOR_CREDIT = 0.6;
+
 export const INVESTMENT_FOLLOWED_CREDIT = 1;
 
 /** What one that ignored it is worth. Flat, and the worst score there is. */
@@ -522,6 +539,8 @@ export interface ClrPriorityScore {
    * not the same achievement as a 100% earned by feeding the starved.
    */
   breaches: number;
+  /** Transfers scored on a prioritised desk's assistant ladder, not on placement. */
+  priorityDeskScored: number;
   /** The mean, 0-100 — or null when there is nothing at all to average. */
   pct: number | null;
   /** The same figure unrounded-ish (4dp), for sorting and for charts. */
@@ -893,6 +912,66 @@ export function resolveInvestmentRouting(recipients: RecipientRow[]): Investment
  * Null carries the same meaning it does above: the rule could not be resolved,
  * so it is applied to nobody. `resolveInvestmentRouting` says why.
  */
+/**
+ * Which loan officers are a PRIORITISED DESK: flagged `needs_transfers` AND
+ * carrying at least one assistant.
+ *
+ * On prod today that is exactly one desk, Christopher Redoble's, with eight
+ * assistants — and it is the busiest desk in the building, which is precisely
+ * why its transfers must not be scored on the ordinary ramp. He is flagged
+ * because the floor is told to feed him; scoring that as bad placement would
+ * mark a CLR down for doing as they were told.
+ */
+export function prioritisedDeskIds(recipients: RecipientRow[]): Set<string> {
+  const rows = recipients ?? [];
+  const withAssistants = new Set<string>();
+  for (const r of rows) {
+    if (r && r.kind === "loa" && hasId(r.deskId)) withAssistants.add(String(r.deskId));
+  }
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (r && r.kind === "lo" && r.needsTransfers && hasId(r.id) && withAssistants.has(String(r.id))) {
+      out.add(recipientKey("lo", r.id));
+    }
+  }
+  return out;
+}
+
+/**
+ * The assistants on one desk, ranked by load, over 60-100.
+ *
+ * The same shape as the loan-officer ramp and for the same reason — the
+ * lightest-loaded assistant is where the work is most needed — but it bottoms
+ * out at PRIORITY_FLOOR_CREDIT instead of zero, because every one of these
+ * transfers reached a desk the floor was told to feed.
+ *
+ * Ranked by DISTINCT load, so two assistants carrying the same number score
+ * the same and a third who carries one more is one step down rather than a
+ * hundredth. An assistant nobody has sent anything to is at the top; the
+ * busiest is at the floor, never below it.
+ */
+export function deskAssistantCredits(
+  recipients: RecipientRow[],
+  deskKey: string,
+  floor: number = PRIORITY_FLOOR_CREDIT,
+): Map<string, number> {
+  const mine = (recipients ?? []).filter(
+    (r) => r && r.kind === "loa" && hasId(r.id) && hasId(r.deskId)
+      && recipientKey("lo", r.deskId as number | string) === deskKey,
+  );
+  const loads = Array.from(new Set(mine.map((r) => receivedCount(r)))).sort((a, b) => a - b);
+  const out = new Map<string, number>();
+  const span = Math.max(0, 1 - floor);
+  for (const r of mine) {
+    const rank = loads.indexOf(receivedCount(r));
+    // One distinct load on the desk means nobody is busier than anybody: they
+    // all sit at the top of the band rather than all at the floor.
+    const share = loads.length <= 1 ? 1 : 1 - rank / (loads.length - 1);
+    out.set(recipientKey("loa", r.id), floor + span * share);
+  }
+  return out;
+}
+
 export function investmentAssistantKeys(recipients: RecipientRow[]): Set<string> | null {
   return resolveInvestmentRouting(recipients).keys;
 }
@@ -1102,6 +1181,11 @@ export function scoreTransferPriority(
   // resolve is not applied to anybody. Flagged rows are still COUNTED in that
   // case (`investmentUnscored`), so the silence is visible downstream.
   const allowed = resolveInvestmentRouting(roster).keys;
+  // The desks the floor is TOLD to feed, and the assistant ladder on each.
+  // Built once: the assistants' own loads do not move within a scan.
+  const priorityDesks = prioritisedDeskIds(roster);
+  const deskLadders = new Map<string, Map<string, number>>();
+  priorityDesks.forEach((desk) => deskLadders.set(desk, deskAssistantCredits(roster, desk)));
 
   // Credits cost a sort per pool and repeat hard: one snapshot per day per
   // distinct eligible set, not one per transfer.
@@ -1127,6 +1211,12 @@ export function scoreTransferPriority(
     unrestricted: number;
     investment: number;
     investmentUnscored: number;
+    /**
+     * Transfers scored on a prioritised desk's assistant ladder rather than on
+     * ordinary placement. Counted so the cell can say which kind of number the
+     * reader is looking at, the same way `breaches` does.
+     */
+    priorityDeskScored: number;
     breaches: number;
     sum: number;
     /**
@@ -1148,7 +1238,7 @@ export function scoreTransferPriority(
       row = {
         clrId, name: String(name ?? clrId), transfers: 0, scored: 0,
         unplaced: 0, unrestricted: 0, investment: 0, investmentUnscored: 0,
-        breaches: 0, sum: 0, rampSum: 0, rampScored: 0,
+        breaches: 0, priorityDeskScored: 0, sum: 0, rampSum: 0, rampScored: 0,
       };
       acc.set(key, row);
     }
@@ -1193,16 +1283,43 @@ export function scoreTransferPriority(
      * the desk these transfers were required to reach is the busiest on the
      * floor, so ordinary placement scores perfect compliance as 0.
      */
-    if (t.investmentProperty === true && allowed === null) row.investmentUnscored += 1;
-    if (t.investmentProperty === true && allowed !== null) {
+    // ── a desk the floor was told to feed ────────────────────────────────
+    //
+    // A loan officer flagged `needs_transfers` who has assistants is not an
+    // ordinary destination: the floor has been instructed to send him work, and
+    // he is the busiest desk in the building precisely because they did. Score
+    // that on the ordinary ramp and every CLR who followed the instruction
+    // reads 0.
+    //
+    // So the ASSISTANT becomes the destination, ranked the way loan officers
+    // are — the one carrying least is where the work is most needed — over a
+    // band that bottoms out at PRIORITY_FLOOR_CREDIT rather than zero. The
+    // choice still counts; it just cannot be scored as a bad one.
+    //
+    // An investment or second home rides the same floor wherever it went: it is
+    // routed by rule, so it is not a placement decision either.
+    const deskKey = hasId(t.loId) ? recipientKey("lo", t.loId) : null;
+    const onPriorityDesk = deskKey !== null && priorityDesks.has(deskKey);
+    if (onPriorityDesk) {
+      const ladder = deskLadders.get(deskKey as string);
+      const recorded = hasId(t.loaId) ? recipientKey("loa", t.loaId) : null;
+      // No assistant recorded is not a breach here and never a zero: the desk
+      // is one the floor was told to feed, and which assistant took it is a
+      // record nobody is scored on the absence of. It sits at the floor.
+      const rung = recorded === null ? undefined : ladder?.get(recorded);
+      const credit = typeof rung === "number" ? rung : PRIORITY_FLOOR_CREDIT;
+      if (t.investmentProperty === true) row.investment += 1;
+      row.scored += 1;
+      row.sum += credit;
+      row.priorityDeskScored += 1;
+      continue;
+    }
+    if (t.investmentProperty === true) {
+      // Routed by rule, but not onto a prioritised desk. It still may not be
+      // marked down for a choice the CLR did not make, so it takes the floor.
       row.investment += 1;
       row.scored += 1;
-      const recorded = hasId(t.loaId) ? recipientKey("loa", t.loaId) : null;
-      if (recorded !== null && allowed.has(recorded)) row.sum += INVESTMENT_FOLLOWED_CREDIT;
-      else {
-        row.sum += INVESTMENT_IGNORED_CREDIT;
-        row.breaches += 1;
-      }
+      row.sum += PRIORITY_FLOOR_CREDIT;
       continue;
     }
 
@@ -1252,6 +1369,7 @@ export function scoreTransferPriority(
       investment: r.investment,
       investmentUnscored: r.investmentUnscored,
       breaches: r.breaches,
+      priorityDeskScored: r.priorityDeskScored,
       pct: mean === null ? null : Math.round(mean * 100),
       mean: mean === null ? null : round(mean, 4),
       unplacedValuedAt: floorMean === null ? null : round(floorMean, 4),
