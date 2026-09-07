@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.61.0",
+    headline: "Investment leads have to reach the right assistant again.",
+    items: [
+      { text: "An investment or second home has to reach Justin, Mateo or John. Among those three the lightest-loaded scores full marks and the busiest scores 60, so following the rule well and following it badly are different numbers.", audience: "manager" },
+      { text: "Anything else scores nothing: another assistant, no assistant recorded, or a different loan officer. Being lightly loaded does not help somebody who was not one of the three.", audience: "manager" },
+      { text: "Ordinary transfers to that desk are unchanged and still judged across all eight assistants, so the same person can be worth full marks on an ordinary lead and nothing on an investment.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.60.0",
     headline: "Placed now judges which assistant took it.",
     items: [

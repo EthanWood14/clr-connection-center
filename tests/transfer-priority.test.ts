@@ -124,6 +124,9 @@ const creditOf = (name: string) => byName(name).credit;
 const bandOf = (name: string) => byName(name).band;
 const inBand = () => credits.filter((c) => c.band !== "ramp").map((c) => c.name);
 
+/** The module reports its mean to 4dp, so arithmetic checked against one rounds too. */
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
 const D1 = "2026-08-24", D2 = "2026-08-25", D3 = "2026-08-26";
 
 /** One transfer, from a CLR to a loan officer, on a day. */
@@ -133,10 +136,11 @@ const t = (clrId: string, loId: number | null, at: string | null = D1): Transfer
 /**
  * The same row with the ASSISTANT recorded on it as well.
  *
- * A real field the module really reads — but on FLAGGED ROWS ONLY. Every
- * unflagged pairing that uses this asserts EXACT equality rather than a
- * tolerance, because whether somebody used the assistant picker is CRM hygiene
- * and it must not be worth a single point of ordinary placement.
+ * A real field the module really reads — but only where it answers something:
+ * on a FLAGGED row it is the routing gate, and on a PRIORITISED DESK it is the
+ * rung. Off both, every pairing that uses this asserts EXACT equality rather
+ * than a tolerance, because whether somebody used the assistant picker is CRM
+ * hygiene and it must not be worth a single point of ordinary placement.
  */
 const withLoa = (row: TransferRow, loaId: number | null): TransferRow =>
   ({ ...row, loaId });
@@ -558,8 +562,7 @@ test("unknown eligibility falls back to the whole floor, and says so", () => {
 
 // ── the prioritised desk, and the floor under it ────────────────────────────
 //
-// Ethan replaced the flat rule ("100 to Justin, Mateo or John, 0 for anything
-// else") with a ladder, in these words:
+// Ethan asked for a ladder on a prioritised desk, in these words:
 //
 //   "for chris's or anyone with LOA's, the LOA that gets it should be
 //   prioritized like an LO (one with the fewest transfers is at 100, one with
@@ -574,13 +577,15 @@ test("unknown eligibility falls back to the whole floor, and says so", () => {
 // that desk, so a transfer onto it can never be marked down as a bad placement.
 // A blank assistant is not a breach and not a zero there; it is the floor.
 //
-// An investment or second home rides the same floor wherever it landed, because
-// it is routed by rule rather than chosen.
+// An investment or second home is NOT on that ladder. It was required to reach
+// one of three named assistants, so the three names gate it — 0 for anything
+// else — and among those three it is ranked over their loads alone. The desk
+// the row names does not enter into it; see the gate section below.
 //
 // The three names are still resolved from the roster, by id and by desk, and
-// the resolver is still what the route logs — but no score turns on the flat
-// verdict any more. What the tests below pin is that the resolver still answers
-// exactly as it did, and that the ladder is what decides the number.
+// the resolver is still what the route logs. What the tests below pin is that
+// the resolver answers exactly as it did, and that the desk ladder is what
+// decides an ORDINARY transfer onto a prioritised desk.
 
 /** The three the rule names, as the module resolves them from the roster. */
 const THREE = [JUSTIN, JOHN, MATEO_LOA].map((id) => recipientKey("loa", id)).sort();
@@ -627,16 +632,113 @@ test("the ladder's rungs are the desk's own loads, fewest at 100 and busiest at 
     [JONJAIRO, ERIK, RYAN_LOA, COLE_LOA, MATEO_LOA, AARON, JUSTIN, JOHN].map((id) => pctTo(id)),
     [100, 94, 89, 83, 77, 71, 66, 60],
   );
-  // The flag changes none of it: the desk decides, not the qualification.
-  assert.deepEqual([JONJAIRO, MATEO_LOA, JOHN].map((id) => pctTo(id, true)), [100, 77, 60]);
+  // The flag takes the transfer OFF this ladder entirely. An investment is
+  // required to reach one of three named assistants, so it is ranked over those
+  // three alone: Jonjairo is the lightest desk in the building and worth 100 on
+  // the ordinary ladder, and nothing at all on this one, because he is not one
+  // of the three. Mateo is the lightest OF THE THREE and takes the full marks
+  // his 77th rung never gave him.
+  assert.deepEqual([JONJAIRO, MATEO_LOA, JOHN].map((id) => pctTo(id, true)), [0, 100, 60]);
 });
 
-test("HIGH — the floor is never breached, whatever the record says", () => {
-  // "the floor starts at 60". Every way a transfer can reach that desk — the
-  // busiest assistant on it, an assistant who sits somewhere else, one who is
-  // not on the roster at all, and no assistant recorded — and every one of them
-  // is at or above 60. Nothing about a prioritised desk can score like a bad
-  // placement, because the CLR did as the floor told them.
+// ── the gate: an investment is ranked over the three named assistants ALONE ──
+//
+// Ethan was shown that "must go to Justin, Mateo or John" had stopped being
+// enforced: the desk ladder scored whichever assistant happened to take it, so
+// an investment routed to Erik — a man the rule does not name — came out at
+// 94%. He chose the gate. The three names decide whether the transfer counts at
+// all, and among those three the ladder ranks by load, so following the rule
+// well and following it barely are still different numbers.
+
+test("HIGH — the three-name ladder is 100, 80 and 60: the lightest OF THE THREE takes full marks", () => {
+  // The rungs, and the loads they come from. Mateo carries 35, Justin 51 and
+  // John 54, and the ladder is built over those three and nobody else — so the
+  // lightest of them is worth everything rather than the 77 he is worth as the
+  // fourth-lightest of eight.
+  const pct = (loaId: number | null, flagged = true) =>
+    scoreTransferPriority(five("Cal", REDOBLE, flagged, loaId), recipients)[0];
+  assert.deepEqual([MATEO_LOA, JUSTIN, JOHN].map((id) => pct(id).pct), [100, 80, 60]);
+  assert.deepEqual([MATEO_LOA, JUSTIN, JOHN].map((id) => pct(id).mean), [1, 0.8, 0.6]);
+  assert.equal(pct(MATEO_LOA).mean, INVESTMENT_FOLLOWED_CREDIT, "obeying it well is worth the top");
+  assert.equal(pct(JOHN).mean, PRIORITY_FLOOR_CREDIT, "and obeying it at all is worth the floor");
+  // The same three read on the DESK ladder are a different set of numbers, which
+  // is the whole of what changed: eight rungs answer "who on this desk needed
+  // it most", three answer "which of the three took it".
+  assert.deepEqual([MATEO_LOA, JUSTIN, JOHN].map((id) => pct(id, false).pct), [77, 66, 60]);
+  // Load still orders them, so the ladder is a ladder and not three flat names.
+  const loadOf = (id: number) => receivedCount(recipients.filter((r) => r.kind === "loa" && r.id === id)[0]);
+  assert.deepEqual([MATEO_LOA, JUSTIN, JOHN].map(loadOf), [35, 51, 54]);
+  for (const id of [MATEO_LOA, JUSTIN, JOHN]) {
+    const row = pct(id);
+    assert.equal(row.investment, 5, String(id));
+    assert.equal(row.breaches, 0, `${id} — the rule was followed`);
+    assert.equal(row.scored, 5, String(id));
+    assert.equal(row.priorityDeskScored, 0, `${id} — judged by the gate, not by the desk`);
+    assert.equal(row.unrestricted, 0, `${id} — and no pool was consulted at all`);
+  }
+});
+
+test("HIGH — a lightly loaded assistant OUTSIDE the three scores 0, not her own high rung", () => {
+  // The bug this rework exists for, pinned by name. Every one of these sits on
+  // Christopher Redoble's desk and every one of them is worth more than John on
+  // the desk ladder — Jonjairo has taken nothing at all and is worth 100 there
+  // — and on an investment every one of them is worth nothing, because the rule
+  // does not name them.
+  const outside = [JONJAIRO, ERIK, RYAN_LOA, COLE_LOA, AARON];
+  assert.deepEqual(outside.map((id) =>
+    scoreTransferPriority(five("Cal", REDOBLE, false, id), recipients)[0].pct), [100, 94, 89, 83, 71]);
+  for (const id of outside) {
+    const row = scoreTransferPriority(five("Cal", REDOBLE, true, id), recipients)[0];
+    assert.equal(row.pct, 0, String(id));
+    assert.equal(row.breaches, 5, `${id} — five investments that missed the three`);
+    assert.equal(row.investment, 5, String(id));
+  }
+  // ...so on an investment the lightest desk in the building loses outright to
+  // the busiest of the three, which is the ordering the gate exists to impose.
+  assert.ok(scoreTransferPriority(five("Cal", REDOBLE, true, JONJAIRO), recipients)[0].mean!
+    < scoreTransferPriority(five("Cal", REDOBLE, true, JOHN), recipients)[0].mean!);
+});
+
+test("HIGH — `breaches` counts investments that missed the three, and nothing else", () => {
+  // The counter that makes a 0% readable. "0%, and eleven of your twelve
+  // investment leads went to the wrong people" and "0%, you fed the busiest
+  // desk in the building" are very different accusations.
+  const breachesOf = (rows: TransferRow[], roster: RecipientRow[] = recipients) =>
+    scoreTransferPriority(rows, roster)[0].breaches;
+  // Ordinary placement never breaches anything, however bad it is.
+  assert.equal(breachesOf(five("Cal", NATHAN, false)), 0, "the worst ordinary placement there is");
+  assert.equal(breachesOf(five("Cal", REDOBLE, false, null)), 0, "a blank on a prioritised desk");
+  assert.equal(breachesOf(five("Cal", REDOBLE, false, ERIK)), 0, "an assistant the rule does not name");
+  assert.equal(breachesOf(five("Cal", null, false, null)), 0, "a record nothing can read");
+  // An investment that reached one of the three never breaches either.
+  for (const id of [MATEO_LOA, JUSTIN, JOHN]) assert.equal(breachesOf(five("Cal", REDOBLE, true, id)), 0);
+  // Only the misses count, one per transfer.
+  assert.equal(breachesOf(five("Cal", REDOBLE, true, ERIK)), 5);
+  assert.equal(breachesOf(five("Cal", REDOBLE, true, ERIK).slice(0, 2)), 2);
+  // A fortnight of both counts the misses alone, and never more than the
+  // investments it saw.
+  const mixed = scoreTransferPriority([
+    ...five("Cal", REDOBLE, true, MATEO_LOA).slice(0, 2),
+    ...five("Cal", REDOBLE, true, ERIK).slice(0, 3),
+    ...five("Cal", NATHAN, false),
+    ...five("Cal", null, false).slice(0, 1),
+  ], recipients)[0];
+  assert.equal(mixed.transfers, 11);
+  assert.equal(mixed.investment, 5);
+  assert.equal(mixed.breaches, 3);
+  assert.ok(mixed.breaches <= mixed.investment);
+  // And a rule that could not run accuses nobody of anything.
+  const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
+  assert.equal(breachesOf(five("Cal", REDOBLE, true, ERIK), gone), 0);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, ERIK), gone)[0].investmentUnscored, 5);
+});
+
+test("HIGH — the floor is never breached by an ORDINARY transfer to a prioritised desk", () => {
+  // "the floor starts at 60". Every way an ordinary transfer can reach that
+  // desk — the busiest assistant on it, an assistant who sits somewhere else,
+  // one who is not on the roster at all, and no assistant recorded — and every
+  // one of them is at or above 60. Nothing about a placement onto a prioritised
+  // desk can score like a bad one, because the CLR did as the floor told them.
   const OFF_ROSTER = 999;
   const elsewhere = [...recipients, loa(140, "Wanda", NATHAN, 2)];
   const cases: Array<[string, number | null, RecipientRow[]]> = [
@@ -646,35 +748,66 @@ test("HIGH — the floor is never breached, whatever the record says", () => {
     ["another loan officer's assistant", 140, elsewhere],
   ];
   for (const [label, loaId, roster] of cases) {
-    for (const flagged of [true, false]) {
-      const row = scoreTransferPriority(five("Cal", REDOBLE, flagged, loaId), roster)[0];
-      assert.ok(row.mean! >= PRIORITY_FLOOR_CREDIT, `${label} ${flagged} — ${row.mean}`);
-      assert.equal(row.pct, 60, `${label} ${flagged}`);
-      assert.equal(row.priorityDeskScored, 5, label);
-    }
+    const row = scoreTransferPriority(five("Cal", REDOBLE, false, loaId), roster)[0];
+    assert.ok(row.mean! >= PRIORITY_FLOOR_CREDIT, `${label} — ${row.mean}`);
+    assert.equal(row.pct, 60, label);
+    assert.equal(row.priorityDeskScored, 5, label);
+    assert.equal(row.breaches, 0, label);
   }
+
+  // An INVESTMENT is not on that floor at all, and the floor was never a
+  // promise about it: it is a promise about placement, and an investment
+  // carried no placement decision. It is gated on the three names instead, so
+  // three of the same four records are a flat 0 and a breach — and the fourth
+  // is 60 because John is one of the three and the busiest of them, not
+  // because any floor caught it.
+  const gated: Array<[string, number | null, RecipientRow[], number, number]> = [
+    ["the busiest of the three", JOHN, recipients, 60, 0],
+    ["no assistant recorded at all", null, recipients, 0, 5],
+    ["an assistant off the roster entirely", OFF_ROSTER, recipients, 0, 5],
+    ["another loan officer's assistant", 140, elsewhere, 0, 5],
+  ];
+  for (const [label, loaId, roster, pct, breaches] of gated) {
+    const row = scoreTransferPriority(five("Cal", REDOBLE, true, loaId), roster)[0];
+    assert.equal(row.pct, pct, label);
+    assert.equal(row.breaches, breaches, label);
+    assert.equal(row.investment, 5, label);
+    assert.equal(row.priorityDeskScored, 0, `${label} — judged on the gate, not on the desk`);
+  }
+
   // ...and the busiest desk in the building is still worth exactly 0 on the
   // ORDINARY ramp, which is the number the floor exists to keep off this desk.
   assert.equal(creditOf("Christopher Redoble"), 0);
 });
 
-test("no assistant recorded on a prioritised desk is the floor, not a breach and not a zero", () => {
-  // Everywhere else in this stat a blank field is either "we cannot say" or,
-  // under the rule this one replaced, a flat zero. On a desk the floor was told
-  // to feed it is neither: which assistant took the lead is a record nobody is
-  // scored on the absence of.
-  const blank = scoreTransferPriority(five("Cal", REDOBLE, true, null), recipients)[0];
-  assert.equal(blank.pct, 60);
-  assert.equal(blank.mean, PRIORITY_FLOOR_CREDIT);
-  assert.equal(blank.scored, 5, "read, not dropped");
-  assert.equal(blank.unplaced, 0, "and not a data gap either");
-  assert.equal(blank.breaches, 0, "nobody is accused of mis-routing");
-  assert.equal(blank.priorityDeskScored, 5);
-  // The same blank UNFLAGGED is the same floor, for the same reason.
+test("HIGH — a blank assistant is 0% on an investment and 60% on an ordinary transfer to the same desk", () => {
+  // THE ASYMMETRY, pinned deliberately, because it looks like an inconsistency
+  // and is not. The investment rule asks WHICH of three people took the lead,
+  // and a row naming nobody does not answer that — so a blank is the answer,
+  // and the answer is no. Everywhere else the assistant is a record nobody is
+  // judged on the absence of: on the same desk, on the same day, an ordinary
+  // transfer with the same blank field is the floor.
+  const flagged = scoreTransferPriority(five("Cal", REDOBLE, true, null), recipients)[0];
+  assert.equal(flagged.pct, 0);
+  assert.equal(flagged.mean, INVESTMENT_IGNORED_CREDIT);
+  assert.equal(flagged.scored, 5, "read, not dropped");
+  assert.equal(flagged.unplaced, 0, "and not a data gap either");
+  assert.equal(flagged.breaches, 5, "a blank on an investment IS the mis-routing");
+  assert.equal(flagged.investment, 5);
+  assert.equal(flagged.priorityDeskScored, 0, "it never touched the desk ladder");
+
   const plain = scoreTransferPriority(five("Ada", REDOBLE, false, null), recipients)[0];
   assert.equal(plain.pct, 60);
+  assert.equal(plain.mean, PRIORITY_FLOOR_CREDIT);
+  assert.equal(plain.scored, 5);
+  assert.equal(plain.unplaced, 0);
   assert.equal(plain.investment, 0, "the flag is what `investment` counts, and it was not set");
-  assert.equal(plain.breaches, 0);
+  assert.equal(plain.breaches, 0, "nobody is accused of mis-routing");
+  assert.equal(plain.priorityDeskScored, 5);
+
+  // The two rows are otherwise identical: same CLR-shaped work, same desk, same
+  // days, same empty field. Only the qualification separates them.
+  assert.equal(plain.pct! - flagged.pct!, 60);
 });
 
 test("a desk that is FLAGGED but has no assistants is an ordinary desk", () => {
@@ -742,15 +875,15 @@ test("HIGH — a rename moves the rule where the roster has an id, and stops it 
     (r.kind === "lo" && r.id === REDOBLE ? { ...r, name: "Christopher Somebodyelse" } : r));
   assert.deepEqual(keysOf(renamedLo), THREE);
   assert.deepEqual([...prioritisedDeskIds(renamedLo)], [recipientKey("lo", REDOBLE)]);
-  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), renamedLo)[0].pct, 77);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), renamedLo)[0].pct, 100);
 
   // Give an assistant her surname, which is the rename that actually happens:
   // the roster row is the same person, so the same id is admitted and she is on
-  // the same rung.
+  // the same rung of the three-name ladder.
   const surnamed = recipients.map((r) =>
     (r.kind === "loa" && r.id === MATEO_LOA ? { ...r, name: "Mateo Reyes" } : r));
   assert.deepEqual(keysOf(surnamed), THREE);
-  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), surnamed)[0].pct, 77);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), surnamed)[0].pct, 100);
 
   // And what a rename does NOT survive, pinned here rather than promised away.
   // A recorded first name is the only handle the roster offers for the three
@@ -763,43 +896,60 @@ test("HIGH — a rename moves the rule where the roster has an id, and stops it 
   assert.equal(investmentAssistantKeys(unrecognisable), null);
   assert.match(resolveInvestmentRouting(unrecognisable).problem ?? "",
     /no active assistant named Mateo/);
-  // ...and no SCORE moves with it, because scoring hangs on the desk and the
-  // assistant's own load, both of which are ids. Cal's five are still 66, the
-  // rung Justin's 51 puts her on, and nobody is accused of anything.
+  // What a stopped resolver costs is bounded in the one direction that matters:
+  // it can switch the GATE off, and it can never turn it into an accusation.
+  // Cal's five investments fall through to the reading their record shows — the
+  // desk ladder, where Justin's 51 is the 66th rung — nobody is charged with a
+  // breach, and the transfers the rule did not judge are counted so the
+  // dashboard can withhold the number rather than print it as a verdict.
   const past = scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), unrecognisable)[0];
   assert.equal(past.pct, 66);
   assert.equal(past.breaches, 0, "nobody is accused on the way past");
-  assert.equal(past.investmentUnscored, 0, "and nothing was left unjudged to count");
+  assert.equal(past.investment, 0, "the rule judged none of them...");
+  assert.equal(past.investmentUnscored, 5, "...and says so, on the row");
+  assert.equal(past.priorityDeskScored, 5, "read as the ordinary desk transfer it looks like");
 });
 
-test("HIGH — a name that resolves to NOBODY stops the resolver, and moves nobody's score", () => {
-  // Mateo leaves, or is respelled past recognition. Under the flat rule that
-  // was a cliff: running on the two names that still resolved would have read
-  // every compliant transfer to the third as a zero, so it stopped for
-  // everybody. It still stops...
+test("HIGH — a name that resolves to NOBODY stops the rule, rather than scoring everybody 0", () => {
+  // Mateo leaves, or is respelled past recognition. Running the gate on the two
+  // names that still resolve would read every compliant transfer to the third
+  // as a flat zero — the sharpest verdict this file hands out, arrived at
+  // because somebody was renamed. So it stops for everybody instead.
   const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
   assert.equal(investmentAssistantKeys(gone), null);
   assert.equal(investmentAssistantKeys(recipients.filter((r) => r.kind === "lo")), null);
   assert.equal(investmentAssistantKeys([]), null);
 
-  // ...and the cliff is gone with it. The ladder never consults the three
-  // names, so a resolver that cannot answer changes no number at all: renaming
-  // Mateo past recognition leaves the desk, the loads and every rung intact.
+  // And STOPPED means stopped: not one flagged transfer is scored 0, not even
+  // the ones that would have been breaches with the roster intact. Every one of
+  // them falls through to the reading its own record shows — the desk ladder
+  // here — and every one is counted, so the number can be withheld rather than
+  // printed as a verdict the roster caused.
   const unrecognisable = recipients.map((r) =>
     (r.kind === "loa" && r.id === MATEO_LOA ? { ...r, name: "Teo" } : r));
   assert.equal(investmentAssistantKeys(unrecognisable), null);
-  for (const loaId of [JONJAIRO, MATEO_LOA, JUSTIN, JOHN, null]) {
-    assert.equal(
-      scoreTransferPriority(five("Cal", REDOBLE, true, loaId), unrecognisable)[0].mean,
-      scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0].mean,
-      String(loaId));
+  const stopped = [JONJAIRO, MATEO_LOA, JUSTIN, JOHN, null].map((loaId) =>
+    scoreTransferPriority(five("Cal", REDOBLE, true, loaId), unrecognisable)[0]);
+  assert.deepEqual(stopped.map((s) => s.pct), [100, 77, 66, 60, 60], "the desk ladder, untouched");
+  for (const s of stopped) {
+    assert.equal(s.breaches, 0, "nobody is accused while the rule is off");
+    assert.equal(s.investment, 0, "and nothing claims to have been judged by it");
+    assert.equal(s.investmentUnscored, 5, "the flagged rows are counted, not absorbed");
   }
-  // Nobody is accused, and nothing is left unjudged: a flagged transfer that
-  // reached no prioritised desk simply takes the floor.
+  // With the roster intact the same five records are gated, and two of them are
+  // the flat 0 the stop refuses to hand out on a rename.
+  assert.deepEqual([JONJAIRO, MATEO_LOA, JUSTIN, JOHN, null].map((loaId) =>
+    scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0].pct),
+    [0, 100, 80, 60, 0]);
+
+  // Off a prioritised desk the fallback is ordinary placement, which is the
+  // honest reading of a record the rule could not judge — and the misleading
+  // one the counter exists to flag: Derek is the lightest man on the floor, so
+  // these five read 100% for a routing rule nobody checked.
   const onStarved = scoreTransferPriority(five("Cal", DEREK, true, null), gone)[0];
-  assert.equal(onStarved.pct, 60);
+  assert.equal(onStarved.pct, 100);
   assert.equal(onStarved.breaches, 0);
-  assert.equal(onStarved.investmentUnscored, 0);
+  assert.equal(onStarved.investmentUnscored, 5);
 });
 
 test("a name TWO people answer to admits both, rather than silently picking one", () => {
@@ -809,17 +959,23 @@ test("a name TWO people answer to admits both, rather than silently picking one"
   const OTHER_JUSTIN = 108;
   const twoJustins = [...recipients, loa(OTHER_JUSTIN, "Justin", REDOBLE, 51)];
   assert.deepEqual(keysOf(twoJustins), [...THREE, recipientKey("loa", OTHER_JUSTIN)].sort());
-  // ...and the ladder does not have to guess at all: each of them is scored on
-  // her OWN load, and these two happen to carry the same 51.
+  // Both are admitted, so a transfer naming either passes the gate — and each
+  // is then ranked on her OWN load, which for these two is the same 51 and so
+  // the same rung. A wrong 100 costs nothing; a wrong 0 accuses somebody of
+  // ignoring a rule they obeyed.
   for (const loaId of [JUSTIN, OTHER_JUSTIN]) {
-    assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, loaId), twoJustins)[0].pct, 66,
-      String(loaId));
+    const row = scoreTransferPriority(five("Cal", REDOBLE, true, loaId), twoJustins)[0];
+    assert.equal(row.pct, 80, String(loaId));
+    assert.equal(row.breaches, 0, String(loaId));
   }
-  // An assistant the rule does not name is no longer a breach — she is a rung.
-  // Erik carries 26, which is the second-lightest desk on the ladder.
+  // An assistant the rule does not name is outside the gate however light she
+  // is. Erik carries 26 — the second-lightest desk in the building, and worth
+  // 94% on the ordinary ladder — and an investment recorded to him is 0.
   const erik = scoreTransferPriority(five("Cal", REDOBLE, true, ERIK), twoJustins)[0];
-  assert.equal(erik.pct, 94);
-  assert.equal(erik.breaches, 0);
+  assert.equal(erik.pct, 0);
+  assert.equal(erik.breaches, 5);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, false, ERIK), twoJustins)[0].pct, 94,
+    "the same record, unflagged, is his own rung on the desk");
 });
 
 test("HIGH — \"Chris's\" is enforced: another loan officer's Justin is a different person", () => {
@@ -835,19 +991,23 @@ test("HIGH — \"Chris's\" is enforced: another loan officer's Justin is a diffe
   const routing = resolveInvestmentRouting(elsewhere);
   assert.equal(routing.desk, recipientKey("lo", REDOBLE));
   assert.equal(routing.problem, null);
-  // The LADDER is bounded by that same desk id, and that is where "Chris's" is
-  // now enforced: her 3 is a light load, but it is a load on somebody else's
-  // desk, so it buys her no rung on his. A transfer recording her takes the
-  // floor rather than the 100% her own load would have been worth.
+  // Both the GATE and the ladder are bounded by that same desk id, and that is
+  // where "Chris's" is enforced. Her 3 is the lightest load either would rank,
+  // and it buys her nothing on his desk: an investment recording her is outside
+  // the gate — 0 and a breach — and an ordinary transfer recording her is the
+  // floor, not the 100% her own load would have been worth.
   assert.equal(deskAssistantCredits(elsewhere, recipientKey("lo", REDOBLE))
     .get(recipientKey("loa", OTHER_DESK_JUSTIN)), undefined);
-  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, OTHER_DESK_JUSTIN), elsewhere)[0].pct, 60);
+  const hers = scoreTransferPriority(five("Cal", REDOBLE, true, OTHER_DESK_JUSTIN), elsewhere)[0];
+  assert.equal(hers.pct, 0);
+  assert.equal(hers.breaches, 5, "another officer's Justin does not satisfy the rule");
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, false, OTHER_DESK_JUSTIN), elsewhere)[0].pct, 60);
   // Her own desk is not prioritised — Nathan carries no flag — so a transfer
   // there is ordinary placement, and her sitting on it changes nothing.
   assert.deepEqual([...prioritisedDeskIds(elsewhere)], [recipientKey("lo", REDOBLE)]);
   assert.equal(scoreTransferPriority(five("Cal", NATHAN, false, OTHER_DESK_JUSTIN), elsewhere)[0].pct, 8);
   // ...and Chris's Justin is untouched by hers existing.
-  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), elsewhere)[0].pct, 66);
+  assert.equal(scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), elsewhere)[0].pct, 80);
 });
 
 test("HIGH — the desk is an id off the three's own rows, so the loan officer can be renamed", () => {
@@ -892,41 +1052,55 @@ test("HIGH — every way the desk cannot be resolved STOPS the rule and names wh
     /sit together at 2 different loan officers' desks/);
 });
 
-test("HIGH — nothing is ever left unjudged, so `investmentUnscored` can no longer print a dash", () => {
-  // The counter the dashboard's dash hangs on, and the cliff it was built for.
-  // Under the flat rule, a roster that could not resolve the three left every
-  // flagged transfer to fall through to ordinary placement — which onto the
-  // busiest desk in the building read 0%, a red cell that was an artefact of a
-  // roster edit. The counter existed so that number could be withheld.
-  //
-  // The ladder removed the cliff: a flagged transfer is either on a prioritised
-  // desk (its assistant's rung) or off one (the floor), and neither reading
-  // consults the three names. So nothing falls through, and the counter is
-  // zero on every path.
+test("HIGH — `investmentUnscored` fires when the roster cannot resolve the three, and only then", () => {
+  // The counter the dashboard's dash hangs on. A roster that cannot resolve the
+  // three leaves every flagged transfer to fall through to the reading its
+  // record shows, and that fallback is misleading in both directions: onto the
+  // busiest desk in the building it prints a rung nobody was judged on, and
+  // onto the lightest man on the floor it prints a triumphant 100% for a
+  // routing rule that never ran. So the transfers are counted and the number is
+  // withheld rather than shown.
   const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
   const row = scoreTransferPriority(five("Cal", REDOBLE, true, JUSTIN), gone)[0];
-  assert.equal(row.investmentUnscored, 0, "nothing was left for the rule to fail on");
-  assert.equal(row.investment, 5, "the flagged transfers are still counted as flagged");
-  assert.equal(row.breaches, 0);
-  assert.ok(row.pct! >= 60, "and the number is a floor-backed one, not a red 0%");
+  assert.equal(row.investmentUnscored, 5, "five flagged transfers the rule could not judge");
+  assert.equal(row.investment, 0, "and none it did");
+  assert.equal(row.breaches, 0, "a roster edit is not an accusation");
+  assert.equal(row.pct, 67, "the desk ladder Justin's 51 puts her on, minus the departed Mateo");
   // Off a prioritised desk, and with a roster that cannot answer either.
   const off = scoreTransferPriority(five("Cal", DEREK, true, null), gone)[0];
-  assert.equal(off.investmentUnscored, 0);
-  assert.equal(off.pct, 60);
+  assert.equal(off.investmentUnscored, 5);
+  assert.equal(off.pct, 100, "ordinary placement, which is exactly why it is withheld");
+
+  // With the roster intact nothing is ever left unjudged: every flagged
+  // transfer is gated, whatever it recorded and wherever it went.
+  for (const [loId, loaId] of [[REDOBLE, MATEO_LOA], [REDOBLE, ERIK], [REDOBLE, null],
+                               [DEREK, null], [NATHAN, JUSTIN], [null, null]] as const) {
+    const judged = scoreTransferPriority(five("Cal", loId, true, loaId), recipients)[0];
+    assert.equal(judged.investmentUnscored, 0, `${loId} ${loaId}`);
+    assert.equal(judged.investment, 5, `${loId} ${loaId}`);
+  }
 });
 
-test("HIGH — the dials say what the band is: 60 at the bottom, 100 at the top, 0 unreachable", () => {
-  // The three constants the scoring band is built from, pinned together so the
-  // shape of the band cannot drift without a test saying so. 0 is still the
-  // bottom of the ORDINARY ramp and still exported; what changed is that no
-  // transfer routed by rule can ever reach it.
+test("HIGH — the dials say what each band is: a 60-100 ladder, and a flat 0 for a miss", () => {
+  // The three constants the scoring bands are built from, pinned together so
+  // their shape cannot drift without a test saying so. Both ladders — the
+  // desk's eight and the rule's three — run from the floor to the top and no
+  // rung on either is a zero; the zero is what sits OUTSIDE the three, and it
+  // is reachable, which is the change.
   assert.equal(PRIORITY_FLOOR_CREDIT, 0.6);
-  assert.equal(INVESTMENT_FOLLOWED_CREDIT, 1, "the top of the band");
-  assert.equal(INVESTMENT_IGNORED_CREDIT, 0, "the bottom of the ordinary ramp");
+  assert.equal(INVESTMENT_FOLLOWED_CREDIT, 1, "the top of both ladders");
+  assert.equal(INVESTMENT_IGNORED_CREDIT, 0, "and the flat verdict on a routing miss");
   const ladder = [...deskAssistantCredits(recipients, recipientKey("lo", REDOBLE)).values()];
   assert.equal(Math.min(...ladder), PRIORITY_FLOOR_CREDIT);
   assert.equal(Math.max(...ladder), INVESTMENT_FOLLOWED_CREDIT);
   assert.ok(!ladder.includes(INVESTMENT_IGNORED_CREDIT), "no rung is a zero");
+  // The three-name ladder has the same two ends, read through the stat itself.
+  const meanOf = (loaId: number | null) =>
+    scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0].mean;
+  assert.equal(meanOf(MATEO_LOA), INVESTMENT_FOLLOWED_CREDIT);
+  assert.equal(meanOf(JOHN), PRIORITY_FLOOR_CREDIT);
+  assert.equal(meanOf(ERIK), INVESTMENT_IGNORED_CREDIT, "and off the ladder is the flat 0");
+  assert.equal(meanOf(null), INVESTMENT_IGNORED_CREDIT);
 });
 
 test("HIGH — the ladder beats the ordinary ramp on the busiest desk in the building", () => {
@@ -937,60 +1111,79 @@ test("HIGH — the ladder beats the ordinary ramp on the busiest desk in the bui
   assert.equal(creditOf("Christopher Redoble"), 0, "the ordinary ramp still says 0");
   for (const [who, loaId, pct] of [["Jonjairo", JONJAIRO, 100], ["Mateo", MATEO_LOA, 77],
                                    ["John", JOHN, 60], ["nobody", null, 60]] as const) {
-    const row = scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0];
+    const row = scoreTransferPriority(five("Cal", REDOBLE, false, loaId), recipients)[0];
     assert.equal(row.pct, pct, who);
-    assert.equal(row.investment, 5, `${who} — the flag is still counted`);
+    assert.equal(row.investment, 0, `${who} — an ordinary placement, not a routed one`);
     assert.equal(row.breaches, 0, `${who} — and nobody is accused of mis-routing`);
     assert.equal(row.scored, 5, who);
     assert.equal(row.priorityDeskScored, 5, `${who} — scored on the desk, not on the ramp`);
     assert.equal(row.unrestricted, 0, `${who} — no pool was consulted at all`);
   }
+  // An INVESTMENT onto the same desk leaves that ladder for the three-name one,
+  // which is a different question with a different answer: the lightest desk in
+  // the building is worth nothing on it, and the lightest of the three is worth
+  // everything.
+  assert.deepEqual([JONJAIRO, MATEO_LOA, JOHN, null].map((loaId) =>
+    scoreTransferPriority(five("Cal", REDOBLE, true, loaId), recipients)[0].pct), [0, 100, 60, 0]);
 });
 
-test("HIGH — an investment property rides the floor wherever it went — 60%, never 0", () => {
-  // "or if its an investment/commercial property". It is routed by rule, not
-  // chosen, so it may not be marked down as a placement — but it is not a flat
-  // 100 either. Derek Bullen is the lightest man on the floor and worth a full
-  // 1.0 on any ordinary transfer; Nathan Coutino is the busiest ordinary desk
-  // and worth 0.0833. Flagged, both are the same 60.
-  assert.equal(creditOf("Derek Bullen"), 1);
+test("HIGH — an investment that missed the three is 0%, however well placed it looks", () => {
+  // Ethan's rule, and the reason the three names are a GATE rather than a
+  // flavour of the ladder: the assistant ladder was scoring whichever assistant
+  // took it, so an investment routed to Erik came out at 94%. It is required to
+  // reach Justin, Mateo or John, and a record that does not say one of them did
+  // is worth nothing — however starved the loan officer on the row was, and
+  // however light the assistant it names.
+  assert.equal(creditOf("Derek Bullen"), 1, "worth a full 1.0 on any ordinary transfer");
   const cases: Array<[string, number | null, number | null]> = [
-    ["the lightest man on the floor", DEREK, null],
-    ["the lightest man on the floor, with an assistant recorded", DEREK, RYAN_LOA],
+    ["the lightest man on the floor, and nobody named", DEREK, null],
+    ["the lightest man on the floor, with another assistant recorded", DEREK, RYAN_LOA],
     ["the busiest ORDINARY desk", NATHAN, null],
-    ["a loan officer off the roster", 9999, JOHN],
-    ["a seeded placeholder nobody has ever transferred to", ALEX_DEMO, JOHN],
+    ["a loan officer off the roster", 9999, ERIK],
+    ["a seeded placeholder nobody has ever transferred to", ALEX_DEMO, ERIK],
     ["nobody recorded anywhere on the row", null, null],
+    ["the prioritised desk, but its lightest assistant", REDOBLE, JONJAIRO],
   ];
   for (const [label, loId, loaId] of cases) {
     const row = scoreTransferPriority(five("Cal", loId, true, loaId), recipients)[0];
-    assert.equal(row.pct, 60, label);
-    assert.equal(row.mean, PRIORITY_FLOOR_CREDIT, `${label} — the floor, flat`);
+    assert.equal(row.pct, 0, label);
+    assert.equal(row.mean, INVESTMENT_IGNORED_CREDIT, `${label} — flat, and the worst there is`);
     assert.equal(row.investment, 5, label);
-    assert.equal(row.breaches, 0, `${label} — a forced route is not a breach`);
-    assert.equal(row.scored, 5, `${label} — read, not dropped: a forced route is not a data gap`);
+    assert.equal(row.breaches, 5, `${label} — and every one of them is counted as a miss`);
+    assert.equal(row.scored, 5, `${label} — read, not dropped: a routed transfer is not a data gap`);
     assert.equal(row.unplaced, 0, label);
-    assert.equal(row.priorityDeskScored, 0, `${label} — it never reached a prioritised desk`);
+    assert.equal(row.priorityDeskScored, 0, `${label} — the gate, never the desk ladder`);
   }
 
-  // It still cannot outscore a well-placed ordinary transfer, which is what
-  // keeps the floor from paying better than good placement.
+  // What the gate reads is the ASSISTANT: naming an admitted one IS naming that
+  // desk, because the form only offers the chosen officer's own assistants, so
+  // the loan officer on the row is not a second gate on top of it. These
+  // pairings cannot arise from the form; the rule's answer to them is the same
+  // three-name ladder, and nothing about the loan officer moves it.
+  assert.deepEqual([DEREK, NATHAN, 9999, null].map((loId) =>
+    scoreTransferPriority(five("Cal", loId, true, MATEO_LOA), recipients)[0].pct),
+    [100, 100, 100, 100]);
+
+  // A miss cannot be rescued by good placement, and it is the one reading in
+  // this file that scores below the busiest desk on the ordinary ramp.
   const mixed = scoreTransferPriority(
     [...five("Cal", DEREK, true), ...five("Ada", DEREK, false)], recipients);
-  assert.deepEqual(mixed.map((s) => [s.name, s.pct]), [["Ada", 100], ["Cal", 60]]);
+  assert.deepEqual(mixed.map((s) => [s.name, s.pct]), [["Ada", 100], ["Cal", 0]]);
 });
 
-test("a flagged row off a prioritised desk is the floor, whichever assistant it names", () => {
-  // The assistant is read on ONE desk and one desk only — the prioritised one,
-  // where she is the destination being ranked. Off it there is no ladder to
-  // stand on, so an investment property is the floor whether it names one of
-  // Chris's three, somebody else, or nobody.
-  for (const loId of [null, 9999, ALEX_DEMO, DEREK]) {
-    for (const loaId of [JOHN, ERIK, null]) {
+test("a flagged row is judged by the assistant alone, off a prioritised desk as on it", () => {
+  // The gate asks one question — which of three people took it — and the loan
+  // officer on the row does not answer it. So the same three readings come out
+  // of every destination: John is one of the three and the busiest of them
+  // (60), Erik is not one of them at all (0), and a row naming nobody does not
+  // say one of them took it (0).
+  for (const loId of [null, 9999, ALEX_DEMO, DEREK, REDOBLE]) {
+    for (const [loaId, pct] of [[JOHN, 60], [ERIK, 0], [null, 0]] as const) {
       const row = scoreTransferPriority(five("Cal", loId, true, loaId), recipients)[0];
-      assert.equal(row.pct, 60, `${loId} ${loaId}`);
+      assert.equal(row.pct, pct, `${loId} ${loaId}`);
       assert.equal(row.investment, 5, `${loId} ${loaId}`);
       assert.equal(row.unplaced, 0, `${loId} ${loaId}`);
+      assert.equal(row.breaches, pct === 0 ? 5 : 0, `${loId} ${loaId}`);
     }
   }
   // The same rows UNFLAGGED and with no readable loan officer are what they
@@ -1045,22 +1238,24 @@ test("HIGH — the assistant is worth nothing at all on an ORDINARY desk, exactl
   assert.deepEqual([NATHAN, DEREK].map((loId) =>
     scoreTransferPriority(five("Ivy", loId, false, MATEO_LOA), recipients)[0].pct), [8, 100]);
 
-  // ...and on a PRIORITISED desk the same field is the whole answer, which is
-  // the pairing the boundary exists to keep apart. Flagged or not.
-  assert.deepEqual([MATEO_LOA, ERIK, null].map((loaId) =>
-    scoreTransferPriority(five("Ivy", REDOBLE, true, loaId), recipients)[0].pct), [77, 94, 60]);
+  // ...and where the same field IS the whole answer, it is worth up to a
+  // hundred points — which is the pairing the boundary exists to keep apart.
+  // On a prioritised desk it is her rung; on an investment it is the gate, and
+  // the two orderings are not even the same shape.
   assert.deepEqual([MATEO_LOA, ERIK, null].map((loaId) =>
     scoreTransferPriority(five("Ivy", REDOBLE, false, loaId), recipients)[0].pct), [77, 94, 60]);
+  assert.deepEqual([MATEO_LOA, ERIK, null].map((loaId) =>
+    scoreTransferPriority(five("Ivy", REDOBLE, true, loaId), recipients)[0].pct), [100, 0, 0]);
 });
 
 test("a mixed row carries its counters, which is what makes its number readable", () => {
-  // Cal made ten readable transfers: five investment properties onto the
-  // prioritised desk, three of which reached Justin (51 received, so the 66
-  // rung) and two of which recorded nobody (the floor), and five ordinary ones
-  // onto the lightest man on the floor. 82% — and what he "lost" is a busy
-  // assistant and two blanks on a desk he was told to feed, which is a
-  // different conversation from 82% earned by middling placement. The counters
-  // are what let the cell say so.
+  // Cal made ten readable transfers: five investment properties, three of which
+  // reached Justin (the busiest but one of the three, so the 80 rung) and two
+  // of which recorded nobody (a miss, so 0), and five ordinary ones onto the
+  // lightest man on the floor. 74% — and what he "lost" is two investment leads
+  // that never named one of the three, which is a very different conversation
+  // from 74% earned by middling placement. The counters are what let the cell
+  // say so.
   const rows = [
     ...five("Cal", REDOBLE, true, JUSTIN).slice(0, 3),
     ...five("Cal", REDOBLE, true, null).slice(0, 2),
@@ -1070,22 +1265,31 @@ test("a mixed row carries its counters, which is what makes its number readable"
   assert.equal(cal.transfers, 10);
   assert.equal(cal.scored, 10);
   assert.equal(cal.investment, 5, "recorded as investment properties");
-  assert.equal(cal.priorityDeskScored, 5, "and every one of them landed on the prioritised desk");
-  assert.equal(cal.breaches, 0, "none of which is an accusation");
-  assert.equal(cal.mean, 0.8171);
-  assert.equal(cal.pct, 82);
+  assert.equal(cal.breaches, 2, "and two of the five named nobody at all");
+  assert.equal(cal.priorityDeskScored, 0, "none of them was judged on the desk ladder");
+  assert.equal(cal.unrestricted, 5, "only the ordinary five ever consulted a pool");
+  assert.equal(cal.mean, 0.74);
+  assert.equal(cal.pct, 74);
+  assert.equal(cal.mean, round4((3 * 0.8 + 2 * INVESTMENT_IGNORED_CREDIT + 5 * 1) / 10),
+    "three rungs, two misses and five perfect placements, over ten");
 });
 
-test("the desk decides which rule applies, not the loan officer's name on the row", () => {
+test("the desk decides which ORDINARY reading applies; the qualification decides whether any does", () => {
   // Pinned so that "prioritised" is not quietly widened into "anything with one
-  // of Chris's assistants on it". The same assistant on the same flagged
-  // transfer is a rung when the transfer reached his desk and the floor when it
-  // did not, because the desk is what the floor was told to feed.
-  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, true, JUSTIN), recipients)[0].pct, 66);
-  assert.equal(scoreTransferPriority(five("Ivy", DEREK, true, JUSTIN), recipients)[0].pct, 60);
-  // ...and unflagged, off the desk, she is worth nothing at all.
+  // of Chris's assistants on it". On an ordinary transfer the same assistant is
+  // a rung when the transfer reached his desk and unread when it did not,
+  // because the desk is what the floor was told to feed.
+  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, false, JUSTIN), recipients)[0].pct, 66);
   assert.equal(scoreTransferPriority(five("Ivy", DEREK, false, JUSTIN), recipients)[0].pct, 100);
   assert.equal(scoreTransferPriority(five("Ivy", NATHAN, false, JUSTIN), recipients)[0].pct, 8);
+  // Flagged, the desk stops deciding anything: the gate asks which of the three
+  // took it, so Justin is the same 80 wherever the row says it went...
+  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, true, JUSTIN), recipients)[0].pct, 80);
+  assert.equal(scoreTransferPriority(five("Ivy", DEREK, true, JUSTIN), recipients)[0].pct, 80);
+  // ...and an assistant on his desk who is not one of the three is worth her
+  // rung when nothing routed the lead and nothing at all when something did.
+  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, false, ERIK), recipients)[0].pct, 94);
+  assert.equal(scoreTransferPriority(five("Ivy", REDOBLE, true, ERIK), recipients)[0].pct, 0);
 });
 
 test("the investment rule is switched ON, and the module still guesses nothing", () => {
@@ -1106,13 +1310,15 @@ test("the investment rule is switched ON, and the module still guesses nothing",
     assert.equal(row.breaches, 0, String(flag));
     assert.equal(row.pct, 8, `${flag} — the ordinary ramp, not the 60 floor`);
   }
-  // ...and `investment` counts the FLAG, never the desk: the prioritised desk
-  // scores the same either way, so the counter is the only thing that says
-  // whether the app recorded an investment property.
+  // ...and `investment` counts the FLAG, never the desk. The same record read
+  // both ways is two different questions with two different answers: Mateo is
+  // the fourth-lightest of eight assistants (77) and the lightest of the three
+  // the rule names (100).
   const flagged = scoreTransferPriority(five("Cal", REDOBLE, true, MATEO_LOA), recipients)[0];
   const plain = scoreTransferPriority(five("Cal", REDOBLE, false, MATEO_LOA), recipients)[0];
-  assert.equal(flagged.pct, plain.pct);
+  assert.deepEqual([flagged.pct, plain.pct], [100, 77]);
   assert.deepEqual([flagged.investment, plain.investment], [5, 0]);
+  assert.deepEqual([flagged.priorityDeskScored, plain.priorityDeskScored], [0, 5]);
 });
 
 test("the rules the routing resolver rests on are written down next to the arithmetic", () => {
@@ -1195,32 +1401,32 @@ test("the answer is read at the START of a line, like every other marker", () =>
   assert.equal(isInvestmentProperty(`Second Investment/2nd Home: Yes`), false);
 });
 
-test("the answer the app composed is what decides whether the floor applies", () => {
+test("the answer the app composed is what decides whether the routing gate applies", () => {
   // The two halves joined up, on the route's own arithmetic. Cal sends five to
-  // Nathan Coutino, the busiest ORDINARY desk on the floor. With an app-composed
-  // Yes the transfer was routed by rule rather than chosen, so it rides the 60%
-  // floor. With a No, or with a sentence merely mentioning the word, nothing
-  // routed it: the same five are an ordinary placement onto the heaviest desk a
-  // CLR could have avoided, and score 8%. Nothing between those readings is a
-  // guess.
+  // Nathan Coutino, the busiest ORDINARY desk on the floor, naming no assistant.
+  // With an app-composed Yes the transfer was required to reach one of three
+  // people and the record does not say it did: 0%. With a No, or with a
+  // sentence merely mentioning the word, nothing routed it: the same five are
+  // an ordinary placement onto the heaviest desk a CLR could have avoided, and
+  // score 8%. Nothing between those readings is a guess.
   const rows = (blob: string, loId: number, loaId: number | null): TransferRow[] =>
     [D1, D1, D2, D2, D3].map((d) => ({
       clrId: "Cal", clrName: "Cal", loId, at: d, loaId,
       investmentProperty: isInvestmentProperty(blob),
     }));
-  assert.equal(scoreTransferPriority(rows(composed("yes"), NATHAN, null), recipients)[0].pct, 60);
+  assert.equal(scoreTransferPriority(rows(composed("yes"), NATHAN, null), recipients)[0].pct, 0);
   assert.equal(scoreTransferPriority(rows(composed("no"), NATHAN, null), recipients)[0].pct, 8);
   assert.equal(scoreTransferPriority(rows("not an investment property", NATHAN, null), recipients)[0].pct, 8,
     "a sentence about it is not an answer to it");
   // ...and the other way round, so this is not just the desk being heavy: a Yes
-  // caps the lightest man on the floor at the same 60, because the CLR was not
-  // the one who chose him either.
-  assert.equal(scoreTransferPriority(rows(composed("yes"), DEREK, null), recipients)[0].pct, 60);
+  // takes the lightest man on the floor from 100% to 0, because feeding the
+  // starved was not the question this lead was asked.
+  assert.equal(scoreTransferPriority(rows(composed("yes"), DEREK, null), recipients)[0].pct, 0);
   assert.equal(scoreTransferPriority(rows(composed("no"), DEREK, null), recipients)[0].pct, 100);
-  // On the PRIORITISED desk the answer changes nothing at all: that desk
-  // already carries the floor, and the assistant already decides the rung.
+  // On the PRIORITISED desk the answer still changes the question: unrouted,
+  // Justin's 51 is her rung among eight; routed, it is her rung among three.
   assert.deepEqual([composed("yes"), composed("no")].map((blob) =>
-    scoreTransferPriority(rows(blob, REDOBLE, JUSTIN), recipients)[0].pct), [66, 66]);
+    scoreTransferPriority(rows(blob, REDOBLE, JUSTIN), recipients)[0].pct), [80, 66]);
 });
 
 test("nothing in this module reads note text or matches a keyword", () => {
@@ -1369,10 +1575,10 @@ test("HIGH — one CLR's score cannot move on ANOTHER CLR's forced routes", () =
   const olaIn = (rows: TransferRow[]) =>
     scoreTransferPriority(rows, recipients).filter((s) => s.name === "Ola")[0];
   const alone = olaIn(board);
-  const withTopRung = olaIn([...board, ...five("Cal", REDOBLE, true, JONJAIRO)]);
-  const withFloor = olaIn([...board, ...five("Cal", REDOBLE, true, JOHN)]);
-  const offDesk = olaIn([...board, ...five("Cal", DEREK, true, null)]);
-  for (const other of [withTopRung, withFloor, offDesk]) {
+  const withFullMarks = olaIn([...board, ...five("Cal", REDOBLE, true, MATEO_LOA)]);
+  const withBottomRung = olaIn([...board, ...five("Cal", REDOBLE, true, JOHN)]);
+  const withBreaches = olaIn([...board, ...five("Cal", DEREK, true, null)]);
+  for (const other of [withFullMarks, withBottomRung, withBreaches]) {
     assert.equal(other.unplacedValuedAt, alone.unplacedValuedAt);
     assert.equal(other.mean, alone.mean);
     assert.equal(other.pct, alone.pct);
@@ -1381,9 +1587,13 @@ test("HIGH — one CLR's score cannot move on ANOTHER CLR's forced routes", () =
   // not passing by the extra rows being ignored.
   const calIn = (rows: TransferRow[]) =>
     scoreTransferPriority(rows, recipients).filter((s) => s.name === "Cal")[0];
-  assert.equal(calIn([...board, ...five("Cal", REDOBLE, true, JONJAIRO)]).pct, 100);
+  assert.equal(calIn([...board, ...five("Cal", REDOBLE, true, MATEO_LOA)]).pct, 100);
   assert.equal(calIn([...board, ...five("Cal", REDOBLE, true, JOHN)]).pct, 60);
-  assert.equal(calIn([...board, ...five("Cal", DEREK, true, null)]).pct, 60);
+  assert.equal(calIn([...board, ...five("Cal", DEREK, true, null)]).pct, 0);
+  // The filler itself is the tell: three fortnights running from perfect
+  // compliance to five breaches, and the figure every unreadable record on the
+  // floor is valued at does not move a hundredth.
+  assert.equal(alone.unplacedValuedAt, 0.6623);
 });
 
 test("HIGH — every transfer behind the number is either scored or unplaced", () => {
@@ -1406,15 +1616,18 @@ test("HIGH — every transfer behind the number is either scored or unplaced", (
     assert.ok(s.investmentUnscored <= s.transfers, s.name);
   }
   // And the mean really is taken over both halves, not over the readable one.
-  // Cal's five readable ones are three rungs of 0.6571 and two floors of 0.6.
+  // Cal's five readable ones are three investments that reached Justin (0.8
+  // each) and two that named nobody (0 each, and counted as breaches).
   const cal = all.filter((s) => s.name === "Cal")[0];
   assert.equal(cal.transfers, 10);
   assert.equal(cal.scored, 5);
-  assert.equal(cal.priorityDeskScored, 3);
+  assert.equal(cal.investment, 5);
+  assert.equal(cal.breaches, 2);
+  assert.equal(cal.priorityDeskScored, 0, "gated, so none of them touched the desk ladder");
   assert.equal(cal.unplaced, 5);
-  assert.equal(cal.pct, Math.round(((3 * 0.6571428571428571 + 2 * PRIORITY_FLOOR_CREDIT)
+  assert.equal(cal.pct, Math.round(((3 * 0.8 + 2 * INVESTMENT_IGNORED_CREDIT)
     + 5 * cal.unplacedValuedAt!) / 10 * 100));
-  assert.equal(cal.pct, 65);
+  assert.equal(cal.pct, 57);
 });
 
 test("a CLR with nothing readable at all scores null, not the floor's average", () => {

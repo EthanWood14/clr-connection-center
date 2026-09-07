@@ -186,13 +186,20 @@ export const MIN_SCORED_TRANSFERS = 5;
  * named above, so it is not graded on how starved anybody was, and it is not
  * graded on anything else either:
  *
- *   FOLLOWED — the transfer records one of the three as its assistant. Exactly
- *     100%, flat, however busy that desk was that morning. This is the point of
- *     the rule rather than an exemption from it: obeying a forced routing
- *     requirement is the correct behaviour, and the stat has to say so.
+ *   FOLLOWED — the transfer records one of the three as its assistant. Scored
+ *     on a ladder built over THOSE THREE ALONE, so following the rule well and
+ *     following it badly are different numbers: the lightest-loaded of the
+ *     three takes 100%, the busiest takes the 60% floor. On the real fortnight
+ *     that is Mateo 100, Justin 80, John 60. Note these are NOT their rungs on
+ *     the eight-assistant desk ladder — a lead that had one correct
+ *     destination is judged against the destinations it was allowed, not
+ *     against the whole desk.
  *   NOT FOLLOWED — anything else. A different assistant, no assistant recorded
- *     at all, a different loan officer: exactly 0%, flat. "Anything else" is
- *     the rule as it was given, and a blank is one of the things it names.
+ *     at all, a different loan officer: exactly 0%, flat, and counted as a
+ *     breach. "Anything else" is the rule as it was given, and a blank is one
+ *     of the things it names. A lightly loaded assistant OUTSIDE the three
+ *     earns nothing for being lightly loaded — Jonjairo is worth 100% on an
+ *     ordinary transfer to that desk and 0% on an investment.
  *
  * "Chris's" is half of the rule, not decoration, and it is enforced. The three
  * are HIS assistants, so an assistant only counts when she is on that desk:
@@ -1180,12 +1187,30 @@ export function scoreTransferPriority(
   // Null means the roster cannot answer that today, and a rule nobody can
   // resolve is not applied to anybody. Flagged rows are still COUNTED in that
   // case (`investmentUnscored`), so the silence is visible downstream.
-  const allowed = resolveInvestmentRouting(roster).keys;
   // The desks the floor is TOLD to feed, and the assistant ladder on each.
   // Built once: the assistants' own loads do not move within a scan.
   const priorityDesks = prioritisedDeskIds(roster);
   const deskLadders = new Map<string, Map<string, number>>();
   priorityDesks.forEach((desk) => deskLadders.set(desk, deskAssistantCredits(roster, desk)));
+
+  // An investment or second home has ONE correct destination: the three named
+  // assistants. So it is not scored on the whole desk — it is scored on a
+  // ladder built over those three alone, which means picking the lightest of
+  // the three is worth full marks rather than whatever rung she happens to
+  // occupy among eight. Anything outside the three is the rule not followed.
+  //
+  // Null means the roster cannot resolve the three today. The rule is then not
+  // applied to anybody rather than to some of them — see resolveInvestmentRouting.
+  const investmentAllowed = resolveInvestmentRouting(roster).keys;
+  const investmentLadder = investmentAllowed === null
+    ? null
+    : deskAssistantCredits(
+        roster.filter((r) => r.kind !== "loa" || investmentAllowed.has(recipientKey("loa", r.id))),
+        // Every allowed assistant shares the one desk the rule names, so any of
+        // their desks is that desk; resolveInvestmentRouting has already proved
+        // they agree.
+        resolveInvestmentRouting(roster).desk ?? "",
+      );
 
   // Credits cost a sort per pool and repeat hard: one snapshot per day per
   // distinct eligible set, not one per transfer.
@@ -1299,27 +1324,46 @@ export function scoreTransferPriority(
     // An investment or second home rides the same floor wherever it went: it is
     // routed by rule, so it is not a placement decision either.
     const deskKey = hasId(t.loId) ? recipientKey("lo", t.loId) : null;
+    const recorded = hasId(t.loaId) ? recipientKey("loa", t.loaId) : null;
+
+    // ── an investment or second home: one correct destination ─────────────
+    //
+    // Ethan's rule. It must reach one of the three named assistants, and among
+    // those three the lightest-loaded is worth the most — so following the rule
+    // well and following it badly are different numbers. Anything else is the
+    // rule not followed: a fourth assistant, a blank, another desk entirely.
+    // Zero, and counted as a breach so the cell can say why.
+    //
+    // A blank is a zero HERE and a floor on an ordinary prioritised-desk
+    // transfer, and the difference is deliberate: this rule asks WHICH of three
+    // people took it, and a row naming nobody does not answer that. Elsewhere
+    // the assistant is a record nobody is judged on the absence of.
+    if (t.investmentProperty === true && investmentLadder !== null) {
+      row.investment += 1;
+      row.scored += 1;
+      const rung = recorded === null ? undefined : investmentLadder.get(recorded);
+      if (typeof rung === "number") row.sum += rung;
+      else {
+        row.sum += INVESTMENT_IGNORED_CREDIT;
+        row.breaches += 1;
+      }
+      continue;
+    }
+    // The roster cannot resolve the three, so the rule is applied to nobody.
+    // Counted on the way past: silence here is not the same as compliance.
+    if (t.investmentProperty === true) row.investmentUnscored += 1;
+
     const onPriorityDesk = deskKey !== null && priorityDesks.has(deskKey);
     if (onPriorityDesk) {
       const ladder = deskLadders.get(deskKey as string);
-      const recorded = hasId(t.loaId) ? recipientKey("loa", t.loaId) : null;
       // No assistant recorded is not a breach here and never a zero: the desk
       // is one the floor was told to feed, and which assistant took it is a
       // record nobody is scored on the absence of. It sits at the floor.
       const rung = recorded === null ? undefined : ladder?.get(recorded);
       const credit = typeof rung === "number" ? rung : PRIORITY_FLOOR_CREDIT;
-      if (t.investmentProperty === true) row.investment += 1;
       row.scored += 1;
       row.sum += credit;
       row.priorityDeskScored += 1;
-      continue;
-    }
-    if (t.investmentProperty === true) {
-      // Routed by rule, but not onto a prioritised desk. It still may not be
-      // marked down for a choice the CLR did not make, so it takes the floor.
-      row.investment += 1;
-      row.scored += 1;
-      row.sum += PRIORITY_FLOOR_CREDIT;
       continue;
     }
 
