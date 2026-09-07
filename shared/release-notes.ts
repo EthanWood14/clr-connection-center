@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.64.2",
+    headline: "Transfer Write-Ups moves into Advanced Settings.",
+    items: [
+      { text: "Transfer Write-Ups now lives under Advanced Settings → Personal, next to Time Clock, rather than in the everyday Personal list. It is a page you go and look at when a write-up is in question, not one you open daily.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.64.1",
     headline: "Reassign Prospect moved to Tools, and CLRs can use it.",
     items: [

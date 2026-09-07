@@ -190,7 +190,6 @@ const mainItems: NavItem[] = [
 
 const personalItems: NavItem[] = [
   { title: "My Report",       url: "/my-report",     icon: BarChart2,       help: help.myReport },
-  { title: "Transfer Write-Ups", url: "/transfer-details", icon: FileSearch },
   { title: "Check-In",        url: "/check-ins",     icon: UserCheck },
   { title: "Time Off",        url: "/time-off",      icon: Plane },
   { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
@@ -201,6 +200,9 @@ const personalItems: NavItem[] = [
 // the everyday Personal group stays short. The page itself is unchanged.
 const advancedPersonalItems: NavItem[] = [
   { title: "Time Clock",      url: "/time-clock",    icon: Timer },
+  // Something you go and look at when a write-up is in question, rather than
+  // every day (owner 9/7/26).
+  { title: "Transfer Write-Ups", url: "/transfer-details", icon: FileSearch },
 ];
 
 const teamItems: NavItem[] = [
