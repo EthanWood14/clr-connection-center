@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
-  AlertTriangle, CalendarClock, Check, CheckCircle2, ChevronRight, Clock3,
-  History, ListChecks, Loader2, Pencil, Plus, Repeat2, Search, Sparkles,
+  AlertTriangle, BadgeDollarSign, CalendarClock, Check, CheckCircle2, ChevronRight, Clock3,
+  History, ListChecks, Loader2, Pencil, Plus, Receipt, Repeat2, Search, Sparkles,
   Target, Trash2, UserRound,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -23,6 +23,8 @@ type HistoryRow = { id: number; taskId: number; title: string; dueAt: string; co
 /** A task whose completion should also report a call count. Mirrors the server. */
 const wantsCallCount = (title: string) => /^call\b/i.test(String(title ?? "").trim());
 const MIN_NOTE = 10;
+/** The shortest reason server/task-comp.ts accepts with an amount. */
+const MIN_COMP_REASON = 3;
 type ClrTask = {
   id: number; title: string; description: string; assignedUserId: number; assignedUserName: string;
   createdByUserId: number; createdByName: string; priority: "low" | "normal" | "high" | "urgent";
@@ -30,11 +32,35 @@ type ClrTask = {
   scheduleDays: number[];
   dueAt: string; status: "active" | "completed"; createdAt: string; updatedAt: string;
   completionCount: number; lastCompletedAt: string | null; overdueAlerted: boolean; history: Completion[];
+  compAmountCents: number | null; compReason: string;
+  compSetByUserId: number | null; compSetAt: string | null; compSetForUserId: number | null;
+  compRequestId: number | null; compRequestStatus: string | null; compRequestAmountCents: number | null;
 };
 type TaskPayload = {
   tasks: ClrTask[]; canManage: boolean; assignees: Array<{ id: number; name: string }>;
+  /** The pay rules, sent by the server so the cap shown is the cap enforced. */
+  taskComp: { enabled: boolean; minCents: number; maxCents: number; reasonMaxLength: number };
   summary: { active: number; overdue: number; dueSoon: number; completed: number };
 };
+
+const money = (cents: number) => `$${((cents || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Dollars a manager typed → whole cents.
+ *
+ * The field is dollars and says so, because the expensive typo is the other way
+ * round: "5000" meant as $50.00 typed into a cents field is $5,000.00. Here it
+ * is $5,000.00 only if somebody types five thousand, and the cap catches that
+ * before the request is ever sent.
+ */
+function parseCompDollars(input: string): { blank: boolean; cents: number; error: string | null } {
+  const raw = String(input ?? "").trim().replace(/^\$/, "").replace(/,/g, "");
+  if (!raw) return { blank: true, cents: 0, error: null };
+  if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
+    return { blank: false, cents: 0, error: "Enter the pay in dollars — like 50 or 50.00." };
+  }
+  return { blank: false, cents: Math.round(Number(raw) * 100), error: null };
+}
 
 const RECURRENCE_LABELS: Record<ClrTask["recurrence"], string> = {
   none: "One time", daily: "Every day", weekdays: "Every weekday", weekly: "Every week", custom_weekly: "Custom weekdays", monthly: "Every month",
@@ -80,6 +106,27 @@ function TaskEditor({ open, onClose, task, payload }: {
   const [recurrence, setRecurrence] = useState<ClrTask["recurrence"]>("none");
   const [scheduleDays, setScheduleDays] = useState<number[]>([1, 3, 5]);
   const [dueAt, setDueAt] = useState(defaultDeadline());
+  const [compDollars, setCompDollars] = useState("");
+  const [compReason, setCompReason] = useState("");
+  const [exposure, setExposure] = useState("");
+
+  // Pay is frozen once a task is completed or archived — the server refuses to
+  // change it, so the editor must not offer to. (Editing anything ELSE on a
+  // completed task stays possible: the request simply carries no comp field.)
+  const payLocked = !!task && task.status !== "active";
+  const mayAttachPay = payload.taskComp?.enabled === true && !payLocked;
+  const maxCents = payload.taskComp?.maxCents ?? 0;
+  const parsedPay = parseCompDollars(compDollars);
+  const payError = !mayAttachPay || parsedPay.blank
+    ? null
+    : parsedPay.error
+      ?? (parsedPay.cents > maxCents
+        ? `Task pay cannot be more than ${money(maxCents)}. Check the amount — if the work really is worth more, file the comp request by hand.`
+        : parsedPay.cents < (payload.taskComp?.minCents ?? 1)
+          ? "Task pay must be more than $0.00. Leave it blank for an unpaid task."
+          : compReason.trim().length < MIN_COMP_REASON
+            ? "Say what the pay is for — the approver sees a request nobody typed."
+            : null);
 
   useEffect(() => {
     setTitle(task?.title ?? "");
@@ -89,16 +136,53 @@ function TaskEditor({ open, onClose, task, payload }: {
     setRecurrence(task?.recurrence ?? "none");
     setScheduleDays(task?.scheduleDays?.length ? task.scheduleDays : [1, 3, 5]);
     setDueAt(task ? localDateTime(task.dueAt) : defaultDeadline());
+    setCompDollars(task?.compAmountCents ? (task.compAmountCents / 100).toFixed(2) : "");
+    setCompReason(task?.compReason ?? "");
+    setExposure("");
   }, [task, open, payload.assignees]);
+
+  // The exposure sentence comes from server/task-comp.ts itself and is shown
+  // BEFORE saving. A repeating paid task is the one place a single click can
+  // commit real money more than once, so the manager reads the rule that is
+  // actually in force rather than a copy of it maintained over here.
+  useEffect(() => {
+    if (!open || !mayAttachPay || parsedPay.blank || payError || recurrence === "none") { setExposure(""); return; }
+    let live = true;
+    const timer = setTimeout(() => {
+      apiRequest("GET", `/api/clr-tasks/comp-preview?amountCents=${parsedPay.cents}&recurrence=${encodeURIComponent(recurrence)}&scheduleDays=${scheduleDays.join(",")}`)
+        .then((result: any) => { if (live) setExposure(String(result?.warning ?? "")); })
+        .catch(() => { if (live) setExposure(""); });
+    }, 350);
+    return () => { live = false; clearTimeout(timer); };
+  }, [open, mayAttachPay, parsedPay.blank, parsedPay.cents, payError, recurrence, scheduleDays]);
+
+  // What this save actually changes about the pay, if anything. Sending an
+  // unchanged amount would be a request to re-attach it, which the server is
+  // right to refuse on a locked task — and sending an unchanged assignee makes
+  // an ordinary rename look like a reassignment of a task that carries money.
+  const nextPayCents = parsedPay.blank ? null : parsedPay.cents;
+  const payChanged = mayAttachPay && (
+    nextPayCents !== (task?.compAmountCents ?? null)
+    || (nextPayCents !== null && compReason.trim() !== (task?.compReason ?? "").trim())
+  );
+  const assigneeChanged = !task || Number(assignedUserId) !== task.assignedUserId;
 
   const save = useMutation({
     mutationFn: () => apiRequest(task ? "PATCH" : "POST", task ? `/api/clr-tasks/${task.id}` : "/api/clr-tasks", {
-      title, description, assignedUserId: Number(assignedUserId), priority, recurrence, scheduleDays,
+      title, description, priority, recurrence, scheduleDays,
       dueAt: new Date(dueAt).toISOString(),
+      ...(assigneeChanged ? { assignedUserId: Number(assignedUserId) } : {}),
+      // A blank amount is sent as an explicit null so CLEARING the pay is a
+      // decision the server can see, rather than an omission it cannot.
+      ...(payChanged ? { amountCents: nextPayCents, reason: nextPayCents === null ? null : compReason.trim() } : {}),
     }),
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clr-tasks"] });
-      toast({ title: task ? "Task updated" : "Task assigned", description: task ? "The new deadline and assignment are live." : "The CLR has been notified." });
+      const warnings: string[] = Array.isArray(result?.compWarnings) ? result.compWarnings : [];
+      toast({
+        title: task ? "Task updated" : "Task assigned",
+        description: warnings[0] ?? (task ? "The new deadline and assignment are live." : "The CLR has been notified."),
+      });
       onClose();
     },
     onError: (error: any) => toast({ title: "Could not save task", description: error?.message, variant: "destructive" }),
@@ -120,9 +204,45 @@ function TaskEditor({ open, onClose, task, payload }: {
             <div className="space-y-1.5"><Label>Repeats</Label><Select value={recurrence} onValueChange={(value) => setRecurrence(value as ClrTask["recurrence"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(RECURRENCE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1.5"><Label>Priority</Label><Select value={priority} onValueChange={(value) => setPriority(value as ClrTask["priority"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Low</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="urgent">Urgent</SelectItem></SelectContent></Select></div>
           </div>
+          {payLocked && !!task?.compAmountCents && (
+            <p className="rounded-xl border bg-muted/25 p-3 text-xs text-muted-foreground" data-testid="task-pay-locked">
+              Pay of {money(task.compAmountCents)} is locked — this task is {task.status}. If the amount was wrong, deny the comp request and file the right one by hand.
+            </p>
+          )}
+          {mayAttachPay && (
+            <div className="space-y-2 rounded-xl border border-emerald-300 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/20" data-testid="task-pay-fields">
+              <div>
+                <Label className="flex items-center gap-1.5"><BadgeDollarSign className="h-4 w-4 text-emerald-600" /> Pay for this task (optional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Completing it files a comp request for the assignee — pending, exactly like a hand-typed one, so somebody still approves it.
+                  Enter <strong>dollars</strong>, up to {money(maxCents)} per task.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-pay-amount">Amount ($)</Label>
+                  <Input id="task-pay-amount" inputMode="decimal" value={compDollars} placeholder="50.00"
+                    onChange={(event) => setCompDollars(event.target.value)} data-testid="input-task-pay" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-pay-reason">What is the pay for?</Label>
+                  <Input id="task-pay-reason" maxLength={payload.taskComp?.reasonMaxLength ?? 120} value={compReason}
+                    onChange={(event) => setCompReason(event.target.value)} placeholder="Example: extra evening calling block"
+                    data-testid="input-task-pay-reason" />
+                </div>
+              </div>
+              {payError && <p className="text-xs font-semibold text-destructive" data-testid="task-pay-error">{payError}</p>}
+              {!payError && !parsedPay.blank && <p className="text-xs text-muted-foreground">Files {money(parsedPay.cents)} for the assignee when this task is completed.</p>}
+              {exposure && (
+                <p className="rounded-lg border border-amber-400 bg-amber-50 p-2 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200" data-testid="task-pay-exposure">
+                  Before you save: {exposure}
+                </p>
+              )}
+            </div>
+          )}
           {recurrence === "custom_weekly" && <div className="space-y-2 rounded-xl border bg-muted/25 p-3"><div><Label>Repeat on</Label><p className="text-xs text-muted-foreground">Choose any combination—like Monday, Wednesday, and Friday for three times a week.</p></div><div className="flex flex-wrap gap-2">{WEEKDAYS.map(({ day, label }) => { const selected = scheduleDays.includes(day); return <Button key={day} type="button" size="sm" variant={selected ? "default" : "outline"} className="min-w-12" aria-pressed={selected} onClick={() => setScheduleDays((days) => selected ? days.filter((item) => item !== day) : [...days, day])}>{label}</Button>; })}</div></div>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button><Button onClick={() => save.mutate()} disabled={!title.trim() || !assignedUserId || !dueAt || (recurrence === "custom_weekly" && !scheduleDays.length) || save.isPending}>{save.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : task ? "Save changes" : "Assign task"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button><Button onClick={() => save.mutate()} disabled={!title.trim() || !assignedUserId || !dueAt || (recurrence === "custom_weekly" && !scheduleDays.length) || !!payError || save.isPending}>{save.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : task ? "Save changes" : "Assign task"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -146,7 +266,13 @@ export default function ClrTasks() {
   const [completionNote, setCompletionNote] = useState("");
 
   const { data, isLoading } = useQuery<TaskPayload>({ queryKey: ["/api/clr-tasks"], refetchInterval: 30_000 });
-  const payload = data ?? { tasks: [], canManage: false, assignees: [], summary: { active: 0, overdue: 0, dueSoon: 0, completed: 0 } };
+  const payload = data ?? {
+    tasks: [], canManage: false, assignees: [],
+    // Pay stays off until the server says otherwise: an editor that offers the
+    // field before the columns exist collects an amount nothing can store.
+    taskComp: { enabled: false, minCents: 1, maxCents: 0, reasonMaxLength: 120 },
+    summary: { active: 0, overdue: 0, dueSoon: 0, completed: 0 },
+  };
 
   const complete = useMutation({
     mutationFn: () => apiRequest("POST", `/api/clr-tasks/${completing!.id}/complete`, {
@@ -155,7 +281,22 @@ export default function ClrTasks() {
     }),
     onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clr-tasks"] });
-      toast({ title: result?.recurring ? "Done — the next occurrence is ready" : "Task complete", description: result?.recurring ? "This occurrence is complete. Its next scheduled deadline remains separate." : "Nice work. Your manager can see the completion." });
+      queryClient.invalidateQueries({ queryKey: ["/api/comp"] });
+      const filedPay = result?.comp?.filed ? `A ${result.comp.amountLabel} comp request was filed for approval.` : "";
+      // The task carried pay and NONE of it filed. Being paid nothing in
+      // silence is the one outcome this must never produce, so the server's own
+      // sentence replaces the cheerful toast, in the destructive style and up
+      // long enough to actually be read.
+      const payNotFiled = !result?.comp?.filed ? String(result?.comp?.notice ?? "") : "";
+      toast(payNotFiled ? {
+        title: "Task complete — but its pay was NOT filed",
+        description: payNotFiled,
+        variant: "destructive",
+        duration: 60000,
+      } : {
+        title: result?.recurring ? "Done — the next occurrence is ready" : "Task complete",
+        description: [filedPay, result?.recurring ? "This occurrence is complete. Its next scheduled deadline remains separate." : "Nice work. Your manager can see the completion."].filter(Boolean).join(" "),
+      });
       setCompleting(null); setCompletionNote("");
     },
     onError: (error: any) => toast({ title: "Could not complete task", description: error?.message, variant: "destructive" }),
@@ -238,7 +379,7 @@ export default function ClrTasks() {
             const due = new Date(task.dueAt);
             return <Card key={task.id} className={`overflow-hidden bg-background/90 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${state === "overdue" ? "border-red-400" : state === "soon" ? "border-amber-400" : state === "completed" ? "border-emerald-300 opacity-80" : ""}`}>
               <div className={`h-1 ${task.priority === "urgent" ? "bg-red-500" : task.priority === "high" ? "bg-amber-500" : task.priority === "normal" ? "bg-indigo-500" : "bg-slate-400"}`} />
-              <CardContent className="p-5"><div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={`capitalize ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</Badge>{task.recurrence !== "none" && <Badge variant="secondary" className="gap-1"><Repeat2 className="h-3 w-3" /> {RECURRENCE_LABELS[task.recurrence]}</Badge>}{state === "overdue" && <Badge className="bg-red-600">OVERDUE</Badge>}{state === "completed" && <Badge className="bg-emerald-600">COMPLETED</Badge>}</div><h2 className="mt-3 text-lg font-black">{task.title}</h2>{task.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{task.description}</p>}<div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" /><strong className="text-foreground">{task.assignedUserName}</strong></span><span className="flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" /> {state === "completed" ? "Was due" : "Due"} {format(due, "EEE, MMM d 'at' h:mm a")}</span>{state !== "completed" && <span className={`font-semibold ${state === "overdue" ? "text-red-600" : state === "soon" ? "text-amber-600" : ""}`}>{formatDistanceToNow(due, { addSuffix: true })}</span>}<span>Assigned by {task.createdByName}</span></div>
+              <CardContent className="p-5"><div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={`capitalize ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</Badge>{task.recurrence !== "none" && <Badge variant="secondary" className="gap-1"><Repeat2 className="h-3 w-3" /> {RECURRENCE_LABELS[task.recurrence]}</Badge>}{state === "overdue" && <Badge className="bg-red-600">OVERDUE</Badge>}{state === "completed" && <Badge className="bg-emerald-600">COMPLETED</Badge>}{!!task.compAmountCents && <Badge className="gap-1 bg-emerald-700" data-testid="task-pay-badge"><BadgeDollarSign className="h-3 w-3" /> Pays {money(task.compAmountCents)}</Badge>}</div><h2 className="mt-3 text-lg font-black">{task.title}</h2>{task.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{task.description}</p>}<div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5" /><strong className="text-foreground">{task.assignedUserName}</strong></span><span className="flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" /> {state === "completed" ? "Was due" : "Due"} {format(due, "EEE, MMM d 'at' h:mm a")}</span>{state !== "completed" && <span className={`font-semibold ${state === "overdue" ? "text-red-600" : state === "soon" ? "text-amber-600" : ""}`}>{formatDistanceToNow(due, { addSuffix: true })}</span>}<span>Assigned by {task.createdByName}</span>{!!task.compAmountCents && <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400" data-testid="task-pay-line"><BadgeDollarSign className="h-3.5 w-3.5" /> {money(task.compAmountCents)} to {task.assignedUserName} on completion{task.compReason ? ` — ${task.compReason}` : ""}</span>}{!!task.compRequestId && <span className="flex items-center gap-1.5" data-testid="task-comp-request"><Receipt className="h-3.5 w-3.5" /> Comp request #{task.compRequestId} · {task.compRequestStatus ?? "filed"}{task.compRequestAmountCents ? ` · ${money(task.compRequestAmountCents)}` : ""}</span>}</div>
                 {task.history.length > 0 && <details className="mt-4 rounded-xl border bg-muted/20"><summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-semibold"><History className="h-3.5 w-3.5" /> {task.completionCount} completion{task.completionCount === 1 ? "" : "s"}<ChevronRight className="ml-auto h-3.5 w-3.5" /></summary><div className="space-y-2 border-t p-3">{task.history.map((entry) => <div key={entry.id} className="rounded-lg bg-background p-2 text-xs"><p><strong>{entry.completedByName}</strong> completed it {formatDistanceToNow(new Date(entry.completedAt), { addSuffix: true })}</p>{entry.note && <p className="mt-1 text-muted-foreground">“{entry.note}”</p>}</div>)}</div></details>}
                 </div><div className="flex shrink-0 flex-wrap gap-2 md:w-48 md:flex-col">{task.status === "active" && <Button className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700" onClick={() => { setCompleting(task); setCompletionNote(""); }}><Check className="h-4 w-4" /> Mark done</Button>}{payload.canManage && <Button variant="outline" className="flex-1 gap-2" onClick={() => { setEditing(task); setEditorOpen(true); }}><Pencil className="h-4 w-4" /> Edit</Button>}{payload.canManage && <Button variant="ghost" className="flex-1 gap-2 text-muted-foreground hover:text-red-600" disabled={archive.isPending} onClick={() => archive.mutate(task)}><Trash2 className="h-4 w-4" /> Archive</Button>}</div></div></CardContent>
             </Card>;
@@ -248,6 +389,12 @@ export default function ClrTasks() {
 
       <TaskEditor open={editorOpen} onClose={() => { setEditorOpen(false); setEditing(null); }} task={editing} payload={payload} />
       <Dialog open={!!completing} onOpenChange={(open) => { if (!open && !complete.isPending) setCompleting(null); }}><DialogContent><DialogHeader><DialogTitle>Complete “{completing?.title}”?</DialogTitle><DialogDescription>{completing?.recurrence === "none" ? "This closes the task and saves it in the completion history." : "This records the current cycle and automatically creates the next deadline."}</DialogDescription></DialogHeader><div className="space-y-3 py-2">
+                {!!completing?.compAmountCents && (
+                  <p className="flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-2 text-xs font-semibold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" data-testid="completion-pay-notice">
+                    <BadgeDollarSign className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>Completing this files a {money(completing.compAmountCents)} comp request for {completing.assignedUserName}. It is filed pending — a manager still approves it.</span>
+                  </p>
+                )}
                 {completing && wantsCallCount(completing.title) && (
                   <div className="space-y-1.5">
                     <Label htmlFor="completion-calls">How many calls did you make? <span className="text-destructive">*</span></Label>

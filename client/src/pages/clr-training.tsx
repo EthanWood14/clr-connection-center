@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Award, ClipboardCheck, Coffee, GraduationCap, Pencil, Printer, RotateCcw, Sun, Sunset, X } from "lucide-react";
+import { Award, ClipboardCheck, ClipboardList, Coffee, GraduationCap, Pencil, Printer, RotateCcw, Sun, Sunset, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -289,6 +289,24 @@ export default function ClrTraining() {
           </section>
         ) : null,
       )}
+
+      {/* This page is the ten-day SCHEDULE. The SOP is the same content as the
+          daily procedure, so it belongs at the top of the reading order for
+          anyone who is already trained. */}
+      <a
+        href="#/clr-sop"
+        className="flex items-center gap-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-4 transition-colors hover:bg-primary/10 print:hidden"
+        data-testid="link-clr-sop"
+      >
+        <ClipboardList className="h-5 w-5 shrink-0 text-primary" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Already trained? Read the SOP instead.</p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            The same rules as the daily procedure — how a call runs start to finish.
+          </p>
+        </div>
+        <span className="ml-auto text-sm font-medium text-primary">Open →</span>
+      </a>
 
       {/* The plan's day-10 final test, as an actual test. */}
       <a

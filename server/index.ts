@@ -117,7 +117,11 @@ app.use((req, res, next) => {
   };
 
   // Routes whose responses contain secrets/PII — never log their bodies.
-  const SENSITIVE_PATH = /\/credentials$|^\/api\/auth\b|^\/api\/checkin\b|^\/api\/lap\b|^\/api\/tv(?:\/|$)|\/import$|email-decision|welcome-login/;
+  // /api/training-test is here because its replies are one named person's
+  // per-question certification performance, and the review and insights bodies
+  // also carry the answer key. Logged, both would sit in log retention after
+  // every page open, readable by anyone with the logs and no login at all.
+  const SENSITIVE_PATH = /\/credentials$|^\/api\/auth\b|^\/api\/checkin\b|^\/api\/lap\b|^\/api\/tv(?:\/|$)|^\/api\/training-test\b|\/import$|email-decision|welcome-login/;
   // Field names that should be redacted if they appear in any logged body.
   const SENSITIVE_KEY = /password|secret|token|api[_-]?key|apikey|credential|bonzo|mailbox|resend/i;
   const redact = (v: any): any => {

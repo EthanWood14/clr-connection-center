@@ -236,6 +236,8 @@ const toolItems: NavItem[] = [
 const referenceItems: NavItem[] = [
   { title: "Forum",           url: "/forum",         icon: MessagesSquare, help: help.forum },
   { title: "CLR Training",    url: "/clr-training",  icon: GraduationCap },
+  // The daily procedure, as opposed to the ten-day plan next to it.
+  { title: "Call SOP",        url: "/clr-sop",       icon: ClipboardList },
 ];
 
 const referenceManagerItems: NavItem[] = [

@@ -49,6 +49,8 @@ interface CompItem {
   hoursCovered?: number | null;
   hoursDetail?: string;
   hoursBacked?: boolean;
+  /** The clr_tasks row this request pays for. Null on every hand-typed one. */
+  taskCompTaskId?: number | null;
 }
 
 // Current category set: software, transfers, time, bonus, training, other.
@@ -1920,7 +1922,16 @@ export default function CompRequests() {
                     )}
                   </div>
                   <div className="flex items-center gap-4 shrink-0">
-                    {r.status === "approved" && (
+                    {r.status === "approved" && (r.taskCompTaskId != null ? (
+                      // Task pay is not the payee's to move through the payout
+                      // states: switching Paid back off puts the row straight
+                      // back into the payout queue for a second payment. The
+                      // server refuses it, so the switch is not offered here at
+                      // all rather than shown and then refused.
+                      <span className="text-xs text-muted-foreground" data-testid={"task-pay-payout-locked-" + r.id}>
+                        Payout status is set by a comp manager
+                      </span>
+                    ) : (
                       <>
                         <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer" title="Mark when the reimbursement has been paid out">
                           <span className={r.isPaid ? "text-sky-600 font-medium" : ""}>Paid</span>
@@ -1939,7 +1950,7 @@ export default function CompRequests() {
                           />
                         </label>
                       </>
-                    )}
+                    ))}
                     {r.status === "pending" && (
                       <Button
                         variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-red-600 gap-1"

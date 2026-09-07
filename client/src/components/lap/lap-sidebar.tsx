@@ -1,5 +1,5 @@
 import {
-  Armchair, GraduationCap,
+  Armchair, ClipboardList, GraduationCap,
   BookOpenCheck,
   CalendarDays,
   Clock3,
@@ -63,6 +63,7 @@ const teamItems: NavItem[] = [
   // Embedded rather than opened off-site — see pages/seating-chart.tsx.
   { title: "Seating Map", href: "/seating-map", icon: Armchair },
   { title: "CLR Training", href: "/clr-training", icon: GraduationCap },
+  { title: "Call SOP", href: "/clr-sop", icon: ClipboardList },
   { title: "LO Profiles", href: "/lo-profiles", icon: UsersRound },
 ];
 

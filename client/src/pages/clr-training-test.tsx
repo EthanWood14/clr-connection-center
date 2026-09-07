@@ -27,7 +27,9 @@ type QuestionFeedback = { id: number; chosen: number; correct: number; isCorrect
 type Result = {
   correctCount: number; total: number; percent: number; passed: boolean;
   passCorrect: number; passPercent: number;
+  // Answered questions only: an empty paper must not come back as the key.
   results: QuestionFeedback[];
+  unanswered: number[];
 };
 type Attempt = { id: number; user_name: string; taken_at: string; correct_count: number; total: number; percent: number; passed: number };
 
@@ -344,7 +346,14 @@ export default function ClrTrainingTest() {
         {history && history.attempts.length > 0 && (
           <Card className="bg-background/80 backdrop-blur">
             <CardContent className="p-4 sm:p-5">
-              <p className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"><History className="h-3.5 w-3.5" /> {history.isManager ? "Recent team attempts" : "Your previous runs"}</p>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"><History className="h-3.5 w-3.5" /> {history.isManager ? "Recent team attempts" : "Your previous runs"}</p>
+                {/* A score alone never said WHICH questions went wrong. This is
+                    where that lives now. */}
+                <Link href="/clr-training/results" className="ml-auto text-xs font-semibold text-violet-700 hover:underline dark:text-violet-300" data-testid="link-training-results">
+                  {history.isManager ? "See who missed what →" : "See which questions you missed →"}
+                </Link>
+              </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {history.attempts.slice(0, 12).map((attempt) => (
                   <div key={attempt.id} className="flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5 text-xs">

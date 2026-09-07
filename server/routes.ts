@@ -5,7 +5,11 @@ import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
 import { notesBetween } from "@shared/release-notes";
-import { questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT } from "@shared/clr-training-test";
+import {
+  questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT,
+  reviewAnswers, unansweredQuestionIds, missRates, missRatesByDay, canReviewAttempt,
+} from "@shared/clr-training-test";
+import { deriveSop } from "@shared/clr-sop";
 import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { isUntouchedLoaNote } from "@shared/lap-note-template";
@@ -94,6 +98,13 @@ import {
 } from "./appointment-permissions";
 import { buildTransferScorecardWindows, priorMonthToDate } from "./manager-scorecard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
+import {
+  TASK_COMP_TASK_COLUMNS, TASK_COMP_REQUEST_COLUMNS, TASK_COMP_REQUEST_UNIQUE_INDEX,
+  TASK_COMP_EXISTING_QUERY, TASK_COMP_MAX_CENTS, TASK_COMP_MIN_CENTS, TASK_COMP_REASON_MAX_LENGTH,
+  formatMoneyCents, parseTaskCompChange, planTaskCompFiling, recurringCompExposure, taskCompSkipNotice,
+  validateTaskCompAmountCents,
+  type TaskCompRequestRow, type TaskCompTaskRow,
+} from "./task-comp";
 import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignments } from "./clr-assignment-availability";
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 
@@ -3740,6 +3751,49 @@ export function registerRoutes(httpServer: Server, app: Express) {
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_entry_ids TEXT`); } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN hours_detail TEXT`); } catch {}
 
+  // Task pay (server/task-comp.ts): which clr_tasks row a request pays for, and
+  // which completion cycle it was filed for. These two columns are the ONLY
+  // place "has this task already been paid?" is answered — never the note, which
+  // is built from a task title and a manager's reason and is therefore text a
+  // user typed.
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN task_comp_task_id INTEGER`); } catch {}
+  try { storageExtra.getRawSqlite().exec(`ALTER TABLE comp_requests ADD COLUMN task_comp_key TEXT`); } catch {}
+  // Partial and UNIQUE, so "at most one live request per task" is a database
+  // guarantee and not only a check in taskCompAlreadyFiled. Hand-typed requests
+  // (task_comp_task_id NULL) are untouched by it.
+  try { storageExtra.getRawSqlite().exec(TASK_COMP_REQUEST_UNIQUE_INDEX); } catch {}
+
+  // A missing column and an unpaid task are indistinguishable to task-comp.ts:
+  // an absent comp_amount_cents reads as "this task pays nothing" on EVERY task,
+  // and an absent task_comp_task_id reads as "never been paid" on EVERY request.
+  // Both fail in silence, so the failure is made loud here and task pay refuses
+  // to be attached at all until the columns exist.
+  const taskCompReady = (() => {
+    try {
+      const db = storageExtra.getRawSqlite();
+      const columns = (table: string) => new Set(
+        (db.prepare(`PRAGMA table_info(${table})`).all() as any[]).map((c: any) => String(c.name)),
+      );
+      const taskColumns = columns("clr_tasks");
+      const requestColumns = columns("comp_requests");
+      const missing = [
+        ...TASK_COMP_TASK_COLUMNS.filter((c) => !taskColumns.has(c.column)).map((c) => `clr_tasks.${c.column}`),
+        ...TASK_COMP_REQUEST_COLUMNS.filter((c) => !requestColumns.has(c.column)).map((c) => `comp_requests.${c.column}`),
+      ];
+      const indexed = !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='comp_requests_task_comp_task_id'`).get();
+      if (missing.length) {
+        console.error(`[task-comp] MISSING COLUMN(S): ${missing.join(", ")}. Task pay is DISABLED — a missing column looks exactly like an unpaid task, so nothing may be attached or filed until the migration above runs.`);
+      }
+      if (!indexed) {
+        console.error("[task-comp] MISSING INDEX comp_requests_task_comp_task_id. Task pay is DISABLED — without it 'paid at most once per task' is a hope rather than a database guarantee.");
+      }
+      return missing.length === 0 && indexed;
+    } catch (e: any) {
+      console.error("[task-comp] could not verify the task-pay columns; task pay is DISABLED:", e?.message ?? e);
+      return false;
+    }
+  })();
+
   // One-time: any comp requests that CLRs had saved as drafts are promoted to
   // "pending" (sent for approval) so they surface in the approval queue instead
   // of sitting invisibly as unsent drafts. Runs once via migrations_applied.
@@ -7192,6 +7246,14 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // ── CLR training certification test ─────────────────────────────────────────
   // The complete answer key stays server-side. Immediate feedback reveals only
   // the question the trainee has just answered, never all 60 at once.
+  //
+  // One definition of "may see other people's results", shared by the history,
+  // the per-attempt review and the aggregate. A second notion of authority in
+  // any one of them is how a privacy rule quietly stops applying to one route.
+  const trainingTestManager = (user: any) => !!user && (
+    user.role === "admin" || user.superAdmin || user.super_admin || user.isManager || user.is_manager
+  );
+
   app.get("/api/training-test", requireAuth, (_req: any, res) => {
     res.json({
       questions: questionsWithoutAnswers(),
@@ -7232,7 +7294,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const userId = Number(req.session_user?.userId) || 0;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const me = storage.getUserById(userId) as any;
-    const isManager = me?.role === "admin" || me?.superAdmin || me?.super_admin || me?.isManager || me?.is_manager;
+    const isManager = trainingTestManager(me);
     const rows = isManager
       ? storageExtra.getRawSqlite().prepare(
           `SELECT id, user_id, user_name, taken_at, correct_count, total, percent, passed
@@ -7241,6 +7303,115 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           `SELECT id, user_id, user_name, taken_at, correct_count, total, percent, passed
              FROM training_test_attempts WHERE org_id=? AND user_id=? ORDER BY taken_at DESC LIMIT 50`).all(orgId, userId);
     res.json({ attempts: rows, isManager: !!isManager });
+  });
+
+  /**
+   * One attempt, question by question.
+   *
+   * The `answers` blob has always been stored and never shown, so nobody could
+   * see WHICH questions somebody missed — only that they scored 78%. This is
+   * that view.
+   *
+   * Authority: you may always read your own attempt; only a manager may read
+   * anybody else's.
+   *
+   * "Not yours" and "does not exist" answer IDENTICALLY — same status, same
+   * body. Answering 403 for one and 404 for the other turned the id space into
+   * a directory: any CLR could walk the ids and learn exactly how many attempts
+   * every colleague had filed, and when, without ever seeing one.
+   *
+   * The review itself covers only the questions the attempt answered, so an
+   * attempt is never a route to the answer key for questions nobody sat.
+   */
+  app.get("/api/training-test/attempts/:id", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const attemptId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(attemptId)) return res.status(400).json({ error: "Invalid attempt." });
+    const me = storage.getUserById(userId) as any;
+    const isManager = trainingTestManager(me);
+    // org_id is part of the lookup, so an id from another org never resolves.
+    const row = storageExtra.getRawSqlite().prepare(
+      `SELECT id, user_id, user_name, taken_at, correct_count, total, percent, passed, answers
+         FROM training_test_attempts WHERE id=? AND org_id=?`,
+    ).get(attemptId, orgId) as any;
+    // One reply for both cases — see the note above. Do not split these.
+    const notFound = () => res.status(404).json({ error: "That attempt is gone." });
+    if (!row) return notFound();
+    if (!canReviewAttempt({ viewerId: userId, isManager, attemptUserId: Number(row.user_id) })) {
+      return notFound();
+    }
+    const review = reviewAnswers(row.answers);
+    const unanswered = unansweredQuestionIds(row.answers);
+    res.json({
+      attempt: {
+        id: row.id, user_id: row.user_id, user_name: row.user_name, taken_at: row.taken_at,
+        correct_count: row.correct_count, total: row.total, percent: row.percent, passed: row.passed,
+      },
+      review,
+      missed: review.filter((item) => !item.isCorrect).map((item) => item.id),
+      // Ids only: a blank question is worth flagging, not worth answering.
+      unanswered,
+      passPercent: TEST_PASS_PERCENT,
+      passCorrect: TEST_PASS_CORRECT,
+      isSelf: Number(row.user_id) === userId,
+    });
+  });
+
+  /**
+   * Which questions the team gets wrong most often.
+   *
+   * A per-person score says who struggled; this says where the TRAINING is
+   * failing — if eleven of thirteen people pick the same wrong answer, the
+   * problem is upstream of all of them. Managers only, because it is built from
+   * everybody's attempts.
+   */
+  app.get("/api/training-test/insights", requireAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(userId) as any;
+    if (!trainingTestManager(me)) {
+      return res.status(403).json({ error: "Only managers can see team results." });
+    }
+    const rows = storageExtra.getRawSqlite().prepare(
+      `SELECT answers, user_id, passed FROM training_test_attempts
+         WHERE org_id=? ORDER BY taken_at DESC LIMIT 500`,
+    ).all(orgId) as any[];
+    const answers = rows.map((r) => r.answers);
+    res.json({
+      attempts: rows.length,
+      takers: new Set(rows.map((r) => Number(r.user_id))).size,
+      passed: rows.filter((r) => Number(r.passed) === 1).length,
+      questions: missRates(answers),
+      byDay: missRatesByDay(answers),
+    });
+  });
+
+  /**
+   * The floor SOP, derived from the live training manual.
+   *
+   * Derived here rather than authored separately so it cannot quietly outlive
+   * the document it came from: deriveSop() checks every step against whatever
+   * the manual says right now and reports the ones that no longer have a
+   * sentence behind them. Same seed fallback as /api/training-manual.
+   */
+  app.get("/api/clr-sop", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    let row: any = null;
+    try {
+      row = storageExtra.getRawSqlite().prepare(
+        `SELECT id, content, author_name, created_at FROM training_manual_versions
+          WHERE org_id = ? ORDER BY id DESC LIMIT 1`,
+      ).get(orgId);
+    } catch { /* table predates this on an older install — fall through to seed */ }
+    const days = row ? readStoredManual(row.content) : TRAINING_DAYS;
+    res.json({
+      ...deriveSop(days),
+      authorName: row?.author_name || TRAINING_AUTHOR,
+      savedAt: row?.created_at ?? null,
+      isSeed: !row,
+    });
   });
 
   // ── CLR task center ────────────────────────────────────────────────────────
@@ -7263,6 +7434,23 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     && (user.isClr ?? user.is_clr ?? (user.role === "assistant"))
     && (user.portal == null || user.portal === "c3")
   );
+  // A clr_tasks row in the shape server/task-comp.ts reads. Every comp value is
+  // normalised to null when it is absent, so a database that has not run the
+  // migration yet reads as "no pay attached" rather than as garbage.
+  const compTaskRow = (row: any): TaskCompTaskRow => ({
+    id: Number(row?.id) || 0,
+    orgId: Number(row?.org_id) || 0,
+    title: String(row?.title ?? ""),
+    status: String(row?.status ?? "active"),
+    recurrence: String(row?.recurrence ?? "none"),
+    scheduleDays: row?.schedule_days,
+    assignedUserId: Number(row?.assigned_user_id) || 0,
+    compAmountCents: row?.comp_amount_cents ?? null,
+    compReason: row?.comp_reason ?? null,
+    compSetByUserId: row?.comp_set_by_user_id ?? null,
+    compSetAt: row?.comp_set_at ?? null,
+    compSetForUserId: row?.comp_set_for_user_id ?? null,
+  });
   const taskRow = (row: any, history: any[] = []) => ({
     id: Number(row.id),
     title: String(row.title ?? ""),
@@ -7283,6 +7471,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     completionCount: Number(row.completion_count ?? 0),
     lastCompletedAt: row.last_completed_at ? String(row.last_completed_at) : null,
     overdueAlerted: !!row.overdue_alerted,
+    // What completing this is worth, shown on the task itself so the CLR who
+    // does the work can see it — and, once it has been completed, the request
+    // that pay actually became.
+    compAmountCents: row.comp_amount_cents == null ? null : Number(row.comp_amount_cents),
+    compReason: String(row.comp_reason ?? ""),
+    compSetByUserId: row.comp_set_by_user_id == null ? null : Number(row.comp_set_by_user_id),
+    compSetAt: row.comp_set_at ? String(row.comp_set_at) : null,
+    compSetForUserId: row.comp_set_for_user_id == null ? null : Number(row.comp_set_for_user_id),
+    compRequestId: row.comp_request_id == null ? null : Number(row.comp_request_id),
+    compRequestStatus: row.comp_request_status ? String(row.comp_request_status) : null,
+    compRequestAmountCents: row.comp_request_amount_cents == null ? null : Number(row.comp_request_amount_cents),
     history: history.map((entry: any) => ({
       id: Number(entry.id), dueAt: String(entry.due_at), completedAt: String(entry.completed_at),
       completedByName: String(entry.completed_by_name ?? "Unknown"), note: String(entry.note ?? ""),
@@ -7360,11 +7559,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // Do not depend solely on the minute cron. A server restart or sleeping
     // browser catches every recurring series up before the task list renders.
     announceSpawnedTaskOccurrences(ensureRecurringTaskOccurrences(taskSqlite(), new Date().toISOString(), 500, orgId));
+    // Only selected when the columns are really there: naming a column SQLite
+    // does not have would 500 the whole task list, and a missing migration must
+    // cost the pay feature, never the task list.
+    const compColumns = taskCompReady ? `,
+        (SELECT cr.id FROM comp_requests cr WHERE cr.org_id=t.org_id AND cr.task_comp_task_id=t.id ORDER BY cr.id LIMIT 1) AS comp_request_id,
+        (SELECT cr.status FROM comp_requests cr WHERE cr.org_id=t.org_id AND cr.task_comp_task_id=t.id ORDER BY cr.id LIMIT 1) AS comp_request_status,
+        (SELECT cr.amount_cents FROM comp_requests cr WHERE cr.org_id=t.org_id AND cr.task_comp_task_id=t.id ORDER BY cr.id LIMIT 1) AS comp_request_amount_cents` : "";
     const rows = taskSqlite().prepare(`
       SELECT t.*, assigned.name AS assigned_user_name, creator.name AS created_by_name,
         (SELECT COUNT(*) FROM clr_task_completions c WHERE c.task_id=t.id) AS completion_count,
         (SELECT MAX(c.completed_at) FROM clr_task_completions c WHERE c.task_id=t.id) AS last_completed_at,
-        EXISTS(SELECT 1 FROM clr_task_alerts a WHERE a.task_id=t.id AND a.due_at=t.due_at) AS overdue_alerted
+        EXISTS(SELECT 1 FROM clr_task_alerts a WHERE a.task_id=t.id AND a.due_at=t.due_at) AS overdue_alerted${compColumns}
       FROM clr_tasks t
       LEFT JOIN users assigned ON assigned.id=t.assigned_user_id
       LEFT JOIN users creator ON creator.id=t.created_by_user_id
@@ -7390,6 +7596,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({
       tasks, canManage,
       assignees: taskClrs(orgId).map((user: any) => ({ id: Number(user.id), name: String(user.name ?? "") })),
+      // The pay rules the editor states BEFORE anyone types an amount. They come
+      // from task-comp.ts rather than being written out again in the client, so
+      // the cap a manager is shown cannot drift from the cap that is enforced.
+      taskComp: {
+        enabled: taskCompReady && canManage,
+        minCents: TASK_COMP_MIN_CENTS,
+        maxCents: TASK_COMP_MAX_CENTS,
+        reasonMaxLength: TASK_COMP_REASON_MAX_LENGTH,
+      },
       summary: {
         active: visibleActive.length,
         overdue: visibleActive.filter((task) => new Date(task.dueAt).getTime() < now).length,
@@ -7422,10 +7637,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
     const now = new Date().toISOString();
+    // Task pay, decided by server/task-comp.ts on EVERY create — not only the
+    // ones carrying a comp field. The authority handed in is the one this file
+    // already has; the module never decides who a manager is.
+    const compChange = parseTaskCompChange(
+      { isTaskManager: taskManager(actor), userId: actorId },
+      compTaskRow({ id: 0, org_id: orgId, title, status: "active", recurrence, schedule_days: JSON.stringify(scheduleDays), assigned_user_id: assignedUserId }),
+      req.body ?? {},
+      now,
+    );
+    // A refusal is answered with the module's own words. Dropping the field
+    // instead would leave a manager sure the task pays $50 and a CLR who is
+    // never paid — the worst outcome available here.
+    if (!compChange.ok) return res.status(compChange.status).json({ error: compChange.error });
+    // ANY comp write, not only the ones carrying an amount. Clearing the pay
+    // writes the very same five columns, so it sailed past a check for the
+    // amount, hit the missing column and answered an opaque 500 with no task
+    // created at all.
+    if (compChange.next && !taskCompReady) {
+      return res.status(503).json({ error: "Task pay is unavailable: C3 is missing the database columns it is stored in. The task was not created — tell an admin to check the [task-comp] line in the server log." });
+    }
+    const comp = compChange.next;
     const result = taskSqlite().prepare(`
-      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?, 'active',?,?)
-    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone), due.toISOString(), now, now);
+      INSERT INTO clr_tasks (org_id,title,description,assigned_user_id,created_by_user_id,priority,recurrence,schedule_days,recurrence_timezone,due_at,status,created_at,updated_at${comp ? ",comp_amount_cents,comp_reason,comp_set_by_user_id,comp_set_at,comp_set_for_user_id" : ""})
+      VALUES (?,?,?,?,?,?,?,?,?,?, 'active',?,?${comp ? ",?,?,?,?,?" : ""})
+    `).run(orgId, title, description, assignedUserId, actorId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone), due.toISOString(), now, now,
+      ...(comp ? [comp.compAmountCents, comp.compReason, comp.compSetByUserId, comp.compSetAt, comp.compSetForUserId] : []));
     const id = Number(result.lastInsertRowid);
     taskSqlite().prepare(`UPDATE clr_tasks SET series_id=? WHERE id=?`).run(id, id);
     // `users.timezone ?? default` is not a guard. `??` catches null and nothing
@@ -7448,8 +7685,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     sendPushToUser(assignedUserId, { title: "New C3 task", body: `${title} — due ${formatTaskDueLabel(due, assignee.timezone)}`, url: "/#/tasks", portal: "c3" }).catch(() => {});
     emailTaskAssignment(assignee, { title, description, due, assignedBy: actor?.name ?? "A manager", assignedByUserId: actorId }, "created");
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: "create", entityType: "clr_task", entityId: id, entityLabel: title,
-      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString() }) });
-    res.status(201).json({ ok: true, id });
+      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString(),
+        compAmountCents: comp?.compAmountCents ?? undefined, compReason: comp?.compReason ?? undefined }) });
+    res.status(201).json({ ok: true, id, compWarnings: compChange.warnings });
   });
 
   app.patch("/api/clr-tasks/:id", requireAuth, (req: any, res) => {
@@ -7474,8 +7712,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
     const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
     if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
-    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,recurrence_timezone=?,due_at=?,status=?,updated_at=? WHERE id=? AND org_id=?`)
-      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone, normalizeTimezone(before.recurrence_timezone)), due.toISOString(), status, new Date().toISOString(), id, orgId);
+    // EVERY patch is judged, including the ones that touch no comp field: a
+    // request that merely hands an already-paid task to the person making it
+    // moves money, and this is where that is refused. The whole body goes in —
+    // one patch can reassign, set the repeat AND attach the pay at once, and
+    // both the self-dealing refusal and the exposure warning have to see the
+    // task as it will be AFTER the patch.
+    const actorUser = storage.getUserById(actorId) as any;
+    const compChange = parseTaskCompChange(
+      { isTaskManager: taskManager(actorUser), userId: actorId },
+      compTaskRow(before),
+      req.body ?? {},
+      new Date().toISOString(),
+    );
+    if (!compChange.ok) return res.status(compChange.status).json({ error: compChange.error });
+    // ANY comp write, clearing included — see the same gate on the create above.
+    if (compChange.next && !taskCompReady) {
+      return res.status(503).json({ error: "Task pay is unavailable: C3 is missing the database columns it is stored in. Nothing was changed — tell an admin to check the [task-comp] line in the server log." });
+    }
+    const comp = compChange.next;
+    taskSqlite().prepare(`UPDATE clr_tasks SET title=?,description=?,assigned_user_id=?,priority=?,recurrence=?,schedule_days=?,recurrence_timezone=?,due_at=?,status=?,updated_at=?${comp ? ",comp_amount_cents=?,comp_reason=?,comp_set_by_user_id=?,comp_set_at=?,comp_set_for_user_id=?" : ""} WHERE id=? AND org_id=?`)
+      .run(title, description, assignedUserId, priority, recurrence, JSON.stringify(scheduleDays), normalizeTimezone(assignee.timezone, normalizeTimezone(before.recurrence_timezone)), due.toISOString(), status, new Date().toISOString(),
+        ...(comp ? [comp.compAmountCents, comp.compReason, comp.compSetByUserId, comp.compSetAt, comp.compSetForUserId] : []), id, orgId);
     // Only a change of assignee is news. Retitling, re-prioritising or moving
     // the deadline leaves the same person holding it, and re-announcing that
     // teaches everyone to ignore the notice that does matter.
@@ -7485,10 +7743,44 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // The new assignee only — whoever lost the task is not mailed about it.
       emailTaskAssignment(assignee, { title, description, due, assignedBy: (storage.getUserById(actorId) as any)?.name ?? "A manager", assignedByUserId: actorId }, "reassigned");
     }
-    const actor = storage.getUserById(actorId) as any;
+    const actor = actorUser;
     audit({ userId: actorId, userName: actor?.name ?? "Unknown", action: status === "archived" ? "archive" : "update", entityType: "clr_task", entityId: id, entityLabel: title,
-      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString(), status }) });
-    res.json({ ok: true });
+      details: JSON.stringify({ assignedUserId, priority, recurrence, scheduleDays, dueAt: due.toISOString(), status,
+        compAmountCents: comp ? comp.compAmountCents : undefined, compReason: comp ? comp.compReason : undefined }) });
+    res.json({ ok: true, compWarnings: compChange.warnings });
+  });
+
+  // What a repeating paid task would commit the CLR to, in the module's OWN
+  // words, BEFORE the manager saves it. The sentence is not copied into the
+  // client: a warning about money that drifts from the rule it describes is
+  // worse than no warning at all. Read-only — it touches nothing.
+  // A GET because it reads nothing and writes nothing — and because the demo
+  // org's read-only guard refuses every POST, which would fire "demo mode is
+  // read-only" at a manager for typing a digit.
+  app.get("/api/clr-tasks/comp-preview", requireAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user?.userId) || 0) as any;
+    if (!taskManager(me)) return res.status(403).json({ error: "Only a manager can put pay on a task." });
+    // A query string carries only text, so the number is made here — and made
+    // strictly: "50.5" stays 50.5 and is refused as a fraction of a cent, "" and
+    // "abc" become 0 and NaN and are refused as well.
+    const raw = String(req.query.amountCents ?? "").trim();
+    const amount = validateTaskCompAmountCents(raw === "" ? Number.NaN : Number(raw));
+    if (!amount.ok) return res.status(400).json({ error: amount.error });
+    // An EMPTY scheduleDays means "no days picked", NOT day 0. "".split(",") is
+    // [""], Number("") is 0, and 0 is a perfectly good Sunday — so a
+    // custom_weekly with nothing selected answered "about 4 occurrences a
+    // month" in place of the module's deliberate "C3 cannot say how often this
+    // repeats" warning. A confident wrong number is worse than the warning it
+    // replaced.
+    const days = String(req.query.scheduleDays ?? "").split(",")
+      .map((d: string) => d.trim()).filter((d: string) => d !== "")
+      .map((d: string) => Number(d)).filter((d: number) => Number.isInteger(d));
+    const exposure = recurringCompExposure(req.query.recurrence, amount.amountCents, days);
+    res.json({
+      ok: true, recurs: exposure.recurs, known: exposure.known,
+      perMonth: exposure.perMonth, monthlyCents: exposure.monthlyCents,
+      warning: exposure.warning, amountLabel: formatMoneyCents(amount.amountCents),
+    });
   });
 
   // How many calls the completion covered. Only meaningful on calling tasks,
@@ -7562,16 +7854,133 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const completedAt = new Date().toISOString();
     const scheduleDays = (() => { try { return JSON.parse(String(task.schedule_days ?? "[]")); } catch { return []; } })();
     const nextDue = nextTaskOccurrenceForRow({ ...task, schedule_days: JSON.stringify(scheduleDays) });
+
+    // ── the pay this completion files, if any ────────────────────────────────
+    // The payee is the ASSIGNEE, so their account is looked up rather than
+    // assumed: planTaskCompFiling refuses when it is not told, and "not told" is
+    // never read as "probably active" (processRecurringComp reads it the same
+    // way and pauses instead of filing into the void).
+    const payee = storage.getUserById(Number(task.assigned_user_id)) as any;
+    const payeeActive = !!payee && !!(payee.isActive ?? payee.is_active);
+    // TASK_COMP_EXISTING_QUERY, run verbatim from the module: keyed on the TASK,
+    // org scoped and deliberately NOT user scoped, because a task can be
+    // reassigned between two completions and the request that already paid for
+    // it may belong to somebody else entirely. Left undefined when it cannot be
+    // run at all, which the plan refuses on rather than treating as "nothing
+    // has ever been filed".
+    let existingComp: TaskCompRequestRow[] | undefined;
+    if (taskCompReady) {
+      try {
+        existingComp = taskSqlite().prepare(TASK_COMP_EXISTING_QUERY).all(orgId, id) as TaskCompRequestRow[];
+      } catch (error: any) {
+        console.error(`[task-comp] could not read the requests already filed for task=${id}:`, error?.message ?? error);
+      }
+    }
+    const compPlan = planTaskCompFiling({
+      task: compTaskRow(task),
+      completion: { taskId: id, orgId, dueAt: String(task.due_at), completedByUserId: userId, completedAt },
+      // Cast, not a placeholder: an unreadable list stays undefined so the plan
+      // refuses to file. Handing it [] would be a lie that pays twice.
+      existing: existingComp as TaskCompRequestRow[],
+      payeeActive,
+      payeeName: payee?.name,
+      completedByName: me?.name,
+      setByName: (storage.getUserById(Number(task.comp_set_by_user_id) || 0) as any)?.name,
+      // The OFFICE business day — the same date processRecurringComp books its
+      // requests to. Left unsaid, the plan falls back to the UTC calendar date
+      // of the completion, which from ~5pm Pacific is already tomorrow: a task
+      // finished on the last evening of a month books into the NEXT month and
+      // lands in a different pay period.
+      expenseDate: businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ, new Date(completedAt)),
+    });
+    // The approval token is generated BEFORE the transaction and written as a
+    // column of the same INSERT, exactly as processRecurringComp does it. A
+    // token attached by a later UPDATE can be lost between the commit and that
+    // update, leaving a pending request no approval email can ever reach.
+    const compToken = compPlan.file ? crypto.randomBytes(24).toString("hex") : null;
+    // What the completing user is told when pay was attached and none of it
+    // filed. The module's own sentence, and empty for the ordinary task that
+    // carries no pay at all.
+    const compNotFiledNotice = taskCompSkipNotice(compPlan);
+    let compRequestId: number | null = null;
+
     try {
       taskSqlite().transaction(() => {
         taskSqlite().prepare(`INSERT INTO clr_task_completions (task_id,org_id,due_at,completed_by_user_id,completed_at,note,calls_made) VALUES (?,?,?,?,?,?,?)`)
           .run(id, orgId, task.due_at, userId, completedAt, note, callsMade);
         taskSqlite().prepare(`UPDATE clr_tasks SET status='completed',updated_at=? WHERE id=? AND org_id=?`)
           .run(completedAt, id, orgId);
+        // INSIDE this transaction, and that placement is the whole of rule 5:
+        // clr_task_completions already declares UNIQUE(task_id, due_at), so a
+        // retry, a double-click or two racing requests all roll the money back
+        // with the completion instead of filing a second request. Filing it in
+        // a second transaction after this one committed would have no such
+        // protection.
+        if (compPlan.file && compToken) {
+          const filed = taskSqlite().prepare(`INSERT INTO comp_requests
+            (org_id,user_id,description,category,amount_cents,expense_date,note,is_reimbursement,status,approval_token,requested_at,created_at,updated_at,task_comp_task_id,task_comp_key)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+              compPlan.file.orgId, compPlan.file.userId, compPlan.file.description, compPlan.file.category,
+              compPlan.file.amountCents, compPlan.file.expenseDate, compPlan.file.note, compPlan.file.isReimbursement,
+              compPlan.file.status, compToken, completedAt, completedAt, completedAt,
+              compPlan.file.taskId, compPlan.file.key,
+            );
+          compRequestId = Number(filed.lastInsertRowid);
+        }
       })();
     } catch (error: any) {
-      if (String(error?.message ?? "").includes("UNIQUE")) return res.status(409).json({ error: "This task cycle was already completed." });
+      const message = String(error?.message ?? "");
+      // The pay index firing means this task already has a live request, so the
+      // completion was rolled back with it. Say which of the two happened.
+      //
+      // SQLite names the COLUMN, never the index: "UNIQUE constraint failed:
+      // comp_requests.task_comp_task_id". Matching the index name — the same
+      // words with an underscore where the dot is — could never fire, so this
+      // branch was dead and every duplicate got the wrong message below.
+      if (message.includes("comp_requests.task_comp_task_id")) {
+        return res.status(409).json({ error: "This task has already filed its pay as a comp request, so this completion was not saved. Refresh the task list — if the task is somehow still open, a manager has to clear its pay before it can be completed again." });
+      }
+      if (message.includes("UNIQUE")) return res.status(409).json({ error: "This task cycle was already completed." });
       throw error;
+    }
+    // Everything below is best-effort: the money row is already durable.
+    if (compPlan.file && compRequestId) {
+      const money = formatMoneyCents(compPlan.file.amountCents);
+      audit({ userId, userName: me?.name ?? "Unknown", action: "create", entityType: "comp_request", entityId: compRequestId,
+        entityLabel: `${payee?.name ?? `User #${compPlan.file.userId}`} task pay auto-filed from task #${id}`,
+        details: JSON.stringify({ taskId: id, dueAt: task.due_at, amountCents: compPlan.file.amountCents,
+          payeeUserId: compPlan.file.userId, completedByUserId: userId, key: compPlan.file.key, warnings: compPlan.warnings }) });
+      try {
+        storage.createNotification({ userId: compPlan.file.userId, type: "comp_request", title: "Task pay filed for approval",
+          message: `Completing "${String(task.title)}" filed a ${money} comp request for you. It still needs a manager's approval.`, isRead: false } as any);
+      } catch {}
+      try {
+        const settings = storageExtra.getEmailSettings() as any;
+        const approverId = Number(settings.approval_recipient_id ?? settings.comp_approver_id ?? settings.timeoff_approver_id ?? 0) || 0;
+        const approver = approverId ? (storage.getUserById(approverId) as any) : null;
+        const approverEmail = approver?.email && String(approver.email).includes("@") ? String(approver.email) : null;
+        if (approverEmail) {
+          const filedRow = taskSqlite().prepare(`SELECT * FROM comp_requests WHERE id=?`).get(compRequestId) as any;
+          const { subject, html } = buildCompApprovalEmail([filedRow], compToken as string, payee?.name ?? "A team member");
+          sendEmail({ to: approverEmail, subject, html }, { cancelKey: "comp:" + compToken })
+            .catch((e: any) => console.error("[task-comp] approver email failed:", e?.message ?? e));
+        }
+      } catch (e: any) { console.error("[task-comp] approver email failed:", e?.message ?? e); }
+      console.log(`[task-comp] filed comp request #${compRequestId} (${money}) for user #${compPlan.file.userId} from task #${id}`);
+    } else if (compNotFiledNotice) {
+      // "no-amount" is the overwhelmingly common case and says nothing. Every
+      // other skip means pay WAS attached and was not filed — and a console
+      // line is not somebody being told. It goes three places: the log for an
+      // operator, the audit trail for anyone asking later why they were never
+      // paid, and the response, which puts it in front of the person who just
+      // ticked the task believing it was worth money.
+      console.error(`[task-comp] task #${id} filed nothing (${compPlan.skipped}): ${compPlan.skipDetail}`);
+      for (const warning of compPlan.warnings) console.error(`[task-comp] ${warning}`);
+      audit({ userId, userName: me?.name ?? "Unknown", action: "update", entityType: "clr_task", entityId: id,
+        entityLabel: `Task pay NOT filed: ${String(task.title)}`,
+        details: JSON.stringify({ taskId: id, dueAt: task.due_at, skipped: compPlan.skipped, detail: compPlan.skipDetail,
+          amountCents: task.comp_amount_cents ?? null, payeeUserId: Number(task.assigned_user_id) || null,
+          completedByUserId: userId, notice: compNotFiledNotice, warnings: compPlan.warnings }) });
     }
     // The completed row remains the permanent record for this occurrence. Its
     // successor is a separate active row, so finishing late cannot erase any
@@ -7590,8 +7999,20 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         message: `${me?.name ?? "A CLR"} completed the task${note ? ` — ${note}` : "."}`, isRead: false } as any);
     }
     audit({ userId, userName: me?.name ?? "Unknown", action: "complete", entityType: "clr_task", entityId: id, entityLabel: String(task.title),
-      details: JSON.stringify({ dueAt: task.due_at, nextDueAt: nextDue, note: note || null }) });
-    res.json({ ok: true, nextDueAt: nextDue, recurring: !!nextDue });
+      details: JSON.stringify({ dueAt: task.due_at, nextDueAt: nextDue, note: note || null,
+        compRequestId: compRequestId ?? undefined, compAmountCents: compPlan.file?.amountCents ?? undefined }) });
+    res.json({
+      ok: true, nextDueAt: nextDue, recurring: !!nextDue,
+      comp: compRequestId && compPlan.file
+        ? { filed: true, requestId: compRequestId, amountCents: compPlan.file.amountCents,
+            amountLabel: formatMoneyCents(compPlan.file.amountCents), payeeUserId: compPlan.file.userId,
+            skipped: null, notice: "" }
+        // A task that carried pay and filed nothing says so HERE, to the person
+        // who just completed it. Being paid nothing in silence is the one
+        // outcome this feature must never produce.
+        : { filed: false, requestId: null, amountCents: 0, amountLabel: null, payeeUserId: null,
+            skipped: compNotFiledNotice ? compPlan.skipped : null, notice: compNotFiledNotice },
+    });
   });
 
   async function alertOverdueClrTasks() {
@@ -9351,6 +9772,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       hoursCovered: r.hours_covered ?? null,
       hoursDetail: r.hours_detail ?? "",
       hoursBacked: !!r.hours_entry_ids,
+      // Task pay: which clr_tasks row this request pays for, and which
+      // completion cycle. taskCompAlreadyFiled decides "has this task been paid"
+      // on these two and nothing else, so a request that reaches it through this
+      // mapper without them would read as "never paid" — on every single row.
+      taskCompTaskId: r.task_comp_task_id ?? null,
+      taskCompKey: r.task_comp_key ?? null,
     };
   }
   function compNameMap() {
@@ -9678,6 +10105,14 @@ ${note}` : daysLine;
       const isOwner = existing.user_id === userId;
       // Owners may edit their own requests; managers/admins may edit anyone's.
       if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your expense." });
+      // Except a task-pay request, which the payee did not file and may not
+      // rewrite. Editing here resubmits the row with a new amount and a new
+      // description, so without this the person being paid could turn the $50 a
+      // manager attached into $500 and send it back for approval looking like
+      // any other request. A comp manager can still correct it.
+      if (existing.task_comp_task_id != null && !isCompManager(userId)) {
+        return res.status(403).json({ error: `This request was filed automatically when task #${Number(existing.task_comp_task_id)} was completed, so its amount is not yours to change. If it is wrong, ask the manager who set the pay on the task.` });
+      }
       const body = req.body ?? {};
       const description = typeof body.description === "string" ? body.description.slice(0, 300).trim() : existing.description;
       let category = COMP_CATEGORIES.has(body.category) ? body.category : existing.category;
@@ -9989,6 +10424,15 @@ ${note}` : daysLine;
       if (!existing) return res.status(404).json({ error: "Not found" });
       const isOwner = existing.user_id === userId;
       if (!isOwner && !isCompManager(userId)) return res.status(403).json({ error: "Not your comp request." });
+      // Nor is a task-pay request the payee's to move through the payout
+      // states. These flags are writable in BOTH directions and is_paid=0 is
+      // exactly what the payout queue reads, so an owner who could set them
+      // would mark their own already-paid task pay unpaid and be paid for the
+      // same task a second time. Same family of hole as the PATCH and DELETE
+      // refusals; a comp manager still runs the payout.
+      if (existing.task_comp_task_id != null && !isCompManager(userId)) {
+        return res.status(403).json({ error: `This request was filed automatically when task #${Number(existing.task_comp_task_id)} was completed, so its payout status is not yours to set — that is what stops the same task being paid twice. Ask a comp manager if it is wrong.` });
+      }
       // The "Processing" stage is a manager/payout control, not something the
       // requester sets on their own request.
       if (hasProcessing && !isCompManager(userId)) return res.status(403).json({ error: "Only managers can update the processing stage." });
@@ -10027,7 +10471,38 @@ ${note}` : daysLine;
       const isOwner = existing.user_id === userId;
       const canDelete = isCompAdmin(userId) || (isOwner && (existing.status === "draft" || existing.status === "pending"));
       if (!canDelete) return res.status(403).json({ error: "You can only remove your own draft or pending items." });
+      // A task-pay request is not the payee's to withdraw. They did not file it
+      // — completing a task somebody else attached money to did — and the row
+      // itself is the guard that stops that task paying a second time if it is
+      // ever re-opened. Deleting it deletes the guard, so it is left to a comp
+      // admin, who can see the whole queue.
+      if (existing.task_comp_task_id != null && !isCompAdmin(userId)) {
+        return res.status(403).json({ error: `This request was filed automatically when task #${Number(existing.task_comp_task_id)} was completed, so it cannot be removed here — it is also what stops that task from paying twice. Ask a comp admin (or the manager who put the pay on the task) to deny or remove it.` });
+      }
+      // And a comp admin does not delete money that has already moved. Removing
+      // the row removes the guard, which re-arms the task for a second FULL
+      // payment — with the record of the first one gone as well. Denying it
+      // keeps the guard; deleting it is precisely what does not.
+      if (existing.task_comp_task_id != null && (existing.status === "approved" || existing.is_paid)) {
+        const state = existing.is_paid ? "has already been paid" : "has already been approved";
+        return res.status(409).json({ error: `This task pay ${state}, so it cannot be removed — it is what stops task #${Number(existing.task_comp_task_id)} from filing its pay all over again, and deleting it re-arms that task for a second full payment. Deny it instead if it was wrong, or correct it with a separate comp entry.` });
+      }
       db.prepare("DELETE FROM comp_requests WHERE id=? AND org_id=?").run(id, orgId);
+      // Deleting a task-pay row re-arms its task, so it is never quiet
+      // housekeeping: the trail names the task that can pay again, and who
+      // decided it could.
+      if (existing.task_comp_task_id != null) {
+        const rearmedTaskId = Number(existing.task_comp_task_id);
+        const remover = storage.getUserById(userId) as any;
+        audit({
+          userId, userName: remover?.name ?? "Unknown", action: "delete",
+          entityType: "comp_request", entityId: id,
+          entityLabel: `${compNameMap().get(existing.user_id) ?? "User"} task pay removed — task #${rearmedTaskId} can file its pay again`,
+          details: JSON.stringify({ taskId: rearmedTaskId, taskCompKey: existing.task_comp_key ?? null,
+            payeeUserId: existing.user_id, amountCents: existing.amount_cents, status: existing.status,
+            isPaid: existing.is_paid ? 1 : 0 }),
+        });
+      }
       // If it's removed before its approval email has gone out, drop the email —
       // unless sibling items share the token and are still pending.
       maybeCancelCompApprovalEmail(existing.approval_token);

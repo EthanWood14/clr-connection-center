@@ -29,6 +29,19 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.62.0",
+    headline: "A call SOP, a test that asks what you would do, and pay you can attach to a task.",
+    items: [
+      { text: "New Call SOP page: how a call is actually run, start to finish, in seven phases \u2014 before you dial, opening, taking the sheet, when they push back, handing it to the loan officer, after the call, and never. It is the standing procedure rather than the ten-day plan, and it is printable.", audience: "everyone" },
+      { text: "Every step of the SOP is tied to a line in the training plan. Edit the plan and the SOP page flags any step whose basis has gone, so the two cannot quietly disagree.", audience: "manager" },
+      { text: "The certification test now asks what you would DO. A borrower offers to send details later; the loan officer is not licensed in that state; the sheet is half filled and they are about to hang up. Still sixty questions and still ninety percent to pass.", audience: "everyone" },
+      { text: "New results page: see which questions you missed, with your answer, the right one, and why. Managers also get a ranking of the questions the whole team gets wrong most \u2014 which says where the training is thin rather than where one person is.", audience: "everyone" },
+      { text: "Managers can attach pay to a task. When the assignee completes it, a comp request is filed for them automatically \u2014 pending, like any other, and still approved by a person.", audience: "manager" },
+      { text: "Task pay is capped at $500 and needs a reason. A CLR can never attach or raise it, a manager cannot attach it to their own task, and a repeating task pays only the occurrence it was attached to \u2014 so one checkbox cannot quietly bill every day.", audience: "manager" },
+      { text: "A task pay request cannot be edited, deleted or marked unpaid by the person being paid. If the pay does not file, whoever completed the task is told why instead of it failing silently.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.61.1",
     headline: "The Shotgun button works on the conversation screen.",
     items: [

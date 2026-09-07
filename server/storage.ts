@@ -763,6 +763,18 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN last_email_sent_at TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN next_email_at TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE clr_task_alerts ADD COLUMN last_email_error TEXT`); } catch {}
+  // Pay a manager attached to ONE task occurrence (server/task-comp.ts). NULL
+  // amount is the normal case — the task pays nothing — and the module reads a
+  // missing column exactly the same way, which is why registerRoutes checks at
+  // boot that all five of these are really here.
+  // comp_set_for_user_id is who held the task when the money went on it, so a
+  // later reassignment shows up as a warning on the filed request instead of
+  // moving somebody's pay in silence.
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN comp_amount_cents INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN comp_reason TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN comp_set_by_user_id INTEGER`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN comp_set_at TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE clr_tasks ADD COLUMN comp_set_for_user_id INTEGER`); } catch {}
 
   // Shotgun lead distribution. Readiness is a short-lived heartbeat rather than
   // a permanent preference, so closing C3 cannot leave someone eligible all day.

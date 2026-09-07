@@ -24,6 +24,7 @@ import LapUsers from "@/pages/lap-users";
 import LapTransferAudit from "@/pages/lap-transfer-audit";
 import SeatingChart from "@/pages/seating-chart";
 import ClrTraining from "@/pages/clr-training";
+import ClrSop from "@/pages/clr-sop";
 import ClrTrainingTest from "@/pages/clr-training-test";
 import CheckIns from "@/pages/check-ins";
 import WeeklySchedule from "@/pages/weekly-schedule";
@@ -140,6 +141,7 @@ function LapRouter() {
       <Route path="/lo-profiles" component={LapLoProfiles} />
       <Route path="/seating-map" component={SeatingChart} />
       <Route path="/clr-training" component={ClrTraining} />
+      <Route path="/clr-sop" component={ClrSop} />
       <Route path="/clr-training/test" component={ClrTrainingTest} />
       <Route path="/state-lookup" component={StateLookup} />
       <Route path="/call-hours" component={CallHours} />

@@ -94,7 +94,9 @@ import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { SplashScreen } from "@/components/splash-screen";
 const SeatingChart = lazy(() => import("@/pages/seating-chart"));
 const ClrTraining = lazy(() => import("@/pages/clr-training"));
+const ClrSop = lazy(() => import("@/pages/clr-sop"));
 const ClrTrainingTest = lazy(() => import("@/pages/clr-training-test"));
+const TrainingResults = lazy(() => import("@/pages/training-results"));
 const ClrTasks = lazy(() => import("@/pages/clr-tasks"));
 const Shotgun = lazy(() => import("@/pages/shotgun"));
 const LapApp = lazy(() => import("@/components/lap/lap-shell").then((m) => ({ default: m.LapApp })));
@@ -127,7 +129,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/leaderboard":  "Team Stats",
   "/seating-map":      "Seating Map",
   "/clr-training":     "CLR Training",
+  "/clr-sop":          "Call SOP",
   "/clr-training/test": "Certification Test",
+  "/clr-training/results": "Certification Results",
   "/tasks":            "CLR Task Center",
   "/shotgun":          "Shotgun Leads",
   "/state-lookup": "State Lookup",
@@ -190,6 +194,10 @@ function AppRouter() {
       <Route path="/leaderboard-classic" component={Leaderboard} />
       <Route path="/seating-map" component={SeatingChart} />
       <Route path="/clr-training" component={ClrTraining} />
+      <Route path="/clr-sop" component={ClrSop} />
+      {/* Registered before /clr-training/test only for readability; wouter
+          matches on the full path, so the two never collide. */}
+      <Route path="/clr-training/results" component={TrainingResults} />
       <Route path="/clr-training/test" component={ClrTrainingTest} />
       <Route path="/tasks" component={ClrTasks} />
       <Route path="/shotgun" component={Shotgun} />
