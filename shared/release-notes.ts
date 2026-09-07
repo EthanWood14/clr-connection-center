@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.61.1",
+    headline: "The Shotgun button works on the conversation screen.",
+    items: [
+      { text: "The orange Shotgun button never appeared while you were reading a conversation — only on a prospect's own page. Since the conversation screen is where most of the work happens, that was most of the time. It appears there now.", audience: "everyone" },
+      { text: "Reload the extension in Chrome to pick this up: it is version 1.2.0. The extension page has a fresh download.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.61.0",
     headline: "Investment leads have to reach the right assistant again.",
     items: [

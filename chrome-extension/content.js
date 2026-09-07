@@ -18,6 +18,16 @@
   // ?id= style params: a wrong guess here would publish the wrong human into
   // the rotation, which is far worse than showing no button.
   const URL_PATTERNS = [/\/prospects?\/(\d+)/i, /[?&#]prospect(?:_?id)?=(\d+)/i];
+  // The conversation view names a THREAD, not a prospect — the prospect is
+  // learned from the response the page-hook reads. Kept apart from the
+  // patterns above precisely because it is NOT a prospect id, and treating it
+  // as one would shotgun a number that means something else entirely.
+  const CONVERSATION_URL = /\/conversations?\/(\d+)/i;
+  const urlConversationId = () => {
+    const m = location.href.match(CONVERSATION_URL);
+    const n = m ? Number(m[1]) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
   const urlProspectId = () => {
     for (const re of URL_PATTERNS) {
       const m = location.href.match(re);
@@ -144,6 +154,12 @@
     // stale (slow response from the previously viewed one) — drop them.
     const urlId = urlProspectId();
     if (urlId && Number(d.id) !== urlId) return;
+    // Same staleness rule, one level out: on a conversation page the URL names
+    // the THREAD rather than the prospect, so an announce is only trusted while
+    // it is still that thread's. Without this the button could carry the
+    // previous borrower's name into a shotgun.
+    const convId = urlConversationId();
+    if (convId && d.conversationId != null && Number(d.conversationId) !== convId) return;
     current = { id: Number(d.id), fields: d.fields || null };
     ensureMounted();
     if (!busy) setIdle();
@@ -161,6 +177,9 @@
       ensureMounted();
       if (!busy) setIdle();
     } else if (current) {
+      // Leaving a prospect clears it. A conversation URL clears it too — the
+      // thread on screen has its own borrower, and the previous one must not
+      // linger on the button while the new response is still in flight.
       current = null;
       if (!busy) setIdle();
     }

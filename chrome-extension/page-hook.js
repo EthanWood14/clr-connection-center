@@ -17,9 +17,57 @@
   // button silently never appeared, with nothing on screen to say why.
   const DETAIL_RE = /\/api(?:\/v\d+)?\/prospects\/(\d+)(?:[/?#]|$)/;
 
+  // A conversation page never fetches the prospect by id — it fetches the
+  // CONVERSATION, and the prospect rides inside the response. So /conversations
+  // /144540156 announced nothing, the content script saw no prospect, and the
+  // orange button simply never appeared on the screen where most of the work
+  // actually happens. Reported from the floor: "there's no orange button".
+  const CONVERSATION_RE = /\/api(?:\/v\d+)?\/conversations\/(\d+)(?:[/?#]|$)/;
+
+  /**
+   * Dig the prospect out of a conversation payload.
+   *
+   * Deliberately NOT a bare search for any "id" — this decides who gets
+   * shotgunned, and picking the wrong number would publish to the wrong
+   * person. Only a value sitting under a prospect-named key counts, and only
+   * a positive integer. Bonzo's shape is not ours to control, so several
+   * spellings are accepted; anything else announces nothing at all, which
+   * leaves the button hidden rather than pointed at a stranger.
+   */
+  const prospectFromConversation = (body) => {
+    const seen = new Set();
+    const walk = (node, depth) => {
+      if (!node || typeof node !== "object" || depth > 6 || seen.has(node)) return null;
+      seen.add(node);
+      for (const key of Object.keys(node)) {
+        const value = node[key];
+        const k = key.toLowerCase();
+        // prospect_id / prospectId, carrying the id directly.
+        if ((k === "prospect_id" || k === "prospectid") && Number.isFinite(Number(value)) && Number(value) > 0) {
+          return { id: Number(value), fields: node.prospect || null };
+        }
+        // prospect / contact / person, an object that carries its own id.
+        if ((k === "prospect" || k === "contact" || k === "person")
+            && value && typeof value === "object"
+            && Number.isFinite(Number(value.id)) && Number(value.id) > 0) {
+          return { id: Number(value.id), fields: value };
+        }
+      }
+      for (const key of Object.keys(node)) {
+        const found = walk(node[key], depth + 1);
+        if (found) return found;
+      }
+      return null;
+    };
+    try { return walk(body, 0); } catch { return null; }
+  };
+
+  // Either shape is worth reading the body of.
+  const WATCHED_RE = new RegExp(DETAIL_RE.source + "|" + CONVERSATION_RE.source);
+
   let last = null;
 
-  const announce = (id, data) => {
+  const announce = (id, data, conversationId) => {
     let fields = null;
     try {
       const d = (data && (data.data || data)) || null;
@@ -33,7 +81,17 @@
         };
       }
     } catch {}
-    last = { type: "C3_SHOTGUN_PROSPECT", id: Number(id), fields };
+    // The conversation this came from, when it came from one. The content
+    // script drops an announce whose conversation is no longer the one on
+    // screen — otherwise a slow response from the thread you just left would
+    // point the button at the previous borrower, and shotgunning the wrong
+    // person is the one failure this extension must not have.
+    last = {
+      type: "C3_SHOTGUN_PROSPECT",
+      id: Number(id),
+      fields,
+      conversationId: Number.isFinite(Number(conversationId)) ? Number(conversationId) : null,
+    };
     window.postMessage(last, window.location.origin);
   };
 
@@ -44,8 +102,16 @@
 
   const check = (url, body) => {
     try {
-      const m = String(url || "").match(DETAIL_RE);
-      if (m) announce(m[1], body);
+      const u = String(url || "");
+      const m = u.match(DETAIL_RE);
+      if (m) { announce(m[1], body); return; }
+      // Same job, one level in: the conversation response names the prospect
+      // whose thread is on screen.
+      const c = u.match(CONVERSATION_RE);
+      if (c) {
+        const found = prospectFromConversation(body);
+        if (found) announce(found.id, found.fields, c[1]);
+      }
     } catch {}
   };
 
@@ -56,7 +122,7 @@
       const req = args[0];
       const url = typeof req === "string" ? req : req && req.url;
       const method = ((args[1] && args[1].method) || (req && req.method) || "GET").toUpperCase();
-      if (method === "GET" && DETAIL_RE.test(String(url || ""))) {
+      if (method === "GET" && WATCHED_RE.test(String(url || ""))) {
         // Known trade-off: observing the promise marks a rejected detail-GET
         // as handled, so Bonzo's own unhandledrejection telemetry won't see
         // it. Only failed prospect-detail GETs are affected.
@@ -71,7 +137,7 @@
   const origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     try {
-      if (String(method).toUpperCase() === "GET" && DETAIL_RE.test(String(url || ""))) {
+      if (String(method).toUpperCase() === "GET" && WATCHED_RE.test(String(url || ""))) {
         this.addEventListener("load", () => {
           let body = null;
           try { body = JSON.parse(this.responseText); } catch {}
