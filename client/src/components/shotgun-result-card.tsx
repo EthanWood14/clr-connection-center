@@ -105,6 +105,11 @@ export function ShotgunResultCard({ lead, onCompleted }: { lead: ShotgunLead; on
       helperAssisted: done && resultType === "transfer" && askHelper ? helperAssisted : null,
     }),
     onSuccess: (result: any) => {
+      if (result.done) {
+        queryClient.setQueryData(["/api/shotgun"], (old: any) => old ? {
+          ...old, leads: old.leads.map((item: ShotgunLead) => item.id === lead.id ? { ...item, status: "done" } : item),
+        } : old);
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] });
       if (result.done) onCompleted?.();
       toast({
@@ -130,12 +135,10 @@ export function ShotgunResultCard({ lead, onCompleted }: { lead: ShotgunLead; on
       <Textarea className="mt-3" rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Write clear notes about the conversation, voicemail, text, next step, or outcome…" />
 
       <div className="mt-4 space-y-3 rounded-xl border bg-background p-3">
-        <Label>Final result</Label>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <Button type="button" variant={resultType === "complete" ? "default" : "outline"} onClick={() => setResultType("complete")}>Completed — no transfer</Button>
-          <Button type="button" variant={resultType === "transfer" ? "default" : "outline"} className={resultType === "transfer" ? "gap-2 bg-emerald-600 hover:bg-emerald-700" : "gap-2"} onClick={() => setResultType("transfer")}>
-            <ArrowRightLeft className="h-4 w-4" /> Log as a transfer
-          </Button>
+        <Label>Did this lead become a transfer?</Label>
+        <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Transfer result">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-sm"><input type="radio" name={`shotgun-result-type-${lead.id}`} checked={resultType === "complete"} onChange={() => setResultType("complete")} /> No transfer</label>
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-sm"><input type="radio" name={`shotgun-result-type-${lead.id}`} checked={resultType === "transfer"} onChange={() => setResultType("transfer")} /> Yes — log a transfer</label>
         </div>
         {resultType === "transfer" && (
           <div className="space-y-3 rounded-xl border border-emerald-300 bg-emerald-50/70 p-3 dark:border-emerald-800 dark:bg-emerald-950/20">
@@ -170,11 +173,14 @@ export function ShotgunResultCard({ lead, onCompleted }: { lead: ShotgunLead; on
         )}
       </div>
 
+      {save.isError && <p role="alert" className="mt-3 rounded-lg border border-red-400 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">Could not save: {save.error.message}. Your entries are still here; please try again.</p>}
+      {!canComplete && <p className="mt-3 text-sm text-muted-foreground">{!called && !texted ? "Select Called or Sent a text. " : ""}{notes.trim().length < 2 ? "Add a short note about what happened. " : ""}{resultType === "transfer" ? "For a transfer, confirm you called and choose a loan officer and transfer type." : ""}</p>}
+      <p className="mt-3 text-xs text-muted-foreground">Save for later keeps this lead assigned and reminders active. Finish lead saves the final result and clears this reminder.</p>
       <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button variant="outline" disabled={save.isPending} onClick={() => save.mutate(false)}>Save progress</Button>
-        <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700" disabled={save.isPending || !canComplete} onClick={() => save.mutate(true)}>
+        <Button type="button" variant="outline" disabled={save.isPending} onClick={() => save.mutate(false)}>Save for later</Button>
+        <Button type="button" className="gap-2 bg-emerald-600 hover:bg-emerald-700" disabled={save.isPending || !canComplete} onClick={() => save.mutate(true)}>
           {resultType === "transfer" ? <ArrowRightLeft className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-          {resultType === "transfer" ? "Log transfer & complete" : "Complete without transfer"}
+          {save.isPending ? "Saving…" : resultType === "transfer" ? "Log transfer & finish lead" : "Finish lead"}
         </Button>
       </div>
     </div>

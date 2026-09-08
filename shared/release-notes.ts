@@ -28,6 +28,7 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.71.2", headline: "Clearer Shotgun completion.", items: [{ text: "Choose whether a transfer happened, then use Finish lead to save and clear the reminder. Save for later keeps it assigned. Saving status and errors now appear directly in the form." }] },
   { version: "4.71.1", headline: "A shorter everyday sidebar.", items: [
     { text: "Seating Map, Team Stats, Office TV, EOD Analytics, NMLS Licenses, My Report, and Weekly Schedule now live under Advanced Settings." },
   ] },
