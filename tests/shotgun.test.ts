@@ -66,7 +66,11 @@ test("a CLR records call, text, notes, then explicitly marks the lead done", () 
   assert.match(result, /Add notes explaining what happened/);
   assert.match(resultCard, /Called this lead/);
   assert.match(resultCard, /Sent a text/);
-  assert.match(resultCard, /Complete without transfer/);
+  // The finish control, whatever it is worded as this month. Pinned on the
+  // ACT rather than the copy — this broke when the buttons were reworded on
+  // 8 Sep, and a test that fails on a better label is a test that gets deleted.
+  assert.match(resultCard, /save\.mutate\(true\)/, "an explicit finish, separate from saving progress");
+  assert.match(resultCard, /Finish lead/);
 });
 
 test("a claimed lead prompts its CLR globally until a result is logged", () => {
@@ -82,7 +86,9 @@ test("a claimed lead prompts its CLR globally until a result is logged", () => {
 
 test("Shotgun transfer completion creates one real C3 transfer outcome atomically", () => {
   const result = routes.slice(routes.indexOf('app.patch("/api/shotgun/:id/result"'), routes.indexOf('app.post("/api/shotgun/:id/requeue"'));
-  assert.match(resultCard, /Log as a transfer/);
+  // Choosing "this became a transfer" — again the mechanism, not the wording.
+  assert.match(resultCard, /setResultType\("transfer"\)/);
+  assert.match(resultCard, /Log transfer & finish lead/);
   assert.match(resultCard, /shotgun-transfer-lo/);
   assert.match(resultCard, /Direct/);
   assert.match(resultCard, /Appointment/);

@@ -211,7 +211,9 @@ test("a LAP transfer says why nothing else moved", () => {
 
 test("the log says which mode ran", () => {
   // Silent skipping is how this went unnoticed; the mode has to be readable.
-  assert.match(sync, /mode=\$\{lapCovered \? "notes_only_lap" : "full"\}/);
+  // Three modes now, because there are three behaviours: full, notes-only for
+  // a LAP-covered LO whose stage stays put, and stage-only for Chris.
+  assert.match(sync, /mode=\$\{lapCovered \? \(isChris \? "lap_stage_only" : "notes_only_lap"\) : "full"\}/);
 });
 
 test("both halves of the write-up reach Bonzo, not just the structured one", () => {
@@ -236,4 +238,23 @@ test("no Bonzo prospect write uses PATCH", () => {
     assert.equal(calls.length, 0, "PATCH on /prospects is rejected by Bonzo");
   }
   assert.match(bonzo, /req\("PUT", `\/prospects\/\$\{prospectId\}`/);
+});
+
+test("a LAP transfer's note says which of the two things was left alone", () => {
+  // The stage moves for Chris now (8 Sep 2026), so the old wording — "the
+  // stage and owner are left as they are" — told the LOA the opposite of what
+  // had just happened, on the borrower's own record, which is the one place
+  // they go to look. Only the OWNER is left.
+  assert.doesNotMatch(sync, /the stage and owner are left as they are/);
+  assert.match(sync, /The owner is left as it is/);
+  assert.match(sync, /moved to \$\{isChris \? "Hot Transfer"/);
+  // And the mode label must not still read notes-only when a stage moved.
+  assert.match(sync, /mode=\$\{lapCovered \? \(isChris \? "lap_stage_only" : "notes_only_lap"\) : "full"\}/);
+});
+
+test("Chris's assistant transfers move; another LO's LAP transfers still do not", () => {
+  // The carve-out is deliberately Chris-shaped, not a blanket removal of the
+  // guard: a future LO who gains an assistant keeps the original behaviour
+  // until somebody decides otherwise.
+  assert.match(sync, /const shouldMove = \(!lapCovered \|\| isChris\) && !advanced && !disqualified && !alreadyThere;/);
 });

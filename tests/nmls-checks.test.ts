@@ -101,11 +101,16 @@ test("the licence board is reachable from the sidebar at last", () => {
   // It has been routed but linked from nowhere since it was built.
   assert.match(sidebarSrc, /url: "\/nmls-status"/);
   assert.match(sidebarSrc, /url: "\/nmls-checks"/);
-  // Both sit in Tools, which every role sees — the group is rendered without
-  // a manager check.
+  // WHERE they sit is a placement decision that may move — the tracker is in
+  // Tools, the licence board was moved into Reference on 8 Sep. What must hold
+  // is that neither is behind a manager check, since both are open to everyone.
   const tools = sidebarSrc.slice(sidebarSrc.indexOf("const toolItems"), sidebarSrc.indexOf("];", sidebarSrc.indexOf("const toolItems")));
-  assert.match(tools, /\/nmls-status/);
-  assert.match(tools, /\/nmls-checks/);
+  assert.match(tools, /\/nmls-checks/, "the tracker stays in Tools");
+  const managerOnly = sidebarSrc.slice(
+    sidebarSrc.indexOf("const referenceManagerItems"),
+    sidebarSrc.indexOf("];", sidebarSrc.indexOf("const referenceManagerItems")));
+  assert.doesNotMatch(managerOnly, /nmls-status|nmls-checks/,
+    "neither NMLS page may sit in the manager-gated group");
   assert.match(sidebarSrc, /renderCollapsibleGroup\("tools", "Tools", toolItems\)/);
 });
 

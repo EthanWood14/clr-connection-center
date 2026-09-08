@@ -28,6 +28,13 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.71.4",
+    headline: "The Bonzo note on an LOA transfer now says what actually happened.",
+    items: [
+      { text: "Leads transferred to one of Chris's assistants moved into Hot Transfer in the last release, but the note left on the borrower in Bonzo still said the stage had been left alone — the opposite of what had just happened, on the one record the LOA goes to check. It now says the stage was moved and that only the owner is left as-is.", audience: "manager" },
+    ],
+  },
   { version: "4.71.3", headline: "Chris Redoble's LOA handoffs move to Hot Transfer.", items: [{ text: "Logging a connected transfer to Chris now moves the existing Bonzo lead to his configured Hot Transfer stage even when an LOA handles the handoff. Advanced and disqualified stages remain protected." }] },
   { version: "4.71.2", headline: "Clearer Shotgun completion.", items: [{ text: "Choose whether a transfer happened, then use Finish lead to save and clear the reminder. Save for later keeps it assigned. Saving status and errors now appear directly in the form." }] },
   { version: "4.71.1", headline: "A shorter everyday sidebar.", items: [

@@ -24917,14 +24917,18 @@ ${note}` : daysLine;
     // so the LO can see the transfer was logged and why the stage stands.
     if (lapCovered || advanced || disqualified) {
       try {
+        // For Chris the stage IS moved now, so the old wording ("the stage and
+        // owner are left as they are") told the LOA the opposite of what had
+        // just happened — on the borrower's own record, which is the one place
+        // they go to check. Say which of the two was actually left.
         await addProspectNote(prospectId, lapCovered
-          ? `CLR transfer logged in C3 — tagged and renamed, but the stage and owner are left as they are because this loan officer works through the LO Assistant Portal.`
+          ? `CLR transfer logged in C3 — tagged and renamed${moved.startsWith("direct") ? `, and moved to ${isChris ? "Hot Transfer" : "the transfer stage"}` : ""}. The owner is left as it is because this loan officer works through the LO Assistant Portal.`
           : `CLR transfer logged — stage left at "${snap.stageName}" (${disqualified ? "disqualified leads are never revived by C3" : "App Taken→Funded deals are not moved back"}).`);
       } catch { /* note is best-effort */ }
     }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_synced_at=COALESCE(bonzo_synced_at, ?) WHERE id=?`)
       .run(prospectId, new Date().toISOString(), outcomeId);
-    console.log(`[bonzo-transfer] outcome=${outcomeId} mode=${lapCovered ? "notes_only_lap" : "full"} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} disqualified=${disqualified} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
+    console.log(`[bonzo-transfer] outcome=${outcomeId} mode=${lapCovered ? (isChris ? "lap_stage_only" : "notes_only_lap") : "full"} prospect=${prospectId} suffix="${suffix}" reassigned=${reassigned} stage="${snap.stageName ?? "?"}" advanced=${advanced} disqualified=${disqualified} moved=${moved} noted=${noted} renamed=${"last_name" in updates}`);
   }
 
   // Admin-only live wiring test for the transfer sync: applies the rename+tag
