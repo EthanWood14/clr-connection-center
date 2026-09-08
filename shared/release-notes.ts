@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.70.0",
+    headline: "Managers can put the whole team in the Shotgun rotation in one press.",
+    items: [
+      { text: "New “Put everyone in” button at the top of Shotgun, for managers and admins. It opts every active CLR into the rotation, so nobody has to be chased one at a time after a round of opt-outs.", audience: "manager" },
+      { text: "It tells you the truth about what it did: how many are in, and how many of those are actually at their desk right now. The rest join the second they open C3.", audience: "manager" },
+      { text: "It cannot fake anyone being there. Being in the rotation and being live are two different things, and the button only sets the first — otherwise a lead would be offered to a closed laptop and sit there for the full twenty seconds while somebody who wanted it watched.", audience: "manager" },
+      { text: "Any lead already waiting in the queue gets another go at finding somebody the moment you press it.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.69.1",
     headline: "The manager dashboard loads again.",
     items: [

@@ -8542,6 +8542,78 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true, isReady: ready });
   });
 
+  /**
+   * Put every CLR back in the rotation, in one press.
+   *
+   * READINESS AND LIVENESS ARE TWO DIFFERENT THINGS, and this only sets one of
+   * them. `is_ready` is the CLR's standing preference — "I take Shotgun leads"
+   * — and it is what this flips. `heartbeat_at` is proof their browser is open
+   * right now, refreshed every ten seconds and stale after thirty-five, and it
+   * is what actually decides who an offer can go to.
+   *
+   * So this route deliberately DOES NOT TOUCH the heartbeat. Stamping it would
+   * be forging liveness: a lead would be offered to somebody whose C3 is shut,
+   * and then sit through the whole offer window while a live CLR who wanted it
+   * watched it go nowhere. Setting it to NULL would be worse still — it would
+   * knock out everyone currently working.
+   *
+   * The honest result is therefore two numbers: how many are now opted in, and
+   * how many of those are live this second. The rest join the moment they open
+   * C3, with no further action from anybody.
+   */
+  app.post("/api/shotgun/readiness/all", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(Number(req.session_user?.userId)) as any;
+    if (!taskManager(me)) return res.status(403).json({ error: "Managers and admins only" });
+
+    const clrs = (storage.getUsers() as any[]).filter((u: any) =>
+      shotgunUserIsClr(u) && (Number(u.orgId ?? u.org_id ?? 1) || 1) === orgId);
+    if (!clrs.length) return res.json({ ok: true, total: 0, live: 0, alreadyReady: 0, message: "There are no active CLRs to add." });
+
+    const now = new Date().toISOString();
+    const cutoff = new Date(Date.now() - SHOTGUN_READY_TTL_MS).toISOString();
+    let alreadyReady = 0;
+
+    shotgunDb().transaction(() => {
+      const readRow = shotgunDb().prepare(`SELECT is_ready FROM shotgun_readiness WHERE org_id=? AND user_id=?`);
+      // is_ready only. heartbeat_at is untouched on an existing row, and left
+      // NULL on a new one — a CLR who has never pressed Ready is opted in but
+      // not pretended to be at their desk.
+      const optIn = shotgunDb().prepare(
+        `INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,1,NULL,?)
+         ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=1,updated_at=excluded.updated_at`);
+      for (const u of clrs) {
+        if ((readRow.get(orgId, Number(u.id)) as any)?.is_ready) alreadyReady += 1;
+        optIn.run(orgId, Number(u.id), now);
+      }
+    })();
+
+    const live = Number((shotgunDb().prepare(
+      `SELECT COUNT(*) AS n FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
+        WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1`,
+    ).get(orgId, cutoff) as any)?.n ?? 0);
+
+    // Queued leads may now have somebody to go to.
+    advanceShotgun(now);
+    audit({
+      userId: Number(req.session_user?.userId) || 0,
+      userName: me?.name ?? "Manager",
+      action: "update",
+      entityType: "shotgun_readiness",
+      entityId: 0,
+      entityLabel: `${clrs.length} CLR(s) put in the Shotgun rotation`,
+      details: JSON.stringify({ total: clrs.length, alreadyReady, live }),
+    } as any);
+
+    const waiting = clrs.length - live;
+    res.json({
+      ok: true, total: clrs.length, live, alreadyReady,
+      message: waiting > 0
+        ? `${clrs.length} CLR${clrs.length === 1 ? "" : "s"} in the rotation. ${live} live right now — the other ${waiting} join as soon as they open C3.`
+        : `${clrs.length} CLR${clrs.length === 1 ? "" : "s"} in the rotation, all live right now.`,
+    });
+  });
+
   // Shared by the composer publish route and the one-click Bonzo endpoint:
   // identical validation, dedupe, insert, rotation kick and notifications.
   function createShotgunLeadFromFields(orgId: number, userId: number, me: any, raw: any, via?: string): { status: number; body: any } {

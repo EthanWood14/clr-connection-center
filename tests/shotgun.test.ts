@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
@@ -292,4 +293,116 @@ test("the popup tells the truth about the extension key", () => {
   assert.doesNotMatch(extPopupHtml, /Extension key \(optional\)/);
   assert.match(extPopupHtml, /does not travel here/);
   assert.match(routes, /sameSite: isProduction \? "strict" : "lax"/);
+});
+
+// ── the manager's "put everyone in" button ─────────────────────────────────
+
+test("a manager can put every CLR in the rotation at once", () => {
+  const route = routes.slice(
+    routes.indexOf('app.post("/api/shotgun/readiness/all"'),
+    routes.indexOf("function createShotgunLeadFromFields"),
+  );
+  assert.notEqual(route.length, 0, "the route must exist");
+  assert.match(route, /if \(!taskManager\(me\)\) return res\.status\(403\)/, "managers and admins only");
+  assert.match(route, /shotgunUserIsClr\(u\)/, "only actual CLRs are added");
+  assert.match(route, /Number\(u\.orgId \?\? u\.org_id \?\? 1\) \|\| 1\) === orgId/, "and only this org's");
+});
+
+test("it sets the preference and NEVER forges the heartbeat", () => {
+  // is_ready is the standing preference; heartbeat_at is proof the browser is
+  // open right now. Stamping the heartbeat would offer a lead to somebody
+  // whose C3 is shut, and it would sit through the whole offer window while a
+  // live CLR watched it go nowhere. Setting it NULL would knock out everyone
+  // currently working.
+  const route = routes.slice(
+    routes.indexOf('app.post("/api/shotgun/readiness/all"'),
+    routes.indexOf("function createShotgunLeadFromFields"),
+  );
+  assert.match(route, /DO UPDATE SET is_ready=1,updated_at=excluded\.updated_at/,
+    "an existing row keeps whatever heartbeat it had");
+  assert.doesNotMatch(route, /DO UPDATE SET[^`]*heartbeat_at=excluded/,
+    "the heartbeat must never be stamped from here");
+  // A brand-new row is opted in but not pretended to be at their desk.
+  assert.match(route, /VALUES \(\?,\?,1,NULL,\?\)/);
+});
+
+test("it reports who is actually reachable, not just who is opted in", () => {
+  // Two numbers, because they are two different facts. Saying "12 added" when
+  // 3 are live would send a manager away believing leads will flow.
+  const route = routes.slice(
+    routes.indexOf('app.post("/api/shotgun/readiness/all"'),
+    routes.indexOf("function createShotgunLeadFromFields"),
+  );
+  assert.match(route, /r\.heartbeat_at>=\?/, "live means a fresh heartbeat");
+  assert.match(route, /join as soon as they open C3/);
+  assert.match(route, /total: clrs\.length, live, alreadyReady/);
+});
+
+test("queued leads get a chance to move, and the press is recorded", () => {
+  const route = routes.slice(
+    routes.indexOf('app.post("/api/shotgun/readiness/all"'),
+    routes.indexOf("function createShotgunLeadFromFields"),
+  );
+  // Adding people is only useful if a waiting lead can now go somewhere.
+  assert.match(route, /advanceShotgun\(now\);/);
+  // Putting the whole team into a rotation is worth being able to look up.
+  assert.match(route, /entityType: "shotgun_readiness"/);
+});
+
+test("no CLRs is a plain answer rather than a crash or a lie", () => {
+  const route = routes.slice(
+    routes.indexOf('app.post("/api/shotgun/readiness/all"'),
+    routes.indexOf("function createShotgunLeadFromFields"),
+  );
+  assert.match(route, /if \(!clrs\.length\) return res\.json\(\{ ok: true, total: 0/);
+});
+
+test("the button is offered to managers only", () => {
+  // The button lives inside the manager guard, and carries the id the rest of
+  // this test names. Matched in two parts because the JSX between them
+  // contains arrow functions, which a [^>]* run cannot cross.
+  const guarded = page.slice(page.indexOf("{payload.canManage && <Button"));
+  assert.ok(guarded.length > 0, "the button must sit behind payload.canManage");
+  assert.match(guarded.slice(0, 600), /button-shotgun-ready-all/);
+  assert.match(guarded.slice(0, 600), /Put everyone in/);
+  // The CLR's own Ready button is untouched — this is in addition to it.
+  assert.match(page, /\{payload\.isClr && <Button size="lg" disabled=\{readiness\.isPending\}/);
+});
+
+test("the upsert keeps a live heartbeat and does not invent one", () => {
+  // Run the ACTUAL statement against the real table shape. The source-match
+  // above says the SQL looks right; this says it behaves right, which is the
+  // claim that matters: a manager must be able to opt everyone in without
+  // making somebody look present who is not.
+  const db = new Database(":memory:");
+  const ddl = storage.match(/CREATE TABLE IF NOT EXISTS shotgun_readiness[\s\S]*?\)`/);
+  assert.ok(ddl, "shotgun_readiness DDL not found");
+  db.exec(ddl![0].replace(/`$/, ""));
+
+  const now = "2026-09-08T20:00:00.000Z";
+  const liveBeat = "2026-09-08T19:59:50.000Z";  // 10s ago — live
+  const staleBeat = "2026-09-08T18:00:00.000Z"; // hours ago — not live
+
+  db.prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (1,1,0,?,?)`).run(liveBeat, now);
+  db.prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (1,2,0,?,?)`).run(staleBeat, now);
+  // User 3 has never pressed Ready at all — no row.
+
+  const optIn = db.prepare(
+    `INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,1,NULL,?)
+     ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=1,updated_at=excluded.updated_at`);
+  for (const uid of [1, 2, 3]) optIn.run(1, uid, now);
+
+  const rows = db.prepare("SELECT user_id,is_ready,heartbeat_at FROM shotgun_readiness ORDER BY user_id").all() as any[];
+  assert.deepEqual(rows.map((r) => r.is_ready), [1, 1, 1], "everyone is opted in");
+  assert.equal(rows[0].heartbeat_at, liveBeat, "somebody at their desk stays live");
+  assert.equal(rows[1].heartbeat_at, staleBeat, "a stale beat is left stale, not refreshed");
+  assert.equal(rows[2].heartbeat_at, null, "a brand-new row is opted in but not pretended present");
+
+  // And the readiness query the rotation uses agrees: only user 1 is offerable.
+  const cutoff = "2026-09-08T19:59:25.000Z"; // now - 35s
+  const live = db.prepare(
+    "SELECT user_id FROM shotgun_readiness WHERE org_id=1 AND is_ready=1 AND heartbeat_at>=?").all(cutoff) as any[];
+  assert.deepEqual(live.map((r) => r.user_id), [1],
+    "opting everyone in must not make an absent CLR offerable");
+  db.close();
 });

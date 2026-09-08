@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Clock3, Download, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, Users, Zap } from "lucide-react";
+import { ArrowRightLeft, Clock3, Download, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -125,6 +125,22 @@ export default function Shotgun() {
   const [managerNotes, setManagerNotes] = useState("");
   const { data, isLoading } = useQuery<ShotgunPayload>({ queryKey: ["/api/shotgun"], refetchInterval: 5_000, staleTime: 0 });
   const payload = data ?? { canManage: false, canPublish: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
+  /**
+   * Put every CLR back in the rotation.
+   *
+   * Sets their standing preference only. Whether a lead can actually reach
+   * somebody still depends on their browser being open, so the result says
+   * both numbers rather than implying everyone is now reachable.
+   */
+  const readyAll = useMutation<{ total: number; live: number; message: string }>({
+    mutationFn: () => apiRequest("POST", "/api/shotgun/readiness/all", {}),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] });
+      toast({ title: "Everyone is in the rotation", description: result.message });
+    },
+    onError: (error: any) => toast({ title: "Could not add everyone", description: error.message, variant: "destructive" }),
+  });
+
   const readiness = useMutation({
     mutationFn: (ready: boolean) => apiRequest("POST", "/api/shotgun/readiness", { ready }),
     onSuccess: (result: any) => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: result.isReady ? "You are READY" : "You are no longer in the rotation", description: result.isReady ? "Keep C3 open. New leads can now come directly to you." : "No new Shotgun leads will be offered to you." }); },
@@ -164,7 +180,10 @@ export default function Shotgun() {
         <header className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-rose-950 to-orange-600 p-6 text-white shadow-xl sm:p-8">
           <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
             <div><Badge className="mb-3 border-white/20 bg-white/10 text-white"><Zap className="mr-1 h-3 w-3" /> 20-second lead routing</Badge><h1 className="flex items-center gap-3 text-3xl font-black sm:text-4xl"><Radio className="h-9 w-9 text-orange-300" /> Shotgun</h1><p className="mt-2 max-w-2xl text-sm text-white/70">One lead. One ready CLR. Twenty seconds to confirm—then C3 automatically moves it to the next person.</p></div>
+            <div className="flex flex-wrap items-center gap-2">
+            {payload.canManage && <Button size="lg" variant="outline" disabled={readyAll.isPending} onClick={() => readyAll.mutate()} className="gap-2 border-white/30 bg-white/10 text-white hover:bg-white/20" data-testid="button-shotgun-ready-all">{readyAll.isPending ? <><RefreshCw className="h-5 w-5 animate-spin" /> Adding…</> : <><UserPlus className="h-5 w-5" /> Put everyone in</>}</Button>}
             {payload.isClr && <Button size="lg" disabled={readiness.isPending} onClick={() => readiness.mutate(!payload.isReady)} className={payload.isReady ? "gap-2 border border-emerald-300 bg-emerald-500 text-white hover:bg-emerald-600" : "gap-2 bg-white text-slate-950 hover:bg-orange-100"}>{payload.isReady ? <><ShieldCheck className="h-5 w-5" /> READY — receiving leads</> : <><Radio className="h-5 w-5" /> Press Ready</>}</Button>}
+            </div>
           </div>
         </header>
 
