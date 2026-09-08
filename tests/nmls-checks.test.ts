@@ -117,3 +117,79 @@ test("the licence page shows Refresh to everyone who may use it", () => {
   // failure that tells them nothing about when to try again.
   assert.match(statusPageSrc, /description: String\(e\?\.message/);
 });
+
+// ── the shared pool: 35 days, and it must be able to SEE the old checks ─────
+
+test("anyone may clear a check nobody has done in 35 days", () => {
+  // Owner 8/9/26. Separate from escalation_days (7), which is when the
+  // ASSIGNEE starts being chased — a different question from when the job
+  // stops being theirs alone.
+  assert.match(routesSrc, /const NMLS_SHARED_POOL_DAYS = 35;/);
+  const route = routesSrc.slice(
+    routesSrc.indexOf('app.get("/api/nmls-checks/my-pending"'),
+    routesSrc.indexOf('app.post("/api/nmls-checks/:loId/confirm"'),
+  );
+  assert.match(route, /\.filter\(\(c: any\) => c\.daysOverdue >= NMLS_SHARED_POOL_DAYS\)/);
+  assert.doesNotMatch(route, /daysOverdue >= escalationDays/,
+    "the pool must not silently follow the nag setting");
+  // The page needs the number to say it out loud.
+  assert.match(route, /sharedPoolDays: NMLS_SHARED_POOL_DAYS/);
+});
+
+test("the pool reads EVERY open check, not just this round's", () => {
+  // The bug that made the request impossible: an unconfirmed check drops out
+  // of the per-period query the moment a new round starts, so the licences
+  // that had gone longest unverified were on nobody's screen at all.
+  // Production had 13 open checks at 69 days, invisible.
+  const route = routesSrc.slice(
+    routesSrc.indexOf('app.get("/api/nmls-checks/my-pending"'),
+    routesSrc.indexOf('app.post("/api/nmls-checks/:loId/confirm"'),
+  );
+  assert.match(route, /const openAnyPeriod = storageExtra\.getOpenNmlsChecks\(\);/);
+  assert.match(route, /const pending = openAnyPeriod/, "my own carried-over checks are still mine");
+  assert.match(route, /const overdue = openAnyPeriod/);
+  assert.match(storage, /export function getOpenNmlsChecks\(\)/);
+  assert.match(storage, /WHERE status <> 'confirmed'/);
+});
+
+test("confirming clears a check from an earlier round too", () => {
+  // Confirming by (lo, CURRENT period) updated no row for a carried-over
+  // check, so the oldest ones were exactly the ones the button could not
+  // clear. Anyone pressing it would have seen nothing happen.
+  assert.match(storage, /export function confirmOpenNmlsChecksForLo\(/);
+  assert.match(storage, /WHERE lo_id=\? AND status <> 'confirmed'/);
+  const confirmRoute = routesSrc.slice(
+    routesSrc.indexOf('app.post("/api/nmls-checks/:loId/confirm"'),
+    routesSrc.indexOf('app.get("/api/nmls/status"'),
+  );
+  assert.match(confirmRoute, /confirmOpenNmlsChecksForLo\(loId, userId\)/);
+  assert.doesNotMatch(confirmRoute, /confirmNmlsCheck\(loId, periodKey/);
+});
+
+test("the tracker is open to everyone, page and route alike", () => {
+  // No role gate anywhere: it is in Tools, which every role sees, and the
+  // endpoints ask only that you are signed in.
+  const tools = sidebarSrc.slice(sidebarSrc.indexOf("const toolItems"), sidebarSrc.indexOf("];", sidebarSrc.indexOf("const toolItems")));
+  assert.match(tools, /\/nmls-checks/);
+  // The tracker's own two routes: list what is outstanding, and confirm one.
+  // (nmls-checks/trigger sits between them in the file and IS admin-only on
+  // purpose — it restarts the whole round and lives on the Settings page.)
+  const list = routesSrc.slice(
+    routesSrc.indexOf('app.get("/api/nmls-checks/my-pending"'),
+    routesSrc.indexOf('app.post("/api/nmls-checks/:loId/confirm"'),
+  );
+  const confirm = routesSrc.slice(
+    routesSrc.indexOf('app.post("/api/nmls-checks/:loId/confirm"'),
+    routesSrc.indexOf('app.post("/api/nmls-checks/trigger"'),
+  );
+  for (const route of [list, confirm]) {
+    assert.notEqual(route.length, 0);
+    assert.doesNotMatch(route, /requireManagerOrAdmin|requireAdminSession|role !== "admin"/);
+  }
+});
+
+test("the page tells people why they are allowed to touch someone else's", () => {
+  const page = readFileSync(join(root, "client/src/pages/nmls-checks.tsx"), "utf8");
+  assert.match(page, /const sharedPoolDays: number = data\?\.sharedPoolDays \?\? 35;/);
+  assert.match(page, /\{sharedPoolDays\}\+ days/, "the number comes from the server, not a hardcoded 7");
+});

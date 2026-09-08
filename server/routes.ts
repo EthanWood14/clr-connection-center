@@ -2108,6 +2108,16 @@ async function sendReport(
 // Older databases have legacy month-block keys ("2026-07"); until the first
 // rolling round fires, getNmlsPeriodKey falls back to that computation so
 // in-flight checks stay visible.
+/**
+ * How long an NMLS check may sit undone before ANYONE may clear it.
+ *
+ * Owner, 8 Sep 2026: 35 days. Separate from escalation_days (7), which is when
+ * the ASSIGNEE starts being chased — the two answer different questions. Being
+ * nagged is about one person's task; opening it to the team is about a licence
+ * the company has not verified in over a month, whoever it was given to.
+ */
+const NMLS_SHARED_POOL_DAYS = 35;
+
 function getNmlsPeriodKey(refDate?: Date): string {
   const schedule = storageExtra.getNmlsSchedule();
   if (schedule.current_period_key) return schedule.current_period_key;
@@ -18999,6 +19009,11 @@ ${note}` : daysLine;
     const schedule = storageExtra.getNmlsSchedule();
     const escalationDays = schedule.escalation_days ?? 7;
     const daysOverdueOf = (c: any) => Math.floor((Date.now() - new Date(c.assigned_at).getTime()) / 86400000);
+    // Every unconfirmed check, from ANY round — see getOpenNmlsChecks. The
+    // per-period list below is still what "my checks this round" means, but a
+    // licence that has gone unverified for two months has to be visible to
+    // somebody, and it had aged out of the only list that was being read.
+    const openAnyPeriod = storageExtra.getOpenNmlsChecks();
     // A check is outstanding until it is CONFIRMED. Filtering on status
     // 'pending' alone hid every check the escalation cron had touched — once it
     // flipped a row to 'escalated' the check fell out of both lists and the page
@@ -19006,12 +19021,18 @@ ${note}` : daysLine;
     // still unverified. Escalation is meant to raise a check's urgency, not
     // retire it.
     const isOpen = (c: any) => c.status !== "confirmed";
-    const pending = allChecks
+    // Mine: anything still open that is assigned to me, from any round. A
+    // check does not stop being mine because a new round started.
+    const pending = openAnyPeriod
       .filter((c: any) => c.assigned_to === userId && isOpen(c))
-      .map((c: any) => ({ ...c, lo: los.find((l: any) => l.id === c.lo_id), daysOverdue: daysOverdueOf(c) }));
-    // Checks belonging to someone else that have gone past the escalation
-    // window — a shared pool anyone can clear.
-    const overdue = allChecks
+      .map((c: any) => ({ ...c, lo: los.find((l: any) => l.id === c.lo_id), daysOverdue: daysOverdueOf(c) }))
+      .sort((a: any, b: any) => b.daysOverdue - a.daysOverdue);
+    // The shared pool: somebody else's check that has gone SHARED_POOL_DAYS
+    // without being done. Owner 8 Sep 2026 — after that long it stops being
+    // one person's job and anyone may clear it, because an unverified licence
+    // is a compliance problem for the company rather than a chore for whoever
+    // it landed on.
+    const overdue = openAnyPeriod
       .filter((c: any) => isOpen(c) && c.assigned_to !== userId)
       .map((c: any) => ({
         ...c,
@@ -19019,9 +19040,13 @@ ${note}` : daysLine;
         assignedTo: users.find((u: any) => u.id === c.assigned_to),
         daysOverdue: daysOverdueOf(c),
       }))
-      .filter((c: any) => c.daysOverdue >= escalationDays)
+      .filter((c: any) => c.daysOverdue >= NMLS_SHARED_POOL_DAYS)
       .sort((a: any, b: any) => b.daysOverdue - a.daysOverdue);
-    res.json({ checks: pending, overdue, periodKey, escalationDays, nextCheckAt: schedule.next_run_at ?? null });
+    res.json({
+      checks: pending, overdue, periodKey, escalationDays,
+      sharedPoolDays: NMLS_SHARED_POOL_DAYS,
+      nextCheckAt: schedule.next_run_at ?? null,
+    });
   });
 
   // Confirm NMLS check for an LO
@@ -19030,7 +19055,11 @@ ${note}` : daysLine;
     const userId = req.session_user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const periodKey = getNmlsPeriodKey();
-    storageExtra.confirmNmlsCheck(loId, periodKey, userId);
+    // Every open check for this LO, not just this round's. Confirming by the
+    // CURRENT period silently did nothing to a check carried over from an
+    // earlier one — so the oldest checks were the ones the button could not
+    // clear, which is precisely backwards.
+    storageExtra.confirmOpenNmlsChecksForLo(loId, userId);
     // Mark all nmls_check notifications for this user as read
     const notifs = storage.getNotifications(userId, "c3");
     for (const n of notifs) {

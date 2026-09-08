@@ -91,6 +91,9 @@ export default function NmlsChecks() {
   const checks: any[] = data?.checks ?? [];
   const overdue: any[] = data?.overdue ?? [];
   const escalationDays: number = data?.escalationDays ?? 7;
+  // After this long an unconfirmed check stops being one person's job. The
+  // server decides it; the page only says so.
+  const sharedPoolDays: number = data?.sharedPoolDays ?? 35;
   const nextCheckAt: string | null = data?.nextCheckAt ?? null;
 
   return (
@@ -183,7 +186,8 @@ export default function NmlsChecks() {
                   {overdue.length} overdue — anyone can help
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  These are assigned to someone else but are past due. Verify and confirm any of them to clear the backlog.
+                  Nobody has verified these in {sharedPoolDays}+ days. They were assigned to someone
+                  else, but after this long anyone can clear them — verify the licence and confirm.
                 </p>
               </div>
               {overdue.map((check) => (

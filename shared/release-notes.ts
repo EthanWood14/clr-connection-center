@@ -29,6 +29,17 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.68.0",
+    headline: "Anyone can clear an NMLS check nobody has done in 35 days.",
+    items: [
+      { text: "After 35 days without being verified, a licence check stops being one person's job. It appears for everyone under “overdue — anyone can help”, and whoever gets to it first can confirm it.", audience: "everyone" },
+      { text: "Fixes the reason that was impossible before: an unconfirmed check used to vanish from the tracker the moment a new round started, so the licences that had gone longest unverified were on nobody's screen. Thirteen of them had been sitting unseen for sixty-nine days.", audience: "everyone" },
+      { text: "Confirming now works on those older checks too. The button used to look at the current round only, so pressing it on a carried-over check did nothing at all.", audience: "everyone" },
+      { text: "Your own outstanding checks follow you between rounds instead of disappearing, oldest first.", audience: "everyone" },
+      { text: "Being chased about your own check still starts at 7 days — that setting is unchanged. The 35 days is only about when everyone else may pitch in.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.67.0",
     headline: "Labor Day is no longer treated as a working day.",
     items: [

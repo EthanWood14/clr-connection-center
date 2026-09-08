@@ -4400,6 +4400,37 @@ export function confirmNmlsCheck(loId: number, periodKey: string, confirmedBy: n
     `UPDATE nmls_check_logs SET status='confirmed', confirmed_by=?, confirmed_at=? WHERE lo_id=? AND period_key=?`
   ).run(confirmedBy, new Date().toISOString(), loId, periodKey);
 }
+
+/**
+ * Every check nobody has confirmed, whatever round it belongs to.
+ *
+ * The per-period reader above is the right one for "what is this round's
+ * work". It is the WRONG one for "who has not been checked lately": a check
+ * left undone when the next round starts drops out of that query entirely, so
+ * the licences that have gone longest unverified are the ones that become
+ * invisible. Thirteen July checks were sixty-nine days old and on nobody's
+ * screen.
+ */
+export function getOpenNmlsChecks() {
+  return sqlite.prepare(
+    `SELECT * FROM nmls_check_logs WHERE status <> 'confirmed' ORDER BY assigned_at ASC`
+  ).all() as any[];
+}
+
+/**
+ * Confirm a check whatever round it came from.
+ *
+ * Confirming by (lo, CURRENT period) silently did nothing for a check carried
+ * over from an earlier round — the row it needed to update was not in that
+ * period. The oldest, most overdue checks were exactly the ones the button
+ * could not clear.
+ */
+export function confirmOpenNmlsChecksForLo(loId: number, confirmedBy: number) {
+  return sqlite.prepare(
+    `UPDATE nmls_check_logs SET status='confirmed', confirmed_by=?, confirmed_at=?
+      WHERE lo_id=? AND status <> 'confirmed'`
+  ).run(confirmedBy, new Date().toISOString(), loId);
+}
 export function getPendingNmlsChecks(olderThanDays: number) {
   const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
   return sqlite.prepare(
