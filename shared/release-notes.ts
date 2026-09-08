@@ -28,6 +28,7 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.68.1", headline: "Transfers per day worked and clearer activity charts.", items: [{ text: "MTD now shows transfers divided by days with recorded work, excluding days off." }, { text: "Activity by CLR has wider cells, clear dates, and fixed names while scrolling." }] },
   {
     version: "4.68.0",
     headline: "Anyone can clear an NMLS check nobody has done in 35 days.",

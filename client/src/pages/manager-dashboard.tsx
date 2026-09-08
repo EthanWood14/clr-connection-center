@@ -403,6 +403,12 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // one CLR and closed by another — so this cell can legitimately read 4.5 and
     // must never be rounded to a whole. See shared/transfer-credit.ts.
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => formatTransferCount(r.transfers ?? 0) },
+    ...(pace ? [{ key: "transfersPerWorkedDay", label: "Transfers / day worked", better: true,
+      get: (r: any) => r.transfersPerWorkedDay ?? null,
+      fmt: (r: any) => r.transfersPerWorkedDay == null ? "—" : Number(r.transfersPerWorkedDay).toFixed(2),
+      title: "MTD transfers divided by distinct days with recorded work. Days off are excluded.",
+      cellTitle: (r: any) => `${r.transfers ?? 0} transfers / ${r.workedDays ?? 0} days worked`,
+    }] : []),
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
@@ -2059,11 +2065,13 @@ function HeatmapCard({
       <CardHeader className="pb-2">
         <CardTitle className="text-sm brand-text">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="p-4 overflow-x-auto">
-        <table className="w-full text-xs border-separate" style={{ borderSpacing: "2px 2px" }}>
+      <CardContent className="p-3 sm:p-4 min-w-0">
+        <p className="mb-3 text-xs text-muted-foreground">Each square is one day. Scroll sideways for more dates; names stay visible.</p>
+        <div className="max-h-[560px] overflow-auto rounded-lg border" tabIndex={0} role="region" aria-label={`${title} by CLR`}>
+        <table className="text-xs border-separate" style={{ borderSpacing: "3px", minWidth: "100%", tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th className="text-left pr-3 pb-1 sticky left-0 bg-card z-10 brand-text">CLR</th>
+              <th className="text-left px-3 pb-1 sticky left-0 bg-card z-20 brand-text min-w-[190px]">CLR</th>
               {dowLabels.map((dow, i) => (
                 <th key={"dow-"+i} className="px-0 pb-0 font-medium text-muted-foreground tabular-nums text-center">
                   <div>{dow}</div>
@@ -2075,7 +2083,7 @@ function HeatmapCard({
               {domLabels.map((dom, i) => (
                 <th key={"dom-"+i} className="px-0 pb-1 font-normal text-[10px] text-muted-foreground tabular-nums text-center"
                     title={block.dates[i]}>
-                  {dom}
+                  {format(parseISO(block.dates[i]), "MMM d")}
                 </th>
               ))}
             </tr>
@@ -2083,8 +2091,8 @@ function HeatmapCard({
           <tbody>
             {block.rows.map(row => (
               <tr key={row.userId}>
-                <td className="pr-3 py-0.5 truncate max-w-[140px] sticky left-0 bg-card font-medium brand-text">
-                  <span className="inline-flex items-center gap-1.5">
+                <td className="px-3 py-2 min-w-[190px] sticky left-0 z-10 bg-card font-medium brand-text border-r">
+                  <span className="flex flex-col items-start gap-1 whitespace-nowrap">
                     {row.name}
                     <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
                   </span>
@@ -2100,7 +2108,7 @@ function HeatmapCard({
                       : (isDark ? "#e4e4e7" : "#0f172a");
                   return (
                     <td key={i} className="p-0">
-                      <div className="w-7 h-7 rounded flex items-center justify-center text-[11px] font-medium tabular-nums"
+                      <div className="min-w-[44px] h-10 rounded flex items-center justify-center text-xs font-medium tabular-nums"
                            style={{ backgroundColor: bg, color: fg }}
                            title={`${block.dates[i]} (${WEEKDAY_SHORT[new Date(block.dates[i] + "T00:00:00").getDay()]}): ${v} ${valueLabel}${v === 1 ? "" : "s"}`}>
                         {v || ""}
@@ -2112,6 +2120,7 @@ function HeatmapCard({
             ))}
           </tbody>
         </table>
+        </div>
         {/* Legend with concrete numeric tiers */}
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-3 flex-wrap">
           <span>Range:</span>

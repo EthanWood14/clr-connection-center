@@ -14163,6 +14163,23 @@ ${note}` : daysLine;
         console.error("[manager-dashboard] placement failed:", e?.message ?? e);
       }
 
+      const workOrg = Number(currentOrgId() ?? 1);
+      const workedRows = sqlite.prepare(`
+        SELECT assistant_id, COUNT(DISTINCT d) AS days FROM (
+          SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
+          UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
+          UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
+          UNION SELECT user_id, stat_date FROM dialpad_daily_stats WHERE org_id=? AND calls>0
+          UNION SELECT COALESCE(e.user_id,l.user_id), e.message_date FROM dialpad_sms_events e
+            LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key WHERE e.org_id=?
+          UNION SELECT user_id, date FROM morning_checkins WHERE org_id=?
+          UNION SELECT user_id, date(clock_in) FROM time_clock_entries WHERE org_id=?
+          UNION SELECT assistant_id, report_date FROM eod_reports WHERE org_id=? AND
+            (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
+             OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
+        ) WHERE d BETWEEN ? AND ? GROUP BY assistant_id
+      `).all(...Array(8).fill(workOrg), startDate, endDate) as any[];
+      const workedDaysByUser = new Map(workedRows.map(r => [Number(r.assistant_id), Number(r.days)]));
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
@@ -14183,6 +14200,9 @@ ${note}` : daysLine;
             name: u.name,
             ...trainingForUser(trainingByUser, u.id),
             transfers: s.transfers,
+            workedDays: workedDaysByUser.get(Number(u.id)) ?? 0,
+            transfersPerWorkedDay: (workedDaysByUser.get(Number(u.id)) ?? 0) > 0
+              ? s.transfers / workedDaysByUser.get(Number(u.id))! : null,
             textTransfers,
             appointments: s.appointments,
             fellThrough: s.fellThrough,
