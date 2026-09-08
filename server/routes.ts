@@ -50,7 +50,10 @@ import {
   TRANSFER_CREDIT_SQL,
 } from "@shared/transfer-credit";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
-import { filterRecipients } from "./deliverable-email";
+import {
+  filterRecipients, suppressionFromHistory, suppressionWindowArg,
+  SUPPRESSION_HISTORY_SQL, SUPPRESS_AFTER_BOUNCES,
+} from "./deliverable-email";
 import {
   trainingAmountCents, normalizeTrainingDates, describeTrainingDays, trainingDetail,
   isTrainingRate,
@@ -773,6 +776,53 @@ function resolveResendKey(): string {
   }
 }
 
+/**
+ * Addresses that keep bouncing and have never delivered, refreshed from C3's
+ * own send history.
+ *
+ * Held in memory and rebuilt on a timer rather than queried per send: this sits
+ * in front of every email the app sends, and a database read on that path
+ * would be paid thousands of times to learn something that changes about once
+ * a month. Stale by at most REFRESH_MS, which is the right trade — an address
+ * that died fifteen minutes ago costs one more bounce, not a permanent one.
+ *
+ * Failure is deliberately silent-but-logged and leaves the set EMPTY: if the
+ * history cannot be read, C3 must still send. Suppression is an optimisation
+ * against known-dead mailboxes, never a gate that mail has to pass.
+ */
+const SUPPRESSION_REFRESH_MS = 15 * 60_000;
+let suppressedAddresses: ReadonlySet<string> = new Set<string>();
+let suppressionRefreshedAt = 0;
+
+function refreshSuppressedAddresses(): void {
+  try {
+    const rows = storageExtra.getRawSqlite()
+      .prepare(SUPPRESSION_HISTORY_SQL)
+      .all(suppressionWindowArg()) as any[];
+    const next = suppressionFromHistory(rows);
+    // Only announce a CHANGE. Logging the same list every fifteen minutes is
+    // how a real signal gets lost in its own noise.
+    const added = Array.from(next).filter((a) => !suppressedAddresses.has(a));
+    if (added.length) {
+      console.warn(
+        `[email-health] no longer addressing ${JSON.stringify(added)} — `
+        + `${SUPPRESS_AFTER_BOUNCES}+ bounces and never delivered`,
+      );
+    }
+    suppressedAddresses = next;
+    suppressionRefreshedAt = Date.now();
+  } catch (e: any) {
+    console.error("[email-health] could not read send history for suppression:", e?.message ?? e);
+    suppressionRefreshedAt = Date.now();
+  }
+}
+
+/** The current set, refreshed lazily so no cron is needed to keep it warm. */
+function currentSuppression(): ReadonlySet<string> {
+  if (Date.now() - suppressionRefreshedAt >= SUPPRESSION_REFRESH_MS) refreshSuppressedAddresses();
+  return suppressedAddresses;
+}
+
 async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, attachments }: EmailPayload): Promise<string> {
   const s = storageExtra.getEmailSettings() as any;
   const apiKey = resolveResendKey();
@@ -795,7 +845,8 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
   // single dead address costs everyone else the email. Strip those here, at the
   // one place every send passes through, rather than at each call site.
   const requested = Array.isArray(to) ? to : [to];
-  const { to: toArr, dropped } = filterRecipients(requested);
+  const suppressed = currentSuppression();
+  const { to: toArr, dropped } = filterRecipients(requested, suppressed);
   if (dropped.length) {
     console.warn(`[sendEmail] dropped undeliverable recipient(s): ${JSON.stringify(dropped)} — subject=${JSON.stringify(subject)}`);
   }
@@ -805,7 +856,7 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
     console.error(`[sendEmail] no deliverable recipients for ${JSON.stringify(subject)} (asked: ${JSON.stringify(requested)})`);
     throw new Error("No deliverable recipients for this email.");
   }
-  const bccList = bcc ? filterRecipients(Array.isArray(bcc) ? bcc : [bcc]).to : [];
+  const bccList = bcc ? filterRecipients(Array.isArray(bcc) ? bcc : [bcc], suppressed).to : [];
   console.log(`[sendEmail] to=${JSON.stringify(toArr)} subject=${JSON.stringify(subject)} from=${JSON.stringify(from)} keyHead=${apiKey.slice(0, 6)}… keySource=${apiKey === DEFAULT_RESEND_KEY ? "default" : "db"}`);
   let result: any;
   try {

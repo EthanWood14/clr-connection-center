@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.65.0",
+    headline: "A dead mailbox can no longer cost everyone else the email.",
+    items: [
+      { text: "C3 already refused to write to addresses that could never work — our own web host, reserved domains. It now also stops writing to an ordinary-looking address that has bounced three or more times and never once arrived: someone who left, a closed mailbox, an address typed wrong when the account was made.", audience: "manager" },
+      { text: "One successful delivery clears an address completely. That matters because the mail provider reports one result per message, not per person — so when a group email fails, everyone on it is recorded as failed. Without that rule, two bad sends could have quietly removed the whole team from their own notifications.", audience: "manager" },
+      { text: "Checked against the real send history before shipping: exactly one address would be set aside, and all sixteen people who had been marked failed alongside it are kept.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.64.2",
     headline: "Transfer Write-Ups moves into Advanced Settings.",
     items: [
