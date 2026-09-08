@@ -85,6 +85,7 @@ import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate 
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz, isValidTimezone, normalizeTimezone } from "./business-day";
+import { isWorkday, isCompanyHoliday, OBSERVED as COMPANY_HOLIDAYS } from "@shared/company-holidays";
 import { createBackup, listBackups } from "./backup";
 import { bonzoConfigured, findProspectByPhone, reassignProspectByEmail, getProspectAssigneeEmail, wallClockToBonzo, createProspectTask, deleteTask, addProspectNote, deleteProspectNote, getProspectAssignee, getProspectSnapshot, getProspectDetail, updateProspect, getPipelineStages, reassignProspect, moveProspectStage, getProspectNotes } from "./bonzo";
 import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBonzoSource } from "./shotgun-bonzo";
@@ -3285,9 +3286,11 @@ async function checkAndSendEodReminders(opts?: { testClrId?: number; testEmail?:
     for (let i = 1; i <= 21; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
-      const dow = d.getDay(); // 0=Sun, 6=Sat
-      if (dow === 0 || dow === 6) continue;
-      weekdaysToCheck.push(d.toISOString().split("T")[0]);
+      const iso = d.toISOString().split("T")[0];
+      // Weekends AND days the office was closed. Nagging somebody for a report
+      // they were never expected to file is how a reminder stops being read.
+      if (!isWorkday(iso)) continue;
+      weekdaysToCheck.push(iso);
       if (weekdaysToCheck.length >= 14) break;
     }
 

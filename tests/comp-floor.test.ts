@@ -22,12 +22,14 @@ import { countWeekdaysInMonth } from "../server/business-day";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
-/** September 2026: 22 weekdays. Written out so the tests do not lean on the
- *  same function they are checking. */
+/** September 2026: 21 WORKING days. Twenty-two of its days are Mon-Fri, but
+ *  Monday the 7th is Labor Day and the office is shut, so it is not a working
+ *  day — see shared/company-holidays.ts. Written out so the tests do not lean
+ *  on the same function they are checking. */
 const SEP = "2026-09";
 const SEP_WEEKDAYS = [
   "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04",
-  "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11",
+  "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11",
   "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18",
   "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25",
   "2026-09-28", "2026-09-29", "2026-09-30",
@@ -68,9 +70,9 @@ test("unionActiveDates de-duplicates and drops junk", () => {
 test("a full month present faces the whole 75", () => {
   const r = compFloorForClr(SEP, clr({ transfers: 80 }));
   assert.equal(r.baseFloor, FULL_MONTH_TRANSFER_FLOOR);
-  assert.equal(r.weekdaysInMonth, 22);
-  assert.equal(r.weekdaysInScope, 22);
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysInMonth, 21);
+  assert.equal(r.weekdaysInScope, 21);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.deepEqual(r.offDates, []);
   assert.equal(r.adjustedFloor, 75);
@@ -96,24 +98,24 @@ test("four weekdays off take four days' worth off the floor", () => {
     transfers: 61,
     activeDates: SEP_WEEKDAYS.filter((d) => off.indexOf(d) < 0),
   }));
-  assert.equal(r.weekdaysWorked, 18);
+  assert.equal(r.weekdaysWorked, 17);
   assert.equal(r.weekdaysOff, 4);
   assert.deepEqual(r.offDates, off);
-  // 75 x 18/22 = 61.36..., and one weekday is worth 75/22 = 3.409...
-  assert.ok(Math.abs(r.adjustedFloorExact - (75 * 18) / 22) < 1e-9);
-  assert.ok(Math.abs(r.floorPerWeekday - 75 / 22) < 1e-9);
-  assert.equal(r.adjustedFloor, 61);
+  // 75 x 17/21 = 60.71..., and one working day is worth 75/21 = 3.571...
+  assert.ok(Math.abs(r.adjustedFloorExact - (75 * 17) / 21) < 1e-9);
+  assert.ok(Math.abs(r.floorPerWeekday - 75 / 21) < 1e-9);
+  assert.equal(r.adjustedFloor, 60);
   assert.equal(r.met, true);
   assert.equal(r.shortBy, 0);
   // The same arithmetic read Ethan's way: 75 minus one day's share per day off.
-  assert.ok(Math.abs(r.adjustedFloorExact - (75 - 4 * (75 / 22))) < 1e-9);
+  assert.ok(Math.abs(r.adjustedFloorExact - (75 - 4 * (75 / 21))) < 1e-9);
 });
 
 test("every weekday off leaves a floor of 0", () => {
   const r = compFloorForClr(SEP, clr({ transfers: 0, activeDates: [] }));
-  assert.equal(r.weekdaysInScope, 22);
+  assert.equal(r.weekdaysInScope, 21);
   assert.equal(r.weekdaysWorked, 0);
-  assert.equal(r.weekdaysOff, 22);
+  assert.equal(r.weekdaysOff, 21);
   assert.deepEqual(r.offDates, SEP_WEEKDAYS);
   assert.equal(r.adjustedFloor, 0);
   assert.equal(r.adjustedFloorExact, 0);
@@ -139,7 +141,7 @@ test("a weekend-only absence changes nothing", () => {
   }));
   assert.equal(present.adjustedFloor, 75);
   assert.equal(alsoWeekends.adjustedFloor, 75);
-  assert.equal(alsoWeekends.weekdaysWorked, 22);
+  assert.equal(alsoWeekends.weekdaysWorked, 21);
   assert.equal(alsoWeekends.weekdaysOff, 0);
   assert.deepEqual(alsoWeekends.offDates, []);
 });
@@ -149,7 +151,7 @@ test("duplicate and out-of-month dates cannot inflate the worked days", () => {
     transfers: 0,
     activeDates: [...SEP_WEEKDAYS, ...SEP_WEEKDAYS, "2026-08-31", "2026-10-01"],
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.adjustedFloor, 75);
 });
 
@@ -163,7 +165,8 @@ test("a day with only ONE kind of activity still counts as worked", () => {
     (bySignal[key] ??= []).push(date);
   });
   const r = compFloorForClr(SEP, clr({ transfers: 75, activeDates: [], activeDatesBySignal: bySignal }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
+  // (SEP_WEEKDAYS is the working-day list, so this tracks it automatically.)
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.adjustedFloor, 75);
 
@@ -174,20 +177,20 @@ test("a day with only ONE kind of activity still counts as worked", () => {
     activeDatesBySignal: { morning_checkins: ["2026-09-15"] },
   }));
   assert.equal(lone.weekdaysWorked, 1);
-  assert.equal(lone.weekdaysOff, 21);
-  assert.equal(lone.adjustedFloor, 3); // 75 x 1/22 = 3.4 -> 3
+  assert.equal(lone.weekdaysOff, 20);
+  assert.equal(lone.adjustedFloor, 3); // 75 x 1/21 = 3.57 -> 3
   assert.ok(CANONICAL_ACTIVITY_SIGNALS.some((s) => s.key === "morning_checkins"));
 });
 
 // ── the boundary and the rounding ───────────────────────────────────────────
 
 test("transfers exactly equal to the adjusted floor MEET it", () => {
-  const off = ["2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"]; // floor 61
+  const off = ["2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"]; // floor 60
   const activeDates = SEP_WEEKDAYS.filter((d) => off.indexOf(d) < 0);
-  const at = compFloorForClr(SEP, clr({ transfers: 61, activeDates }));
-  const under = compFloorForClr(SEP, clr({ transfers: 60, activeDates }));
-  const over = compFloorForClr(SEP, clr({ transfers: 62, activeDates }));
-  assert.equal(at.adjustedFloor, 61);
+  const at = compFloorForClr(SEP, clr({ transfers: 60, activeDates }));
+  const under = compFloorForClr(SEP, clr({ transfers: 59, activeDates }));
+  const over = compFloorForClr(SEP, clr({ transfers: 61, activeDates }));
+  assert.equal(at.adjustedFloor, 60);
   assert.equal(at.met, true);
   assert.equal(at.shortBy, 0);
   assert.equal(under.met, false);
@@ -224,16 +227,17 @@ test("the floor rounds DOWN, and lands exactly on whole answers", () => {
 // ── partial months, starters and leavers ────────────────────────────────────
 
 test("a month that has not finished pro-rates to the weekdays counted so far", () => {
-  // Through Tuesday 15 September: 11 of the month's 22 weekdays have happened.
+  // Through Tuesday 15 September: 10 of the month's 21 working days have
+  // happened — the 7th was Labor Day.
   const elapsed = SEP_WEEKDAYS.filter((d) => d <= "2026-09-15");
   const r = compFloorForClr(SEP, clr({ transfers: 37, activeDates: elapsed }), { through: "2026-09-15" });
-  assert.equal(elapsed.length, 11);
+  assert.equal(elapsed.length, 10);
   assert.equal(r.partialMonth, true);
-  assert.equal(r.weekdaysInScope, 11);
-  assert.equal(r.weekdaysWorked, 11);
+  assert.equal(r.weekdaysInScope, 10);
+  assert.equal(r.weekdaysWorked, 10);
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.weekdaysOutOfScope, 11);
-  assert.equal(r.adjustedFloor, 37); // 75 x 11/22 = 37.5 -> 37
+  assert.equal(r.adjustedFloor, 35); // 75 x 10/21 = 35.7 -> 35
   assert.equal(r.met, true);
   assert.ok(r.notes.some((n) => n.includes("Partial month")));
 });
@@ -244,18 +248,18 @@ test("a mid-month starter is not charged for the weekdays before they started", 
   assert.equal(worked.length, 13);
   assert.equal(r.weekdaysInScope, 13);
   assert.equal(r.weekdaysOff, 0);
-  assert.equal(r.weekdaysOutOfScope, 9);
-  assert.equal(r.adjustedFloor, 44); // 75 x 13/22 = 44.3 -> 44
+  assert.equal(r.weekdaysOutOfScope, 8);
+  assert.equal(r.adjustedFloor, 46); // 75 x 13/21 = 46.4 -> 46
   assert.ok(r.notes.some((n) => n.includes("Started 2026-09-14")));
 });
 
 test("a mid-month leaver is not charged for the weekdays after they left", () => {
   const worked = SEP_WEEKDAYS.filter((d) => d <= "2026-09-11");
   const r = compFloorForClr(SEP, clr({ transfers: 30, activeDates: worked, endDate: "2026-09-11" }));
-  assert.equal(worked.length, 9);
-  assert.equal(r.weekdaysInScope, 9);
+  assert.equal(worked.length, 8);
+  assert.equal(r.weekdaysInScope, 8);
   assert.equal(r.weekdaysOff, 0);
-  assert.equal(r.adjustedFloor, 30); // 75 x 9/22 = 30.68 -> 30
+  assert.equal(r.adjustedFloor, 28); // 75 x 8/21 = 28.5 -> 28
   assert.equal(r.met, true);
 });
 
@@ -273,7 +277,7 @@ test("activity outside the recorded employment window still counts as worked", (
 
 test("approved time off lowers the floor like any other day away, and is reported apart", () => {
   assert.equal(APPROVED_LEAVE_REDUCES_FLOOR, true);
-  const leave = ["2026-09-07", "2026-09-08", "2026-09-09"];
+  const leave = ["2026-09-08", "2026-09-09", "2026-09-10"];
   const sick = ["2026-09-22"];
   const away = [...leave, ...sick];
   const r = compFloorForClr(SEP, clr({
@@ -281,11 +285,11 @@ test("approved time off lowers the floor like any other day away, and is reporte
     activeDates: SEP_WEEKDAYS.filter((d) => away.indexOf(d) < 0),
     approvedTimeOffDates: [...leave, "2026-09-05"], // a weekend leave day changes nothing
   }));
-  assert.equal(r.weekdaysWorked, 18);
+  assert.equal(r.weekdaysWorked, 17);
   assert.equal(r.weekdaysOff, 4);
   assert.equal(r.approvedLeaveWeekdaysOff, 3);
   assert.equal(r.unexplainedWeekdaysOff, 1);
-  assert.equal(r.adjustedFloor, 61); // identical to four unexplained days off
+  assert.equal(r.adjustedFloor, 60); // identical to four unexplained days off
   assert.ok(r.notes.some((n) => n.includes("approved time off")));
 });
 
@@ -293,9 +297,9 @@ test("a day worked during approved leave is worked", () => {
   const r = compFloorForClr(SEP, clr({
     transfers: 0,
     activeDates: SEP_WEEKDAYS,
-    approvedTimeOffDates: ["2026-09-07", "2026-09-08"],
+    approvedTimeOffDates: ["2026-09-08", "2026-09-09"],
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.approvedLeaveWeekdaysOff, 0);
   assert.equal(r.adjustedFloor, 75);
@@ -320,13 +324,13 @@ test("the report carries the month's facts and one row per CLR, in order", () =>
   assert.equal(report.period, SEP);
   assert.equal(report.monthLabel, "September 2026");
   assert.equal(report.through, "2026-09-30");
-  assert.equal(report.weekdaysInMonth, 22);
+  assert.equal(report.weekdaysInMonth, 21);
   assert.equal(report.baseFloor, 75);
   assert.equal(report.partialMonth, false);
   assert.deepEqual(report.rows.map((r) => r.name), ["Ada", "Grace", "CLR #9"]);
-  assert.deepEqual(report.rows.map((r) => r.adjustedFloor), [75, 37, 0]);
+  assert.deepEqual(report.rows.map((r) => r.adjustedFloor), [75, 39, 0]);
   assert.deepEqual(report.rows.map((r) => r.met), [true, true, true]);
-  assert.deepEqual(report.rows.map((r) => r.weekdaysOff), [0, 11, 22]);
+  assert.deepEqual(report.rows.map((r) => r.weekdaysOff), [0, 10, 21]);
 });
 
 test("an empty roster and a nonsense month return nothing rather than throwing", () => {
@@ -389,10 +393,10 @@ test("a manager marking someone ABSENT leaves a check-in row, and the day is sti
     activeDates: [],
     activeDatesBySignal: { morning_checkins: realCheckins },
   }));
-  assert.equal(r.weekdaysWorked, 21);
+  assert.equal(r.weekdaysWorked, 20);
   assert.equal(r.weekdaysOff, 1);
   assert.deepEqual(r.offDates, ["2026-09-10"]);
-  assert.equal(r.adjustedFloor, 71); // 75 x 21/22 = 71.59 -> 71
+  assert.equal(r.adjustedFloor, 71); // 75 x 20/21 = 71.4 -> 71
   assert.equal(r.met, true);
 
   // And what the bug cost: reading "any row" as presence gives the person a
@@ -433,15 +437,17 @@ test("an EXCUSED absence is not a check-in, and does not count either", () => {
     activeDates: [],
     activeDatesBySignal: {
       morning_checkins: everyDayExcept("2026-09-08", "2026-09-09"),
-      // Filed the excuse on the 7th, FOR the 8th and 9th.
-      attendance_excuse_requests: ["2026-09-07T18:00:00Z"],
+      // Filed the excuse on the 10th, FOR the 8th and 9th. A different day
+      // from the ones being excused, which is the whole point: filing is a
+      // trace of the day it happened, not of the days it covers.
+      attendance_excuse_requests: ["2026-09-10T18:00:00Z"],
     },
     approvedTimeOffDates: ["2026-09-08", "2026-09-09"],
   }));
   assert.equal(r.weekdaysOff, 2);
   assert.deepEqual(r.offDates, ["2026-09-08", "2026-09-09"]);
   assert.equal(r.approvedLeaveWeekdaysOff, 2);
-  assert.equal(r.adjustedFloor, 68); // 75 x 20/22 = 68.18 -> 68
+  assert.equal(r.adjustedFloor, 67); // 75 x 19/21 = 67.8 -> 67
   const s = signal("attendance_excuse_requests");
   assert.ok(s.source.includes("requested_at"));
   assert.ok(s.source.includes("requested_via"), "an admin-filed excuse is the ADMIN's action");
@@ -475,7 +481,7 @@ test("an EOD report with every counter at zero is still a day worked", () => {
       eod_reports: [zeroCounterEod.report_date], // ANY submitted row counts
     },
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.adjustedFloor, 75);
 });
@@ -487,8 +493,8 @@ test("a day whose ONLY trace is an all-zero EOD is worked, not off", () => {
     activeDatesBySignal: { eod_reports: ["2026-09-15"] },
   }));
   assert.equal(r.weekdaysWorked, 1);
-  assert.equal(r.weekdaysOff, 21);
-  assert.equal(r.adjustedFloor, 3); // 75 x 1/22 = 3.4 -> 3
+  assert.equal(r.weekdaysOff, 20);
+  assert.equal(r.adjustedFloor, 3); // 75 x 1/21 = 3.57 -> 3
 });
 
 test("the eod_reports signal no longer carries the training clock's counter predicate", () => {
@@ -519,7 +525,7 @@ test("a Mojo-only day is a worked day", () => {
       mojo_sessions: mojoOnly,
     },
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.adjustedFloor, 75);
 
@@ -553,7 +559,7 @@ test("a CallTools day of active seconds with no dispositioned call is a worked d
       callsync_agent_activity_daily: heartbeatOnly,
     },
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.equal(r.adjustedFloor, 75);
 });
@@ -706,7 +712,7 @@ test("the floor counts a 6:30pm Pacific EOD on the day it was worked", () => {
       eod_reports: [eveningFiling],
     },
   }));
-  assert.equal(r.weekdaysWorked, 22);
+  assert.equal(r.weekdaysWorked, 21);
   assert.equal(r.weekdaysOff, 0);
   assert.deepEqual(r.offDates, []);
   assert.equal(r.adjustedFloor, 75);
@@ -744,15 +750,15 @@ test("`through` bounds the WORKED count, not just the scope", () => {
   // days. Counting them would put worked (13) above the elapsed weekdays (11)
   // and raise the bar over a part of the month nobody has been measured on.
   const elapsed = SEP_WEEKDAYS.filter((d) => d <= "2026-09-15");
-  assert.equal(elapsed.length, 11);
+  assert.equal(elapsed.length, 10);
   const r = compFloorForClr(SEP, clr({
     transfers: 37,
     activeDates: [...elapsed, "2026-09-18", "2026-09-21"],
   }), { through: "2026-09-15" });
-  assert.equal(r.weekdaysWorked, 11);
-  assert.equal(r.weekdaysInScope, 11);
+  assert.equal(r.weekdaysWorked, 10);
+  assert.equal(r.weekdaysInScope, 10);
   assert.equal(r.weekdaysOff, 0);
-  assert.equal(r.adjustedFloor, 37); // 75 x 11/22 = 37.5 -> 37, not 44
+  assert.equal(r.adjustedFloor, 35); // 75 x 10/21 = 35.7 -> 35, not 42
   assert.equal(r.met, true);
   assert.deepEqual(r.activeDatesAfterThrough, ["2026-09-18", "2026-09-21"]);
   assert.ok(r.notes.some((n) => n.includes("after 2026-09-15")));
@@ -784,7 +790,7 @@ test("a nonsense baseFloor produces a coherent row instead of a free pass", () =
     assert.equal(r.baseFloor, FULL_MONTH_TRANSFER_FLOOR, String(bad));
     assert.equal(r.adjustedFloor, 75, String(bad));
     assert.ok(Number.isFinite(r.floorPerWeekday), String(bad));
-    assert.ok(Math.abs(r.floorPerWeekday - 75 / 22) < 1e-9, String(bad));
+    assert.ok(Math.abs(r.floorPerWeekday - 75 / 21) < 1e-9, String(bad));
     assert.equal(r.met, false, String(bad));
     assert.ok(r.notes.some((n) => n.includes("unusable base floor")), String(bad));
   }
@@ -853,7 +859,7 @@ test("a CLR handed junk instead of a date list is not silently marked absent all
     userId: 3, transfers: 75,
     activeDates: SEP_WEEKDAYS.map((d) => new Date(d + "T15:00:00Z")) as any,
   });
-  assert.equal(dates.weekdaysWorked, 22);
+  assert.equal(dates.weekdaysWorked, 21);
   assert.equal(dates.adjustedFloor, 75);
   // A signal map that is not an object must not throw either.
   assert.doesNotThrow(() => compFloorForClr(SEP, clr({ activeDatesBySignal: "nope" as any })));
@@ -869,10 +875,11 @@ test("the two phrasings of the rule agree ONLY when nothing is out of scope", ()
   const whole = compFloorForClr(SEP, clr({ transfers: 0, activeDates: everyDayExcept("2026-09-03", "2026-09-10") }));
   assert.equal(whole.weekdaysOutOfScope, 0);
   assert.equal(whole.weekdaysWorked + whole.weekdaysOff, whole.weekdaysInMonth);
-  assert.ok(Math.abs(whole.adjustedFloorExact - proportional(22, 20)) < 1e-9);
-  assert.ok(Math.abs(whole.adjustedFloorExact - subtraction(22, 2)) < 1e-9);
+  assert.ok(Math.abs(whole.adjustedFloorExact - proportional(21, 19)) < 1e-9);
+  assert.equal(whole.weekdaysWorked, 19);
+  assert.ok(Math.abs(whole.adjustedFloorExact - subtraction(21, 2)) < 1e-9);
 
-  // A mid-month starter: 9 weekdays were never theirs, and the subtraction
+  // A mid-month starter: 8 working days were never theirs, and the subtraction
   // form OVERSTATES the bar by exactly those days' share. The header used to
   // present the identity unconditionally, which is wrong for every starter,
   // every leaver and every partial run.
@@ -881,12 +888,12 @@ test("the two phrasings of the rule agree ONLY when nothing is out of scope", ()
     activeDates: SEP_WEEKDAYS.filter((d) => d >= "2026-09-14" && d !== "2026-09-15"),
     startDate: "2026-09-14",
   }));
-  assert.equal(starter.weekdaysOutOfScope, 9);
+  assert.equal(starter.weekdaysOutOfScope, 8);
   assert.equal(starter.weekdaysWorked, 12);
   assert.equal(starter.weekdaysOff, 1);
   assert.notEqual(starter.weekdaysWorked + starter.weekdaysOff, starter.weekdaysInMonth);
-  assert.ok(Math.abs(starter.adjustedFloorExact - proportional(22, 12)) < 1e-9);
-  assert.ok(subtraction(22, 1) > starter.adjustedFloorExact + 1,
+  assert.ok(Math.abs(starter.adjustedFloorExact - proportional(21, 12)) < 1e-9);
+  assert.ok(subtraction(21, 1) > starter.adjustedFloorExact + 1,
     "the '75 minus days off' shorthand is the harsher, wrong answer here");
   // Every row carries all three counts, so an email can show the working.
   assert.equal(

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { countNonSundaysInMonth } from "../shared/pace-days";
+import { nonSundayHolidaysInMonth } from "../shared/company-holidays";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dash = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "utf8");
@@ -80,7 +81,10 @@ test("every month of a year adds up, and only Sundays are ever dropped", () => {
     }
     // Saturdays are worked days here. If any Saturday were being dropped the
     // total would land below lastDay - sundays, which this equality catches.
-    assert.equal(countNonSundaysInMonth(2026, m), lastDay - sundays, `2026-${m}`);
+    // Company holidays are the one deliberate subtraction on top (September
+    // 2026 loses Labor Day), so they are added back before comparing.
+    const holidays = nonSundayHolidaysInMonth(2026, m).length;
+    assert.equal(countNonSundaysInMonth(2026, m) + holidays, lastDay - sundays, `2026-${m}`);
     assert.ok(sundays >= 4 && sundays <= 5, `2026-${m} should have 4 or 5 Sundays`);
   }
 });
@@ -111,12 +115,12 @@ test("the MTD pace divides AND multiplies by non-Sundays", () => {
 test("mixing the two rules would inflate every projection by about a seventh", () => {
   // Same CLR, same month, two ways of counting. Only the first is correct.
   const transfers = 60;
-  const elapsed = countNonSundaysInMonth(2026, 9, 21);   // 18
-  const whole = countNonSundaysInMonth(2026, 9);         // 26
+  const elapsed = countNonSundaysInMonth(2026, 9, 21);   // 17 (Labor Day is out)
+  const whole = countNonSundaysInMonth(2026, 9);         // 25
   const correct = Math.round((transfers / elapsed) * whole);
   const mixed = Math.round((transfers / elapsed) * 30);  // non-Sundays / calendar days
-  assert.equal(correct, 87);
-  assert.equal(mixed, 100);
+  assert.equal(correct, 88);
+  assert.equal(mixed, 106);
   assert.ok(mixed / correct > 1.1, "the mixed version is materially higher, not a rounding wobble");
 });
 
@@ -138,17 +142,20 @@ test("worked example: 60 transfers by 21 September 2026 projects to 87", () => {
   //   Sundays:   6, 13, 20, 27  -> 4 of them
   //   Saturdays: 5, 12, 19, 26  -> 4 of them, and they DO count here
   //
-  // Divisor (worked so far, 1st..21st): 21 - Sundays {6,13,20}    = 21 - 3 = 18
-  // Multiplier (worked all month):      30 - Sundays {6,13,20,27} = 30 - 4 = 26
+  // Monday the 7th is Labor Day — the office is shut, so it is not a worked
+  // day either (shared/company-holidays.ts).
   //
-  //   60 / 18             = 3.3333... transfers per worked day
-  //   3.3333... * 26      = 86.666...
-  //   Math.round(86.666)  = 87
+  // Divisor (worked so far, 1st..21st): 21 - Sundays {6,13,20} - 1 = 17
+  // Multiplier (worked all month):      30 - Sundays {6,13,20,27} - 1 = 25
+  //
+  //   60 / 17             = 3.5294... transfers per worked day
+  //   3.5294... * 25      = 88.235...
+  //   Math.round(88.235)  = 88
   const elapsed = countNonSundaysInMonth(2026, 9, 21);
   const whole = countNonSundaysInMonth(2026, 9);
-  assert.equal(elapsed, 18);
-  assert.equal(whole, 26);
-  assert.equal(Math.round((60 / elapsed) * whole), 87);
+  assert.equal(elapsed, 17);
+  assert.equal(whole, 25);
+  assert.equal(Math.round((60 / elapsed) * whole), 88);
 
   // For contrast, the two rules this is NOT.
   // Raw calendar days, which is what shipped before: 60 / 21 * 30 = 85.714 -> 86

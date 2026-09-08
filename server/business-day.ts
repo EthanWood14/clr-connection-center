@@ -1,3 +1,5 @@
+import { isWorkday, isoFor } from "@shared/company-holidays";
+
 // Business-day calendar helpers.
 //
 // The business day rolls over at 7:00pm (19:00) in the user's local timezone:
@@ -25,7 +27,9 @@ export const EOD_DUE_LABEL = "4:00 PM the next business day";
 /** The next weekday strictly after `date`. Weekends are not filing days. */
 export function nextBusinessDay(date: string): string {
   let d = addIsoDays(date, 1);
-  while ([0, 6].includes(new Date(`${d}T12:00:00Z`).getUTCDay())) d = addIsoDays(d, 1);
+  // Skips holidays as well as weekends, so an EOD due "the next business day"
+  // is never due on a day the office is shut.
+  while (!isWorkday(d)) d = addIsoDays(d, 1);
   return d;
 }
 
@@ -113,8 +117,9 @@ export function addIsoDays(iso: string, days: number): string {
 // Whether a calendar date is Mon-Fri. Noon UTC so no DST shift can move the
 // date onto an adjacent day and change its weekday.
 function isWeekday(year: number, month: number, day: number): boolean {
-  const dow = new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).getUTCDay();
-  return dow !== 0 && dow !== 6;
+  // A weekday the office is closed is not a working day. One list decides
+  // that for the whole app — see shared/company-holidays.ts.
+  return isWorkday(isoFor(year, month, day));
 }
 
 /**

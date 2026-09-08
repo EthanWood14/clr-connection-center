@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.67.0",
+    headline: "Labor Day is no longer treated as a working day.",
+    items: [
+      { text: "Monday 7 September was a holiday and C3 counted it as an ordinary weekday everywhere. It chased people for a report they were never going to file, divided the month's pace by a day nobody worked, and read a day the office was shut as a day somebody did not turn up. It no longer does any of that.", audience: "everyone" },
+      { text: "Your monthly pace and your transfer minimum are both worked out from 21 working days in September rather than 22, so neither asks for a day's output nobody was here for.", audience: "everyone" },
+      { text: "An EOD report due “the next business day” now skips the holiday too — Friday the 4th's report was due Tuesday the 8th, not Monday.", audience: "everyone" },
+      { text: "Office closures live in one list now, so adding the next one changes every screen at once instead of most of them. Tell Ethan which days the office is closed and they go in.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.66.0",
     headline: "NMLS Licenses is in the sidebar at last, and anyone can refresh it.",
     items: [

@@ -1,3 +1,5 @@
+import { isWorkday } from "@shared/company-holidays";
+
 /**
  * comp-floor.ts — the monthly transfer floor, pro-rated by the weekdays a CLR
  * was actually here.
@@ -452,8 +454,9 @@ export function isWeekdayIso(iso: unknown): boolean {
   const y = Number(s.slice(0, 4));
   const m = Number(s.slice(5, 7));
   const d = Number(s.slice(8, 10));
-  const dow = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
-  return dow !== 0 && dow !== 6;
+  // Company holidays are not working days, so they never count toward the
+  // floor a CLR is measured against. shared/company-holidays.ts is the list.
+  return isWorkday(`${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
 }
 
 /**

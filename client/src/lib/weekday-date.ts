@@ -1,3 +1,5 @@
+import { isCompanyHoliday } from "@shared/company-holidays";
+
 // Shift weekend dates onto the following Monday for chart aggregation.
 // Returns the original `YYYY-MM-DD` string unchanged if it falls Mon–Fri,
 // or the next Monday's date string if it falls on Sat (6) / Sun (0).
@@ -52,6 +54,9 @@ export function dropWeekendBuckets<T extends { startDate?: string; endDate?: str
 
 // True if `YYYY-MM-DD` falls on Mon–Fri.
 export function isWeekday(dateStr: string): boolean {
+  // Named for what it used to test; it now answers "is this a working day",
+  // which is what every caller actually meant. Company holidays are out.
+  if (isCompanyHoliday(dateStr)) return false;
   if (!dateStr) return false;
   const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return false;

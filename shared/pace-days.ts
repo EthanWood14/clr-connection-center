@@ -1,3 +1,5 @@
+import { isCompanyHoliday, isoFor } from "./company-holidays";
+
 // Pace-day arithmetic for the Transfer Scorecard's month-to-date projection.
 //
 // The scorecard projects month-end from the pace so far: transfers divided by
@@ -69,7 +71,12 @@ export function countNonSundaysInMonth(year: number, month: number, throughDay?:
   if (!(end >= 1)) return 0; // catches 0, negatives and NaN
   let count = 0;
   for (let day = 1; day <= end; day++) {
-    if (!isSunday(year, month, day)) count++;
+    if (isSunday(year, month, day)) continue;
+    // A day the office is shut is not a day of pace lost. This counter keeps
+    // Saturdays (owner's rule), so a Saturday holiday has to be excluded here
+    // even though a Mon-Fri counter would never have included it.
+    if (isCompanyHoliday(isoFor(year, month, day))) continue;
+    count++;
   }
   return count;
 }
