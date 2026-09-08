@@ -14169,22 +14169,37 @@ ${note}` : daysLine;
       }
 
       const workOrg = Number(currentOrgId() ?? 1);
-      const workedRows = sqlite.prepare(`
-        SELECT assistant_id, COUNT(DISTINCT d) AS days FROM (
-          SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
-          UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
-          UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
-          UNION SELECT user_id, stat_date FROM dialpad_daily_stats WHERE org_id=? AND calls>0
-          UNION SELECT COALESCE(e.user_id,l.user_id), e.message_date FROM dialpad_sms_events e
-            LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key WHERE e.org_id=?
-          UNION SELECT user_id, date FROM morning_checkins WHERE org_id=?
-          UNION SELECT user_id, date(clock_in) FROM time_clock_entries WHERE org_id=?
-          UNION SELECT assistant_id, report_date FROM eod_reports WHERE org_id=? AND
-            (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
-             OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
-        ) WHERE d BETWEEN ? AND ? GROUP BY assistant_id
-      `).all(...Array(8).fill(workOrg), startDate, endDate) as any[];
-      const workedDaysByUser = new Map(workedRows.map(r => [Number(r.assistant_id), Number(r.days)]));
+      // Days each CLR left any trace, for the transfers-per-worked-day column.
+      //
+      // eod_reports has NO org_id column — filtering on it made prepare()
+      // throw, which took the WHOLE manager dashboard down (4.68.1, live for
+      // about an hour on 8 Sep 2026). It is single-org anyway, so there is
+      // nothing to filter by; the seven tables that DO carry org_id still do.
+      //
+      // Wrapped as well: this column is a nicety, and no nicety should be able
+      // to blank the dashboard. If the query ever fails again the page loses
+      // one number instead of everything.
+      let workedDaysByUser = new Map<number, number>();
+      try {
+        const workedRows = sqlite.prepare(`
+          SELECT assistant_id, COUNT(DISTINCT d) AS days FROM (
+            SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
+            UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
+            UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
+            UNION SELECT user_id, stat_date FROM dialpad_daily_stats WHERE org_id=? AND calls>0
+            UNION SELECT COALESCE(e.user_id,l.user_id), e.message_date FROM dialpad_sms_events e
+              LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key WHERE e.org_id=?
+            UNION SELECT user_id, date FROM morning_checkins WHERE org_id=?
+            UNION SELECT user_id, date(clock_in) FROM time_clock_entries WHERE org_id=?
+            UNION SELECT assistant_id, report_date FROM eod_reports WHERE
+              (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
+               OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
+          ) WHERE d BETWEEN ? AND ? GROUP BY assistant_id
+        `).all(...Array(7).fill(workOrg), startDate, endDate) as any[];
+        workedDaysByUser = new Map(workedRows.map(r => [Number(r.assistant_id), Number(r.days)]));
+      } catch (e: any) {
+        console.error("[manager-dashboard] worked-days rollup failed:", e?.message ?? e);
+      }
       const leaderboard = countedClrs
         .map((u: any) => {
           const s = lbByUser[u.id] ?? { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };

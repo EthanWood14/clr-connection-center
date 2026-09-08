@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.69.1",
+    headline: "The manager dashboard loads again.",
+    items: [
+      { text: "The dashboard went blank for about an hour this afternoon. The new transfers-per-day-worked figure asked the EOD reports table for a company id it does not have, and the error took the whole page down rather than just that one number.", audience: "everyone" },
+      { text: "Fixed, and fenced: if that figure ever fails again the dashboard loses one number instead of everything.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.69.0",
     headline: "Reassign Prospect: pick people from a list instead of typing addresses.",
     items: [
