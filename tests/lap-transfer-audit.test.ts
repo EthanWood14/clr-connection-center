@@ -178,7 +178,7 @@ test("an available LOA routes a transfer to LAP without a competing Bonzo update
   const sync = routes.slice(routes.indexOf("async function syncTransferToBonzo"), routes.indexOf("app.post(\"/api/bonzo/test-transfer\""));
   assert.match(sync, /hasAvailableLapAssistant/);
   assert.match(sync, /reassigned = "skipped_lap";/);
-  assert.match(sync, /const shouldMove = !lapCovered &&/);
+  assert.match(sync, /const shouldMove = \(!lapCovered \|\| isChris\) &&/);
   // The rename and the clrtransfer tag are markers and DO apply; only the
   // automation trigger would be a mutation, and shouldMove already excludes it.
   assert.doesNotMatch(sync, /delete updates\[k\]/);

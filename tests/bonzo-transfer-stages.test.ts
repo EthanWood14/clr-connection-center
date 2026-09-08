@@ -185,7 +185,7 @@ test("LAP coverage suppresses every write that mutates the borrower", () => {
   // Reassigning and moving the stage are what would create a second
   // destination for the same transfer. Both stay off.
   assert.match(sync, /if \(lapCovered\) \{\s*\r?\n\s*reassigned = "skipped_lap";/);
-  assert.match(sync, /const shouldMove = !lapCovered &&/);
+  assert.match(sync, /const shouldMove = \(!lapCovered \|\| isChris\) &&/);
   // The rename and the clrtransfer tag are markers, not workflow, so they DO
   // still apply. The only tag that mutates is the automation trigger, and it
   // rides on shouldMove, which lapCovered already forces false.

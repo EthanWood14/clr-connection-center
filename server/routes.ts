@@ -24815,7 +24815,10 @@ ${note}` : daysLine;
     const advanced = isAdvancedStage(snap.stageName, stages, snap.stageId);
     const disqualified = DISQUALIFIED_STAGE_RE.test(String(snap.stageName ?? ""));
     const alreadyThere = wantStageRe.test(String(snap.stageName ?? ""));
-    const shouldMove = !lapCovered && !advanced && !disqualified && !alreadyThere;
+    // Chris's connected CLR → LOA handoffs still need the Hot Transfer stage.
+    // LAP continues to own the handoff; only stage movement is enabled here,
+    // not reassignment or creation of a second prospect.
+    const shouldMove = (!lapCovered || isChris) && !advanced && !disqualified && !alreadyThere;
     let moved = "none";
     if (shouldMove) {
       // An explicit per-LO stage id wins — it pins the destination even if the
