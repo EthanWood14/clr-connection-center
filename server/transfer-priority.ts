@@ -405,6 +405,30 @@ export interface RecipientRow extends StarvedRow {
    * destination at all under this stat, so an assistant row is false.
    */
   receiving: boolean;
+  /**
+   * On a LOAN OFFICER row: the assistant row that is the SAME HUMAN BEING.
+   *
+   * Some people do both jobs — they carry their own pipeline as a loan officer
+   * AND work another officer's desk as an assistant. C3 stores those as two
+   * unrelated rows, so their work was counted in two halves and neither half
+   * looked heavy. Ryan is 27 as an assistant and 24 as an officer: a stat that
+   * sees only the 24 calls him one of the lighter desks and pays full credit
+   * for sending him more, while he is in fact carrying 51 — the busiest person
+   * on the floor.
+   *
+   * NOT `deskId`, which says whose desk an assistant sits at. This says two
+   * rows are one person.
+   *
+   * EXPLICIT, never inferred. The assistant rows hold first names only
+   * ("Ryan"), and there is an active CLR called Ryan Andrade as well as a loan
+   * officer — matching on a first name would merge the loads of two different
+   * people and quietly corrupt everybody's score. Same rule the Bonzo work
+   * settled on: identity is a link somebody set, never a name that looks alike.
+   *
+   * Null on everyone who does one job, which is almost everyone, and while it
+   * is null this changes nothing at all.
+   */
+  sameAsLoaId?: number | string | null;
 }
 
 /**
@@ -728,6 +752,65 @@ function dedupeRecipients(rows: RecipientRow[]): RecipientRow[] {
 // ── what a transfer to each loan officer is worth ───────────────────────────
 
 /**
+ * Fold a hybrid's two jobs into one load.
+ *
+ * A person who is both a loan officer and somebody else's assistant appears in
+ * C3 as two rows. This stat only ranks loan officers, so it saw one of those
+ * halves and called the person lighter than they are — and "lighter" is what
+ * earns a CLR full credit for sending them more work.
+ *
+ * So: where a loan officer row names the assistant row that is the same human
+ * (`sameAsLoaId`), that assistant's received count is ADDED to the officer's,
+ * and the assistant row is dropped from the pool it was never eligible for
+ * anyway. One person, one load, ranked once.
+ *
+ * Nothing happens without an explicit link. Unlinked rows come back untouched,
+ * in their original order, which is what makes this safe to ship before a
+ * single link exists.
+ *
+ * `lastAt` takes the LATER of the two: the question it answers is "when did
+ * this person last get anything", and being idle at one job while busy at the
+ * other is not idle.
+ */
+export function mergeHybridLoads(rows: RecipientRow[]): RecipientRow[] {
+  const list = (rows ?? []).filter(Boolean);
+  if (!list.length) return list;
+
+  // Assistant rows by id, so a link can find its other half.
+  const assistants = new Map<string, RecipientRow>();
+  for (const r of list) {
+    if (r.kind === "loa" && hasId(r.id)) assistants.set(String(r.id), r);
+  }
+
+  const absorbed = new Set<string>();
+  const merged = list.map((r) => {
+    if (r.kind !== "lo" || !hasId(r.sameAsLoaId)) return r;
+    const other = assistants.get(String(r.sameAsLoaId));
+    // A link pointing at nothing is left alone rather than zeroed: a stale id
+    // must not silently rewrite somebody's load.
+    if (!other) return r;
+    // A link to itself, or two officers claiming one assistant, must not
+    // double-count. First claim wins and the rest are ignored.
+    if (absorbed.has(String(other.id))) return r;
+    absorbed.add(String(other.id));
+    const later = (a: string | null | undefined, b: string | null | undefined) => {
+      const x = String(a ?? ""), y = String(b ?? "");
+      return (x > y ? x : y) || null;
+    };
+    return {
+      ...r,
+      transfers: receivedCount(r) + receivedCount(other),
+      lastAt: later(r.lastAt, other.lastAt),
+      // Busy at either job means this desk is genuinely taking work.
+      receiving: r.receiving === true || other.receiving === true,
+    };
+  });
+
+  // The absorbed assistant rows are no longer their own recipient.
+  return merged.filter((r) => !(r.kind === "loa" && hasId(r.id) && absorbed.has(String(r.id))));
+}
+
+/**
  * Credit is a function of LOAD ALONE, and never increases with it.
  *
  * That invariant is the point of this shape. The first version promoted a
@@ -760,7 +843,10 @@ function dedupeRecipients(rows: RecipientRow[]): RecipientRow[] {
  * that reaches only them cannot be read, and lands in `unplaced`.
  */
 export function recipientCredits(rows: RecipientRow[], opts: PriorityOptions = {}): RecipientCredit[] {
-  let list = (rows ?? []).filter((r) => r && r.kind === "lo");
+  // A hybrid's two jobs are one person's workload before anything is ranked —
+  // otherwise the ordering, the bands and the ramp are all computed from a
+  // load that is only half of what they are actually carrying.
+  let list = mergeHybridLoads(rows ?? []).filter((r) => r && r.kind === "lo");
 
   // A pool restriction that names nobody on the roster is treated as no
   // restriction at all: an eligibility list we cannot resolve is missing

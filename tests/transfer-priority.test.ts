@@ -7,7 +7,7 @@ import {
   receivedCount, percentileNearestRank, flagPromotionCut, fullCreditBandSize, recipientKey,
   recipientCredits, creditIndex, transferCredit, transferDay, snapshotLoads,
   scoreTransferPriority, investmentAssistantKeys, resolveInvestmentRouting,
-  prioritisedDeskIds, deskAssistantCredits,
+  prioritisedDeskIds, deskAssistantCredits, mergeHybridLoads,
   FULL_CREDIT_LOS, FULL_CREDIT_SHARE, FLAG_PROMOTION_PERCENTILE,
   SCORE_NON_RECEIVING_RECIPIENTS, MIN_SCORED_TRANSFERS, PRIORITY_WINDOW_DAYS,
   INVESTMENT_PROPERTY_LOAS, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
@@ -2180,4 +2180,93 @@ test("HIGH — a routing 0% and a placement 0% are told apart by the CELL, not b
   // The column's own tooltip no longer sends the reader to a hover for the one
   // thing the cell now says by itself.
   assert.doesNotMatch(mgr, /Hover a cell to see how much of its number came from that routing rule/);
+});
+
+// ── people who do both jobs ────────────────────────────────────────────────
+
+const hybridLo = (id: number, name: string, transfers: number, over: any = {}) =>
+  ({ id, kind: "lo" as const, name, transfers, lastAt: "2026-09-01", needsTransfers: false, receiving: true, ...over });
+const hybridLoa = (id: number, name: string, transfers: number, over: any = {}) =>
+  ({ id, kind: "loa" as const, name, transfers, lastAt: "2026-09-01", needsTransfers: false, receiving: false, ...over });
+
+test("a hybrid's two jobs are added into one load", () => {
+  // Ryan is 27 as an assistant and 24 as an officer. A stat that sees only the
+  // 24 calls him one of the lighter desks and pays full credit for sending him
+  // more, while he is actually carrying 51.
+  const merged = mergeHybridLoads([
+    hybridLo(1012, "Ryan Andrade", 24, { sameAsLoaId: 9 }),
+    hybridLoa(9, "Ryan", 27),
+    hybridLo(1008, "Mark Gomez", 29),
+  ]);
+  const ryan = merged.find((r) => r.id === 1012)!;
+  assert.equal(ryan.transfers, 51, "27 as an assistant plus 24 as an officer");
+  assert.equal(merged.some((r) => r.kind === "loa" && r.id === 9), false,
+    "the assistant row is absorbed, not left to be ranked twice");
+  assert.equal(merged.find((r) => r.id === 1008)!.transfers, 29, "everyone else is untouched");
+});
+
+test("without a link nothing changes at all", () => {
+  // This is what makes it safe to ship before a single link exists.
+  const rows = [hybridLo(1, "A", 10), hybridLo(2, "B", 20), hybridLoa(9, "Ryan", 27)];
+  assert.deepEqual(mergeHybridLoads(rows), rows);
+  assert.deepEqual(mergeHybridLoads([]), []);
+});
+
+test("the merged load is what the ranking actually uses", () => {
+  // The point of merging BEFORE ordering: bands and the ramp are computed from
+  // the load, so a half-counted hybrid would be mis-banded, not just
+  // mis-displayed.
+  const rows = [
+    hybridLo(1, "Light", 5),
+    hybridLo(2, "Heavy", 40),
+    hybridLo(1012, "Ryan Andrade", 24, { sameAsLoaId: 9 }),
+    hybridLoa(9, "Ryan", 27),
+  ];
+  const before = recipientCredits(rows.filter((r) => r.kind === "lo").map((r) => ({ ...r, sameAsLoaId: null })));
+  const after = recipientCredits(rows);
+  const creditFor = (list: any[], id: number) => list.find((c) => c.id === id)?.credit;
+  assert.ok(creditFor(before, 1012)! > creditFor(after, 1012)!,
+    "counting only half his work paid MORE credit for sending him another lead");
+  assert.equal(after.find((c) => c.id === 1012)!.transfers, 51);
+});
+
+test("a link that points at nothing leaves the load alone", () => {
+  // A stale id must not silently rewrite somebody's load to zero or drop them.
+  const merged = mergeHybridLoads([hybridLo(1, "A", 12, { sameAsLoaId: 999 })]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].transfers, 12);
+});
+
+test("one assistant cannot be counted onto two officers", () => {
+  // Two officers both claiming the same assistant would inflate the floor's
+  // total workload out of nothing. First claim wins.
+  const merged = mergeHybridLoads([
+    hybridLo(1, "First", 10, { sameAsLoaId: 9 }),
+    hybridLo(2, "Second", 10, { sameAsLoaId: 9 }),
+    hybridLoa(9, "Shared", 30),
+  ]);
+  assert.equal(merged.find((r) => r.id === 1)!.transfers, 40);
+  assert.equal(merged.find((r) => r.id === 2)!.transfers, 10, "the second claim is ignored");
+  assert.equal(merged.filter((r) => r.kind === "loa").length, 0);
+});
+
+test("the later of the two last-worked dates wins, and either job counts as receiving", () => {
+  // Idle at one job while busy at the other is not idle.
+  const merged = mergeHybridLoads([
+    hybridLo(1, "A", 0, { sameAsLoaId: 9, lastAt: "2026-08-01", receiving: false }),
+    hybridLoa(9, "A", 15, { lastAt: "2026-09-05", receiving: true }),
+  ]);
+  assert.equal(merged[0].lastAt, "2026-09-05");
+  assert.equal(merged[0].receiving, true);
+  assert.equal(merged[0].transfers, 15);
+});
+
+test("the link is explicit, never inferred from a name", () => {
+  // Assistant rows hold first names only ("Ryan"), and there is an active CLR
+  // called Ryan Andrade as well as a loan officer. Matching on a first name
+  // would merge two different people's workloads.
+  const src = readFileSync(join(root, "server/transfer-priority.ts"), "utf8");
+  const fn = src.slice(src.indexOf("export function mergeHybridLoads"), src.indexOf("export function recipientCredits"));
+  assert.doesNotMatch(fn, /\.name\b/, "the merge must never look at a name");
+  assert.match(fn, /sameAsLoaId/);
 });

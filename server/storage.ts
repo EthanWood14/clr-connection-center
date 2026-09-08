@@ -81,6 +81,13 @@ sqlite.exec(`
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1`); } catch {}
+// Some people do BOTH jobs — their own pipeline as a loan officer, and another
+// officer's desk as an assistant. C3 stores those as two unrelated rows, so
+// the placement stat saw half a workload and called them lightly loaded. This
+// names the assistant row that is the same human, so the two loads can be
+// added. Explicit, because assistant rows hold first names only and guessing
+// would merge two different people. NULL for everyone who does one job.
+try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN same_person_loa_id INTEGER`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN in_daily_assignments INTEGER NOT NULL DEFAULT 1`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN exclude_from_stats INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`); } catch {}

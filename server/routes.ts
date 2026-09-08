@@ -14047,13 +14047,14 @@ ${note}` : daysLine;
         const placementLos = (sqlite.prepare(
           `SELECT lo.id AS id, lo.full_name AS name,
                   COALESCE(lo.needs_transfers, 0) AS flagged,
+                  lo.same_person_loa_id AS sameAsLoaId,
                   SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
                   MAX(o.date) AS lastAt
              FROM loan_officers lo
              LEFT JOIN lead_outcomes o
                ON o.lo_id = lo.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
             WHERE lo.org_id = ? AND lo.internal_status = 'active'
-            GROUP BY lo.id, lo.full_name, lo.needs_transfers`,
+            GROUP BY lo.id, lo.full_name, lo.needs_transfers, lo.same_person_loa_id`,
         ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
           id: Number(r.id),
           kind: "lo",
@@ -14062,6 +14063,9 @@ ${note}` : daysLine;
           lastAt: r.lastAt ? String(r.lastAt) : null,
           needsTransfers: !!Number(r.flagged),
           receiving: !!r.lastAt,
+          // Set only for the handful of people who also work somebody's desk;
+          // mergeHybridLoads adds that half of their workload onto this row.
+          sameAsLoaId: r.sameAsLoaId != null ? Number(r.sameAsLoaId) : null,
         }));
         // loan_officer_assistants carries no org_id of its own; the parent loan
         // officer is the org scope, exactly as the starved page reads it.

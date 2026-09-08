@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.71.0",
+    headline: "Someone who works both as an LO and an LOA is counted once, for their whole workload.",
+    items: [
+      { text: "A person who carries their own pipeline AND works another officer's desk was stored as two separate records, so Placed only ever saw half of what they were carrying — which made them look like one of the lighter desks and paid full credit for sending them even more.", audience: "manager" },
+      { text: "Their two roles now add up to one workload, ranked once. Ryan is a live example: 27 through the desk and 24 of his own is 51, not 24.", audience: "manager" },
+      { text: "Who is one person and who is two has to be set deliberately — nothing is guessed from names, because the desk records hold first names only and there is more than one Ryan in C3. Until a pairing is set, nothing changes for anybody.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.70.0",
     headline: "Managers can put the whole team in the Shotgun rotation in one press.",
     items: [
