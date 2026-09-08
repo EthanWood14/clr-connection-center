@@ -39,7 +39,11 @@ function StatusBadge({ status }: { status: string | null }) {
 export default function NmlsStatus() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  // Owner 9/7/26: everyone can refresh, not just admins. This reads a public
+  // licence register; the server enforces a shared cooldown so opening it does
+  // not turn fifteen people into three hundred requests at the register.
+  const isPortal = user?.portal === "lap" || user?.portal === "lop";
+  const canRefresh = !!user && !isPortal && user.role !== "viewer";
   const [search, setSearch] = useState("");
 
   const { data, isLoading } = useQuery<{ items: NmlsItem[] }>({
@@ -56,7 +60,13 @@ export default function NmlsStatus() {
         description: `Checked ${r.checked ?? 0}. Blocked: ${r.blocked ?? 0}. Flagged: ${r.flagged ?? 0}.`,
       });
     },
-    onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
+    // The server's 429 carries a readable reason ("run it again in 3 minutes"),
+    // and a generic "Refresh failed" would hide it behind something untrue.
+    onError: (e: any) => toast({
+      title: "Not refreshed",
+      description: String(e?.message ?? "Something went wrong."),
+      variant: "destructive",
+    }),
   });
 
   const checkOne = useMutation({
@@ -107,7 +117,7 @@ export default function NmlsStatus() {
             Auto-verified nightly. Use Refresh All to check now.
           </p>
         </div>
-        {isAdmin && (
+        {canRefresh && (
           <Button
             onClick={() => checkAll.mutate()}
             disabled={checkAll.isPending}

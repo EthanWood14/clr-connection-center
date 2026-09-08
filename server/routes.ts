@@ -19,7 +19,7 @@ import cookieParser from "cookie-parser";
 import { Resend } from "resend";
 import cron from "node-cron";
 
-import { isPortalAccount, clrRoleMatches, canUseReassignTool, CLR_PORTAL_SQL } from "./clr-roster";
+import { isPortalAccount, clrRoleMatches, canUseReassignTool, canRunNmlsCheckAll, CLR_PORTAL_SQL } from "./clr-roster";
 import { eodNagStage, eodNagLocks, eodNagChimes, EOD_NAG_CHIME_INTERVAL_MS, type EodNagStage } from "./eod-nag";
 import { buildBuckets, chooseBucketWidth, type ActivityPoint } from "./chart-buckets";
 import { summarizeCompleteness, isInvestmentProperty, type TransferRow as CompletenessRow } from "@shared/transfer-completeness";
@@ -2651,6 +2651,16 @@ async function verifyLoNmls(loId: number): Promise<{ ok: boolean; status: string
 
   return { ok: true, status: result.status, states: result.states, blocked: result.blocked, error: result.rawError };
 }
+
+/**
+ * The bulk NMLS scan is shared, so its rate limit is shared too.
+ *
+ * Module-level rather than per-user: the thing being protected is the public
+ * register on the other end, which does not care which of us is asking.
+ */
+const NMLS_CHECK_ALL_COOLDOWN_MS = 5 * 60_000;
+let nmlsCheckAllLastRunAt = 0;
+let nmlsCheckAllInFlight = false;
 
 async function verifyAllLoNmls(): Promise<{ checked: number; blocked: number; flagged: number }> {
   const los = storage.getLoanOfficers().filter((lo: any) => lo.nmlsId && lo.internalStatus === "active");
@@ -19065,15 +19075,43 @@ ${note}` : daysLine;
   });
 
   // Check all LOs (admin only)
+  // Owner 9/7/26: open to everyone on staff, not just admins. This reads a
+  // PUBLIC licence register — nothing here is confidential, and the reason it
+  // was restricted was the cost of the scan, not who may see the answer.
+  //
+  // Cost is handled by a cooldown instead, which is the honest control: the
+  // scan walks every active LO with a 500ms pause between them, so it is ~20
+  // external requests and ~11 seconds. One at a time, shared across everyone —
+  // fifteen people each pressing Refresh All would otherwise be three hundred
+  // requests at the register in a minute.
   app.post("/api/nmls/check-all", requireAuth, async (req: any, res) => {
-    const user = req.session_user;
-    if (user?.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    const sessionUser = req.session_user;
+    const actor = storage.getUserById(Number(sessionUser?.userId)) as any;
+    if (!canRunNmlsCheckAll({ ...actor, portal: sessionUser?.portal ?? actor?.portal })) {
+      return res.status(403).json({ error: "CLRs, managers and admins only" });
+    }
+    if (nmlsCheckAllInFlight) {
+      return res.status(429).json({ error: "A check is already running. Give it a moment." });
+    }
+    const waited = Date.now() - nmlsCheckAllLastRunAt;
+    if (waited < NMLS_CHECK_ALL_COOLDOWN_MS) {
+      const secs = Math.ceil((NMLS_CHECK_ALL_COOLDOWN_MS - waited) / 1000);
+      return res.status(429).json({
+        error: `Everyone's licences were just checked. You can run it again in ${secs > 60 ? `${Math.ceil(secs / 60)} minutes` : `${secs} seconds`}.`,
+      });
+    }
+    const user = sessionUser;
+    nmlsCheckAllInFlight = true;
     try {
       const result = await verifyAllLoNmls();
+      nmlsCheckAllLastRunAt = Date.now();
       audit({ userId: user.userId, userName: user.name ?? "Admin", action: "verify", entityType: "nmls_license", entityId: null as any, entityLabel: "bulk check", details: JSON.stringify(result) });
       res.json({ ok: true, ...result });
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "verify failed" });
+    } finally {
+      // Always cleared, or one failed scan locks the button for everyone.
+      nmlsCheckAllInFlight = false;
     }
   });
 

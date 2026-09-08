@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
   Trophy, Settings, MapPin, BedDouble,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck, Sparkles,
-  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch, ArrowRightLeft
+  FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch, ArrowRightLeft, BadgeCheck
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -231,6 +231,9 @@ const toolItems: NavItem[] = [
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
+  // The licence status board. It has existed and been reachable by URL only
+  // since it was built — no link anywhere (owner 9/7/26).
+  { title: "NMLS Licenses",   url: "/nmls-status",    icon: BadgeCheck },
   // CLRs too (owner 9/7/26) — they are the ones who find a prospect sitting in
   // the wrong book while working a list.
   { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },

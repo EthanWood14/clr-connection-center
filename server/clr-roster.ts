@@ -27,20 +27,46 @@ export function clrRoleMatches(user: any): boolean {
 
 
 /**
- * May this account use the Bonzo reassign tool?
+ * Is this a working C3 staff account?
  *
- * CLRs, managers and admins (owner 9/7/26 — a CLR working a list is usually
- * the first to notice a prospect sitting in the wrong book). Viewers are
- * read-only by definition and the LAP/LOP portals are a different product, so
- * both stay out. Every move is written to the audit trail regardless.
+ * The general answer to "may this person use a staff tool": a CLR, a manager
+ * or an admin. Viewers are read-only by definition and the LAP/LOP portals are
+ * a different product, so both stay out.
+ *
+ * One predicate rather than one per tool, because the interesting cases — a
+ * portal session resolving to a shared user row, an admin who is not flagged
+ * is_clr — are the same every time, and a second copy is a second chance to
+ * get them wrong.
  */
-export function canUseReassignTool(user: any): boolean {
+export function canUseStaffTools(user: any): boolean {
   if (!user || isPortalAccount(user)) return false;
   if (user.role === "viewer") return false;
   if (user.role === "admin") return true;
   if (user.isManager ?? user.is_manager) return true;
   if (user.superAdmin ?? user.super_admin) return true;
   return clrRoleMatches(user);
+}
+
+/**
+ * May this account use the Bonzo reassign tool?
+ *
+ * Owner 9/7/26: CLRs too, not just managers — a CLR working a list is usually
+ * the first to notice a prospect sitting in the wrong book. Every move is
+ * written to the audit trail regardless.
+ */
+export function canUseReassignTool(user: any): boolean {
+  return canUseStaffTools(user);
+}
+
+/**
+ * May this account run the bulk NMLS re-check?
+ *
+ * Owner 9/7/26: everyone, not just admins. It reads a public licence
+ * register — the reason it was ever restricted was cost, not confidentiality,
+ * and a cooldown handles cost better than a role does.
+ */
+export function canRunNmlsCheckAll(user: any): boolean {
+  return canUseStaffTools(user);
 }
 
 /** SQL twin, for raw roster queries. Matches the convention Shotgun already uses. */

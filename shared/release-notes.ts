@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.66.0",
+    headline: "NMLS Licenses is in the sidebar at last, and anyone can refresh it.",
+    items: [
+      { text: "New under Tools: NMLS Licenses. Every loan officer's licence status in one list, with a link straight to their public profile. The page has existed since it was built but was linked from nowhere — you could only reach it by typing the address.", audience: "everyone" },
+      { text: "Refresh All is no longer admin-only. Anyone can re-check every licence against the public register, because it reads public information — the reason it was locked was the cost of the scan, not who was allowed to see it.", audience: "everyone" },
+      { text: "To keep that cost sane, the scan runs once every five minutes for the whole team rather than once per person. Press it while somebody else is running one and you are told when you can try again.", audience: "everyone" },
+      { text: "NMLS Tracker is unchanged and was already open to everyone.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.65.0",
     headline: "A dead mailbox can no longer cost everyone else the email.",
     items: [
