@@ -3,6 +3,15 @@ import assert from "node:assert/strict";
 
 import { registerBonzoReassignRoutes } from "../server/bonzo-reassign-routes";
 import { canUseReassignTool } from "../server/clr-roster";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  peopleFromPayload, fallbackPeopleFromLos, normalizePerson,
+  PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS,
+} from "../server/leadvault-people";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * The routes, driven through a stand-in Express and a fake Bonzo, so the rules
@@ -37,11 +46,15 @@ function harness(over: Partial<Parameters<typeof registerBonzoReassignRoutes>[1]
     },
     getProspectAssigneeEmail: async (id: number) => holders.get(id) ?? null,
     audit: (_req: any, entry: any) => { audits.push(entry); },
+    people: async () => ({ people: [], source: "leadvault", fetchedAt: null, notice: null }),
     ...over,
   };
 
   registerBonzoReassignRoutes(
-    { post(path: string, _auth: any, handler: Handler) { routes.set(path, handler); } } as any,
+    {
+      post(path: string, _auth: any, handler: Handler) { routes.set(path, handler); },
+      get(path: string, _auth: any, handler: Handler) { routes.set(path, handler); },
+    } as any,
     deps as any,
   );
 
@@ -57,6 +70,7 @@ function harness(over: Partial<Parameters<typeof registerBonzoReassignRoutes>[1]
 
   return {
     check: (body: any) => call("/api/bonzo/reassign/check", body),
+    people: () => call("/api/bonzo/reassign/people"),
     move: (body: any) => call("/api/bonzo/reassign", body),
     calls, audits,
     setHolder: (id: number, email: string | null) => holders.set(id, email),
@@ -252,4 +266,108 @@ test("viewers and the LOA portal stay out", () => {
   assert.equal(canUseReassignTool({ role: "assistant", portal: "lop" }), false);
   assert.equal(canUseReassignTool(null), false);
   assert.equal(canUseReassignTool({}), false);
+});
+
+// ── the roster behind the dropdowns ─────────────────────────────────────────
+
+test("LeadVault rows become pickable people", () => {
+  const people = peopleFromPayload({
+    users: [
+      { full_name: "Chris Redoble", email: "Credoble@WestCapitalLending.com", role: "lo", bonzo_user_id: 1000 },
+      { full_name: "Bill Neessen", email: "bill@westcapitallending.com", role: "lo", bonzo_user_id: 42 },
+    ],
+  });
+  assert.deepEqual(people.map((p) => p.email),
+    ["bill@westcapitallending.com", "credoble@westcapitallending.com"], "sorted by name, lowercased");
+  assert.equal(people[1].name, "Chris Redoble");
+  assert.equal(people[1].bonzoUserId, 1000);
+});
+
+test("a row with no usable address is left out, not shown broken", () => {
+  // An option that cannot be moved to is worse than a shorter list: the person
+  // picking it has no way to know it will fail.
+  const people = peopleFromPayload({ users: [
+    { full_name: "No Email", email: "", role: "lo" },
+    { full_name: "Spaces", email: "a b@x.com" },
+    { full_name: "No At", email: "nope" },
+    { full_name: "Fine", email: "fine@x.com" },
+  ]});
+  assert.deepEqual(people.map((p) => p.email), ["fine@x.com"]);
+  assert.equal(normalizePerson({ email: "  " }), null);
+});
+
+test("the same person twice collapses to one option", () => {
+  const people = peopleFromPayload({ users: [
+    { full_name: "Chris", email: "c@x.com" },
+    { full_name: "Chris Redoble", email: "C@X.com" },
+  ]});
+  assert.equal(people.length, 1);
+});
+
+test("whatever envelope LeadVault uses, or none, is tolerated", () => {
+  const rows = [{ full_name: "A", email: "a@x.com" }];
+  for (const payload of [rows, { users: rows }, { los: rows }, { people: rows }]) {
+    assert.equal(peopleFromPayload(payload).length, 1, JSON.stringify(payload).slice(0, 30));
+  }
+  // A shape change degrades to an empty list rather than throwing on a page
+  // somebody is trying to use.
+  for (const junk of [null, undefined, {}, "nope", 7, { users: "no" }]) {
+    assert.deepEqual(peopleFromPayload(junk as any), []);
+  }
+});
+
+test("the fallback prefers the address Bonzo actually knows them by", () => {
+  // bonzo_username is the field that exists precisely because an LO's Bonzo
+  // seat is not always their company email.
+  const los = [
+    { fullName: "Chris Redoble", email: "chris@wcl.com", bonzoUsername: "credoble@westcapitallending.com" },
+    { fullName: "No Bonzo Seat", email: "solo@wcl.com", bonzoUsername: "" },
+    { fullName: "Nothing", email: "", bonzoUsername: "" },
+  ];
+  const people = fallbackPeopleFromLos(los);
+  assert.deepEqual(people.map((p) => p.email),
+    ["credoble@westcapitallending.com", "solo@wcl.com"]);
+  assert.equal(people.length, 2, "an LO with no address at all is not an option");
+});
+
+test("the fallback is a fallback, and the freshness rules are sane", () => {
+  // Served stale for a while, but not so long that somebody who left is still
+  // in the dropdown a day later.
+  assert.ok(PEOPLE_TTL_MS > 0 && PEOPLE_TTL_MS <= 30 * 60_000);
+  assert.ok(PEOPLE_STALE_MAX_MS > PEOPLE_TTL_MS);
+  assert.ok(PEOPLE_STALE_MAX_MS <= 24 * 60 * 60_000);
+});
+
+test("the roster route is gated like the rest of the tool", async () => {
+  let refused = 0;
+  const h = harness({
+    requireAccess: (_q: any, res: any) => { refused += 1; res.status(403).json({ error: "no" }); return false; },
+    people: async () => ({ people: [], source: "none", fetchedAt: null, notice: null }),
+  } as any);
+  const out = await h.people();
+  assert.equal(out.code, 403, "a staff roster with addresses is not a public list");
+  assert.equal(refused, 1);
+});
+
+test("an empty LeadVault answer is never mistaken for 'nobody works here'", () => {
+  // It is far likelier the endpoint changed shape than that the company has no
+  // loan officers, so an empty read must fall through rather than cache.
+  const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+  const fn = routes.slice(routes.indexOf("function fetchLeadVaultPeople"), routes.indexOf("async function reassignPeople"));
+  assert.match(fn, /if \(!people\.length\) return null;/);
+  // And the cache is only written on a real answer.
+  assert.ok(fn.indexOf("peopleCache = ") > fn.indexOf("if (!people.length) return null;"));
+});
+
+test("the roster refreshes itself rather than waiting to be asked", () => {
+  const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+  // A cron keeps it warm so the first person of the morning does not pay for
+  // the fetch, and a hire reaches the dropdown without anyone asking. Both the
+  // timer and the boot warm-up must call the fetch, not just define it.
+  const warm = routes.slice(routes.indexOf("async function reassignPeople"));
+  const cronAt = warm.indexOf('cron.schedule("*/10 * * * *"');
+  const bootAt = warm.indexOf("setTimeout(() => { void fetchLeadVaultPeople");
+  assert.ok(cronAt > 0, "refreshed on a timer");
+  assert.ok(bootAt > 0, "and warmed shortly after boot");
+  assert.match(warm.slice(cronAt, cronAt + 300), /void fetchLeadVaultPeople\(\)/);
 });

@@ -118,6 +118,11 @@ import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignm
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 import { registerTransferDetailRoutes } from "./transfer-detail-routes";
 import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
+import {
+  peopleFromPayload, fallbackPeopleFromLos,
+  PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
+  type LeadVaultPerson, type PeopleResult,
+} from "./leadvault-people";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -18734,6 +18739,81 @@ ${note}` : daysLine;
     void fetchOutboundSummary(90, token).catch(() => {});
   }
 
+  /**
+   * The LeadVault roster, cached and kept warm.
+   *
+   * Same shape as the outbound-summary reader below: serve fresh, serve stale
+   * while refreshing, and only block when there is nothing usable at all. This
+   * sits behind a dropdown somebody is waiting on, so a four-second fetch on
+   * every page load would be felt.
+   */
+  let peopleCache: { at: number; people: LeadVaultPerson[] } | null = null;
+  let peopleInFlight: Promise<LeadVaultPerson[] | null> | null = null;
+
+  function fetchLeadVaultPeople(): Promise<LeadVaultPerson[] | null> {
+    if (peopleInFlight) return peopleInFlight;
+    const token = leadvaultReportingToken();
+    if (!token) return Promise.resolve(null);
+    const base = (process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud").replace(/\/+$/, "");
+    const run = (async () => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10_000);
+      try {
+        const upstream = await fetch(`${base}/api/clr/users`, {
+          headers: { "x-api-token": token, Accept: "application/json" },
+          signal: ctrl.signal,
+        });
+        if (!upstream.ok) return null;
+        const json: any = await upstream.json().catch(() => null);
+        const people = peopleFromPayload(json);
+        // An empty roster is treated as a failed read, not as "nobody works
+        // here": it is far likelier that the endpoint changed shape than that
+        // the company has no loan officers.
+        if (!people.length) return null;
+        peopleCache = { at: Date.now(), people };
+        return people;
+      } catch { return null; } finally {
+        clearTimeout(timer);
+        peopleInFlight = null;
+      }
+    })();
+    peopleInFlight = run;
+    return run;
+  }
+
+  async function reassignPeople(): Promise<PeopleResult> {
+    const age = peopleCache ? Date.now() - peopleCache.at : Infinity;
+    if (peopleCache && age < PEOPLE_TTL_MS) {
+      return { people: peopleCache.people, source: "leadvault", fetchedAt: new Date(peopleCache.at).toISOString(), notice: null };
+    }
+    if (peopleCache && age < PEOPLE_STALE_MAX_MS) {
+      void fetchLeadVaultPeople().catch(() => {});
+      return { people: peopleCache.people, source: "leadvault", fetchedAt: new Date(peopleCache.at).toISOString(), notice: null };
+    }
+    const fresh = await fetchLeadVaultPeople();
+    if (fresh?.length) {
+      return { people: fresh, source: "leadvault", fetchedAt: new Date(peopleCache?.at ?? Date.now()).toISOString(), notice: null };
+    }
+    // LeadVault is the source; this is only so the tool still works without it.
+    const fallback = fallbackPeopleFromLos(storage.getLoanOfficers() as any[]);
+    if (!fallback.length) {
+      return { people: [], source: "none", fetchedAt: null, notice: "No roster available — LeadVault could not be reached and C3 has no loan officer addresses on file." };
+    }
+    return {
+      people: fallback,
+      source: "c3-fallback",
+      fetchedAt: null,
+      notice: "LeadVault could not be reached, so this is C3's own loan officer list. It may be out of date — check the address before moving anything.",
+    };
+  }
+
+  // Warm on a timer so the first person to open the page does not pay for the
+  // fetch, and so a roster change reaches the dropdown without anyone asking.
+  cron.schedule("*/10 * * * *", () => {
+    runWithOrg({ orgId: 1, superAdmin: false }, () => { void fetchLeadVaultPeople().catch(() => {}); });
+  });
+  setTimeout(() => { void fetchLeadVaultPeople().catch(() => {}); }, 20_000);
+
   async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
     const out = new Map<string, number>();
     const token = leadvaultReportingToken();
@@ -21459,6 +21539,7 @@ ${note}` : daysLine;
     findProspectByPhone: (phone: string) => findProspectByPhone(phone),
     reassignProspectByEmail,
     getProspectAssigneeEmail,
+    people: reassignPeople,
     audit: (req: any, entry) => {
       const u = storage.getUserById(Number(req.session_user?.userId)) as any;
       audit({

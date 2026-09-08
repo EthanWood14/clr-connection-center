@@ -28,6 +28,15 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.69.0",
+    headline: "Reassign Prospect: pick people from a list instead of typing addresses.",
+    items: [
+      { text: "Both address boxes on Reassign Prospect are now dropdowns of names. Typing the address was the one step of that job with no safety net — everything else is checked, and then it all rested on spelling somebody's address right.", audience: "everyone" },
+      { text: "The list comes from LeadVault and keeps itself up to date, so somebody who joined today is there without anyone editing C3. Whoever you already picked on one side is left out of the other, because moving a prospect to the person who already has it is not a move.", audience: "everyone" },
+      { text: "If LeadVault cannot be reached the tool still works, falling back to C3's own loan officer list — and says so on screen, in amber, so you know to check the address before moving anything.", audience: "manager" },
+    ],
+  },
   { version: "4.68.1", headline: "Transfers per day worked and clearer activity charts.", items: [{ text: "MTD now shows transfers divided by days with recorded work, excluding days off." }, { text: "Activity by CLR has wider cells, clear dates, and fixed names while scrolling." }] },
   {
     version: "4.68.0",

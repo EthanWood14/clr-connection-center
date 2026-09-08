@@ -41,6 +41,11 @@ export interface BonzoReassignDeps {
   getProspectAssigneeEmail: (prospectId: number) => Promise<string | null>;
   /** Records who moved what, so a disputed move has an answer. */
   audit: (req: any, entry: { action: string; details: Record<string, unknown> }) => void;
+  /** The roster behind the two dropdowns. LeadVault, cached — see leadvault-people. */
+  people: () => Promise<{
+    people: Array<{ email: string; name: string; role: string | null; bonzoUserId: number | null }>;
+    source: string; fetchedAt: string | null; notice: string | null;
+  }>;
 }
 
 /** The candidate list, reduced to what the decision and the screen both need. */
@@ -56,8 +61,24 @@ function summarize(candidates: ReassignCandidate[]) {
 export function registerBonzoReassignRoutes(app: Express, deps: BonzoReassignDeps): void {
   const {
     requireAuth, requireAccess, bonzoConfigured,
-    findProspectByPhone, reassignProspectByEmail, getProspectAssigneeEmail, audit,
+    findProspectByPhone, reassignProspectByEmail, getProspectAssigneeEmail, audit, people,
   } = deps;
+
+  /**
+   * Who the two dropdowns may offer.
+   *
+   * Gated like the rest of the tool: it is a staff roster with email addresses,
+   * not a public list.
+   */
+  app.get("/api/bonzo/reassign/people", requireAuth, async (req: any, res: Response) => {
+    if (!requireAccess(req, res)) return;
+    try {
+      res.json(await people());
+    } catch (e: any) {
+      console.error("[bonzo-reassign] roster unavailable:", e?.message ?? e);
+      res.status(502).json({ error: "Could not load the list of people." });
+    }
+  });
 
   /**
    * Step one: look, decide, and explain. Changes nothing.
