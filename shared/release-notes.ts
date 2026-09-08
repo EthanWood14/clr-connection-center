@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.71.1", headline: "A shorter everyday sidebar.", items: [
+    { text: "Seating Map, Team Stats, Office TV, EOD Analytics, NMLS Licenses, My Report, and Weekly Schedule now live under Advanced Settings." },
+  ] },
   {
     version: "4.71.0",
     headline: "Someone who works both as an LO and an LOA is counted once, for their whole workload.",

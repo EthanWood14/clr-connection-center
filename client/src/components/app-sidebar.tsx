@@ -189,16 +189,16 @@ const mainItems: NavItem[] = [
 ];
 
 const personalItems: NavItem[] = [
-  { title: "My Report",       url: "/my-report",     icon: BarChart2,       help: help.myReport },
   { title: "Check-In",        url: "/check-ins",     icon: UserCheck },
   { title: "Time Off",        url: "/time-off",      icon: Plane },
-  { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
   { title: "Comp Requests",   url: "/comp-requests", icon: Wallet },
 ];
 
 // Occasional-use personal pages, folded into Advanced Settings (owner 8/25) so
 // the everyday Personal group stays short. The page itself is unchanged.
 const advancedPersonalItems: NavItem[] = [
+  { title: "My Report",       url: "/my-report",     icon: BarChart2,       help: help.myReport },
+  { title: "Weekly Schedule", url: "/my-schedule",   icon: CalendarDays },
   { title: "Time Clock",      url: "/time-clock",    icon: Timer },
   // Something you go and look at when a write-up is in question, rather than
   // every day (owner 9/7/26).
@@ -209,18 +209,10 @@ const teamItems: NavItem[] = [
   // The same view managers get at Home, open to the whole team. Their personal
   // dashboard stays where it is — this is in addition to it, not instead of it.
   { title: "Team Dashboard",        url: "/team-dashboard", icon: LayoutDashboard, help: help.dashboard },
-  { title: "Team Stats",            url: "/leaderboard",   icon: Trophy,          help: help.stats },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
-  // Embedded in C3 rather than opened off-site — the chart still lives in its
-  // own app, you just no longer leave C3 (and re-authenticate) to look at it.
-  { title: "Seating Map",           url: "/seating-map", icon: Armchair },
-  // A real pathname (not a hash route) so the short public wallboard URL stays
-  // visible in the browser and can be copied straight onto any TV.
-  { title: "Office TV",             url: "/tv",          icon: MonitorPlay, external: true },
 ];
 
 const managerTeamItems: NavItem[] = [
-  { title: "EOD Analytics",         url: "/eod-analytics", icon: BarChart2 },
   // Admin-only in practice: the API refuses a non-admin, and the page says so.
   { title: "App Review",            url: "/app-review",    icon: Sparkles },
 ];
@@ -231,9 +223,6 @@ const toolItems: NavItem[] = [
   { title: "Install App",     url: "/install",        icon: Smartphone },
   { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
   { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
-  // The licence status board. It has existed and been reachable by URL only
-  // since it was built — no link anywhere (owner 9/7/26).
-  { title: "NMLS Licenses",   url: "/nmls-status",    icon: BadgeCheck },
   // CLRs too (owner 9/7/26) — they are the ones who find a prospect sitting in
   // the wrong book while working a list.
   { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },
@@ -243,6 +232,10 @@ const toolItems: NavItem[] = [
 // the everyday sidebar short. CLR Profiles stays manager-gated at the render
 // site — relocating a link must not turn it into a 403 for a CLR.
 const referenceItems: NavItem[] = [
+  { title: "Seating Map", url: "/seating-map", icon: Armchair },
+  { title: "Team Stats", url: "/leaderboard", icon: Trophy, help: help.stats },
+  { title: "Office TV", url: "/tv", icon: MonitorPlay, external: true },
+  { title: "NMLS Licenses", url: "/nmls-status", icon: BadgeCheck },
   { title: "Forum",           url: "/forum",         icon: MessagesSquare, help: help.forum },
   { title: "CLR Training",    url: "/clr-training",  icon: GraduationCap },
   // The daily procedure, as opposed to the ten-day plan next to it.
@@ -250,6 +243,7 @@ const referenceItems: NavItem[] = [
 ];
 
 const referenceManagerItems: NavItem[] = [
+  { title: "EOD Analytics", url: "/eod-analytics", icon: BarChart2 },
   { title: "CLR Profiles",    url: "/clr-profiles",  icon: UserCheck },
 ];
 
