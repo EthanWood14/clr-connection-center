@@ -67,6 +67,28 @@ const PIPELINE_OPTIONS: { key: PipelineRange; label: string }[] = [
   { key: "7d", label: "7d" },
 ];
 
+// Meta conversion has its own windows: none of the ranges above include 28
+// days, and 4 weeks is the window this comparison is quoted in.
+type MetaRange = 7 | 14 | 28 | 30 | 90;
+const META_RANGE_OPTIONS: { key: string; label: string }[] = [
+  { key: "7", label: "7d" },
+  { key: "14", label: "14d" },
+  { key: "28", label: "28d" },
+  { key: "30", label: "30d" },
+  { key: "90", label: "90d" },
+];
+
+type MetaConversionFlow = {
+  flow: string; label: string; leads: number; transferred: number; rate: number;
+};
+type MetaConversionResp = {
+  configured: boolean;
+  days: number;
+  flows: MetaConversionFlow[];
+  fetchedAt: string | null;
+  stale: boolean;
+};
+
 type Alert = { level: "warn" | "danger" | "info"; text: string; href?: string };
 type RangeBlock = {
   window: { startDate: string; endDate: string; days: number; label: string };
@@ -695,6 +717,7 @@ export default function ManagerDashboard() {
   const [rangeLeaderboard, setRangeLeaderboard] = useState<RangeKey>("30d");
   const [rangeHeatmap, setRangeHeatmap] = useState<RangeKey>("30d");
   const [rangeTopLos, setRangeTopLos] = useState<RangeKey>("30d");
+  const [metaDays, setMetaDays] = useState<string>("28");
   const [rangeStates, setRangeStates] = useState<RangeKey>("30d");
   const [rangeCompare, setRangeCompare] = useState<RangeKey>("30d");
   type CompareSort = "transferPct" | "appointmentPct" | "fellThroughPct" | "totalOutcomes" | "name";
@@ -708,6 +731,15 @@ export default function ManagerDashboard() {
   const [clrTrendShowAvg, setClrTrendShowAvg] = useState(true);
   const [clrTrendAvgWindow, setClrTrendAvgWindow] = useState(7); // trailing window in business days
   const [pipelineRange, setPipelineRange] = useState<PipelineRange>("1d");
+
+  // Own query on purpose. The page's single /api/manager-dashboard call feeds
+  // every other section, so a LeadVault timeout folded into it would leave the
+  // whole dashboard sitting on skeletons.
+  const metaConv = useQuery<MetaConversionResp>({
+    queryKey: [`/api/meta-conversion?days=${metaDays}`],
+    queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
+    refetchInterval: 60_000,
+  });
 
   const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
     queryKey: ["/api/manager-dashboard"],
@@ -1813,6 +1845,62 @@ export default function ManagerDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Meta lead -> transfer conversion, split by which Meta pipe fed it.
+            Hidden entirely when LeadVault isn't configured — an unconfigured
+            install should show nothing, not an empty chart. */}
+        {metaConv.data?.configured ? (
+          <div>
+            <SectionTitle icon={Target}
+              action={
+                <RangePills options={META_RANGE_OPTIONS} value={metaDays} onChange={setMetaDays} ariaLabel="Meta conversion range" />
+              }
+            >
+              Meta leads that reached an LO — last {metaConv.data.days} days
+            </SectionTitle>
+            <Card>
+              <CardContent className="p-4">
+                {metaConv.data.flows.length === 0 ? (
+                  // No rows at all means the upstream read failed. Say that,
+                  // rather than drawing zeroes — "Meta stopped converting" and
+                  // "we couldn't ask" are very different answers.
+                  <div className="text-center text-muted-foreground text-sm py-6">
+                    Couldn&apos;t reach LeadVault for this — showing nothing rather than guessing.
+                  </div>
+                ) : (
+                  <>
+                    <ul className="space-y-3.5">
+                      {metaConv.data.flows.map((f) => {
+                        const best = Math.max(...metaConv.data!.flows.map((x) => x.rate), 1);
+                        const pct = Math.round((f.rate / best) * 100);
+                        return (
+                          <li key={f.flow}>
+                            <div className="flex justify-between items-baseline mb-1 text-sm gap-3">
+                              <span className="font-medium truncate brand-text">{f.label}</span>
+                              <span className="tabular-nums text-muted-foreground shrink-0">
+                                {f.transferred} of {f.leads}
+                                <span className="ml-2 font-semibold" style={{ color: GREEN }}>{f.rate}%</span>
+                              </span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                              <div className="h-full" style={{ width: `${pct}%`, backgroundColor: GREEN }} />
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="text-xs text-muted-foreground mt-3">
+                      A lead counts as transferred only if the transfer happened on or after
+                      the day it arrived. Transfers sync from C3 every few hours, so the last
+                      day or two always reads low.
+                      {metaConv.data.stale ? " Showing the last copy we could fetch." : ""}
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
 
         {/* Top states by NPA — render only if there's any data, otherwise hidden */}
         {(statesBlock?.topStates?.length ?? 0) > 0 ? (

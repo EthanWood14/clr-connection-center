@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.78.0",
+    headline: "See which Meta ads actually turn into transfers.",
+    items: [
+      {
+        text: "The Advanced Dashboard now shows how many Meta leads reached a loan officer, split between the Meta leads we have been running since 2024 and the newer Retail Intake ones that started in July — so you can see at a glance which is converting better. Pick the window you want, from a week up to 90 days.",
+        audience: "everyone",
+      },
+    ],
+  },
+  {
     version: "4.77.0",
     headline: "Two charts on the team page, and one Shotgun lead at a time.",
     items: [

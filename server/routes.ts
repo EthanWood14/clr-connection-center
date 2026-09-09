@@ -124,6 +124,7 @@ import {
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
+import { metaConversion } from "./leadvault-meta-conversion";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -19123,6 +19124,18 @@ ${note}` : daysLine;
       withoutBonzoLogin: chosen.length - emails.length,
       los: result.los.map((row) => ({ ...row, lo: loByEmail.get(row.email) ?? null })),
     });
+  });
+
+  // Meta lead -> transfer conversion, split by which Meta pipe fed the lead.
+  // Deliberately its OWN endpoint rather than folded into /api/manager-dashboard:
+  // that single query feeds the entire Advanced Dashboard, and a LeadVault
+  // timeout inside it would leave the whole page on skeletons.
+  app.get("/api/meta-conversion", requireAuth, async (req: any, res) => {
+    const result = await metaConversion(req.query.days, {
+      token: leadvaultReportingToken,
+      baseUrl: () => process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud",
+    });
+    res.json(result);
   });
 
   async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
