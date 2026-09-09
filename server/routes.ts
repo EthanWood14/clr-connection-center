@@ -12,7 +12,7 @@ import {
 import { deriveSop } from "@shared/clr-sop";
 import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
 import { normalizeLicensedStates } from "@shared/licensed-states";
-import { isUntouchedLoaNote } from "@shared/lap-note-template";
+import { isUntouchedLoaNote, parseLoaNote } from "@shared/lap-note-template";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
@@ -6883,13 +6883,58 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
    * quick succession replaces the pending email each time, so one message goes
    * out with everything rather than three arriving separately.
    */
-  function emailLapSubmission(orgId: number, packageId: number, portal: "lap" | "lop"): void {
+  /**
+   * The deal sheet, as a table rather than the raw text the LOA typed.
+   *
+   * The note IS the form — twenty-two labelled lines an LOA fills in — so
+   * rendering it as one pre-wrapped paragraph made the reader hunt for the
+   * FICO in a wall of text. Parsed back into label/value pairs it reads like
+   * the sheet it is.
+   *
+   * Anything that is not a known label is shown underneath, unchanged. That is
+   * where the free paragraph and any pasted email chain live, and dropping
+   * them would throw away the part somebody actually wrote.
+   *
+   * A note that does not look like the sheet at all falls back to plain text —
+   * an LOA who typed a sentence must not lose it to a parser.
+   */
+  function dealSheetHtml(notes: string, esc: (v: string) => string): string {
+    const body = String(notes ?? "").trim();
+    if (!body) return "";
+    const { fields, trailing } = parseLoaNote(body);
+    const filled = fields.filter((f) => f.value);
+    if (!filled.length) {
+      return `<p style="margin:0 0 6px;color:#1e293b;font-size:13px;font-weight:600">Notes</p>
+        <p style="margin:0;color:#475569;font-size:13px;line-height:1.7;white-space:pre-wrap">${esc(body)}</p>`;
+    }
+    const rows = filled.map((f) => `
+      <tr>
+        <td style="padding:5px 14px 5px 0;color:#64748b;font-size:13px;vertical-align:top;white-space:nowrap">${esc(f.label)}</td>
+        <td style="padding:5px 0;font-size:13px;color:#1e293b;white-space:pre-wrap">${esc(f.value)}</td>
+      </tr>`).join("");
+    return `<p style="margin:0 0 6px;color:#1e293b;font-size:13px;font-weight:600">Deal sheet</p>
+      <table style="border-collapse:collapse;margin:0 0 14px">${rows}</table>
+      ${trailing ? `<p style="margin:0;color:#475569;font-size:13px;line-height:1.7;white-space:pre-wrap">${esc(trailing)}</p>` : ""}`;
+  }
+
+  function emailLapSubmission(
+    orgId: number, packageId: number, portal: "lap" | "lop",
+    // A manual send supplies its own recipients, because the automatic path
+    // reads *_files_recipient — which is EMPTY on production, so relying on it
+    // would send the button's email to nobody at all.
+    override?: { to: string[]; onDone?: (r: { ok: boolean; to: string[]; files: number; error?: string }) => void },
+  ): void {
     try {
       const settings = storageExtra.getEmailSettings() as any;
-      const to = String(settings[`${portal}_files_recipient`] || "").trim();
-      if (!to.includes("@")) return; // nobody configured for this portal
+      const to = override
+        ? override.to.join(", ")
+        : String(settings[`${portal}_files_recipient`] || "").trim();
+      if (!to.includes("@")) { override?.onDone?.({ ok: false, to: [], files: 0, error: "No recipient" }); return; }
       const pkg = storageExtra.getLapPackageForEmail(orgId, packageId);
-      if (!pkg || !pkg.files.length) return;
+      if (!pkg || !pkg.files.length) {
+        override?.onDone?.({ ok: false, to: [], files: 0, error: "No documents on this file yet" });
+        return;
+      }
 
       const totalBytes = pkg.files.reduce((n, f) => n + f.sizeBytes, 0);
       const attach = totalBytes <= LAP_EMAIL_ATTACH_MAX_BYTES;
@@ -6925,8 +6970,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         <table style="border-collapse:collapse;margin:0 0 18px">${rows}</table>
         ${attach ? "" : `<p style="margin:0 0 18px;color:#b45309;font-size:12px;line-height:1.6">
             These files total ${fmtBytes(totalBytes)}, too large to attach. Open ${label} to download them.</p>`}
-        ${pkg.notes ? `<p style="margin:0 0 6px;color:#1e293b;font-size:13px;font-weight:600">Notes</p>
-          <p style="margin:0;color:#475569;font-size:13px;line-height:1.7;white-space:pre-wrap">${esc(pkg.notes)}</p>` : ""}`;
+        ${dealSheetHtml(pkg.notes, esc)}`;
 
       // Queuing alone does not supersede an earlier message, so drop any still
       // pending for this package first — otherwise three uploads send three
@@ -6949,10 +6993,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           : undefined,
         // Replaces any still-pending email for this same package, so uploading
         // all three documents produces one message, not three.
-      }, { cancelKey }).catch((e) =>
-        console.error("[lap] submission email failed:", e?.message ?? e));
+      }, override ? { immediate: true } : { cancelKey })
+        .then(() => override?.onDone?.({ ok: true, to: override.to, files: pkg.files.length }))
+        .catch((e) => {
+          console.error("[lap] submission email failed:", e?.message ?? e);
+          override?.onDone?.({ ok: false, to: override.to, files: pkg.files.length, error: String(e?.message ?? e) });
+        });
     } catch (e: any) {
       console.error("[lap] could not build the submission email:", e?.message ?? e);
+      override?.onDone?.({ ok: false, to: [], files: 0, error: String(e?.message ?? e) });
     }
   }
 
@@ -17557,6 +17606,75 @@ ${note}` : daysLine;
     const ctx = lapSessionContext(req, res);
     if (!ctx) return;
     res.json({ recipient: portalEmailIdentity("lap").notesRecipient });
+  });
+
+  /**
+   * Send one file's documents and its deal sheet, on demand.
+   *
+   * The automatic path already builds this email when a document is uploaded,
+   * but it addresses `lap_files_recipient` — which is EMPTY on production, so
+   * it has never sent anything. This is the button: same email, addressed the
+   * way the notes email is (the file's loan officer, plus the configured notes
+   * recipient), which is the pair that actually receives LAP mail today.
+   *
+   * Deliberately NOT idempotent — pressing it twice sends twice. It is a Send
+   * button; somebody re-sending after fixing the sheet is the normal case, and
+   * silently swallowing the second press would be worse than a duplicate.
+   * Immediate rather than queued so the person watching gets a real answer.
+   */
+  app.post("/api/lap/results/:id/email", requireAuth, (req: any, res) => {
+    const ctx = lapSessionContext(req, res);
+    if (!ctx) return;
+    const packageId = lapPositiveRouteId(req.params.id);
+    if (!packageId) return res.status(400).json({ error: "Invalid file id." });
+
+    const pkg = storageExtra.getLapPackageForEmail(ctx.orgId, packageId);
+    if (!pkg) return res.status(404).json({ error: "That file could not be found." });
+    if (!pkg.files.length) {
+      return res.status(400).json({ error: "There are no documents on this file to send yet." });
+    }
+    // A sheet with nothing filled in is worse than no email: it tells the LO a
+    // deal was worked and shows them twenty-two blank lines.
+    if (isUntouchedLoaNote(pkg.notes)) {
+      return res.status(400).json({ error: "Fill in the deal sheet before sending — it is the body of the email." });
+    }
+
+    const identity = portalEmailIdentity("lap");
+    const seen = new Set<string>();
+    const to: string[] = [];
+    for (const candidate of [pkg.loanOfficerEmail ?? "", identity.notesRecipient, identity.filesRecipient]) {
+      const addr = String(candidate ?? "").trim();
+      if (!addr.includes("@") || seen.has(addr.toLowerCase())) continue;
+      seen.add(addr.toLowerCase());
+      to.push(addr);
+    }
+    if (!to.length) {
+      return res.status(503).json({ error: "No recipient is configured — set the LAP notes recipient in Settings." });
+    }
+
+    let answered = false;
+    const finish = (r: { ok: boolean; to: string[]; files: number; error?: string }) => {
+      if (answered) return;
+      answered = true;
+      audit({
+        userId: Number(req.session_user?.userId) || 0,
+        userName: String(ctx.user?.name ?? "LAP"),
+        action: "create",
+        entityType: "lap_result_email",
+        entityId: packageId,
+        entityLabel: `${pkg.borrowerName} — ${r.files} document(s) emailed to ${r.to.join(", ")}`,
+        details: JSON.stringify({ packageId, to: r.to, files: r.files, ok: r.ok, error: r.error ?? null }),
+      } as any);
+      if (!r.ok) return res.status(502).json({ error: r.error ?? "The email could not be sent." });
+      res.json({
+        ok: true, to: r.to, files: r.files,
+        message: `Sent ${r.files} document${r.files === 1 ? "" : "s"} to ${r.to.join(", ")}.`,
+      });
+    };
+    // The builder is fire-and-forget by design; onDone is how a manual send
+    // learns what happened instead of reporting a hopeful success.
+    emailLapSubmission(ctx.orgId, packageId, "lap", { to, onDone: finish });
+    setTimeout(() => finish({ ok: false, to, files: pkg.files.length, error: "The mail provider did not answer in time." }), 25_000);
   });
 
   app.get("/api/lap/results", requireAuth, (req: any, res) => {

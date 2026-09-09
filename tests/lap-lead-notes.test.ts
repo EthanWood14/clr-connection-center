@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isUntouchedLoaNote, loaNoteHasContent, LOA_NOTE_TEMPLATE } from "../shared/lap-note-template";
+import {
+  isUntouchedLoaNote, loaNoteHasContent, LOA_NOTE_TEMPLATE,
+  LOA_NOTE_TEMPLATE_LINES, LOA_NOTE_LABELS, parseLoaNote,
+} from "../shared/lap-note-template";
 import { foldLapNoteBatch, type LapNoteBatchEntry } from "../server/lap-note-batch";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,7 +51,7 @@ test("an untouched template is blank; one filled line is content", () => {
   assert.equal(isUntouchedLoaNote(LOA_NOTE_TEMPLATE.replace(/\n/g, "\r\n")), true);
   // Trailing spaces after a label are not content either.
   assert.equal(isUntouchedLoaNote(LOA_NOTE_TEMPLATE.split("\n").map((line) => `${line}   `).join("\n")), true);
-  const filled = LOA_NOTE_TEMPLATE.replace("Credit score: ", "Credit score: 720");
+  const filled = LOA_NOTE_TEMPLATE.replace("FICO Actual: ", "FICO Actual: 776");
   assert.equal(isUntouchedLoaNote(filled), false);
   assert.equal(loaNoteHasContent(filled), true);
   assert.equal(isUntouchedLoaNote("Called the borrower, wants a HELOC"), false, "free text is content too");
@@ -61,11 +64,11 @@ test("the guard judges lines, not the whole body", () => {
   // reordered, "filled in" — and emailed it.
   assert.equal(isUntouchedLoaNote(lines.slice(1).join("\n")), true, "template minus one line");
   assert.equal(isUntouchedLoaNote([...lines].reverse().join("\n")), true, "template lines reordered");
-  // "Borrower:" without the trailing space is the same bare label.
-  assert.equal(isUntouchedLoaNote("Borrower:"), true);
+  // A label without its trailing space is the same bare label.
+  assert.equal(isUntouchedLoaNote("FICO Actual:"), true);
   assert.equal(isUntouchedLoaNote(lines.map((line) => line.trimEnd()).join("\n")), true);
   // One free-text line beside a bare label is content.
-  const withText = "Borrower: \nCalled the borrower, wants a HELOC";
+  const withText = "FICO Actual: \nCalled the borrower, wants a HELOC";
   assert.equal(isUntouchedLoaNote(withText), false);
   assert.equal(loaNoteHasContent(withText), true);
 });
@@ -208,7 +211,9 @@ test("admins can change the notes recipient from the portal email settings card"
 
 // ── the send ────────────────────────────────────────────────────────────────
 test("an LOA note emails the LO and the notes recipient, folded into one message per window", () => {
-  assert.match(routes, /import \{ isUntouchedLoaNote \} from "@shared\/lap-note-template"/);
+  // parseLoaNote joined it on 9 Sep so the email can render the sheet as a
+  // sheet; the guard itself is the part that matters here.
+  assert.match(routes, /import \{ isUntouchedLoaNote[^}]*\} from "@shared\/lap-note-template"/);
   const notify = between(routes, "function notifyLapPackageNote", 'app.get("/api/lap/results/:id/notes"');
   // The in-app bell rings for both kinds, before the email gate.
   assert.ok(at(notify, "storage.createNotification(") < at(notify, 'if (kind !== "loa") return;'));
@@ -255,4 +260,154 @@ test("the server refuses a bare-template LOA note before anything is written", (
   // The guard lives in the LOA branch, after the LO sections are assembled:
   // remarks are never held to the template.
   assert.ok(at(post, '["Opportunities"') < at(post, "isUntouchedLoaNote(body)"));
+});
+
+// ── the real deal sheet (Ethan, 9 Sep 2026) ────────────────────────────────
+
+test("the template is Chris's actual fields, in the order he sent them", () => {
+  // The old list was an explicit placeholder. Order is deliberate: value →
+  // loan → pricing → credit → product → outcome → paperwork → notes, which is
+  // how a deal is read and what the LOAs scan line by line.
+  assert.equal(LOA_NOTE_TEMPLATE_LINES[0], "Estimated Value: ");
+  assert.equal(LOA_NOTE_TEMPLATE_LINES[LOA_NOTE_TEMPLATE_LINES.length - 1], "Other Important Notes: ");
+  for (const label of [
+    "Proposed Loan Amount", "Current Rate", "Proposed Rate", "Origination Points",
+    "Discount Points", "Revenue Estimate", "FICO Est", "FICO Actual",
+    "Credit Pull (Y/N)", "Hard/Soft", "Total Proposed Comp", "Appraisal Needed (Y/N)",
+    "1st MTG or HELOC", "Pitched Deal (Y/N)", "Deal Accepted Terms",
+    "Deal Not Accepted Objections", "How Many Properties Do They Own",
+    "Completed App in LendingPad (Y/N)", "Full 1003 (Y/N)", "Partial 1003 (Y/N)",
+  ]) {
+    assert.ok(LOA_NOTE_LABELS.includes(label), `${label} must be on the sheet`);
+  }
+  assert.equal(LOA_NOTE_LABELS.length, LOA_NOTE_TEMPLATE_LINES.length);
+  // The placeholder wording must be gone.
+  assert.equal(LOA_NOTE_LABELS.includes("Notes for Chris"), false);
+});
+
+test("TBD and N/A count as filled in, because they are real answers", () => {
+  // A rate that is not priced yet and a comp figure that does not apply are
+  // both states somebody deliberately recorded, not blanks.
+  assert.equal(isUntouchedLoaNote(LOA_NOTE_TEMPLATE.replace("Proposed Rate: ", "Proposed Rate: TBD")), false);
+  assert.equal(isUntouchedLoaNote(LOA_NOTE_TEMPLATE.replace("Total Proposed Comp: ", "Total Proposed Comp: N/A")), false);
+});
+
+test("a filled sheet parses back into fields, keeping what was written freehand", () => {
+  // Ethan's real example, trimmed. The pasted email chain underneath must
+  // survive — losing the part somebody wrote in their own words would defeat
+  // the point of sending it.
+  const note = [
+    "Estimated Value: $860k",
+    "Proposed Loan Amount: $660k",
+    "Current Rate: 2.50%",
+    "Proposed Rate: TBD",
+    "FICO Est: 710",
+    "FICO Actual: 776",
+    "Credit Pull (Y/N): Y",
+    "Hard/Soft: Soft",
+    "1st MTG or HELOC: Cash out Refi or HELOC",
+    "Other Important Notes: Spoke to Xee about a cash out or heloc maxing out his LTV.",
+    "He owes $500k on his first paying $2400/monthly.",
+    "",
+    "From: Erik Wenning <ewenning@westcapitallending.com>",
+  ].join("\n");
+  const { fields, trailing } = parseLoaNote(note);
+  const get = (l: string) => fields.find((f) => f.label === l)?.value;
+  assert.equal(get("Estimated Value"), "$860k");
+  assert.equal(get("Proposed Rate"), "TBD");
+  assert.equal(get("FICO Actual"), "776");
+  assert.equal(get("1st MTG or HELOC"), "Cash out Refi or HELOC");
+  // A wrapped continuation belongs to the field above it, not to nowhere.
+  assert.match(get("Other Important Notes")!, /maxing out his LTV\. He owes \$500k/);
+  // The pasted chain came after the last label, so it rides along on that field
+  // rather than being dropped.
+  assert.match(get("Other Important Notes")!, /From: Erik Wenning/);
+  assert.equal(trailing, "", "nothing before the first label in this example");
+});
+
+test("text before any label is kept as trailing, not thrown away", () => {
+  const { fields, trailing } = parseLoaNote("Heads up — rush file\nEstimated Value: $860k");
+  assert.equal(trailing, "Heads up — rush file");
+  assert.equal(fields[0].value, "$860k");
+  // Junk in, empty out, never a throw.
+  assert.deepEqual(parseLoaNote(null), { fields: [], trailing: "" });
+  assert.deepEqual(parseLoaNote(undefined).fields, []);
+});
+
+// ── the Send email button (Ethan, 9 Sep 2026) ──────────────────────────────
+
+test("a file can be emailed on demand, with its documents attached", () => {
+  const fn = routes.slice(
+    routes.indexOf('app.post("/api/lap/results/:id/email"'),
+    routes.indexOf('app.get("/api/lap/results"'),
+  );
+  assert.notEqual(fn.length, 0, "the route must exist");
+  // Same builder as the automatic path, so the attachments and the layout
+  // cannot drift into two versions.
+  assert.match(fn, /emailLapSubmission\(ctx\.orgId, packageId, "lap", \{ to, onDone: finish \}\)/);
+  assert.match(routes, /attachments: attach\s*$/m);
+});
+
+test("it addresses the pair that actually receives LAP mail", () => {
+  // The automatic path uses lap_files_recipient, which is EMPTY on production —
+  // relying on it would send the button's email to nobody.
+  const fn = routes.slice(
+    routes.indexOf('app.post("/api/lap/results/:id/email"'),
+    routes.indexOf('app.get("/api/lap/results"'),
+  );
+  assert.match(fn, /pkg\.loanOfficerEmail \?\? "", identity\.notesRecipient, identity\.filesRecipient/);
+  assert.match(fn, /if \(!to\.length\)/, "sending to nobody must be refused, not attempted");
+  assert.match(fn, /No recipient is configured/);
+  assert.match(storage, /loanOfficerEmail:/, "the LO's address has to reach the route");
+});
+
+test("it refuses the two sends that would waste the LO's attention", () => {
+  const fn = routes.slice(
+    routes.indexOf('app.post("/api/lap/results/:id/email"'),
+    routes.indexOf('app.get("/api/lap/results"'),
+  );
+  // Nothing to attach.
+  assert.match(fn, /no documents on this file to send yet/i);
+  // A blank deal sheet is worse than silence: it says a deal was worked and
+  // then shows twenty-two empty lines.
+  assert.match(fn, /isUntouchedLoaNote\(pkg\.notes\)/);
+  assert.match(fn, /Fill in the deal sheet before sending/);
+});
+
+test("the person pressing it is told what actually happened", () => {
+  const fn = routes.slice(
+    routes.indexOf('app.post("/api/lap/results/:id/email"'),
+    routes.indexOf('app.get("/api/lap/results"'),
+  );
+  // The builder is fire-and-forget; a manual send must not report a hopeful
+  // success it has not confirmed.
+  assert.match(fn, /onDone: finish/);
+  assert.match(fn, /res\.status\(502\)/, "a provider failure is not a success");
+  assert.match(fn, /did not answer in time/, "and a hung provider still answers the caller");
+  assert.match(fn, /if \(answered\) return;/, "the timeout must not double-answer");
+  // Sending somebody's file out of the building is worth being able to look up.
+  assert.match(fn, /entityType: "lap_result_email"/);
+});
+
+test("the deal sheet is emailed as a sheet, and free text survives", () => {
+  assert.match(routes, /function dealSheetHtml\(/);
+  assert.match(routes, /\$\{dealSheetHtml\(pkg\.notes, esc\)\}/);
+  const fn = routes.slice(routes.indexOf("function dealSheetHtml("), routes.indexOf("function emailLapSubmission("));
+  assert.match(fn, /parseLoaNote\(body\)/);
+  assert.match(fn, /Deal sheet/);
+  // A note that is not the sheet at all must not be lost to the parser.
+  assert.match(fn, /if \(!filled\.length\)/);
+  assert.match(fn, /trailing \?/, "the pasted chain under the sheet is kept");
+});
+
+test("the button sits on the file and asks before it sends", () => {
+  const page = read("client/src/pages/lap-results.tsx");
+  assert.match(page, /function SendFileEmail\(/);
+  assert.match(page, /lap-send-email-\$\{result\.id\}/);
+  assert.match(page, /Send email/);
+  // It leaves the building and cannot be recalled.
+  assert.match(page, /const \[confirming, setConfirming\] = useState\(false\)/);
+  assert.match(page, /Send to the LO\?/);
+  // The server's specific refusals must reach the person, not be flattened.
+  assert.match(page, /description: String\(e\?\.message \?\? e\)/);
 });

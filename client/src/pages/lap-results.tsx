@@ -12,6 +12,7 @@ import {
   FileSearch,
   FileText,
   Combine,
+  Mail,
   Pencil,
   Plus,
   RefreshCw,
@@ -22,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,61 @@ function payloadFromForm(form: FormState): LapResultPayload {
 
 function initials(name?: string | null) {
   return (name || "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+}
+
+/**
+ * Send this file's documents and its deal sheet to the loan officer.
+ *
+ * One button per FILE, not per document: the email carries all three documents
+ * at once, which is how they are read — nobody wants a credit report on its
+ * own, and three separate emails would be three separate things to reconcile.
+ *
+ * Confirms first. This leaves the building and cannot be recalled, and the
+ * same button will be pressed again after a correction, so the count and the
+ * borrower are shown before it goes.
+ */
+function SendFileEmail({ result }: { result: LapResult }) {
+  const { toast } = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const send = useMutation<{ message: string; to: string[]; files: number }>({
+    mutationFn: () => apiRequest("POST", `/api/lap/results/${result.id}/email`, {}),
+    onSuccess: (r) => {
+      setConfirming(false);
+      toast({ title: "Email sent", description: r.message });
+    },
+    // The server's refusals are specific — no documents yet, an empty deal
+    // sheet, nobody configured to receive it — and each one tells the person
+    // what to do next, so none of them may be flattened into "failed".
+    onError: (e: any) => toast({
+      title: "Not sent",
+      description: String(e?.message ?? e),
+      variant: "destructive",
+    }),
+  });
+
+  if (!confirming) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setConfirming(true)}
+        data-testid={`lap-send-email-${result.id}`}
+      >
+        <Mail /> Send email
+      </Button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-lg border bg-muted/30 px-2 py-1">
+      <span className="text-xs text-muted-foreground">Send to the LO?</span>
+      <Button size="sm" disabled={send.isPending} onClick={() => send.mutate()}>
+        {send.isPending ? <><RefreshCw className="animate-spin" /> Sending…</> : "Send"}
+      </Button>
+      <Button variant="ghost" size="sm" disabled={send.isPending} onClick={() => setConfirming(false)}>
+        Cancel
+      </Button>
+    </div>
+  );
 }
 
 function ResultStatus({ result, compact = false }: { result: LapResult; compact?: boolean }) {
@@ -485,9 +541,12 @@ function ResultEditor({
             <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {formatLapDate(result.resultDate || result.createdAt)}</span>
           </div>
         </div>
-        <Button variant={editing ? "ghost" : "outline"} size="sm" onClick={() => setEditing((current) => !current)}>
-          {editing ? <X /> : <Pencil />} {editing ? "Cancel" : "Edit details"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <SendFileEmail result={result} />
+          <Button variant={editing ? "ghost" : "outline"} size="sm" onClick={() => setEditing((current) => !current)}>
+            {editing ? <X /> : <Pencil />} {editing ? "Cancel" : "Edit details"}
+          </Button>
+        </div>
       </div>
 
       {editing ? (

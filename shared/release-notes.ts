@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.72.0",
+    headline: "Send a file's documents and its deal sheet to the LO, in one press.",
+    items: [
+      { text: "New Send email button on every file in Input Results. It emails that file's documents as attachments with the deal sheet as the message, to the file's loan officer and the LAP notes recipient. It asks to confirm first, because it leaves the building.", audience: "lap" },
+      { text: "The deal sheet is now Chris's real fields — estimated value, proposed loan amount, rates, points, FICO estimated and actual, credit pull, product, whether it was pitched, the 1003 and LendingPad questions, and the notes. The old list was a placeholder waiting for the real one.", audience: "lap" },
+      { text: "It arrives as a sheet rather than a wall of text, so the loan officer can find the FICO without reading a paragraph. Anything typed underneath — a note in your own words, a pasted email chain — comes through untouched below it.", audience: "lap" },
+      { text: "It will not send an empty sheet or a file with no documents on it yet, and it tells you which. A sheet with nothing filled in is worse than no email at all.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.71.4",
     headline: "The Bonzo note on an LOA transfer now says what actually happened.",
     items: [

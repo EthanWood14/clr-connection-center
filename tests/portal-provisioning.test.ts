@@ -193,8 +193,16 @@ test("submitting documents emails one message per package, not per file", () => 
   assert.match(fn, /cancelPendingEmails\(cancelKey\)/,
     "a pending email for the same package must be superseded");
   assert.match(fn, /lap-submission:\$\{orgId\}:\$\{packageId\}/, "the key must be per package, not global");
-  assert.match(fn, /if \(!to\.includes\("@"\)\) return;/, "no recipient configured means no email");
-  assert.match(fn, /if \(!pkg \|\| !pkg\.files\.length\) return;/, "never send an empty submission");
+  // Both guards still hold; they now also answer the manual send's caller
+  // (9 Sep 2026), which is why they carry an onDone rather than a bare return.
+  // The guard line now also answers the manual send's caller, so it carries an
+  // onDone call between the test and the return — matched in two parts rather
+  // than with a run that cannot cross the object braces inside it.
+  const noRecipient = fn.slice(fn.indexOf('if (!to.includes("@"))'));
+  assert.ok(noRecipient.length > 0, "no recipient configured means no email");
+  assert.match(noRecipient.slice(0, 200), /return;/);
+  assert.match(fn, /if \(!pkg \|\| !pkg\.files\.length\) \{/, "never send an empty submission");
+  assert.match(fn, /No documents on this file yet/);
   // Oversized attachments degrade to a list rather than a failed send.
   assert.match(fn, /LAP_EMAIL_ATTACH_MAX_BYTES/);
   assert.match(fn, /too large to attach/);

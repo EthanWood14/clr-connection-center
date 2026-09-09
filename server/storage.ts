@@ -8653,6 +8653,8 @@ export function hasAvailableLapAssistant(orgId: number, loanOfficerId: number): 
 export function getLapPackageForEmail(orgId: number, packageId: number): {
   borrowerName: string; dealReference: string | null; notes: string; resultDate: string;
   createdByName: string | null; loanOfficerName: string | null;
+  /** The LO's own address, so a manual send can reach them and not just Chris. */
+  loanOfficerEmail: string | null;
   files: Array<{ documentType: string; filename: string; mime: string; sizeBytes: number; data: Buffer }>;
 } | null {
   const pkg = getLapPackageRow(orgId, packageId);
@@ -8671,6 +8673,13 @@ export function getLapPackageForEmail(orgId: number, packageId: number): {
     resultDate: String(pkg.result_date ?? ""),
     createdByName: pkg.created_by_name ? String(pkg.created_by_name) : null,
     loanOfficerName: pkg.loan_officer_name ? String(pkg.loan_officer_name) : null,
+    loanOfficerEmail: (() => {
+      const id = Number(pkg.loan_officer_id ?? 0);
+      if (!id) return null;
+      const lo = sqlite.prepare(`SELECT email FROM loan_officers WHERE id=?`).get(id) as any;
+      const email = String(lo?.email ?? "").trim();
+      return email.includes("@") ? email : null;
+    })(),
     files: rows.map((r) => ({
       documentType: String(r.document_type),
       filename: String(r.original_filename),
