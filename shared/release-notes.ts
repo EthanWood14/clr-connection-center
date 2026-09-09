@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.79.0",
+    headline: "Meta transfers now count however long they took.",
+    items: [
+      {
+        text: "On the Advanced Dashboard, a Meta lead now counts as transferred if it ever reached a loan officer, rather than only when the transfer happened after the lead came in. Both Meta numbers went up slightly.",
+        audience: "everyone",
+      },
+    ],
+  },
+  {
     version: "4.78.0",
     headline: "See which Meta ads actually turn into transfers.",
     items: [

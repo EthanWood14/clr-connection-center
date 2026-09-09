@@ -1890,9 +1890,9 @@ export default function ManagerDashboard() {
                       })}
                     </ul>
                     <p className="text-xs text-muted-foreground mt-3">
-                      A lead counts as transferred only if the transfer happened on or after
-                      the day it arrived. Transfers sync from C3 every few hours, so the last
-                      day or two always reads low.
+                      A lead counts as transferred if it ever reached an LO, however long it
+                      took. Transfers sync from C3 every few hours, so the last day or two
+                      always reads low.
                       {metaConv.data.stale ? " Showing the last copy we could fetch." : ""}
                     </p>
                   </>
