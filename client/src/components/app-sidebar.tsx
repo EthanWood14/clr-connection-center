@@ -206,9 +206,12 @@ const advancedPersonalItems: NavItem[] = [
 ];
 
 const teamItems: NavItem[] = [
-  // The same view managers get at Home, open to the whole team. Their personal
-  // dashboard stays where it is — this is in addition to it, not instead of it.
-  { title: "Team Dashboard",        url: "/team-dashboard", icon: LayoutDashboard, help: help.dashboard },
+  // Two doors onto the same numbers. The summary is first because it is the
+  // one most people want: the week in plain words, no ranges to choose
+  // (owner 9/9/26). The Advanced one is the manager dashboard, unchanged and
+  // still open to everyone — it just no longer pretends to be the only view.
+  { title: "How we're doing",       url: "/team-summary",   icon: LayoutDashboard },
+  { title: "Advanced Dashboard",    url: "/advanced-dashboard", icon: BarChart2,   help: help.dashboard },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
 ];
 

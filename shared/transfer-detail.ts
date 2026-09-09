@@ -1,6 +1,6 @@
 import {
   CAPTURE_LABELS, UNSCORED_LABELS, QUAL_LABELS,
-  TRANSFER_COMPLETENESS_FIELDS, capturedLabels, scoreTransfer,
+  TRANSFER_COMPLETENESS_FIELDS, capturedLabels, scoreTransfer, writeUpBlob,
   type TransferRow,
 } from "./transfer-completeness";
 
@@ -150,7 +150,10 @@ export function buildTransferDetail(
   row: TransferRow & Record<string, unknown>,
   narrativeColumns: ReadonlyArray<{ label: string; key: string }> = DEFAULT_NARRATIVE,
 ): TransferDetail {
-  const blob = row?.conversationNotes;
+  // Both halves, for the reason the scorer reads both: an answer typed into
+  // Other Notes is an answer, and a detail page that showed it as a blank
+  // while the score counted it would be the two disagreeing on screen.
+  const blob = writeUpBlob(row);
   const captured = capturedLabels(blob);
   const values = capturedValues(blob);
   const score = scoreTransfer(row);

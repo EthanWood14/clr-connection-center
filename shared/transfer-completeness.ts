@@ -131,6 +131,30 @@ export interface TransferRow {
 
 const text = (v: unknown): boolean => String(v ?? "").trim().length > 0;
 
+/**
+ * Both halves of a write-up, as one blob to read answers out of.
+ *
+ * The capture block is what the form composes, but the box that used to be
+ * open on the page was Other Notes, and CLRs answered there instead —
+ * Adrienne and Jackie by name (Ethan, 9 Sep 2026). Scoring only the composed
+ * half marked those answers missing: their write-ups read as blanks on the
+ * detail page and cost them percentage points on work they had actually done.
+ *
+ * The Bonzo hand-off has posted both halves since Joy Crosett's file went out
+ * with only the lead-source line on it. This is the same lesson, applied to
+ * the half of C3 that reads rather than sends: look where they wrote it.
+ *
+ * Reading a second blob cannot invent an answer. Every label still has to
+ * appear at the start of a line with a value after the colon, and the marker
+ * values ("Co-Borrower: n/a") still have to be exact, so prose about a
+ * co-borrower is no more convincing here than it was there.
+ */
+export function writeUpBlob(row: TransferRow): string {
+  return [String(row?.conversationNotes ?? ""), String(row?.notes ?? "")]
+    .filter((half) => half.trim().length > 0)
+    .join("\n");
+}
+
 /** Which capture labels this blob actually answered, matched line by line. */
 export function capturedLabels(blob: unknown): Set<string> {
   const found = new Set<string>();
@@ -250,7 +274,7 @@ export interface TransferScore {
 }
 
 export function scoreTransfer(row: TransferRow): TransferScore {
-  const captured = capturedLabels(row.conversationNotes);
+  const captured = capturedLabels(writeUpBlob(row));
   let filled = 0;
   let expected = 0;
   const missing: string[] = [];
@@ -286,7 +310,7 @@ export function summarizeCompleteness(rows: TransferRow[]): CompletenessSummary 
   let complete = 0;
 
   for (const row of rows) {
-    const captured = capturedLabels(row.conversationNotes);
+    const captured = capturedLabels(writeUpBlob(row));
     let rowExpected = 0;
     let rowMissing = 0;
     for (let i = 0; i < TRANSFER_COMPLETENESS_FIELDS.length; i += 1) {

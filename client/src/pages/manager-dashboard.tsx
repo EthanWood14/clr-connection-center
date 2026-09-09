@@ -925,11 +925,16 @@ export default function ManagerDashboard() {
           <div className="flex items-center gap-2">
             <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider"
                   style={{ backgroundColor: NAVY, color: GOLD }}>
-              Manager view
+              {/* It says Advanced, not Manager: this page has been open to the
+                  whole team for a while, and a CLR reading "Manager view" on a
+                  page they were sent to reasonably assumes they are somewhere
+                  they should not be. The summary at /team-summary is the other
+                  door onto the same numbers (owner 9/9/26). */}
+              Advanced view
             </span>
           </div>
           <h1 className="text-2xl md:text-3xl font-bold mt-1 brand-text">
-            Welcome back, {user?.name?.split(" ")[0] ?? "Manager"}
+            Welcome back, {user?.name?.split(" ")[0] ?? "there"}
           </h1>
           <p className="text-sm text-muted-foreground">
             Team overview · {format(parseISO(data.today), "EEEE, MMMM d, yyyy")}

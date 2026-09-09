@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.75.0",
+    headline: "A plain-English team page, and answers count wherever you typed them.",
+    items: [
+      { text: "New page under Team: How we're doing. The week in sentences — how many borrowers we got onto the phone with a loan officer, whether that is more or fewer than last week, how the month is going, and who did it. Every number carries a line saying what it means.", audience: "everyone" },
+      { text: "The dashboard you already know is now called the Advanced Dashboard, and it says \"Advanced view\" instead of \"Manager view\" — it has been open to the whole team for a while and the badge did not say so. Nothing on it changed, and your old link still works.", audience: "everyone" },
+      { text: "If you answered a lead-capture question in the Other Notes box instead of the boxes above it, it now counts. Your write-up score and the write-up page both read both boxes. On production that is 44 transfers that were being marked down for answers that were sitting right there.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.74.0",
     headline: "Info Gathering is on the page, not behind a button.",
     items: [

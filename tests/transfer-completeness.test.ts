@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  scoreTransfer, summarizeCompleteness, capturedLabels,
+  scoreTransfer, summarizeCompleteness, capturedLabels, writeUpBlob,
   CAPTURE_LABELS, TRANSFER_COMPLETENESS_FIELDS,
   UNSCORED_LABELS, QUAL_LABELS, QUAL_WEIGHT,
   qualAnswer, isInvestmentProperty, INVESTMENT_PROPERTY_LABEL,
@@ -341,4 +341,46 @@ test("the reader shares capturedLabels' line discipline", () => {
   const mid = "CLR asked about Investment/2nd Home: Yes was the answer";
   assert.ok(!capturedLabels(mid).has(INVESTMENT_PROPERTY_LABEL));
   assert.equal(isInvestmentProperty(mid), false);
+});
+
+// ── Answers typed into Other Notes ──────────────────────────────────────────
+// The form kept Info Gathering collapsed and Other Notes open, so some CLRs
+// answered in the box that was open. Ethan named Adrienne and Jackie on
+// 9 Sep 2026. Reading only the composed half scored that work as missing.
+
+test("an answer typed into Other Notes is still an answer", () => {
+  const row = {
+    borrowerName: "Ann Diaz", phoneNumber: "555", leadSource: "CallTools",
+    loId: 3, transferType: "direct",
+    conversationNotes: "Owns Home: Yes",
+    notes: "Credit Score: 580-620\nEstimated Home Value: $189k\nMonthly Income: $4,100",
+  };
+  const captured = capturedLabels(writeUpBlob(row));
+  for (const label of ["Owns Home", "Credit Score", "Estimated Home Value", "Monthly Income"]) {
+    assert.ok(captured.has(label), `${label} should count wherever it was typed`);
+  }
+  // …and the score agrees with the reader.
+  assert.ok(!scoreTransfer(row).missing.includes("capture:Credit Score"));
+});
+
+test("both halves are read, and neither is required", () => {
+  assert.equal(writeUpBlob({ conversationNotes: "A: 1", notes: "B: 2" }), "A: 1\nB: 2");
+  assert.equal(writeUpBlob({ conversationNotes: "A: 1", notes: "" }), "A: 1");
+  assert.equal(writeUpBlob({ conversationNotes: null, notes: "B: 2" }), "B: 2");
+  assert.equal(writeUpBlob({}), "");
+  // A label at the very start of the free-text half still matches: the join
+  // must put a newline between the halves, not run them together.
+  assert.ok(capturedLabels(writeUpBlob({ conversationNotes: "Owns Home: Yes", notes: "Military: No" })).has("Military"));
+});
+
+test("reading a second box cannot invent an answer", () => {
+  // Prose about a section is not a section marker, wherever it is written —
+  // this is the guard that stops "First Mortgage: 320k at 6.5%" deleting the
+  // whole first-mortgage section from what was expected.
+  const row = { conversationNotes: "Owns Home: Yes", notes: "First Mortgage: 320k at 6.5%" };
+  assert.ok(!capturedLabels(writeUpBlob(row)).has("First Mortgage"));
+  // An empty value is still empty.
+  assert.ok(!capturedLabels(writeUpBlob({ notes: "Property Address:   " })).has("Property Address"));
+  // And a label buried mid-sentence in the free text stays buried.
+  assert.ok(!capturedLabels(writeUpBlob({ notes: "we talked about Credit Score: 700 maybe" })).has("Credit Score"));
 });

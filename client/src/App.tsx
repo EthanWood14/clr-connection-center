@@ -60,6 +60,7 @@ const EodReport = lazy(() => import("@/pages/eod-report"));
 const EodAnalytics = lazy(() => import("@/pages/eod-analytics"));
 const AppReview = lazy(() => import("@/pages/app-review"));
 const ManagerDashboard = lazy(() => import("@/pages/manager-dashboard"));
+const TeamSummary = lazy(() => import("@/pages/team-summary"));
 const TimeOff = lazy(() => import("@/pages/time-off"));
 const CompRequests = lazy(() => import("@/pages/comp-requests"));
 const TimeClock = lazy(() => import("@/pages/time-clock"));
@@ -149,7 +150,11 @@ const PAGE_TITLES: Record<string, string> = {
   "/call-script":    "Call Script",
   "/eod-report":     "EOD Reporting",
   "/eod-analytics":  "EOD Analytics",
-  "/team-dashboard": "Team Dashboard",
+  // Both paths reach the same page. /team-dashboard is what people have
+  // bookmarked and what older links point at, so it keeps working.
+  "/team-dashboard": "Advanced Dashboard",
+  "/advanced-dashboard": "Advanced Dashboard",
+  "/team-summary": "How the team is doing",
   "/time-off":       "Time Off",
   "/comp-requests":  "Comp Requests",
   "/time-clock":     "Time Clock",
@@ -219,6 +224,8 @@ function AppRouter() {
       <Route path="/eod-analytics" component={EodAnalytics} />
       <Route path="/app-review" component={AppReview} />
       <Route path="/team-dashboard" component={ManagerDashboard} />
+      <Route path="/advanced-dashboard" component={ManagerDashboard} />
+      <Route path="/team-summary" component={TeamSummary} />
       <Route path="/time-off" component={TimeOff} />
       <Route path="/comp-requests" component={CompRequests} />
       <Route path="/time-clock" component={TimeClock} />
