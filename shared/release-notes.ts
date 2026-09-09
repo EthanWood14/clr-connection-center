@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.77.0",
+    headline: "Two charts on the team page, and one Shotgun lead at a time.",
+    items: [
+      { text: "How we're doing now has two charts: borrowers handed over day by day across the last twenty working days, and this week set against last week. Bars, not lines, weekends left out, and the counts on the axis — no percentages anywhere on the page.", audience: "everyone" },
+      { text: "Shotgun will not offer you a new lead, or let you accept one, while you still owe a write-up on the last one. Finish it and you are back in the rotation. The page tells you which lead is holding you up rather than leaving Ready-with-no-offers looking like a fault.", audience: "everyone" },
+      { text: "That closes a gap where you could accept, get pulled away, accept again, and end up sitting on leads nobody else could be offered.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.76.0",
     headline: "See the lead that just landed for the LO you are about to call.",
     items: [

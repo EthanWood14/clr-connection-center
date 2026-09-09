@@ -412,3 +412,42 @@ test("the upsert keeps a live heartbeat and does not invent one", () => {
     "opting everyone in must not make an absent CLR offerable");
   db.close();
 });
+
+// ── One at a time, and that means finished ──────────────────────────────────
+// Owner, 9 Sep 2026: Shotgun must not let somebody accept a new lead until
+// they finish any old ones. Accepting, getting distracted, and accepting again
+// left a queue of half-worked leads nobody else could be offered.
+
+test("a CLR holding an unwritten lead is skipped by the rotation", () => {
+  const assign = routes.slice(routes.indexOf("function assignShotgunLead"), routes.indexOf("function advanceShotgun"));
+  assert.match(assign, /live\.status IN \('offered','claimed'\)/,
+    "both an open offer and an unfinished claim must exclude a candidate");
+  // The exclusion is still per-user and still ignores the lead being assigned.
+  assert.match(assign, /live\.current_assignee_id=u\.id/);
+  assert.match(assign, /live\.id<>\?/);
+});
+
+test("the accept itself refuses, because an offer can be in flight", () => {
+  // The rotation skip is not enough on its own: an offer made a second before
+  // the earlier lead was claimed is already sitting on somebody's screen.
+  const fn = routes.slice(routes.indexOf('app.post("/api/shotgun/:id/confirm"'), routes.indexOf('app.post("/api/shotgun/:id/deny"'));
+  assert.match(fn, /status='claimed' AND id<>\?/, "look for another lead they already hold");
+  assert.match(fn, /Finish \$\{holding\.lead_name\} first/, "name the lead they owe");
+  assert.match(fn, /blockedBy: \{ id: Number\(holding\.id\)/);
+  // Re-checked inside the write transaction, so two accepts landing together
+  // cannot both pass the read and leave one CLR holding two leads.
+  assert.match(fn, /const stillHolding = /);
+  assert.ok(fn.indexOf("const stillHolding") < fn.indexOf("SET status='claimed'"),
+    "the second check must run before the claim is written");
+});
+
+test("the page says why no leads are coming, rather than looking broken", () => {
+  // Ready, and no offer for an hour, with nothing explaining it, reads as the
+  // rotation being down.
+  const feed = routes.slice(routes.indexOf('app.get("/api/shotgun"'), routes.indexOf('app.post("/api/shotgun/readiness"'));
+  assert.match(feed, /holding: holding \? \{ id: Number\(holding\.id\)/);
+  assert.match(page, /data-testid="shotgun-holding-banner"/);
+  assert.match(page, /Finish \{payload\.holding\.leadName\} first/);
+  // And a refused accept shows the server's reason, not a generic line.
+  assert.match(alert, /\(confirm\.error as any\)\?\.message/);
+});

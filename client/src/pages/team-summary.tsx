@@ -1,10 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
+import {
+  Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
+import { dropWeekendRows } from "@/lib/weekday-date";
 
 /**
  * The team's week, in words anybody can read.
@@ -36,7 +40,10 @@ type SummaryData = {
   stats: { today: any; week: Period; month: Period; priorWeek: Period; priorMonth: Period };
   callActivity: { week: Calls; priorWeek: Calls; month: Calls; priorMonth: Calls };
   eod: { submitted: number; total: number; missing: number; dueLabel: string };
-  byRange: Record<string, { leaderboard: { userId: number; name: string; transfers: number; appointments: number; inTraining: boolean }[] }>;
+  byRange: Record<string, {
+    trend?: { date: string; calls: number; transfers: number; appointments: number; fellThrough: number }[];
+    leaderboard: { userId: number; name: string; transfers: number; appointments: number; inTraining: boolean }[];
+  }>;
 };
 
 const n = (v: unknown) => Number(v ?? 0) || 0;
@@ -83,6 +90,92 @@ function BigNumber({
   );
 }
 
+const GOLD = "#C9A24A";
+const GREEN = "#16a34a";
+const BLUE = "#2563eb";
+const AMBER = "#d97706";
+
+/**
+ * Two charts, and only two.
+ *
+ * The Advanced page has nine. That is the right number for somebody digging
+ * and the wrong number for a page whose job is to be understood at a glance,
+ * so these answer the two questions the numbers above raise and stop: is the
+ * line going up, and how does this week compare with last.
+ *
+ * Both are bars. A line implies a continuous quantity between the points, and
+ * there is no such thing as Tuesday-and-a-half — the bar says "this day, this
+ * many" and cannot be misread. Weekends are dropped rather than drawn as
+ * zeroes, because a fortnight of alternating spikes and troughs looks like a
+ * problem and is only the calendar.
+ */
+function DailyChart({ rows }: { rows: { date: string; transfers: number }[] }) {
+  if (rows.length < 2) return null;
+  const busiest = Math.max(...rows.map((r) => r.transfers));
+  return (
+    <Card data-testid="summary-chart-daily">
+      <CardContent className="p-5">
+        <p className="text-sm font-semibold">Borrowers handed over, day by day</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The last {rows.length} working days. Weekends are left out.
+          {busiest > 0 && ` The best day was ${busiest}.`}
+        </p>
+        <div className="mt-4 h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} tickLine={false} axisLine={false} />
+              <Tooltip
+                cursor={{ opacity: 0.1 }}
+                formatter={(value: any) => [`${value} handed over`, ""]}
+                labelFormatter={(label: any) => String(label)}
+              />
+              {/* The best day is picked out, so the eye has somewhere to land. */}
+              <Bar dataKey="transfers" radius={[3, 3, 0, 0]}>
+                {rows.map((r) => (
+                  <Cell key={r.date} fill={r.transfers === busiest && busiest > 0 ? GREEN : GOLD} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function WeekOverWeekChart({ week, priorWeek }: { week: Period; priorWeek: Period }) {
+  const rows = [
+    { label: "Handed over", "This week": n(week.transfers), "Last week": n(priorWeek.transfers) },
+    { label: "Callbacks", "This week": n(week.appointments), "Last week": n(priorWeek.appointments) },
+    { label: "Did not work out", "This week": n(week.fellThrough), "Last week": n(priorWeek.fellThrough) },
+  ];
+  if (rows.every((r) => r["This week"] === 0 && r["Last week"] === 0)) return null;
+  return (
+    <Card data-testid="summary-chart-week-over-week">
+      <CardContent className="p-5">
+        <p className="text-sm font-semibold">This week against last week</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Darker is this week. The two bars are counts, so a taller one is simply more.
+        </p>
+        <div className="mt-4 h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} tickLine={false} axisLine={false} />
+              <Tooltip cursor={{ opacity: 0.1 }} />
+              <Bar dataKey="Last week" fill="#cbd5e1" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="This week" fill={BLUE} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function TeamSummary() {
   const { data, isLoading } = useQuery<SummaryData>({
     queryKey: ["/api/manager-dashboard"],
@@ -120,6 +213,13 @@ export default function TeamSummary() {
   const most = n(people[0]?.transfers) || 1;
 
   const eod = data.eod ?? { submitted: 0, total: 0, missing: 0, dueLabel: "" };
+
+  // Working days only, most recent twenty. The 30-day block is the widest the
+  // endpoint returns without asking for more; twenty bars is about as many as
+  // stay readable at phone width.
+  const daily = dropWeekendRows(data.byRange?.["30d"]?.trend ?? [], "date")
+    .slice(-20)
+    .map((d) => ({ date: d.date, transfers: n(d.transfers), label: format(parseISO(d.date), "MMM d") }));
 
   return (
     <div className="space-y-6 p-4 md:p-6" data-testid="page-team-summary">
@@ -188,6 +288,11 @@ export default function TeamSummary() {
         />
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-2">
+        <DailyChart rows={daily} />
+        <WeekOverWeekChart week={week} priorWeek={priorWeek} />
+      </div>
+
       <Card>
         <CardContent className="p-5">
           <p className="text-sm font-semibold">This month so far</p>
@@ -211,7 +316,15 @@ export default function TeamSummary() {
         <CardContent className="p-5">
           <p className="text-sm font-semibold">Who handed over the most this week</p>
           {people.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">Nobody has handed a borrower over yet this week.</p>
+            // Only "nobody" when the headline agrees. A page saying five up
+            // top and nobody down here is a page nobody trusts twice, and the
+            // two numbers come from different parts of the payload, so they
+            // can disagree — a training-only week does it.
+            <p className="mt-2 text-sm text-muted-foreground">
+              {transfers === 0
+                ? "Nobody has handed a borrower over yet this week."
+                : "The per-person breakdown is not available for this week."}
+            </p>
           ) : (
             <div className="mt-3 space-y-2" data-testid="summary-people">
               {people.map((p) => (

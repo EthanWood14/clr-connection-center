@@ -73,3 +73,30 @@ test("the advanced page no longer calls itself the manager's", () => {
   assert.match(advanced, /Advanced view/);
   assert.ok(!/>\s*Manager view\s*</.test(advanced));
 });
+
+test("two charts, and only two", () => {
+  // Owner, 9 Sep 2026: the summary was too simple; it should have two charts
+  // and still be simple. Nine is the Advanced page's number and the reason
+  // people bounce off it.
+  assert.match(page, /data-testid="summary-chart-daily"/);
+  assert.match(page, /data-testid="summary-chart-week-over-week"/);
+  const charts = page.match(/data-testid="summary-chart-[a-z-]+"/g) ?? [];
+  assert.equal(charts.length, 2, "a third chart needs a decision, not a commit");
+});
+
+test("the charts are bars, and weekends are dropped rather than drawn as zero", () => {
+  // A line implies a quantity between the points and there is no such thing as
+  // Tuesday-and-a-half. And a fortnight of alternating spikes and troughs
+  // looks like a problem when it is only the calendar.
+  assert.match(page, /dropWeekendRows\(data\.byRange\?\.\["30d"\]\?\.trend \?\? \[\], "date"\)/);
+  assert.ok(!/<LineChart/.test(page), "bars, not lines");
+  assert.match(page, /<BarChart/);
+  // Counts on the axis, never a percentage: this page states differences in
+  // whole things.
+  assert.match(page, /allowDecimals=\{false\}/);
+});
+
+test("a chart with nothing to show does not draw an empty box", () => {
+  assert.match(page, /if \(rows\.length < 2\) return null;/);
+  assert.match(page, /if \(rows\.every\(\(r\) => r\["This week"\] === 0 && r\["Last week"\] === 0\)\) return null;/);
+});

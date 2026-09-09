@@ -52,6 +52,13 @@ export type ShotgunPayload = {
   serverNow: string;
   leads: ShotgunLead[];
   readyUsers: Array<{ id: number; name: string; heartbeat_at: string }>;
+  /**
+   * The lead this CLR claimed and has not written up. While it is set they are
+   * skipped by the rotation and refused at the accept, so the page must be
+   * able to say so: a Ready badge and no offers for an hour, with nothing
+   * explaining it, reads as the rotation being broken.
+   */
+  holding?: { id: number; leadName: string; claimedAt: string | null } | null;
 };
 
 function statusStyle(status: ShotgunLead["status"]) {
@@ -186,6 +193,23 @@ export default function Shotgun() {
             </div>
           </div>
         </header>
+
+        {/* One at a time. While a claimed lead has no write-up the rotation
+            skips this CLR and the accept refuses, so the reason has to be on
+            screen — otherwise Ready with no offers looks like a fault. */}
+        {payload.holding && (
+          <div
+            className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/30"
+            data-testid="shotgun-holding-banner"
+          >
+            <Clock3 className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="text-sm text-amber-900 dark:text-amber-200">
+              <span className="font-semibold">Finish {payload.holding.leadName} first.</span>{" "}
+              Write up what happened on it below. Until then no new Shotgun lead will be
+              offered to you, and one cannot be accepted.
+            </p>
+          </div>
+        )}
 
         {(payload.canManage || payload.canPublish) && (
           <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">

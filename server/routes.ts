@@ -8414,10 +8414,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
           AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
           AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
+          -- One lead at a time, and that means finished, not merely answered.
+          -- 'offered' was already here: nobody should be deciding on two
+          -- twenty-second countdowns at once. 'claimed' is the addition
+          -- (owner, 9 Sep 2026): a CLR holding a lead they have not written
+          -- up yet is not free to take another. The old rule let somebody
+          -- accept, get distracted, accept again, and leave a queue of
+          -- half-worked leads nobody else could be offered.
           AND NOT EXISTS (
             SELECT 1 FROM shotgun_leads live
             WHERE live.org_id=u.org_id AND live.current_assignee_id=u.id
-              AND live.status='offered' AND live.id<>?
+              AND live.status IN ('offered','claimed') AND live.id<>?
           )
         ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
                  CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
@@ -8525,8 +8532,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const readyUsers = canPublish ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
       FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
       WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 ORDER BY u.name`).all(orgId, cutoff) : [];
+    // The lead this CLR still owes a write-up on, if any. While it is set they
+    // are skipped by the rotation and refused at the accept, so the page has
+    // to be able to say so — a Ready badge and no offers for an hour, with no
+    // explanation, reads as the rotation being broken.
+    const holding = isClr ? shotgunDb().prepare(`SELECT id,lead_name,claimed_at FROM shotgun_leads
+      WHERE org_id=? AND current_assignee_id=? AND status='claimed' ORDER BY claimed_at LIMIT 1`)
+      .get(orgId, userId) as any : null;
     res.json({ canManage, canPublish, isClr, isReady, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
-      leads: rows.map(shotgunLeadJson), readyUsers });
+      leads: rows.map(shotgunLeadJson), readyUsers,
+      holding: holding ? { id: Number(holding.id), leadName: String(holding.lead_name), claimedAt: holding.claimed_at ?? null } : null });
   });
 
   app.post("/api/shotgun/readiness", requireAuth, (req: any, res) => {
@@ -8830,9 +8845,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const leadId = Number(req.params.id);
     const me = storage.getUserById(userId) as any;
     const now = new Date().toISOString();
+    // Finish what you are holding before taking another. The rotation already
+    // skips a CLR with an unfinished lead, but an offer can be in flight when
+    // they claim — sent a second earlier, or made before the earlier lead was
+    // claimed — so the accept itself has to refuse, not just the assignment.
+    // Returned as its own answer rather than the generic 409 so the page can
+    // name the lead they still owe.
+    const holding = shotgunDb().prepare(`SELECT id,lead_name FROM shotgun_leads
+      WHERE org_id=? AND current_assignee_id=? AND status='claimed' AND id<>? ORDER BY claimed_at LIMIT 1`)
+      .get(orgId, userId, leadId) as any;
+    if (holding) {
+      return res.status(409).json({
+        error: `Finish ${holding.lead_name} first — write up what happened on it, then this one can come back round.`,
+        blockedBy: { id: Number(holding.id), leadName: String(holding.lead_name) },
+      });
+    }
     const result = shotgunDb().transaction(() => {
       const lead = shotgunDb().prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
       if (!lead || lead.status !== "offered" || Number(lead.current_assignee_id) !== userId || String(lead.offer_expires_at) <= now) return false;
+      // Re-checked inside the write: two accepts landing together must not
+      // both pass the read above and leave the CLR holding two leads.
+      const stillHolding = shotgunDb().prepare(`SELECT 1 FROM shotgun_leads
+        WHERE org_id=? AND current_assignee_id=? AND status='claimed' AND id<>? LIMIT 1`).get(orgId, userId, leadId);
+      if (stillHolding) return false;
       const changed = shotgunDb().prepare(`UPDATE shotgun_leads SET status='claimed',claimed_at=?,offer_expires_at=NULL,updated_at=?
         WHERE id=? AND org_id=? AND status='offered' AND current_assignee_id=? AND offer_expires_at>?`).run(now, now, leadId, orgId, userId, now);
       if (!changed.changes) return false;
