@@ -171,8 +171,15 @@ function DealSheet({ result }: { result: LapResult }) {
 
   const { fields, trailing } = parseLoaNote(saved);
   const filled = fields.filter((f) => f.value);
-  const started = saved.trim().length > 0;
-  const bare = started && isUntouchedLoaNote(saved);
+  // "Started" is the same judgement the email makes, not "is the field empty".
+  // Every package created from a C3 transfer is stamped with a provenance
+  // sentence, so on the old test not one file in production read as
+  // not-started — the card offered Edit sheet over a line nobody wrote.
+  const started = !isUntouchedLoaNote(saved);
+  // Starting a sheet must not silently drop the provenance stamp the package
+  // was created with, so it moves below the fields rather than being replaced.
+  const stamp = started ? "" : saved.trim();
+  const startingDraft = started ? saved : stamp ? `${LOA_NOTE_TEMPLATE}\n\n${stamp}` : LOA_NOTE_TEMPLATE;
 
   return (
     <div className="rounded-xl border bg-muted/10 p-4" data-testid={`lap-deal-sheet-${result.id}`}>
@@ -189,7 +196,7 @@ function DealSheet({ result }: { result: LapResult }) {
           <Button
             variant={started ? "outline" : "default"}
             size="sm"
-            onClick={() => { setDraft(started ? saved : LOA_NOTE_TEMPLATE); setEditing(true); }}
+            onClick={() => { setDraft(startingDraft); setEditing(true); }}
             data-testid={`lap-deal-sheet-edit-${result.id}`}
           >
             <Pencil /> {started ? "Edit sheet" : "Start the sheet"}
@@ -225,10 +232,6 @@ function DealSheet({ result }: { result: LapResult }) {
         <p className="text-sm text-muted-foreground">
           Press <span className="font-medium">Start the sheet</span> to fill in value, loan amount, rates,
           FICO, product and the rest.
-        </p>
-      ) : bare ? (
-        <p className="text-sm text-amber-700 dark:text-amber-400">
-          The sheet is here but nothing is filled in yet.
         </p>
       ) : (
         <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">

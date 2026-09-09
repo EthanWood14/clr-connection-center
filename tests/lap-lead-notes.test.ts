@@ -458,8 +458,33 @@ test("an empty sheet cannot be saved, for the reason it cannot be emailed", () =
   assert.match(fn, /an empty sheet cannot be emailed/i);
   // The template is OFFERED, not written: an untouched file reads as "not
   // started" rather than as a sheet somebody abandoned.
-  assert.match(fn, /setDraft\(started \? saved : LOA_NOTE_TEMPLATE\)/);
+  assert.match(fn, /const startingDraft = started \? saved : stamp/);
   assert.match(fn, /Start the sheet/);
+});
+
+test("the auto-created stamp is provenance, not a deal sheet", () => {
+  // Every package born from a C3 transfer carries this sentence in the very
+  // field the email sends. It is not blank, so on the old test all 1,564
+  // packages in production read as "filled in": the card offered Edit sheet
+  // over a line nobody wrote, and the Send guard would have passed a file
+  // with no sheet at all straight to the loan officer.
+  const stamp = "Created automatically from Elleine Asuncion's C3 transfer on 2026-09-09. Documents are optional and may be added whenever available.";
+  assert.equal(isUntouchedLoaNote(stamp), true);
+  assert.equal(isUntouchedLoaNote(`${stamp}
+${LOA_NOTE_TEMPLATE}`), true, "stamp plus bare template is still nothing");
+  // One real answer anywhere makes it a sheet again.
+  assert.equal(isUntouchedLoaNote(`${stamp}
+FICO Est: 704`), false);
+  // A sentence a person wrote is never mistaken for the stamp.
+  assert.equal(isUntouchedLoaNote("Created automatically from the borrower's own notes"), false);
+  assert.equal(isUntouchedLoaNote("Spoke to him about the C3 transfer on 2026-09-09."), false);
+});
+
+test("starting a sheet keeps the stamp instead of overwriting it", () => {
+  const page = read("client/src/pages/lap-results.tsx");
+  const fn = page.slice(page.indexOf("function DealSheet("), page.indexOf("function SendFileEmail("));
+  assert.match(fn, /const stamp = started \? "" : saved\.trim\(\)/);
+  assert.match(fn, /\$\{LOA_NOTE_TEMPLATE\}\\n\\n\$\{stamp\}/, "the stamp moves below the fields");
 });
 
 test("a filled sheet is readable at a glance, and free text survives", () => {

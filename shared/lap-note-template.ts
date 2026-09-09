@@ -59,7 +59,21 @@ function normalise(body: string): string[] {
 }
 
 /**
- * True when a note is blank, or is nothing but bare template labels.
+ * The sentence every auto-created package carries in its notes field.
+ *
+ * A package born from a C3 transfer is stamped "Created automatically from
+ * <CLR>'s C3 transfer on <date>. Documents are optional…". That is provenance,
+ * not a deal sheet — but it is also not blank, so it counted as "filled in"
+ * everywhere that asked. All 1,564 packages in production carry it, which
+ * means the deal sheet never showed as not-started and the Send email guard
+ * never once fired: a file with no sheet at all would have gone to the loan
+ * officer with that sentence as the body.
+ */
+const AUTO_CREATED = /^Created automatically from .*C3 transfer on \d{4}-\d{2}-\d{2}\..*$/;
+
+/**
+ * True when a note is blank, is the auto-created stamp, or is nothing but bare
+ * template labels.
  *
  * Judged line by line. The earlier version compared the whole body to the
  * whole template, so deleting one label line or reordering the labels made a
@@ -67,7 +81,7 @@ function normalise(body: string): string[] {
  * by email to the loan officer and Chris.
  */
 export function isUntouchedLoaNote(body: string): boolean {
-  return normalise(body ?? "").every((line) => LABELS.has(line));
+  return normalise(body ?? "").every((line) => LABELS.has(line) || AUTO_CREATED.test(line));
 }
 
 /** True when any line is more than a bare label: a filled-in label or free text. */

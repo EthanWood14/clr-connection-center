@@ -457,9 +457,11 @@ export function OutcomeFormDialog({
   // Final gate before anything is logged: a confirmation step that asks
   // whether the call has been put into Bonzo (with one-click notes copy).
   const [confirmBonzo, setConfirmBonzo] = useState(false);
-  // The long tail is collapsed by default. Nothing is hidden silently — the
-  // header keeps a count of what is filled inside it.
-  const [showInfo, setShowInfo] = useState(false);
+  // Info Gathering used to be collapsed behind a button, with a count in the
+  // header so "nothing is hidden silently". It was hidden anyway: the box that
+  // stayed open was Other Notes, directly below it, and CLRs typed the whole
+  // intake into that instead — which is free text nothing downstream can read
+  // as answers. The boxes are the ask, so the boxes are on screen.
 
   // After a "Log & next", clear the call-specific answers and keep only the
   // routing context. Carrying the borrower, phone, notes, qualification
@@ -478,7 +480,6 @@ export function OutcomeFormDialog({
       loaId: keep.loaId,
     });
     setConfirmBonzo(false);
-    setShowInfo(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
   // Org toggle: ask whether Bulk Texter was part of the transfer.
@@ -512,7 +513,6 @@ export function OutcomeFormDialog({
   useEffect(() => {
     if (!open) return;
     setConfirmBonzo(false);
-    setShowInfo(false);
     if (initialValues) {
       form.reset({
         ...(form.formState.defaultValues as OutcomeFormValues),
@@ -888,21 +888,21 @@ export function OutcomeFormDialog({
               ))}
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowInfo((v) => !v)}
-                className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm font-semibold hover:bg-muted"
-                data-testid="toggle-info-gathering"
+              <div
+                className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm font-semibold"
+                data-testid="header-info-gathering"
               >
                 <span>Info Gathering</span>
                 <span className="text-[11px] font-normal text-muted-foreground">
-                  {infoFilledCount > 0 ? `${infoFilledCount} filled` : "optional"} · {showInfo ? "hide" : "show"}
+                  {infoFilledCount > 0
+                    ? `${infoFilledCount} of ${INFO_FIELDS.length} filled`
+                    : "every box optional"}
                 </span>
-              </button>
-              {/* Kept in the DOM when hidden would mean 20 registered inputs on
-                  every render; unmounting is fine because react-hook-form holds
-                  the values, so reopening restores what was typed. */}
-              {showInfo && (
+              </div>
+              {/* Always mounted, so every box is registered on every render.
+                  That was the reason to unmount it, and it is a bad trade for
+                  twenty inputs: hidden fields were being answered in prose in
+                  the Other Notes box below instead. */}
               <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
               {INFO_FIELDS.map((f, index) => (
                 <Fragment key={f.name}>
@@ -1008,7 +1008,9 @@ export function OutcomeFormDialog({
                 </Fragment>
               ))}
               </div>
-              )}
+              {/* Other Notes closes the same block the boxes opened, so it
+                  reads as "and anything they did not ask for" rather than as
+                  the place to write the whole call. */}
               <FormField control={form.control} name="notes" render={({ field }) => (
                 <FormItem>
                   <div className="flex items-center justify-between gap-2">
@@ -1016,7 +1018,7 @@ export function OutcomeFormDialog({
                     <CopyNotesButton text={field.value || ""} />
                   </div>
                   <NotesPolicyNote />
-                  <FormControl><Textarea {...field} rows={2} placeholder="Anything else worth passing along…" data-testid="textarea-other-notes" /></FormControl>
+                  <FormControl><Textarea {...field} rows={2} placeholder="Anything the boxes above did not cover…" data-testid="textarea-other-notes" /></FormControl>
                 </FormItem>
               )} />
             </>

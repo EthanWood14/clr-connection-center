@@ -140,12 +140,20 @@ test("the form opens on the answer for the case that is 89% of outcomes", () => 
   assert.match(edit, /transferType: null,/, "editing must not preselect");
 });
 
-test("the long tail is collapsed, but never hidden silently", () => {
-  assert.match(page, /data-testid="toggle-info-gathering"/);
-  assert.match(page, /\{showInfo && \(/, "the section collapses");
+test("Info Gathering is on screen, not behind a control", () => {
+  // It used to collapse behind a button. The box that stayed open was Other
+  // Notes, immediately below, so two CLRs answered the whole intake in prose
+  // there instead — free text nothing downstream can read as answers.
+  assert.match(page, /data-testid="header-info-gathering"/);
+  assert.ok(!/toggle-info-gathering/.test(page), "no control may hide the boxes");
+  assert.ok(!/showInfo/.test(page), "no state may hide the boxes");
   assert.match(page, /INFO_FIELDS\.map\(\(f, index\) =>/, "the shared field list still drives it");
-  // A collapsed section that hid filled values would be a trap.
-  assert.match(page, /infoFilledCount/, "the header must say how many are filled");
+  assert.match(page, /infoFilledCount/, "the header still says how many are filled");
+  // Other Notes must stay BELOW the boxes: it is the overflow, not the intake.
+  assert.ok(
+    page.indexOf('data-testid="header-info-gathering"') < page.indexOf('data-testid="textarea-other-notes"'),
+    "the boxes must come before the free-text box",
+  );
 });
 
 test("burst entry keeps the form up but never carries one call into the next", () => {

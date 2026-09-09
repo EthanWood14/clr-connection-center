@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.74.0",
+    headline: "Info Gathering is on the page, not behind a button.",
+    items: [
+      { text: "On Input Results, the Info Gathering boxes for a transfer are now open on the page instead of collapsed behind a bar you had to press. The header still tells you how many of them you have filled in.", audience: "everyone" },
+      { text: "Why it changed: the box that stayed open was Other Notes, right underneath, so the whole intake was being typed there in prose. Written that way the loan officer still reads it, but nothing else can — not the write-up, not the completeness score, not any report that asks how often we captured a credit score.", audience: "everyone" },
+      { text: "Other Notes now sits directly under the boxes and asks for anything they did not cover, rather than reading like the place to write the call up.", audience: "everyone" },
+      { text: "In the LAP portal, a file created from a C3 transfer is stamped with a line saying where it came from. That line was sitting in the deal sheet, so every file looked like it had a sheet already, and Send email would have gone out with that one sentence as the whole write-up. Those files now read as not started, and starting one keeps the stamp underneath.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.73.0",
     headline: "The deal sheet is on the file where you can see it.",
     items: [
