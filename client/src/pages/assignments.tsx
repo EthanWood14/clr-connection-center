@@ -1063,6 +1063,107 @@ function TransferLullsCard() {
   );
 }
 
+/**
+ * What just landed for the loan officers you were given today.
+ *
+ * The reason to call one LO before another is that a lead arrived for them
+ * forty minutes ago. That fact lived in LeadVault, on somebody else's screen,
+ * so it reached the CLR by memory or not at all (Ethan, 9 Sep 2026).
+ *
+ * Polled, not pushed, in the shape Shotgun uses. Twenty seconds rather than
+ * Shotgun's five: nothing here expires, and the server caches on the SET of
+ * loan officers, so the whole floor refreshing costs LeadVault a couple of
+ * requests a minute.
+ *
+ * SILENT WHEN THERE IS NOTHING TO SAY. No shared secret configured, no
+ * assignments yet, or no lead in the window and the card does not render at
+ * all — an empty panel on the page every CLR opens first is a panel they stop
+ * seeing.
+ */
+function NewestLeadsCard() {
+  const { data } = useQuery<{
+    configured: boolean;
+    stale: boolean;
+    fetchedAt: string | null;
+    hours: number;
+    askedFor: number;
+    withoutBonzoLogin: number;
+    los: { email: string; name: string | null; lo: { id: number; name: string } | null;
+           leads: { externalId: string; borrowerName: string | null; state: string | null;
+                    city: string | null; source: string | null; loanPurpose: string | null;
+                    stage: string | null; landedAt: string | null }[] }[];
+  }>({
+    queryKey: ["/api/lo-newest-leads"],
+    queryFn: () => apiRequest("GET", "/api/lo-newest-leads?hours=72&per=1"),
+    refetchInterval: 20_000,
+  });
+
+  if (!data?.configured) return null;
+  const rows = (data.los ?? []).filter((r) => r.leads.length > 0);
+  if (rows.length === 0) return null;
+
+  // Newest first: the whole point is which one to pick up.
+  const sorted = [...rows].sort((a, b) =>
+    String(b.leads[0]?.landedAt ?? "").localeCompare(String(a.leads[0]?.landedAt ?? "")));
+
+  return (
+    <Card className="border-emerald-200 dark:border-emerald-800" data-testid="newest-leads-card">
+      <CardContent className="p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Sparkles className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <span className="text-sm font-semibold">Just landed for your LOs</span>
+          <span className="text-[11px] text-muted-foreground">
+            newest lead in the last {data.hours} hours · live from LeadVault
+            {data.stale ? " · reconnecting" : ""}
+          </span>
+        </div>
+        <div className="space-y-1.5">
+          {sorted.map((row) => {
+            const lead = row.leads[0];
+            return (
+              <div
+                key={row.email}
+                className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border px-2.5 py-1.5"
+                data-testid={`newest-lead-${row.lo?.id ?? row.email}`}
+              >
+                <span className="text-sm font-medium">{row.lo?.name || row.name || row.email}</span>
+                <span className="text-xs text-muted-foreground">got</span>
+                <span className="text-sm">{lead.borrowerName ?? "a new lead"}</span>
+                {lead.state && <Badge variant="outline" className="font-normal">{lead.state}</Badge>}
+                {lead.source && (
+                  <span className="text-xs text-muted-foreground truncate max-w-[16rem]">{lead.source}</span>
+                )}
+                <span className="ml-auto text-xs tabular-nums text-emerald-700 dark:text-emerald-400">
+                  {landedAgo(lead.landedAt)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {data.withoutBonzoLogin > 0 && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            {data.withoutBonzoLogin} of your loan officers {data.withoutBonzoLogin === 1 ? "has" : "have"} no
+            Bonzo login on file in C3, so their leads cannot be looked up.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** "12m ago". Minutes for the first hour, then hours, then the date. */
+function landedAgo(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export default function Assignments() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -1526,6 +1627,9 @@ export default function Assignments() {
           </p>
         </div>
       )}
+
+      {/* What LeadVault has just taken in for the LOs on this list */}
+      <NewestLeadsCard />
 
       {/* Fewest transfers over the last 5 working days */}
       <TransferLullsCard />

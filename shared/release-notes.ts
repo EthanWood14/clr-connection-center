@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.76.0",
+    headline: "See the lead that just landed for the LO you are about to call.",
+    items: [
+      { text: "Your Call List now shows, live, the newest lead LeadVault has taken in for each loan officer you were given today — borrower, state, lead source and how long ago it arrived, newest at the top. It refreshes on its own every twenty seconds, the way Shotgun does.", audience: "everyone" },
+      { text: "It only appears when there is something to say. No leads in the last three days for anyone on your list and the panel stays off the page.", audience: "everyone" },
+      { text: "A loan officer with no Bonzo login saved in C3 cannot be looked up, and the panel says how many of yours are in that state rather than leaving you to wonder why one is blank.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.75.0",
     headline: "A plain-English team page, and answers count wherever you typed them.",
     items: [

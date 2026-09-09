@@ -123,6 +123,7 @@ import {
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
+import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -19022,6 +19023,72 @@ ${note}` : daysLine;
     runWithOrg({ orgId: 1, superAdmin: false }, () => { void fetchLeadVaultPeople().catch(() => {}); });
   });
   setTimeout(() => { void fetchLeadVaultPeople().catch(() => {}); }, 20_000);
+
+  /**
+   * The newest lead LeadVault holds for each of a CLR's assigned LOs.
+   *
+   * The point of the page it feeds: you are given four loan officers to call
+   * today, and the call worth making first is the one whose lead landed forty
+   * minutes ago. Until now that meant keeping LeadVault open on a second
+   * monitor and remembering which of the twenty-nine names on it were yours.
+   *
+   * WHICH LOAN OFFICERS: today's assignments for the signed-in user by
+   * default, which is the list they are actually working. `?loIds=` overrides
+   * it for the call-script page, where the CLR has one LO selected and wants
+   * that one. Nothing here is private per-user — every CLR may look up any
+   * LO — so the parameter is capped rather than gated, to keep one caller
+   * from asking about the whole company on a poll.
+   *
+   * The cache lives in leadvault-newest-leads.ts and is keyed on the SET of
+   * addresses, so the whole floor polling every fifteen seconds costs
+   * LeadVault a couple of requests a minute.
+   */
+  app.get("/api/lo-newest-leads", requireAuth, async (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const hours = Math.min(Math.max(parseInt(String(req.query.hours ?? "72"), 10) || 72, 1), 24 * 14);
+    const per = Math.min(Math.max(parseInt(String(req.query.per ?? "1"), 10) || 1, 1), 5);
+
+    const losById = new Map<number, any>();
+    for (const lo of storage.getLoanOfficers() as any[]) losById.set(Number(lo.id), lo);
+
+    const explicit = String(req.query.loIds ?? "").split(",")
+      .map((raw) => parseInt(raw.trim(), 10))
+      .filter((id) => Number.isFinite(id));
+    let chosen: any[];
+    if (explicit.length) {
+      chosen = explicit.slice(0, 40).map((id) => losById.get(id)).filter(Boolean);
+    } else {
+      const date = businessTodayForRequest(req, storageExtra.getRawSqlite());
+      const mine = (storage.getDailyAssignments(date) as any[])
+        .filter((a) => (a.assistantId ?? a.assistant_id) === userId);
+      chosen = mine.map((a) => losById.get(Number(a.loId ?? a.lo_id))).filter(Boolean);
+    }
+
+    const emails = loEmailsFor(chosen);
+    // Which LO each address belongs to, so the client can put a lead against
+    // the assignment card it is about without matching on a name.
+    const loByEmail = new Map<string, { id: number; name: string }>();
+    for (const lo of chosen) {
+      const email = String(lo?.bonzoUsername ?? lo?.bonzo_username ?? "").trim().toLowerCase();
+      if (email) loByEmail.set(email, { id: Number(lo.id), name: String(lo.fullName ?? lo.full_name ?? "") });
+    }
+
+    const result = await newestLeadsForLos(emails, { hours, per }, {
+      token: leadvaultReportingToken,
+      baseUrl: () => process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud",
+    });
+
+    res.json({
+      ...result,
+      hours,
+      // An LO with no Bonzo login on file cannot be asked about at all. Say
+      // how many, because the honest answer to "why is this one blank" is
+      // usually that nobody filled in their Bonzo address in C3.
+      askedFor: emails.length,
+      withoutBonzoLogin: chosen.length - emails.length,
+      los: result.los.map((row) => ({ ...row, lo: loByEmail.get(row.email) ?? null })),
+    });
+  });
 
   async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
     const out = new Map<string, number>();
