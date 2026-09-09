@@ -25,6 +25,9 @@ import {
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  LOA_NOTE_TEMPLATE, LOA_NOTE_LABELS, isUntouchedLoaNote, parseLoaNote,
+} from "@shared/lap-note-template";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -123,6 +126,125 @@ function payloadFromForm(form: FormState): LapResultPayload {
 
 function initials(name?: string | null) {
   return (name || "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+}
+
+/**
+ * The deal sheet — the twenty-two fields that become the body of the email.
+ *
+ * IT LIVES ON THE FILE, IN THE OPEN. It used to be the "Operational notes"
+ * textarea inside Edit details: you had to press a button to discover the one
+ * field the whole handoff depends on, and it was described as somewhere to
+ * "add context another team member needs". Nobody fills in a form they cannot
+ * see (Ethan, 9 Sep 2026).
+ *
+ * It writes `result.notes`, which is the field emailLapSubmission actually
+ * sends. That matters: the template used to be pre-filled ONLY in the notes
+ * thread below, which posts to a different table entirely — so an LOA could
+ * fill in all twenty-two fields and the Send button would still refuse,
+ * correctly, because the field it reads was untouched. One sheet, one field,
+ * one place to put it.
+ *
+ * Empty means "not started", so the template is offered rather than written:
+ * the box only becomes the sheet when somebody chooses to start it. Saving a
+ * bare template is refused for the same reason the email refuses it.
+ */
+function DealSheet({ result }: { result: LapResult }) {
+  const { toast } = useToast();
+  const saved = result.notes ?? "";
+  const [draft, setDraft] = useState(saved);
+  const [editing, setEditing] = useState(false);
+
+  const save = useMutation({
+    // Only the sheet. The PATCH takes partial updates, so re-sending the
+    // borrower, date and LO here would let a stale card clobber an edit
+    // somebody else made to those fields while this one was open.
+    mutationFn: () => apiRequest("PATCH", `/api/lap/results/${result.id}`, {
+      notes: draft.trim() || null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lap/results"] });
+      setEditing(false);
+      toast({ title: "Deal sheet saved" });
+    },
+    onError: (e: any) => toast({ title: "Not saved", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  const { fields, trailing } = parseLoaNote(saved);
+  const filled = fields.filter((f) => f.value);
+  const started = saved.trim().length > 0;
+  const bare = started && isUntouchedLoaNote(saved);
+
+  return (
+    <div className="rounded-xl border bg-muted/10 p-4" data-testid={`lap-deal-sheet-${result.id}`}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-semibold">Deal sheet</h3>
+          <p className="text-xs text-muted-foreground">
+            {started
+              ? `${filled.length} of ${LOA_NOTE_LABELS.length} filled in — this is the body of the email.`
+              : "Not started. This is the body of the email that goes to the loan officer."}
+          </p>
+        </div>
+        {!editing && (
+          <Button
+            variant={started ? "outline" : "default"}
+            size="sm"
+            onClick={() => { setDraft(started ? saved : LOA_NOTE_TEMPLATE); setEditing(true); }}
+            data-testid={`lap-deal-sheet-edit-${result.id}`}
+          >
+            <Pencil /> {started ? "Edit sheet" : "Start the sheet"}
+          </Button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-2">
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            rows={16}
+            spellCheck={false}
+            className="font-mono text-xs leading-relaxed"
+            data-testid={`lap-deal-sheet-input-${result.id}`}
+          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isUntouchedLoaNote(draft) && (
+              <span className="mr-auto text-xs text-amber-700 dark:text-amber-400">
+                Nothing filled in yet — an empty sheet cannot be emailed.
+              </span>
+            )}
+            <Button variant="ghost" size="sm" disabled={save.isPending} onClick={() => { setDraft(saved); setEditing(false); }}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={save.isPending || isUntouchedLoaNote(draft)} onClick={() => save.mutate()}>
+              {save.isPending ? <RefreshCw className="animate-spin" /> : <Check />} Save sheet
+            </Button>
+          </div>
+        </div>
+      ) : !started ? (
+        <p className="text-sm text-muted-foreground">
+          Press <span className="font-medium">Start the sheet</span> to fill in value, loan amount, rates,
+          FICO, product and the rest.
+        </p>
+      ) : bare ? (
+        <p className="text-sm text-amber-700 dark:text-amber-400">
+          The sheet is here but nothing is filled in yet.
+        </p>
+      ) : (
+        <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+          {filled.map((f) => (
+            <div key={f.label} className="flex items-baseline gap-2 text-sm">
+              <span className="shrink-0 text-xs text-muted-foreground">{f.label}</span>
+              <span className="min-w-0 break-words">{f.value}</span>
+            </div>
+          ))}
+          {trailing && (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed sm:col-span-2">{trailing}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -579,16 +701,6 @@ function ResultEditor({
                 onChange={(event) => setForm({ ...form, resultDate: event.target.value })}
               />
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor={`lap-notes-${result.id}`}>Operational notes</Label>
-              <Textarea
-                id={`lap-notes-${result.id}`}
-                value={form.notes}
-                onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                placeholder="Add context another team member needs to understand this package."
-                rows={3}
-              />
-            </div>
           </div>
           <div className="mt-4 flex justify-end">
             <Button
@@ -599,14 +711,9 @@ function ResultEditor({
             </Button>
           </div>
         </div>
-      ) : (
-        result.notes && (
-          <div className="rounded-lg border bg-muted/20 px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Operational notes</p>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">{result.notes}</p>
-          </div>
-        )
-      )}
+      ) : null}
+
+      <DealSheet result={result} />
 
       <div>
         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -1075,12 +1182,12 @@ export default function LapResults() {
               />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="lap-create-notes">Operational notes</Label>
+              <Label htmlFor="lap-create-notes">Deal sheet <span className="font-normal text-muted-foreground">(optional — usually filled in on the file)</span></Label>
               <Textarea
                 id="lap-create-notes"
                 value={createForm.notes}
                 onChange={(event) => setCreateForm({ ...createForm, notes: event.target.value })}
-                placeholder="Optional context for the LO or another assistant"
+                placeholder="Leave blank and press Start the sheet on the file once you have the numbers."
                 rows={3}
               />
             </div>

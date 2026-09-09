@@ -411,3 +411,61 @@ test("the button sits on the file and asks before it sends", () => {
   // The server's specific refusals must reach the person, not be flattened.
   assert.match(page, /description: String\(e\?\.message \?\? e\)/);
 });
+
+// ── the deal sheet is on the file, in the open (Ethan, 9 Sep 2026) ─────────
+
+test("the sheet is its own section, not hidden behind Edit details", () => {
+  const page = read("client/src/pages/lap-results.tsx");
+  assert.match(page, /function DealSheet\(/);
+  assert.match(page, /<DealSheet result=\{result\} \/>/);
+  assert.match(page, /lap-deal-sheet-\$\{result\.id\}/);
+  // It must sit OUTSIDE the editing branch — the whole complaint was that the
+  // one field the handoff depends on took a button press to discover.
+  const card = page.slice(page.indexOf("<DealSheet result={result} />"));
+  assert.ok(card.length > 0);
+  assert.ok(page.indexOf("<DealSheet result={result} />") > page.indexOf("editing ? ("),
+    "the sheet renders after the edit form closes, not inside it");
+  // And the old hidden copies are gone, so one field has one door. The label
+  // survives only inside the DealSheet header comment, which explains why.
+  const jsx = page.slice(page.indexOf("function DealSheet("));
+  assert.doesNotMatch(jsx, /<Label[^>]*>Operational notes/);
+  assert.doesNotMatch(page, /Add context another team member needs/);
+  // Creating a file names the same field the same way, rather than inventing a
+  // second name for it.
+  assert.match(page, /htmlFor="lap-create-notes">Deal sheet/);
+});
+
+test("the sheet writes the field the email actually sends", () => {
+  // THE BUG THIS FIXES: the template was pre-filled only in the notes thread,
+  // which posts to lap_package_notes — a different table from the p.notes the
+  // email reads. An LOA could fill all twenty-two fields and Send would still
+  // refuse, correctly, because the field it checks was untouched.
+  const page = read("client/src/pages/lap-results.tsx");
+  const fn = page.slice(page.indexOf("function DealSheet("), page.indexOf("function SendFileEmail("));
+  assert.match(fn, /apiRequest\("PATCH", `\/api\/lap\/results\/\$\{result\.id\}`/);
+  assert.match(fn, /notes: draft\.trim\(\) \|\| null/);
+  // Only the sheet goes in the patch: re-sending borrower/date/LO from a card
+  // that has been open a while would clobber somebody else's edit.
+  assert.doesNotMatch(fn, /borrowerName: result\.borrowerName/);
+  // The email reads that same field.
+  assert.match(storage, /notes: String\(pkg\.notes \?\? ""\)/);
+});
+
+test("an empty sheet cannot be saved, for the reason it cannot be emailed", () => {
+  const page = read("client/src/pages/lap-results.tsx");
+  const fn = page.slice(page.indexOf("function DealSheet("), page.indexOf("function SendFileEmail("));
+  assert.match(fn, /disabled=\{save\.isPending \|\| isUntouchedLoaNote\(draft\)\}/);
+  assert.match(fn, /an empty sheet cannot be emailed/i);
+  // The template is OFFERED, not written: an untouched file reads as "not
+  // started" rather than as a sheet somebody abandoned.
+  assert.match(fn, /setDraft\(started \? saved : LOA_NOTE_TEMPLATE\)/);
+  assert.match(fn, /Start the sheet/);
+});
+
+test("a filled sheet is readable at a glance, and free text survives", () => {
+  const page = read("client/src/pages/lap-results.tsx");
+  const fn = page.slice(page.indexOf("function DealSheet("), page.indexOf("function SendFileEmail("));
+  assert.match(fn, /parseLoaNote\(saved\)/);
+  assert.match(fn, /filled\.length\} of \$\{LOA_NOTE_LABELS\.length\}/, "says how much is done");
+  assert.match(fn, /\{trailing &&/, "the pasted chain under the sheet is shown, not dropped");
+});

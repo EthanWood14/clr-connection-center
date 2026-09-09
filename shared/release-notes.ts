@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.73.0",
+    headline: "The deal sheet is on the file where you can see it.",
+    items: [
+      { text: "The deal sheet now sits on each file in Input Results, open, with a Start the sheet button and a count of how much is filled in. It used to be a box called “Operational notes” hidden inside Edit details — nobody fills in a form they cannot see.", audience: "lap" },
+      { text: "Fixes a real gap in yesterday's Send email button: the twenty-two fields were pre-filled in the notes thread, which is a different place from the one the email reads. You could fill in the whole sheet and Send would still say it was empty. Now there is one sheet, in one place, and it is the one that gets sent.", audience: "lap" },
+      { text: "A filled sheet reads back as a list rather than a block of text, so you can check it before sending, and anything typed underneath it is kept.", audience: "lap" },
+    ],
+  },
+  {
     version: "4.72.0",
     headline: "Send a file's documents and its deal sheet to the LO, in one press.",
     items: [
