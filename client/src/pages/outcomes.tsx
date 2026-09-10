@@ -29,6 +29,7 @@ import {
 import { HelpIcon, markStep } from "@/components/onboarding";
 import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/outcome-draft";
 import { timeColumnsPatch } from "@/lib/appointment-datetime";
 import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection, composeLeadCaptureNotes } from "@/lib/lead-capture";
 import { copyToClipboard } from "@/lib/utils";
@@ -356,41 +357,20 @@ function TransferTypeOption({
   );
 }
 
-export function OutcomeFormDialog({
-  open,
-  onClose,
-  onSubmit,
-  isPending,
-  users,
-  los,
-  todayCount = 0,
-  todayRecent = [],
-  resetSignal = 0,
-  initialValues,
-  title = "Log Outcome",
-  submitLabel = "Log Outcome",
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (values: OutcomeFormValues, keepOpen?: boolean) => void;
-  isPending: boolean;
-  /** Logged so far today, so burst entry can see itself accumulate. */
-  todayCount?: number;
-  todayRecent?: Array<{ id: number; borrowerName?: string | null; outcomeType: string }>;
-  /** Bumped by the page after a successful "Log & next", to clear the form. */
-  resetSignal?: number;
-  users: any[];
-  los: any[];
-  initialValues?: Partial<OutcomeFormValues>;
-  title?: string;
-  submitLabel?: string;
-}) {
-  const { user: meUser } = useAuth();
-  const meId = Number((meUser as any)?.id) || 0;
-  const meIsAdmin = !!(meUser && ((meUser as any).role === "admin" || (meUser as any).superAdmin || (meUser as any).isManager));
-  const form = useForm<OutcomeFormValues>({
-    resolver: zodResolver(outcomeFormSchema),
-    defaultValues: {
+/**
+ * A blank form, built fresh every time it is asked for.
+ *
+ * This used to be an object literal inside useForm, and everything that
+ * wanted "empty again" read form.formState.defaultValues. That was fine
+ * until the draft restore landed on 10 Sep 2026: react-hook-form REPLACES
+ * defaultValues when you reset() with new ones, so after a draft was put
+ * back, "empty again" meant "the draft again". Start fresh did nothing
+ * visible, and — much worse — Log & next would have carried the restored
+ * borrower onto the next call, which is the one thing the reset below exists
+ * to prevent. Caught in the preview before it shipped.
+ */
+function blankOutcomeForm(meId: number): OutcomeFormValues {
+  return {
       date: businessTodayClient(),
       assistantId: meId || 1, // default to the logged-in CLR (not hardcoded)
       loId: 0,
@@ -451,7 +431,44 @@ export function OutcomeFormDialog({
       infoMilitary: "",
       infoEmploymentNotes: "",
       infoMilitaryNotes: "",
-    },
+  } as OutcomeFormValues;
+}
+
+export function OutcomeFormDialog({
+  open,
+  onClose,
+  onSubmit,
+  isPending,
+  users,
+  los,
+  todayCount = 0,
+  todayRecent = [],
+  resetSignal = 0,
+  initialValues,
+  title = "Log Outcome",
+  submitLabel = "Log Outcome",
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (values: OutcomeFormValues, keepOpen?: boolean) => void;
+  isPending: boolean;
+  /** Logged so far today, so burst entry can see itself accumulate. */
+  todayCount?: number;
+  todayRecent?: Array<{ id: number; borrowerName?: string | null; outcomeType: string }>;
+  /** Bumped by the page after a successful "Log & next", to clear the form. */
+  resetSignal?: number;
+  users: any[];
+  los: any[];
+  initialValues?: Partial<OutcomeFormValues>;
+  title?: string;
+  submitLabel?: string;
+}) {
+  const { user: meUser } = useAuth();
+  const meId = Number((meUser as any)?.id) || 0;
+  const meIsAdmin = !!(meUser && ((meUser as any).role === "admin" || (meUser as any).superAdmin || (meUser as any).isManager));
+  const form = useForm<OutcomeFormValues>({
+    resolver: zodResolver(outcomeFormSchema),
+    defaultValues: blankOutcomeForm(meId),
   });
 
   // Final gate before anything is logged: a confirmation step that asks
@@ -471,7 +488,10 @@ export function OutcomeFormDialog({
     if (!resetSignal) return;
     const keep = form.getValues();
     form.reset({
-      ...form.formState.defaultValues as OutcomeFormValues,
+      // blankOutcomeForm(), NOT formState.defaultValues: restoring a draft
+      // replaces defaultValues, so reading them here would put the restored
+      // borrower back onto the next call.
+      ...blankOutcomeForm(meId),
       date: keep.date,
       assistantId: keep.assistantId,
       outcomeType: keep.outcomeType,
@@ -480,6 +500,11 @@ export function OutcomeFormDialog({
       loaId: keep.loaId,
     });
     setConfirmBonzo(false);
+    // The draft dies with the form it belonged to. "Log & next" exists to
+    // start a fresh call, and restoring the last borrower onto it would be
+    // the exact mistake the reset above is written to prevent.
+    clearDraft(meId);
+    setRestoredDraft(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
   // Org toggle: ask whether Bulk Texter was part of the transfer.
@@ -515,13 +540,47 @@ export function OutcomeFormDialog({
     setConfirmBonzo(false);
     if (initialValues) {
       form.reset({
-        ...(form.formState.defaultValues as OutcomeFormValues),
+        ...blankOutcomeForm(meId),
         assistantId: meId || 1,
         ...initialValues,
       });
     } else if (meId) {
       form.setValue("assistantId", meId, { shouldValidate: false });
     }
+  }, [open, initialValues, meId, form]);
+
+  /**
+   * Put back whatever was typed before the page went away.
+   *
+   * ONLY for a new outcome. Opening the form from an assignment, a shotgun
+   * lead or an edit passes initialValues, and those describe a specific call
+   * — a draft landing on top of them would be a wrong record rather than a
+   * recovered one, which is the worse of the two failures.
+   */
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  useEffect(() => {
+    if (!open || initialValues || !meId) return;
+    const saved = loadDraft(meId, businessTodayClient());
+    if (!saved) return;
+    form.reset({
+      ...blankOutcomeForm(meId),
+      assistantId: meId,
+      ...(saved as Partial<OutcomeFormValues>),
+    });
+    setRestoredDraft(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialValues, meId]);
+
+  // Save as they type. Debounced because this fires on every keystroke across
+  // thirty-odd fields, and localStorage writes are synchronous.
+  useEffect(() => {
+    if (!open || initialValues || !meId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const sub = form.watch((values) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => saveDraft(meId, businessTodayClient(), values as any), 400);
+    });
+    return () => { if (timer) clearTimeout(timer); sub.unsubscribe(); };
   }, [open, initialValues, meId, form]);
 
 
@@ -598,12 +657,40 @@ export function OutcomeFormDialog({
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((v) => onSubmit(v))} className="flex flex-col min-h-0 flex-1">
+          <form onSubmit={form.handleSubmit((v) => { clearDraft(meId); setRestoredDraft(false); onSubmit(v); })} className="flex flex-col min-h-0 flex-1">
             <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
 
           {/* Outcome type — the first thing on the page, always visible and
               always changeable. It used to be a separate full-screen step that
               had to be cleared before any field appeared. */}
+          {/* Say that something was put back. A form that silently fills
+              itself in is worse than one that loses your work: you cannot
+              tell whose call you are looking at. */}
+          {restoredDraft && !confirmBonzo && (
+            <div
+              className="flex flex-wrap items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 dark:border-sky-800 dark:bg-sky-950/30"
+              data-testid="outcome-draft-restored"
+            >
+              <p className="text-xs text-sky-900 dark:text-sky-200">
+                <span className="font-semibold">Picked up where you left off.</span>{" "}
+                This is what you had typed before the page reloaded.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="ml-auto h-7 text-xs"
+                data-testid="button-discard-draft"
+                onClick={() => {
+                  clearDraft(meId);
+                  setRestoredDraft(false);
+                  form.reset(blankOutcomeForm(meId));
+                }}
+              >
+                Start fresh
+              </Button>
+            </div>
+          )}
           {!confirmBonzo && (
             <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="What was the result?">
               {OUTCOME_TILES.map(tile => {
@@ -1066,7 +1153,7 @@ export function OutcomeFormDialog({
                     type="button"
                     variant="secondary"
                     disabled={isPending}
-                    onClick={() => form.handleSubmit((v) => onSubmit(v, true))()}
+                    onClick={() => form.handleSubmit((v) => { clearDraft(meId); setRestoredDraft(false); onSubmit(v, true); })()}
                     data-testid="button-log-and-next"
                   >
                     Log &amp; next

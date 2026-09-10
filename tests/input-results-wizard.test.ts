@@ -132,9 +132,14 @@ test("appointment notes edits are mirrored to Bonzo", () => {
 // long tail behind one control.
 
 test("the form opens on the answer for the case that is 89% of outcomes", () => {
-  const entry = page.slice(page.indexOf("function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
-  assert.match(entry, /outcomeType: "transfer",/);
-  assert.match(entry, /transferType: "direct",/, "Direct is the common shape - do not make them click it");
+  // The blank form moved into blankOutcomeForm() on 10 Sep 2026 so that
+  // "empty again" could not be poisoned by a restored draft. The answers it
+  // opens on are unchanged.
+  const blank = page.slice(page.indexOf("function blankOutcomeForm"), page.indexOf("export function OutcomeFormDialog"));
+  assert.match(blank, /outcomeType: "transfer",/);
+  assert.match(blank, /transferType: "direct",/, "Direct is the common shape - do not make them click it");
+  const entry = page.slice(page.indexOf("export function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
+  assert.match(entry, /defaultValues: blankOutcomeForm\(meId\)/);
   // Editing must reflect what was recorded, never invent a transfer type.
   const edit = page.slice(page.indexOf("function EditOutcomeDialog"));
   assert.match(edit, /transferType: null,/, "editing must not preselect");
@@ -174,7 +179,11 @@ test("a normal submit does not accidentally behave as Log & next", () => {
   // would arrive as a truthy keepOpen and leave the dialog open every time.
   // Only the entry dialog's onSubmit takes keepOpen, so only it must wrap.
   const entry = page.slice(page.indexOf("function OutcomeFormDialog"), page.indexOf("function EditOutcomeDialog"));
-  assert.match(entry, /form\.handleSubmit\(\(v\) => onSubmit\(v\)\)/);
+  // The invariant is that onSubmit is called with ONE argument, not that the
+  // arrow body is a bare call — it gained a draft-clear on 10 Sep 2026.
+  assert.match(entry, /form\.handleSubmit\(\(v\) => /);
+  assert.match(entry, /onSubmit\(v\);/, "the plain submit passes no keepOpen");
+  assert.match(entry, /onSubmit\(v, true\);/, "and Log & next passes it explicitly");
   assert.ok(!/handleSubmit\(onSubmit\)/.test(entry), "the entry form must not pass onSubmit bare");
 });
 

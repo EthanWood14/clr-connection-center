@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.89.0",
+    headline: "Input Results keeps what you typed.",
+    items: [
+      { text: "The Log Outcome form now saves as you go. A refresh, a stray Back, a phone locking or an update reloading the tab no longer throws away a half-finished write-up — reopen it and everything is still there, with a line at the top saying it was picked up where you left off.", audience: "everyone" },
+      { text: "There is a Start fresh button next to that line if you would rather begin again, and logging the outcome or pressing Log & next clears it — one call's details can never land on the next.", audience: "everyone" },
+      { text: "What you had typed is only offered back on the same day, and only to you.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.88.0",
     headline: "Rhode Island is W2-only; Connecticut and Maine are fine.",
     items: [
