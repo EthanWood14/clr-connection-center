@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.92.0",
+    headline: "Your outcomes get today's date, not your laptop's idea of it.",
+    items: [
+      { text: "The date C3 puts on an outcome now comes from the timezone set on your profile instead of the clock on the device you are using. If those agree, nothing changes for you.", audience: "everyone" },
+      { text: "They did not agree for anyone working from another timezone. Elleine's whole shift was being stamped with the next day's date, so the office TV showed her at zero transfers every day and her work turned up a day late. That is fixed going forward.", audience: "manager" },
+      { text: "The 7pm rollover is unchanged — it just reads the right clock now.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.91.0",
     headline: "Lead source is a sharper question now.",
     items: [

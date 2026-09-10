@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { queryClient, apiRequest } from "./queryClient";
 import { detectProductPortal } from "./product-metadata";
+import { setClientTimezone } from "./business-day";
 
 async function getExistingPushSubscription(): Promise<PushSubscription | null> {
   if (
@@ -116,6 +117,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetchMe()
       .then((data: any) => {
         setUser(data.user ?? null);
+        // Before anything renders. Every date C3 stamps on an outcome comes
+        // from businessTodayClient(), and until this is set it reads the
+        // device clock — which put a Manila-hours CLR's whole shift on
+        // tomorrow's date. Cleared on sign-out below.
+        setClientTimezone(data?.user?.timezone);
         try {
           const w = window as any;
           w.__clrIsSuperAdmin = !!data?.user?.superAdmin;
@@ -126,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Reached only after a 401, or after every retry failed. Either way
         // there is no session to preserve on a first load.
         setUser(null);
+        setClientTimezone(null);
       })
       .finally(() => {
         setIsLoading(false);
@@ -156,6 +163,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     await apiRequest("POST", "/api/auth/logout", { pushEndpoint }).catch(() => {});
     setUser(null);
+    // A shared machine must not keep the last person's timezone: the next
+    // one to sign in would stamp their outcomes in it until auth resolved.
+    setClientTimezone(null);
     queryClient.clear();
     window.location.hash = portal === "lap" ? "#/lap" : "#/login";
   }, []);
@@ -183,6 +193,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data: any = await fetchMe();
       setUser(data.user ?? null);
+      // Follows a timezone change made in Settings without a reload.
+      setClientTimezone(data?.user?.timezone);
       try {
         const w = window as any;
         w.__clrIsSuperAdmin = !!data?.user?.superAdmin;
