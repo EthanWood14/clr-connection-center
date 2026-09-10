@@ -35,7 +35,7 @@ import { RaceScene } from "@/components/tv/race";
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
-  StarvedPage, UpcomingPage,
+  StarvedPage, UpcomingPage, LoSplitPage,
 } from "@/components/tv/pages";
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
@@ -141,7 +141,7 @@ const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeo
 type PageId =
   | "scorecard" | "team" | "latest" | "tip"
   | "transfersWeek" | "transfersMonth" | "writeup" | "assignments" | "eod"
-  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved" | "upcoming";
+  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved" | "upcoming" | "loSplit";
 
 /**
  * The deck, and when each page is allowed on it.
@@ -175,6 +175,9 @@ const DECK: Slot[] = [
   { id: "writeup",        dwellMs: 12_000 },
   { id: "leadSource",     dwellMs: 11_000 },
   { id: "starved",        dwellMs: 13_000 },
+  // Directly after "who needs transfers", because it answers the question
+  // that one raises: who is actually doing the feeding.
+  { id: "loSplit",        dwellMs: 13_000 },
   { id: "transfersMonth", dwellMs: 12_000 },
   { id: "tip",            dwellMs: 12_000 },
 ];
@@ -852,6 +855,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
         case "leadSource":   return !!board?.leadSources;
         case "onPhoneNow":   return !!board?.onPhoneNow;
         case "starved":      return !!board?.starved;
+        case "loSplit":      return !!board?.loSplit;
         case "upcoming":     return !!board?.upcoming;
         default:             return true;
       }
@@ -1029,6 +1033,20 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
                 days={board?.starved?.days ?? 14}
                 los={board?.starved?.los ?? []}
                 loas={board?.starved?.loas ?? []}
+              />
+            )}
+            {page === "loSplit" && (
+              <LoSplitPage
+                reduced={reduced}
+                helperName={board?.loSplit?.helperName ?? "Elleine"}
+                helperKnown={!!board?.loSplit?.helperKnown}
+                rows={board?.loSplit?.windows?.month ?? []}
+                totals={board?.loSplit?.totals ?? {
+                  today: { helper: 0, others: 0, total: 0 },
+                  week: { helper: 0, others: 0, total: 0 },
+                  month: { helper: 0, others: 0, total: 0 },
+                  all: { helper: 0, others: 0, total: 0 },
+                }}
               />
             )}
             {page === "upcoming" && (

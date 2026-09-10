@@ -125,7 +125,7 @@ import {
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
-import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId } from "./lo-transfer-split";
+import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -22516,6 +22516,57 @@ ${note}` : daysLine;
         // starvation list and bury the people it exists to name. Do not
         // "fix" it.
         return { days: STARVED_WINDOW_DAYS, from, los: orderStarved(los), loas: orderStarved(loas) };
+      });
+
+      // ── who is feeding each loan officer ────────────────────────────────
+      section("loSplit", () => {
+        // The wall version of the Advanced Dashboard's split (owner 10 Sep
+        // 2026). "Who needs transfers" above already says who is short; this
+        // says who is doing the feeding, which is the question that follows.
+        //
+        // NO exclude_from_stats filter, for the reason the dashboard has
+        // none: Elleine carries that flag, and she logged 1,336 of the 3,296
+        // transfers that ever reached a loan officer. Filtering her out would
+        // leave the page showing zero in the one place it is pointing.
+        const helperName = String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine");
+        // Read straight from the table for THIS display's org, not through
+        // storage.getUsers(), which scopes itself to the CALLER's session.
+        // A TV route has no session of its own, so that call returns every
+        // org's people to a kiosk and this org's people to a browser that
+        // happens to be logged in — the split silently switched off when the
+        // signed-in org was not the display's. Caught in the preview: the
+        // curl said "Elleine known", the browser said "nobody is set".
+        const orgUsers = sqlite.prepare(
+          `SELECT id, name, is_active FROM users WHERE org_id = ?`,
+        ).all(orgId) as any[];
+        const helperUserId = resolveHelperUserId(orgUsers, helperName);
+        const rows = sqlite.prepare(`
+          SELECT o.lo_id, lo.full_name AS name, o.assistant_id, win.window
+          FROM lead_outcomes o
+          JOIN loan_officers lo ON lo.id = o.lo_id
+          JOIN (SELECT 'today' AS window UNION ALL SELECT 'week' UNION ALL SELECT 'month' UNION ALL SELECT 'all') win
+          WHERE o.outcome_type = 'transfer'
+            AND o.org_id = @orgId
+            AND o.lo_id IS NOT NULL
+            AND (
+              (win.window = 'all')
+              OR (win.window = 'today' AND o.date = @today)
+              OR (win.window = 'week'  AND o.date >= @weekStart  AND o.date <= @today)
+              OR (win.window = 'month' AND o.date >= @monthStart AND o.date <= @today)
+            )
+        `).all({ orgId, today: w.today, weekStart: w.weekStart, monthStart: w.monthStart }) as any[];
+        const windows = foldLoSplitRows(rows, helperUserId);
+        return {
+          helperName,
+          helperKnown: helperUserId != null,
+          windows,
+          totals: {
+            today: totalsFor(windows.today),
+            week: totalsFor(windows.week),
+            month: totalsFor(windows.month),
+            all: totalsFor(windows.all),
+          },
+        };
       });
 
       // ── write-up completeness, this week ─────────────────────────────────

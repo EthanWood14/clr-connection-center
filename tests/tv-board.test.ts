@@ -1286,7 +1286,11 @@ test("the upcoming slot is in the deck AND has something to render", () => {
   assert.match(page, /\{ id: "upcoming",\s+dwellMs: 13_000 \}/);
   assert.match(page, /page === "upcoming"/, "the deck id has a renderer");
   assert.match(page, /<UpcomingPage/);
-  assert.match(page, /StarvedPage, UpcomingPage,\r?\n\} from "@\/components\/tv\/pages"/);
+  // Imported from the one place the pages live. Matched loosely on purpose:
+  // pinning the whole import line meant adding any page to the deck broke a
+  // test about a different page.
+  assert.match(page, /UpcomingPage/);
+  assert.match(page, /\} from "@\/components\/tv\/pages";/);
   assert.match(tvPages, /export function UpcomingPage/);
   assert.match(tvPages, /data-testid="tv-page-upcoming"/);
   // Its dwell and its pan have to agree, the way every other page's do.
@@ -1543,8 +1547,10 @@ test("every page pans against the height it is actually given", () => {
   assert.match(tvPages, /"--tv-pan": `-\$\{Math\.round\(over\)\}px`/);
   // Every page that pans still asks for a box and still measures it, so a
   // shorter deck simply means a longer slide, not a truncated list.
-  assert.equal((tvPages.match(/usePan\(PAN_SECONDS\./g) ?? []).length, 11);
-  assert.equal((tvPages.match(/ref=\{\w+\.ref\}/g) ?? []).length, 11);
+  // Bump both when a panning page is added — they are the guard that a new
+  // page did not forget its box. 12 since LoSplitPage (10 Sep 2026).
+  assert.equal((tvPages.match(/usePan\(PAN_SECONDS\./g) ?? []).length, 12);
+  assert.equal((tvPages.match(/ref=\{\w+\.ref\}/g) ?? []).length, 12);
   // And the keyframes are still declared exactly once, on the board's root.
   assert.equal((page.match(/@keyframes tv-pan/g) ?? []).length, 1);
   assert.doesNotMatch(tvPages, /@keyframes/);

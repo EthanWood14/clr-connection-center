@@ -24,7 +24,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy } from "lucide-react";
+import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy, Users } from "lucide-react";
 import { formatTransferCount } from "@shared/transfer-credit";
 
 // ── local twins of the tv.tsx pieces ────────────────────────────────────────
@@ -111,6 +111,7 @@ const PAN_SECONDS = {
   onPhoneNow: 9,
   starved: 13,
   upcoming: 13,
+  loSplit: 13,
 } as const;
 
 /** The clipping box a panned list lives in, as a flex child. */
@@ -1116,6 +1117,120 @@ export function UpcomingPage({ appointments, days, todayCount, reduced }: {
         </motion.ul>
       </div>
       {pan.overflowing && <PanCount>{list.length} in the next {win} days</PanCount>}
+    </div>
+  );
+}
+
+// ── who is feeding the loan officers ────────────────────────────────────────
+export interface TvLoSplitRow { loId: number; name: string; helper: number; others: number; total: number }
+
+/**
+ * Transfers per loan officer this month, split by who sent them.
+ *
+ * The page before this one names who is SHORT. This one names who is doing
+ * the feeding, which is the question that follows it — and on this floor the
+ * answer is lopsided enough to be worth a wall: Elleine has logged 1,336 of
+ * the 3,296 transfers that have ever reached a loan officer.
+ *
+ * That is why the bar is divided rather than doubled. Two bars side by side
+ * would ask the room to compare lengths across a gap; one bar in two colours
+ * shows the SHARE, which is the thing being said, at a glance from the far
+ * side of the office.
+ *
+ * The month drives the rows because a wall page that is blank until eleven in
+ * the morning teaches people to look past it. All four windows are along the
+ * bottom, so the day is still there for anyone who wants it.
+ */
+export function LoSplitPage({ helperName, helperKnown, rows, totals, reduced }: {
+  helperName: string;
+  helperKnown: boolean;
+  rows: TvLoSplitRow[];
+  totals: Record<"today" | "week" | "month" | "all", { helper: number; others: number; total: number }>;
+  reduced: boolean;
+}) {
+  const pan = usePan(PAN_SECONDS.loSplit, reduced);
+  const list = rows ?? [];
+  const max = Math.max(1, ...list.map((r) => r.total));
+  const month = totals?.month ?? { helper: 0, others: 0, total: 0 };
+  const share = month.total > 0 ? Math.round((month.helper / month.total) * 100) : 0;
+  const WINDOW_ORDER: Array<["today" | "week" | "month" | "all", string]> = [
+    ["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All time"],
+  ];
+
+  return (
+    <div className={PAGE} data-testid="tv-page-lo-split">
+      <div className="mb-5 flex items-end justify-between gap-8">
+        <div className="min-w-0">
+          <Eyebrow>Transfers received · this month</Eyebrow>
+          <h2 className={TITLE}>Who is feeding the LOs</h2>
+          <p className="mt-2 text-[clamp(1.05rem,1.5vw,1.55rem)] text-white/45">
+            {helperKnown
+              ? `Gold is ${helperName}. Blue is everyone else.`
+              : "Nobody is set as the helper, so this is everyone together."}
+          </p>
+        </div>
+        {helperKnown && month.total > 0 && (
+          <HeaderPill tone="gold" icon={<Users className="h-8 w-8 shrink-0" />}>
+            <span className="truncate">{helperName} sent {share}% of them</span>
+          </HeaderPill>
+        )}
+      </div>
+
+      <div ref={pan.ref} className={PAN_BOX}>
+        <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2" style={pan.style}>
+          {list.map((r) => (
+            <motion.li key={r.loId} variants={rise(reduced)} className="grid grid-cols-[1fr_13rem] items-center gap-8">
+              <div className="min-w-0">
+                <p className="truncate text-[clamp(1.15rem,1.7vw,1.8rem)] font-bold">{r.name}</p>
+                <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-white/10">
+                  <motion.div
+                    className={`h-full ${GOLD_BAR}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(r.helper / max) * 100}%` }}
+                    transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                  />
+                  <motion.div
+                    className={`h-full ${COOL_BAR}`}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(r.others / max) * 100}%` }}
+                    transition={{ type: "spring", stiffness: 120, damping: 20, delay: 0.08 }}
+                  />
+                </div>
+              </div>
+              <div className="flex shrink-0 items-baseline justify-end gap-3 tabular-nums">
+                <span className="text-[clamp(1rem,1.5vw,1.6rem)] font-bold text-amber-300">{r.helper}</span>
+                <span className="text-[clamp(1rem,1.4vw,1.4rem)] text-white/30">+</span>
+                <span className="text-[clamp(1rem,1.5vw,1.6rem)] font-bold text-cyan-300">{r.others}</span>
+                <span className="text-[clamp(1rem,1.4vw,1.4rem)] text-white/30">=</span>
+                <span className="text-[clamp(1.5rem,2.4vw,2.5rem)] font-black">{r.total}</span>
+              </div>
+            </motion.li>
+          ))}
+          {!list.length && <li className={EMPTY}>No transfers this month yet.</li>}
+        </motion.ul>
+      </div>
+      {pan.overflowing && <PanCount>{list.length} loan officers</PanCount>}
+
+      <motion.div
+        initial={{ opacity: 0, y: reduced ? 0 : 18 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.55, type: "spring", stiffness: 140, damping: 20 }}
+        className="mt-5 grid shrink-0 grid-cols-4 gap-6 rounded-3xl border border-white/10 bg-white/[0.04] px-10 py-4"
+      >
+        {WINDOW_ORDER.map(([key, label]) => {
+          const t = totals?.[key] ?? { helper: 0, others: 0, total: 0 };
+          return (
+            <div key={key} className="min-w-0" data-testid={`tv-lo-split-total-${key}`}>
+              <Eyebrow>{label}</Eyebrow>
+              <p className="mt-1 text-[clamp(1.7rem,2.8vw,2.8rem)] font-black leading-none">{t.total}</p>
+              <p className="mt-1 text-[clamp(0.95rem,1.3vw,1.35rem)] text-white/45">
+                <span className="text-amber-300">{t.helper}</span>
+                {" + "}
+                <span className="text-cyan-300">{t.others}</span>
+              </p>
+            </div>
+          );
+        })}
+      </motion.div>
     </div>
   );
 }

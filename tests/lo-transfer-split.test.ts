@@ -188,3 +188,65 @@ test("the card shows both halves, a total, and says what it counted", () => {
   // The caveat that stops somebody adding these to a CLR scorecard.
   assert.match(page, /still one\s*\n?\s*borrower who reached this LO/);
 });
+
+// ── the wall ───────────────────────────────────────────────────────────────
+
+test("the TV builds the same split from the same fold", () => {
+  // Two implementations of "who fed this LO" would drift, and the wall
+  // disagreeing with the dashboard in front of the whole floor is the worst
+  // place for that to happen.
+  const sec = routes.slice(routes.indexOf('section("loSplit"'), routes.indexOf('section("writeUps"'));
+  assert.match(sec, /foldLoSplitRows\(rows, helperUserId\)/);
+  assert.match(sec, /resolveHelperUserId\(/);
+  assert.match(sec, /helper_name \|\| "Elleine"/);
+  // Same exclusion decision, for the same reason.
+  assert.ok(!/assistant_id NOT IN/.test(sec),
+    "the wall must not filter out the person it is pointing at");
+  // All four windows reach the wall, even though the rows show the month.
+  assert.match(sec, /totals: \{/);
+  for (const w of LO_SPLIT_WINDOWS) assert.ok(sec.includes(`${w}: totalsFor(windows.${w})`), w);
+});
+
+test("the wall page is in the deck, right after the one it answers", () => {
+  const tv = read("client/src/pages/tv.tsx");
+  const pages = read("client/src/components/tv/pages.tsx");
+  assert.match(pages, /export function LoSplitPage/);
+  assert.match(pages, /data-testid="tv-page-lo-split"/);
+  // "Who needs transfers" says who is short; this says who is doing the
+  // feeding. They belong next to each other.
+  const deck = tv.slice(tv.indexOf("const DECK: Slot[]"), tv.indexOf("// ── sound"));
+  assert.ok(deck.indexOf('id: "loSplit"') > deck.indexOf('id: "starved"'), "loSplit follows starved");
+  // Every page's dwell has a twin in PAN_SECONDS, or the pan outruns the page.
+  assert.match(deck, /id: "loSplit",\s+dwellMs: 13_000/);
+  assert.match(pages, /loSplit: 13,/);
+  // A page with no data must not take a slot on the wall.
+  assert.match(tv, /case "loSplit":\s+return !!board\?\.loSplit;/);
+});
+
+test("the wall says which colour is whose, and copes with no helper", () => {
+  const pages = read("client/src/components/tv/pages.tsx");
+  const fn = pages.slice(pages.indexOf("export function LoSplitPage"));
+  assert.match(fn, /Gold is \$\{helperName\}/);
+  // With nobody resolved the page must not silently paint everything as
+  // "everyone else" and leave the room to guess why the gold vanished.
+  assert.match(fn, /Nobody is set as the helper/);
+  // Divided bar, not two bars: the share is the thing being said.
+  assert.match(fn, /GOLD_BAR/);
+  assert.match(fn, /COOL_BAR/);
+});
+
+test("the wall reads its own org's people, not the viewer's", () => {
+  // storage.getUsers() scopes itself to the CALLER's session. A TV route has
+  // no session, so it returned every org's people to a kiosk and the signed-in
+  // org's people to a browser that happened to be logged in — and the split
+  // silently switched off whenever those differed. Caught in the preview: curl
+  // said the helper was known, the browser on the same server said nobody was.
+  const sec = routes.slice(routes.indexOf('section("loSplit"'), routes.indexOf('section("writeUps"'));
+  assert.match(sec, /SELECT id, name, is_active FROM users WHERE org_id = \?/);
+  // Comments stripped: the one above names the call it replaced, and that
+  // explanation must not trip its own guard.
+  const code = sec.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+  assert.ok(!/storage\.getUsers\(\)/.test(code),
+    "a display-token route must not resolve people through the caller's session");
+  assert.match(sec, /resolveHelperUserId\(orgUsers, helperName\)/);
+});

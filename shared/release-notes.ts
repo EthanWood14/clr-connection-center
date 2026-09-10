@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.84.0",
+    headline: "The office TV now shows who is feeding the loan officers.",
+    items: [
+      { text: "New wall page, straight after \"Who needs transfers\": every loan officer's transfers this month, with gold for Elleine and blue for everyone else in one divided bar. Today, this week, this month and all time run along the bottom.", audience: "everyone" },
+      { text: "It sits next to the page that says who is short on purpose — that one names who needs feeding, this one names who is doing the feeding.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.83.0",
     headline: "How many transfers each loan officer got — and how much of it was Elleine.",
     items: [
