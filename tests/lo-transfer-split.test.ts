@@ -119,9 +119,10 @@ test("the footer adds up the column it is under", () => {
 
 test("one statement covers all four windows", () => {
   const fn = routes.slice(routes.indexOf('app.get("/api/lo-transfer-split"'), routes.indexOf('app.get("/api/meta-conversion"'));
-  // Four queries would read the transfer table four times for three answers
-  // that are subsets of the fourth.
-  assert.equal((fn.match(/FROM lead_outcomes/g) ?? []).length, 1);
+  // Two now: one keyed on the loan officer, one on the assistant. Still one
+  // statement each for all four windows, which is the property that matters —
+  // eight would read the transfer table eight times for the same answers.
+  assert.equal((fn.match(/FROM lead_outcomes/g) ?? []).length, 2);
   for (const w of LO_SPLIT_WINDOWS) assert.ok(fn.includes(`'${w}'`), `${w} must be in the window list`);
   assert.match(fn, /o\.outcome_type = 'transfer'/);
   assert.match(fn, /o\.org_id = @orgId/);
@@ -179,14 +180,32 @@ test("the SQL runs and buckets a transfer into every window it belongs to", () =
 // ── the table ──────────────────────────────────────────────────────────────
 
 test("the card shows both halves, a total, and says what it counted", () => {
-  assert.match(page, /data-testid="lo-split-table"/);
-  assert.match(page, /data-testid="lo-split-totals"/);
+  assert.match(page, /testId="lo-split-table"/);
+  assert.match(page, /data-testid=\{`\$\{testId\}-totals`\}/);
   assert.match(page, /\{helperName\}<\/th>/, "the helper column is named after the setting");
   assert.match(page, /Everyone else/);
   // "No helper resolved" must not look like "the helper sent none".
   assert.match(page, /data-testid="lo-split-helper-notice"/);
   // The caveat that stops somebody adding these to a CLR scorecard.
-  assert.match(page, /still one\s*\n?\s*borrower who reached this LO/);
+  assert.match(page, /still one borrower/);
+});
+
+test("assistants are counted separately, in their own table", () => {
+  // Owner, 10 Sep 2026. A subtotal inside the LO table would be wrong twice
+  // over: a transfer to an LOA is ALSO a transfer to their loan officer, so
+  // adding them double-counts, and nesting it would stop the LO rows matching
+  // the headline. Two populations, two tables.
+  const fn = routes.slice(routes.indexOf('app.get("/api/lo-transfer-split"'), routes.indexOf('app.get("/api/meta-conversion"'));
+  assert.match(fn, /JOIN loan_officer_assistants a ON a\.id = o\.loa_id/);
+  assert.match(fn, /o\.loa_id IS NOT NULL/);
+  // The assistant table has no org column of its own; the parent LO is the scope.
+  assert.match(fn, /JOIN loan_officers parent ON parent\.id = a\.lo_id/);
+  assert.match(fn, /parent\.org_id = @orgId/);
+  // Same fold, so the two tables cannot disagree about what a split is.
+  assert.match(fn, /loaWindows: foldLoSplitRows\(loaRows, helperUserId\)/);
+  assert.match(page, /testId="loa-split-table"/);
+  // And the page says not to add them together.
+  assert.match(page, /do\s*\n?\s*not add them together/);
 });
 
 // ── the wall ───────────────────────────────────────────────────────────────

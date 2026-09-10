@@ -13,10 +13,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 const map = readFileSync(join(root, "client/src/components/us-state-geo-map.tsx"), "utf8");
 
-test("the eleven W2-only states are exactly the ones given", () => {
+test("the ten W2-only states are exactly the ones given", () => {
   assert.deepEqual([...W2_ONLY_STATES].sort(),
-    ["AR","GA","IL","IN","MD","MS","MT","NC","NJ","SC","VT"]);
-  assert.equal(W2_ONLY_STATES.length, 11);
+    // Maryland was on this list until 10 Sep 2026, when the owner took it off.
+    ["AR","GA","IL","IN","MS","MT","NC","NJ","SC","VT"]);
+  assert.equal(W2_ONLY_STATES.length, 10);
   assert.ok(isW2OnlyState("ar"), "case should not matter");
   assert.ok(isW2OnlyState(" NC "), "nor should stray whitespace");
   assert.ok(!isW2OnlyState("CA"));
@@ -38,8 +39,9 @@ test("Chris Redoble is permanently excluded, and nobody else is caught by accide
 test("saving W2-only states for him drops them and reports what was dropped", () => {
   const asked = ["CA", "AR", "TX", "MD", "NC", "FL"];
   const out = applyW2OnlyExclusions("Christopher Redoble", asked);
-  assert.deepEqual(out.states, ["CA", "TX", "FL"]);
-  assert.deepEqual(out.removed, ["AR", "MD", "NC"]);
+  assert.deepEqual(out.states, ["CA", "TX", "MD", "FL"]);
+  // MD stays: it is no longer W2-only, so even the excluded LO keeps it.
+  assert.deepEqual(out.removed, ["AR", "NC"]);
   // Everyone else keeps whatever they were given.
   const other = applyW2OnlyExclusions("Devon Linkon", asked);
   assert.deepEqual(other.states, asked);

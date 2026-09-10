@@ -19201,12 +19201,41 @@ ${note}` : daysLine;
       monthStart: month.startDate, monthEnd: month.endDate,
     }) as any[];
 
+    // The same four windows again, keyed on the ASSISTANT the transfer went
+    // to rather than the loan officer (owner 10 Sep 2026). A separate list,
+    // not a subtotal inside the LO one: a transfer to an LOA is also a
+    // transfer to their loan officer, so adding the two together would count
+    // it twice, and nesting it would make the LO rows stop matching the
+    // headline. Two populations, two tables, each honest on its own.
+    const loaRows = db.prepare(`
+      SELECT o.loa_id AS lo_id, a.full_name AS name, o.assistant_id, w.window
+      FROM lead_outcomes o
+      JOIN loan_officer_assistants a ON a.id = o.loa_id
+      JOIN loan_officers parent ON parent.id = a.lo_id
+      JOIN (SELECT 'today' AS window UNION ALL SELECT 'week' UNION ALL SELECT 'month' UNION ALL SELECT 'all') w
+      WHERE o.outcome_type = 'transfer'
+        AND o.org_id = @orgId
+        AND o.loa_id IS NOT NULL
+        AND parent.org_id = @orgId
+        AND (
+          (w.window = 'all')
+          OR (w.window = 'today' AND o.date = @today)
+          OR (w.window = 'week'  AND o.date >= @weekStart  AND o.date <= @weekEnd)
+          OR (w.window = 'month' AND o.date >= @monthStart AND o.date <= @monthEnd)
+        )
+    `).all({
+      orgId, today,
+      weekStart: week.startDate, weekEnd: week.endDate,
+      monthStart: month.startDate, monthEnd: month.endDate,
+    }) as any[];
+
     res.json({
       helperName,
       helperUserId,
       helperNotice: helperNoticeFor(helperName, helperUserId),
       today,
       windows: foldLoSplitRows(rows, helperUserId),
+      loaWindows: foldLoSplitRows(loaRows, helperUserId),
     });
   });
 

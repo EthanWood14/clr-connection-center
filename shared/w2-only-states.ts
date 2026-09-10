@@ -16,7 +16,8 @@ export const W2_ONLY_STATES = [
   "GA", // Georgia
   "IL", // Illinois
   "IN", // Indiana
-  "MD", // Maryland
+  // Maryland came off this list on 10 Sep 2026 (owner). It is an ordinary
+  // state again: no W2 restriction, and nobody is excluded from it.
   "MS", // Mississippi
   "MT", // Montana
   "NJ", // New Jersey

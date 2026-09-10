@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.86.0",
+    headline: "Maryland is an ordinary state again, and assistants get their own transfer table.",
+    items: [
+      { text: "Maryland is no longer W2-only. It shows as a normal state on the map, anyone can be listed there, and Chris has been added back to it.", audience: "everyone" },
+      { text: "Transfers by loan officer now has a second table beside it for LO assistants, with the same Elleine / everyone-else split and the same four time ranges.", audience: "manager" },
+      { text: "The two tables overlap on purpose — a transfer to an assistant is also a transfer to their loan officer — so the page says not to add them together.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.85.0",
     headline: "Replying to a C3 email can go somewhere real.",
     items: [
