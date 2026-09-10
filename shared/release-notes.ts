@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.88.0",
+    headline: "Rhode Island is W2-only; Connecticut and Maine are fine.",
+    items: [
+      { text: "Rhode Island now shows as W2-only on the state map. Connecticut stays an ordinary state and Maine is unchanged. Nobody's licences were touched — the thirteen loan officers licensed in Rhode Island keep it.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.87.0",
     headline: "The state map matches the licensing map.",
     items: [

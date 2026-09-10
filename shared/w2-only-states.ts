@@ -21,6 +21,7 @@ export const W2_ONLY_STATES = [
   "NV", // Nevada
   "NJ", // New Jersey
   "NC", // North Carolina
+  "RI", // Rhode Island
   "SC", // South Carolina
   "VT", // Vermont
 ] as const;
@@ -43,14 +44,13 @@ export const W2_ONLY_STATES = [
  *               officer holds it, which is consistent with the instruction
  *               rather than with the map.
  *
- * NOT CHANGED, because a screenshot is not a licence register:
- *   CT, RI      both look red on the map, but thirteen loan officers hold RI
- *               and two hold CT. "WCL does not hold a licence" and thirteen
- *               people licensed there cannot both be true, and those two are
- *               a few pixels wide on that image. Left alone pending a
- *               straight answer.
- *   ME          painted in a fourth colour the legend does not explain, with
- *               six loan officers licensed. Left alone for the same reason.
+ * The three the map could not settle, answered by Ethan the same day. Both
+ * readings of red were wrong, which is why they were asked about rather than
+ * applied — thirteen loan officers hold RI and marking it no-licence would
+ * have taken the state off all of them:
+ *   RI          W2-only, not no-licence.
+ *   CT          an ordinary state. On neither list.
+ *   ME          left as it is, whatever the fourth colour means.
  */
 
 export type W2OnlyState = (typeof W2_ONLY_STATES)[number];

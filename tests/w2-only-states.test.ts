@@ -17,14 +17,17 @@ test("the W2-only states match the licensing map", () => {
   // Reconciled against the map on 10 Sep 2026: Louisiana and Nevada added,
   // Arkansas removed, Maryland removed earlier the same day by instruction.
   assert.deepEqual([...W2_ONLY_STATES].sort(),
-    ["GA","IL","IN","LA","MS","MT","NC","NJ","NV","SC","VT"]);
-  assert.equal(W2_ONLY_STATES.length, 11);
-  // The two the map and the roster disagree about are deliberately NOT here:
-  // thirteen loan officers hold RI and two hold CT, which cannot be squared
-  // with "WCL does not hold a licence".
-  for (const unresolved of ["CT", "RI", "ME", "MD"]) {
-    assert.ok(!(W2_ONLY_STATES as readonly string[]).includes(unresolved),
-      `${unresolved} must not be added on a screenshot reading alone`);
+    ["GA","IL","IN","LA","MS","MT","NC","NJ","NV","RI","SC","VT"]);
+  assert.equal(W2_ONLY_STATES.length, 12);
+  // Rhode Island is W2-only, NOT no-licence — which is why it was asked about
+  // rather than read off the map. Thirteen loan officers hold it, and marking
+  // it no-licence would have stripped the state from every one of them.
+  assert.ok(isW2OnlyState("RI"));
+  assert.ok(!isNoLicenseState("RI"));
+  // Connecticut is an ordinary state, and Maine was left as it was.
+  for (const ordinary of ["CT", "ME", "MD"]) {
+    assert.ok(!(W2_ONLY_STATES as readonly string[]).includes(ordinary), `${ordinary} is not W2-only`);
+    assert.ok(!isNoLicenseState(ordinary), `${ordinary} is not a no-licence state`);
   }
   assert.ok(isW2OnlyState("nv"), "case should not matter");
   assert.ok(isW2OnlyState(" NC "), "nor should stray whitespace");
