@@ -100,3 +100,31 @@ test("a chart with nothing to show does not draw an empty box", () => {
   assert.match(page, /if \(rows\.length < 2\) return null;/);
   assert.match(page, /if \(rows\.every\(\(r\) => r\["This week"\] === 0 && r\["Last week"\] === 0\)\) return null;/);
 });
+
+test("the pages you do not touch every call live behind the Advanced fold", () => {
+  // Owner, 10 Sep 2026. Main is what you touch on every call; these are not.
+  // The script is read until it is known, Shotgun answers itself (the offer is
+  // a full-screen alert wherever you are, and the write-up prompt follows
+  // you), and the EOD report is once at the end of the day.
+  for (const moved of ["/call-script", "/eod-report", "/shotgun", "/team-summary", "/advanced-dashboard", "/app-review"]) {
+    const main = sidebar.slice(sidebar.indexOf("const mainItems"), sidebar.indexOf("const personalItems"));
+    assert.ok(!main.includes(moved), `${moved} must not be in Main`);
+  }
+  assert.match(sidebar, /const advancedWorkflowItems: NavItem\[\]/);
+  assert.match(sidebar, /const advancedDashboardItems: NavItem\[\]/);
+  // Both new groups render INSIDE the fold, which only exists under showAdvanced.
+  const fold = sidebar.slice(sidebar.indexOf("{showAdvanced && <>"));
+  assert.ok(fold.includes("renderItems(advancedWorkflowItems)"));
+  assert.ok(fold.includes("renderItems(advancedDashboardItems)"));
+  // App Review stays manager-gated: relocating a link must not turn it into a
+  // 403 for a CLR, and must not hand it to one either.
+  assert.match(fold, /isManagerOrAdmin && renderItems\(advancedDashboardManagerItems\)/);
+});
+
+test("moving a link does not move the page", () => {
+  // Every route still resolves, so bookmarks, push notifications and every
+  // link written before today land where they always did.
+  for (const route of ["/call-script", "/eod-report", "/shotgun", "/team-summary", "/advanced-dashboard", "/app-review"]) {
+    assert.ok(app.includes(`path="${route}"`), `${route} must still be routed`);
+  }
+});

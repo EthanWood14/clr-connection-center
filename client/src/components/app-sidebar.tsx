@@ -179,13 +179,10 @@ const help = {
 // the Reporting group moved here; the group itself is gone.
 const mainItems: NavItem[] = [
   { title: "Home",                  url: "/",             icon: LayoutDashboard, help: help.dashboard },
-  { title: "Calling Script",        url: "/call-script",  icon: PhoneCall,       help: help.script },
   { title: "Your Call List",        url: "/assignments",  icon: CalendarCheck,   help: help.assignments },
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
-  { title: "EOD Report",            url: "/eod-report",   icon: FileText,        help: help.eodReport },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
   { title: "Tasks",                 url: "/tasks",        icon: ListTodo,        badge: "tasks" },
-  { title: "Shotgun",               url: "/shotgun",      icon: Zap },
 ];
 
 const personalItems: NavItem[] = [
@@ -206,18 +203,37 @@ const advancedPersonalItems: NavItem[] = [
 ];
 
 const teamItems: NavItem[] = [
-  // Two doors onto the same numbers. The summary is first because it is the
-  // one most people want: the week in plain words, no ranges to choose
-  // (owner 9/9/26). The Advanced one is the manager dashboard, unchanged and
-  // still open to everyone — it just no longer pretends to be the only view.
-  { title: "How we're doing",       url: "/team-summary",   icon: LayoutDashboard },
-  { title: "Advanced Dashboard",    url: "/advanced-dashboard", icon: BarChart2,   help: help.dashboard },
   { title: "Chat",                  url: "/chat",          icon: MessageCircle,   badge: "chat", help: help.chat },
 ];
 
-const managerTeamItems: NavItem[] = [
-  // Admin-only in practice: the API refuses a non-admin, and the page says so.
-  { title: "App Review",            url: "/app-review",    icon: Sparkles },
+/**
+ * Moved out of Main into Advanced Settings, 10 Sep 2026 (owner).
+ *
+ * Main is what you touch on every call. These three are not: the script is
+ * read until it is known, Shotgun answers itself (the offer is a full-screen
+ * alert wherever you are in C3, and the write-up prompt follows you), and the
+ * EOD report is once at the end of the day and already has its own tile on
+ * Home and a link in the footer. None of them lose a route — a bookmark, a
+ * push notification and every existing link still land where they always did.
+ */
+const advancedWorkflowItems: NavItem[] = [
+  { title: "Calling Script",  url: "/call-script", icon: PhoneCall, help: help.script },
+  { title: "EOD Report",      url: "/eod-report",  icon: FileText,  help: help.eodReport },
+  { title: "Shotgun",         url: "/shotgun",     icon: Zap },
+];
+
+/** The two team dashboards, folded away with everything else you visit weekly. */
+const advancedDashboardItems: NavItem[] = [
+  // The summary first: it is the one most people want, the week in plain
+  // words with no ranges to choose. The Advanced one is the old manager
+  // dashboard, unchanged and still open to everyone.
+  { title: "How we're doing",    url: "/team-summary",       icon: LayoutDashboard },
+  { title: "Advanced Dashboard", url: "/advanced-dashboard", icon: BarChart2, help: help.dashboard },
+];
+
+/** Admin-only in practice: the API refuses a non-admin and the page says so. */
+const advancedDashboardManagerItems: NavItem[] = [
+  { title: "App Review",         url: "/app-review",         icon: Sparkles },
 ];
 
 const toolItems: NavItem[] = [
@@ -539,7 +555,10 @@ export function AppSidebar() {
 
         {/* Compressed groups — headers stay visible, items fold away */}
         {renderCollapsibleGroup("personal", "Personal", personalItems)}
-        {renderCollapsibleGroup("team", "Team", isManagerOrAdmin ? [...teamItems, ...managerTeamItems] : teamItems)}
+        {/* Chat only, since the dashboards and App Review moved behind the
+            Advanced fold. Kept as its own group rather than folded into Main:
+            it is the one place that is about the team rather than the call. */}
+        {renderCollapsibleGroup("team", "Team", teamItems)}
         {renderCollapsibleGroup("tools", "Tools", toolItems)}
 
         {/* ADVANCED SETTINGS — collapsible folder for admin/help/etc.
@@ -568,6 +587,29 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(advancedPersonalItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* CALLING & REPORTS — the workflow pages that are not every-call work */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Calling &amp; Reports
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(advancedWorkflowItems)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* DASHBOARDS — the team's numbers, plus App Review for managers */}
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-widest">
+            Dashboards
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {renderItems(advancedDashboardItems)}
+              {isManagerOrAdmin && renderItems(advancedDashboardManagerItems)}
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 

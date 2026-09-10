@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.80.0",
+    headline: "A shorter sidebar: Main is only what you touch on every call.",
+    items: [
+      { text: "Calling Script, EOD Report and Shotgun have moved out of Main into Advanced Settings, under a new \"Calling & Reports\" heading. EOD Report also still has its button on Home, where most people press it anyway.", audience: "everyone" },
+      { text: "How we're doing and the Advanced Dashboard moved out of Team into Advanced Settings under \"Dashboards\", with App Review beside them for managers. Team is now just Chat.", audience: "everyone" },
+      { text: "Nothing moved but the links. Every page is at the same address, so bookmarks, notifications and anything you have saved still work — and Shotgun still interrupts you wherever you are when a lead comes up.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.79.0",
     headline: "Meta transfers now count however long they took.",
     items: [

@@ -67,12 +67,18 @@ test("report review is searchable, filterable, sortable, exportable, and mobile 
   assert.match(page, /\^\[=\+\\-@\]/, "user-entered notes must not become spreadsheet formulas");
 });
 
-test("EOD analytics is routed and only appears in the Team menu for managers", () => {
+test("EOD analytics is routed, and its nav link is manager-only", () => {
   // Wired into App.tsx — statically or lazily. Pages became lazy on 2026-08-28
   // to cut the entry bundle, so pinning the import STYLE here would fail for a
   // change that does not affect whether the page is routed.
   assert.match(app, /EodAnalytics = lazy\(\(\) => import\("@\/pages\/eod-analytics"\)\)|import EodAnalytics from "@\/pages\/eod-analytics"/);
   assert.match(app, /<Route path="\/eod-analytics" component=\{EodAnalytics\}/);
-  assert.match(sidebar, /const managerTeamItems/);
-  assert.match(sidebar, /isManagerOrAdmin \? \[\.\.\.teamItems, \.\.\.managerTeamItems\] : teamItems/);
+  // Manager-gated wherever it sits in the nav. It used to be pinned to
+  // managerTeamItems, which had already stopped being the list it lives in —
+  // the page moved to Reference and the assertion kept passing on a name
+  // rather than on the gate. Assert the gate.
+  assert.match(sidebar, /const referenceManagerItems: NavItem\[\] = \[[^\]]*"\/eod-analytics"/s,
+    "EOD Analytics belongs to the manager-only reference list");
+  assert.match(sidebar, /isManagerOrAdmin && renderItems\(referenceManagerItems\)/,
+    "and that list only renders for a manager");
 });
