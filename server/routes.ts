@@ -127,6 +127,7 @@ import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
+import { canonicalLeadSource } from "@shared/lead-source";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -22865,16 +22866,23 @@ ${note}` : daysLine;
         const build = (key: "today" | "week" | "month", nominalStart: string) => {
           let total = 0;
           let withSource = 0;
-          const sources: Array<{ source: string; count: number }> = [];
+          // Folded onto the current list before counting. The picker was split
+          // finer on 11 Sep 2026, so without this the wall would show
+          // "BulkTexts" and "Bulk Texting" as two different sources — one
+          // answer, two rows, neither the real total. Only pure renames fold;
+          // "Retail" and "Single Dialing" predate the split and stay as they
+          // are rather than being guessed into one half of it.
+          const byName = new Map<string, number>();
           for (const r of rows) {
             const n = Number(r[key]) || 0;
             if (!n) continue;
             total += n;
-            const name = String(r.source ?? "");
+            const name = canonicalLeadSource(r.source);
             if (!name) continue;
             withSource += n;
-            sources.push({ source: name, count: n });
+            byName.set(name, (byName.get(name) ?? 0) + n);
           }
+          const sources = Array.from(byName.entries()).map(([source, count]) => ({ source, count }));
           sources.sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
           const startDate = effectiveStart(nominalStart);
           return {

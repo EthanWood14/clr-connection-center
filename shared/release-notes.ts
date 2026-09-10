@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.91.0",
+    headline: "Lead source is a sharper question now.",
+    items: [
+      { text: "The lead source list on Input Results and the calling script is now: Retail (iLeads), Retail (Meta), CallTools, Single Dialing (New), Single Dialing (Responded), Single Dialing (Other), and Bulk Texting.", audience: "everyone" },
+      { text: "Mojo is off the list — it had never been picked once.", audience: "everyone" },
+      { text: "Older answers still count. \"BulkTexts\" and \"Responded\" are treated as the same thing as their new names, so the office TV shows one line per source rather than two. \"Retail\" and \"Single Dialing\" from before the split stay under their own names, because nothing in those records says which half they belong to and guessing would be worse than leaving them.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.90.0",
     headline: "A read-only numbers feed, for tooling rather than people.",
     items: [

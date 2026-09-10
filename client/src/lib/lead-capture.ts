@@ -6,9 +6,11 @@
 // serialize them into one text block, so a lead captured mid-call and a lead
 // typed in afterwards look identical to Bonzo, the LO handoff, and reports.
 
-export const LEAD_SOURCE_OPTIONS = [
-  "Retail", "BulkTexts", "Single Dialing", "Mojo", "CallTools", "Responded",
-] as const;
+// The list itself moved to shared/ on 11 Sep 2026 so the server can fold
+// legacy spellings onto it when grouping — the office TV groups by this
+// string, and a rename would otherwise split one source into two rows.
+export { LEAD_SOURCE_OPTIONS, canonicalLeadSource } from "@shared/lead-source";
+import { LEAD_SOURCE_OPTIONS } from "@shared/lead-source";
 
 export type QualAnswer = "yes" | "no" | "";
 

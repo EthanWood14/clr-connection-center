@@ -14,9 +14,10 @@ const lib = readFileSync(join(root, "client/src/lib/lead-capture.ts"), "utf8");
 
 test("every outcome asks which lead source it came from, with a self-fill option", () => {
   assert.match(page, /Which lead source did this come in from\?/);
-  for (const opt of ["Retail", "BulkTexts", "Single Dialing", "Mojo", "CallTools", "Responded"]) {
-    assert.ok(lib.includes(`"${opt}"`), `${opt} must be offered`);
-  }
+  // The list itself moved to shared/lead-source.ts on 11 Sep 2026 and was
+  // split finer there; tests/lead-source-split.test.ts pins its contents.
+  // What this test cares about is that the page asks the question at all.
+  assert.match(lib, /from "@shared\/lead-source"/);
   assert.match(page, /LEAD_SOURCE_OPTIONS\.map/, "the page renders the shared option list");
   assert.match(page, /Other — type it in/, "a CLR must be able to answer outside the list");
   assert.match(page, /data-testid="input-lead-source-other"/);
