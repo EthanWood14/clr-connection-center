@@ -128,3 +128,38 @@ test("moving a link does not move the page", () => {
     assert.ok(app.includes(`path="${route}"`), `${route} must still be routed`);
   }
 });
+
+test("a CLR has a link to their own settings", () => {
+  // Settings sat in the ADMIN-ONLY group, so a CLR had no route to their own
+  // profile, availability or notification preferences anywhere in the nav —
+  // only a line in the page footer and one step of the onboarding checklist.
+  // The page has always been built for them: it opens on Profile and pushes a
+  // non-admin back there if they land on an admin tab.
+  const personal = sidebar.slice(
+    sidebar.indexOf("const advancedPersonalItems"),
+    sidebar.indexOf("];", sidebar.indexOf("const advancedPersonalItems")));
+  assert.match(personal, /url: "\/settings"/, "Settings belongs to the everyone list");
+  const admin = sidebar.slice(
+    sidebar.indexOf("const adminItems"),
+    sidebar.indexOf("];", sidebar.indexOf("const adminItems")));
+  assert.ok(!admin.includes("/settings"), "and must no longer be admin-gated");
+  // Report Archive stays: that page refuses anyone who is not admin or viewer.
+  assert.match(admin, /\/reports-archive/);
+});
+
+test("Glossary and the NMLS tracker moved out of Tools, not out of reach", () => {
+  const tools = sidebar.slice(
+    sidebar.indexOf("const toolItems"),
+    sidebar.indexOf("];", sidebar.indexOf("const toolItems")));
+  for (const gone of ["/glossary", "/nmls-checks"]) {
+    assert.ok(!tools.includes(gone), `${gone} must have left Tools`);
+  }
+  const reference = sidebar.slice(
+    sidebar.indexOf("const referenceItems"),
+    sidebar.indexOf("];", sidebar.indexOf("const referenceItems")));
+  for (const moved of ["/glossary", "/nmls-checks"]) {
+    assert.ok(reference.includes(moved), `${moved} must be in the everyone Reference list`);
+  }
+  // Tools still has a reason to exist.
+  assert.match(tools, /\/state-lookup/);
+});

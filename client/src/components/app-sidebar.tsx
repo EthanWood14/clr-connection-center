@@ -200,6 +200,13 @@ const advancedPersonalItems: NavItem[] = [
   // Something you go and look at when a write-up is in question, rather than
   // every day (owner 9/7/26).
   { title: "Transfer Write-Ups", url: "/transfer-details", icon: FileSearch },
+  // Settings was in the ADMIN-ONLY group, so a CLR had no link to their own
+  // profile, availability or notification preferences anywhere in the nav —
+  // only a line in the page footer and one step of the onboarding checklist.
+  // The page has always been built for them: it opens on Profile and sends a
+  // non-admin back there if they land on an admin tab. Every admin section
+  // inside it is gated on its own, so the link is safe here (owner 9/10/26).
+  { title: "Settings",        url: "/settings",      icon: Settings,        help: help.settings },
 ];
 
 const teamItems: NavItem[] = [
@@ -240,8 +247,6 @@ const toolItems: NavItem[] = [
   { title: "State Lookup",    url: "/state-lookup",   icon: MapPin },
   { title: "Call Hours",      url: "/call-hours",     icon: Clock },
   { title: "Install App",     url: "/install",        icon: Smartphone },
-  { title: "Glossary",        url: "/glossary",       icon: BookOpen,     help: help.glossary },
-  { title: "NMLS Tracker",    url: "/nmls-checks",    icon: ShieldCheck,  badge: "nmls" },
   // CLRs too (owner 9/7/26) — they are the ones who find a prospect sitting in
   // the wrong book while working a list.
   { title: "Reassign Prospect", url: "/bonzo-reassign", icon: ArrowRightLeft },
@@ -254,7 +259,13 @@ const referenceItems: NavItem[] = [
   { title: "Seating Map", url: "/seating-map", icon: Armchair },
   { title: "Team Stats", url: "/leaderboard", icon: Trophy, help: help.stats },
   { title: "Office TV", url: "/tv", icon: MonitorPlay, external: true },
+  // The two NMLS pages sit together: the tracker is the work, the licences are
+  // the record. Moved out of Tools with the Glossary (owner 9/10/26) — the
+  // tracker keeps its badge, and the Advanced header carries the count while
+  // the fold is shut so outstanding checks cannot go quiet.
+  { title: "NMLS Tracker",  url: "/nmls-checks", icon: ShieldCheck, badge: "nmls" },
   { title: "NMLS Licenses", url: "/nmls-status", icon: BadgeCheck },
+  { title: "Glossary",      url: "/glossary",    icon: BookOpen, help: help.glossary },
   { title: "Forum",           url: "/forum",         icon: MessagesSquare, help: help.forum },
   { title: "CLR Training",    url: "/clr-training",  icon: GraduationCap },
   // The daily procedure, as opposed to the ten-day plan next to it.
@@ -278,8 +289,9 @@ const loManagementItems: NavItem[] = [
 
 const adminItems: NavItem[] = [
   { title: "Outbound Calls", url: "/outbound-calls", icon: PhoneOutgoing, beta: true },
+  // Admin and viewer accounts only — the page itself says so and refuses
+  // everyone else, so the link stays where only they can see it.
   { title: "Report Archive",  url: "/reports-archive", icon: Inbox },
-  { title: "Settings",        url: "/settings",    icon: Settings,        help: help.settings },
 ];
 
 // Viewer accounts get only the Report Archive (read-only role)
@@ -529,6 +541,13 @@ export function AppSidebar() {
   // ── Render ─────────────────────────────────────────────────────────────────
   const { isMobile, state } = useSidebar();
   const showAdvanced = advancedOpen;
+  // Every badged item that now lives behind the fold. Only the lists a CLR
+  // can actually see are counted — a badge for a link they will never be
+  // shown would be a number they cannot clear.
+  const advancedHiddenCount = advancedOpen
+    ? 0
+    : [...advancedPersonalItems, ...advancedWorkflowItems, ...advancedDashboardItems, ...referenceItems]
+        .reduce((n, it) => n + getBadgeCount(it.badge), 0);
   const isManagerOrAdmin = user?.role === "admin" || !!(user as any)?.isManager;
 
   return (
@@ -576,6 +595,15 @@ export function AppSidebar() {
             {advancedOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <Settings2 className="w-3.5 h-3.5" />
             <span className="font-semibold">Advanced Settings</span>
+            {/* Anything badged inside the fold still shows a count while it is
+                shut. NMLS Tracker moved in here on 9/10/26 and its badge is
+                how anyone knows there are checks to clear — a number that
+                disappears when a folder closes is a number nobody acts on. */}
+            {advancedHiddenCount > 0 && (
+              <Badge className="ml-auto h-4 min-w-4 px-1 text-[10px] bg-destructive text-destructive-foreground">
+                {advancedHiddenCount > 99 ? "99+" : advancedHiddenCount}
+              </Badge>
+            )}
           </button>
         </SidebarGroup>
 

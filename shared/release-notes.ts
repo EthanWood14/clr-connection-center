@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.81.0",
+    headline: "Settings is finally in your sidebar, and Tools is down to four.",
+    items: [
+      { text: "Settings now sits under Advanced Settings → Personal for everyone. It was in the admin-only group, so unless you are an admin the only link to your own profile, availability and notification preferences was a line in the page footer. The page always worked for you — there was just no way to find it.", audience: "everyone" },
+      { text: "Glossary and NMLS Tracker moved out of Tools into Advanced Settings → Reference, next to NMLS Licenses. Both are still open to everyone; nothing about who can use them changed.", audience: "everyone" },
+      { text: "If you have outstanding NMLS checks, the count now shows on the Advanced Settings header while it is closed, so the tracker moving does not make the work go quiet.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.80.0",
     headline: "A shorter sidebar: Main is only what you touch on every call.",
     items: [

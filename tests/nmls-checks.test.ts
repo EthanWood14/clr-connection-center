@@ -101,17 +101,26 @@ test("the licence board is reachable from the sidebar at last", () => {
   // It has been routed but linked from nowhere since it was built.
   assert.match(sidebarSrc, /url: "\/nmls-status"/);
   assert.match(sidebarSrc, /url: "\/nmls-checks"/);
-  // WHERE they sit is a placement decision that may move — the tracker is in
-  // Tools, the licence board was moved into Reference on 8 Sep. What must hold
-  // is that neither is behind a manager check, since both are open to everyone.
-  const tools = sidebarSrc.slice(sidebarSrc.indexOf("const toolItems"), sidebarSrc.indexOf("];", sidebarSrc.indexOf("const toolItems")));
-  assert.match(tools, /\/nmls-checks/, "the tracker stays in Tools");
+  // WHERE they sit is a placement decision that keeps moving — Tools, then
+  // Reference for the licence board on 8 Sep, then both into Reference on
+  // 10 Sep. What must hold is that neither is behind a manager check, since
+  // both are open to everyone.
+  const reference = sidebarSrc.slice(
+    sidebarSrc.indexOf("const referenceItems"),
+    sidebarSrc.indexOf("];", sidebarSrc.indexOf("const referenceItems")));
+  assert.match(reference, /\/nmls-checks/, "the tracker is in the everyone list");
+  assert.match(reference, /\/nmls-status/, "so is the licence board");
   const managerOnly = sidebarSrc.slice(
     sidebarSrc.indexOf("const referenceManagerItems"),
     sidebarSrc.indexOf("];", sidebarSrc.indexOf("const referenceManagerItems")));
   assert.doesNotMatch(managerOnly, /nmls-status|nmls-checks/,
     "neither NMLS page may sit in the manager-gated group");
-  assert.match(sidebarSrc, /renderCollapsibleGroup\("tools", "Tools", toolItems\)/);
+  // The tracker keeps its badge, and a shut fold still shows the count. A
+  // number that vanishes when a folder closes is a number nobody acts on.
+  assert.match(reference, /url: "\/nmls-checks", icon: ShieldCheck, badge: "nmls"/);
+  assert.match(sidebarSrc, /const advancedHiddenCount = advancedOpen/);
+  assert.match(sidebarSrc, /\.\.\.referenceItems\]/, "the fold's count must include the Reference list");
+  assert.match(sidebarSrc, /advancedHiddenCount > 0 && \(/, "and must be rendered on the shut header");
 });
 
 test("the licence page shows Refresh to everyone who may use it", () => {
@@ -172,10 +181,13 @@ test("confirming clears a check from an earlier round too", () => {
 });
 
 test("the tracker is open to everyone, page and route alike", () => {
-  // No role gate anywhere: it is in Tools, which every role sees, and the
-  // endpoints ask only that you are signed in.
-  const tools = sidebarSrc.slice(sidebarSrc.indexOf("const toolItems"), sidebarSrc.indexOf("];", sidebarSrc.indexOf("const toolItems")));
-  assert.match(tools, /\/nmls-checks/);
+  // No role gate anywhere: it sits in Reference, which is rendered for every
+  // role, and the endpoints ask only that you are signed in.
+  const reference = sidebarSrc.slice(
+    sidebarSrc.indexOf("const referenceItems"),
+    sidebarSrc.indexOf("];", sidebarSrc.indexOf("const referenceItems")));
+  assert.match(reference, /\/nmls-checks/);
+  assert.match(sidebarSrc, /\{renderItems\(referenceItems\)\}/, "rendered unconditionally");
   // The tracker's own two routes: list what is outstanding, and confirm one.
   // (nmls-checks/trigger sits between them in the file and IS admin-only on
   // purpose — it restarts the whole round and lives on the Settings page.)
