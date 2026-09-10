@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.87.0",
+    headline: "The state map matches the licensing map.",
+    items: [
+      { text: "Louisiana and Nevada are now marked W2-only, and Arkansas is not. That brings the map in line with the WCL licensing map — nobody's licences changed, only how those states are labelled.", audience: "everyone" },
+      { text: "Maryland stays an ordinary state, as asked earlier today, and Hawaii stays on the no-licence list.", audience: "everyone" },
+      { text: "Connecticut, Rhode Island and Maine were left alone. The licensing map appears to shade them differently, but thirteen loan officers are licensed in Rhode Island and six in Maine, so the two do not agree and a wrong guess there is the expensive kind.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.86.0",
     headline: "Maryland is an ordinary state again, and assistants get their own transfer table.",
     items: [

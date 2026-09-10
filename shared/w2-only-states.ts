@@ -12,19 +12,46 @@
  */
 
 export const W2_ONLY_STATES = [
-  "AR", // Arkansas
   "GA", // Georgia
   "IL", // Illinois
   "IN", // Indiana
-  // Maryland came off this list on 10 Sep 2026 (owner). It is an ordinary
-  // state again: no W2 restriction, and nobody is excluded from it.
+  "LA", // Louisiana
   "MS", // Mississippi
   "MT", // Montana
+  "NV", // Nevada
   "NJ", // New Jersey
   "NC", // North Carolina
   "SC", // South Carolina
   "VT", // Vermont
 ] as const;
+
+/*
+ * Reconciled against the WCL licensing map on 10 Sep 2026 (owner: "readjust
+ * any of the necessary states"). What moved, and what deliberately did not:
+ *
+ *   + LA, + NV  the map paints both amber and this list did not have them.
+ *               Fifteen and thirteen loan officers hold them respectively,
+ *               so this restricts how they may be listed; it takes nobody's
+ *               licence away.
+ *   - AR        the map paints it green. It was the only state on this list
+ *               the map disagreed with.
+ *   - MD        removed earlier the same day by direct instruction. The map
+ *               appears to still show it amber; the instruction is newer and
+ *               wins. Say so rather than quietly reverting a decision.
+ *   = HI        stays on NO_LICENSE_STATES even though the map shows it
+ *               green: Ethan put it there by name on 1 Sep 2026, and no loan
+ *               officer holds it, which is consistent with the instruction
+ *               rather than with the map.
+ *
+ * NOT CHANGED, because a screenshot is not a licence register:
+ *   CT, RI      both look red on the map, but thirteen loan officers hold RI
+ *               and two hold CT. "WCL does not hold a licence" and thirteen
+ *               people licensed there cannot both be true, and those two are
+ *               a few pixels wide on that image. Left alone pending a
+ *               straight answer.
+ *   ME          painted in a fourth colour the legend does not explain, with
+ *               six loan officers licensed. Left alone for the same reason.
+ */
 
 export type W2OnlyState = (typeof W2_ONLY_STATES)[number];
 

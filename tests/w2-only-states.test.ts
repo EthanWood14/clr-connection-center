@@ -13,12 +13,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const storage = readFileSync(join(root, "server/storage.ts"), "utf8");
 const map = readFileSync(join(root, "client/src/components/us-state-geo-map.tsx"), "utf8");
 
-test("the ten W2-only states are exactly the ones given", () => {
+test("the W2-only states match the licensing map", () => {
+  // Reconciled against the map on 10 Sep 2026: Louisiana and Nevada added,
+  // Arkansas removed, Maryland removed earlier the same day by instruction.
   assert.deepEqual([...W2_ONLY_STATES].sort(),
-    // Maryland was on this list until 10 Sep 2026, when the owner took it off.
-    ["AR","GA","IL","IN","MS","MT","NC","NJ","SC","VT"]);
-  assert.equal(W2_ONLY_STATES.length, 10);
-  assert.ok(isW2OnlyState("ar"), "case should not matter");
+    ["GA","IL","IN","LA","MS","MT","NC","NJ","NV","SC","VT"]);
+  assert.equal(W2_ONLY_STATES.length, 11);
+  // The two the map and the roster disagree about are deliberately NOT here:
+  // thirteen loan officers hold RI and two hold CT, which cannot be squared
+  // with "WCL does not hold a licence".
+  for (const unresolved of ["CT", "RI", "ME", "MD"]) {
+    assert.ok(!(W2_ONLY_STATES as readonly string[]).includes(unresolved),
+      `${unresolved} must not be added on a screenshot reading alone`);
+  }
+  assert.ok(isW2OnlyState("nv"), "case should not matter");
   assert.ok(isW2OnlyState(" NC "), "nor should stray whitespace");
   assert.ok(!isW2OnlyState("CA"));
   assert.ok(!isW2OnlyState(null));
@@ -39,9 +47,10 @@ test("Chris Redoble is permanently excluded, and nobody else is caught by accide
 test("saving W2-only states for him drops them and reports what was dropped", () => {
   const asked = ["CA", "AR", "TX", "MD", "NC", "FL"];
   const out = applyW2OnlyExclusions("Christopher Redoble", asked);
-  assert.deepEqual(out.states, ["CA", "TX", "MD", "FL"]);
-  // MD stays: it is no longer W2-only, so even the excluded LO keeps it.
-  assert.deepEqual(out.removed, ["AR", "NC"]);
+  // AR and MD both came off the W2 list on 10 Sep 2026, so the excluded LO
+  // keeps them; NC is still W2-only and is still stripped.
+  assert.deepEqual(out.states, ["CA", "AR", "TX", "MD", "FL"]);
+  assert.deepEqual(out.removed, ["NC"]);
   // Everyone else keeps whatever they were given.
   const other = applyW2OnlyExclusions("Devon Linkon", asked);
   assert.deepEqual(other.states, asked);
