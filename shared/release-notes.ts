@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.85.0",
+    headline: "Replying to a C3 email can go somewhere real.",
+    items: [
+      { text: "C3 sends from reports@westcapitallending.center, which has no mailbox — so pressing Reply or Reply-All on a digest came back as a delivery failure from Microsoft, with the whole original header block attached, to everyone on the thread. There is now a \"Replies go to\" address in Settings, and every C3 email carries it.", audience: "manager" },
+      { text: "Leave it empty and nothing changes. Set it and replies land on a real person instead of bouncing.", audience: "manager" },
+      { text: "The LAP and LOP portals already had their own reply address and keep it — their mail still reads as theirs.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.84.0",
     headline: "The office TV now shows who is feeding the loan officers.",
     items: [

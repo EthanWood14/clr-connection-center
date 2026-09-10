@@ -907,6 +907,10 @@ function EmailReportsCard() {
   const [ttsApiKey, setTtsApiKey] = useState("");
   const [ttsVoice, setTtsVoice] = useState("");
   const [managerEmails, setManagerEmails] = useState<string[]>([]);
+  // Where a reply to a C3 email lands. The From address is send-only, so
+  // without this a Reply-All comes back as a delivery failure with the whole
+  // header block attached (owner 10 Sep 2026).
+  const [replyTo, setReplyTo] = useState("");
   const [newManagerEmail, setNewManagerEmail] = useState("");
   const [dailyEnabled, setDailyEnabled] = useState(false);
   const [weeklyEnabled, setWeeklyEnabled] = useState(false);
@@ -938,6 +942,7 @@ function EmailReportsCard() {
     setTtsApiKey(emailSettings.tts_api_key ?? emailSettings.ttsApiKey ?? "");
     setTtsVoice(emailSettings.tts_voice ?? emailSettings.ttsVoice ?? "");
     try { setManagerEmails(JSON.parse(emailSettings.manager_emails ?? emailSettings.managerEmails ?? "[]")); } catch { setManagerEmails([]); }
+    setReplyTo(String(emailSettings.reply_to ?? emailSettings.replyTo ?? ""));
     setDailyEnabled(!!(emailSettings.daily_enabled ?? emailSettings.dailyEnabled));
     setWeeklyEnabled(!!(emailSettings.weekly_enabled ?? emailSettings.weeklyEnabled));
     setMonthlyEnabled(!!(emailSettings.monthly_enabled ?? emailSettings.monthlyEnabled));
@@ -982,6 +987,7 @@ function EmailReportsCard() {
   function handleSave() {
     const payload: any = {
       managerEmails: JSON.stringify(managerEmails),
+      replyTo: replyTo.trim(),
       dailyEnabled: dailyEnabled ? 1 : 0,
       weeklyEnabled: weeklyEnabled ? 1 : 0,
       monthlyEnabled: monthlyEnabled ? 1 : 0,
@@ -1264,6 +1270,24 @@ function EmailReportsCard() {
                 </div>
                 <Switch checked={sendToAllManagers} onCheckedChange={setSendToAllManagers} />
               </div>
+            </div>
+
+            {/* Where a reply goes. The From address has no mailbox. */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Replies Go To</p>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                C3 sends from <strong>reports@westcapitallending.center</strong>, which has no mailbox — so
+                anyone who presses <strong>Reply</strong> or <strong>Reply-All</strong> on a C3 email gets a
+                delivery failure back, and so does everyone else on the thread. Put a real address here and
+                replies land there instead. Leave it empty to keep the old behaviour.
+              </p>
+              <Input
+                type="email"
+                value={replyTo}
+                onChange={e => setReplyTo(e.target.value)}
+                placeholder="someone@westcapitallending.com"
+                data-testid="input-reply-to"
+              />
             </div>
 
             {/* Approval recipient — one person for everyone */}

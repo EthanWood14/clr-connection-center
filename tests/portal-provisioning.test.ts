@@ -139,7 +139,13 @@ test("each portal sends mail under its own identity", () => {
   assert.match(routes, /function portalEmailIdentity/);
   const dispatch = routes.slice(routes.indexOf("async function dispatchEmailNow"), routes.indexOf("type ReportOptions"));
   assert.match(dispatch, /fromName\s*\?/, "a portal name must be able to override the display name");
-  assert.match(dispatch, /replyTo && replyTo\.includes\("@"\)/, "reply-to must be validated before it is set");
+  // Still validated before it is set — the variable gained a name on
+  // 10 Sep 2026 when C3's own reply-to joined the portals', and a caller's
+  // own value must keep winning over the org default.
+  assert.match(dispatch, /effectiveReplyTo && effectiveReplyTo\.includes\("@"\)/,
+    "reply-to must be validated before it is set");
+  assert.match(dispatch, /const effectiveReplyTo = replyTo \?\?/,
+    "a portal's own reply-to must override the org-wide one");
   // The address itself must still come from the verified domain.
   assert.match(dispatch, /baseFrom\.match\(\/<\(\[\^>\]\+\)>\//, "only the display name is swapped, never the address");
 });

@@ -850,6 +850,22 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
   const from = fromName
     ? `${fromName.replace(/[<>"]/g, "")} <${(baseFrom.match(/<([^>]+)>/)?.[1] ?? baseFrom).trim()}>`
     : baseFrom;
+  // WHERE A REPLY GOES.
+  //
+  // The From address is send-only: it lives on the verified Resend domain and
+  // has no mailbox behind it. So anybody who pressed Reply or Reply-All on a
+  // C3 email — which is a completely reasonable thing to do to a digest with
+  // five people on it — got a delivery failure back from Microsoft with the
+  // entire original header block attached, and so did everyone else on the
+  // thread (Ethan, 10 Sep 2026). C3 never sent that; it is what a mail server
+  // does when a message is addressed to nothing.
+  //
+  // Setting a reply-to is the fix, and it is the only one available from this
+  // side: nothing here can stop somebody pressing Reply, it can only make the
+  // reply land somewhere. The portals have had one since July; the main
+  // sender did not. A portal that supplies its own still wins.
+  const orgReplyTo = String(s.reply_to || "").trim();
+  const effectiveReplyTo = replyTo ?? (orgReplyTo.includes("@") ? orgReplyTo : undefined);
   // Resend drops the WHOLE message if any one recipient is undeliverable, so a
   // single dead address costs everyone else the email. Strip those here, at the
   // one place every send passes through, rather than at each call site.
@@ -873,7 +889,7 @@ async function dispatchEmailNow({ to, bcc, subject, html, fromName, replyTo, att
     result = await resend.emails.send({
       from, to: toArr, subject, html,
       ...(bccList.length ? { bcc: bccList } : {}),
-      ...(replyTo && replyTo.includes("@") ? { replyTo } : {}),
+      ...(effectiveReplyTo && effectiveReplyTo.includes("@") ? { replyTo: effectiveReplyTo } : {}),
       ...(attachments?.length ? { attachments } : {}),
     });
   } catch (err: any) {

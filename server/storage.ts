@@ -2520,6 +2520,15 @@ function runNewMigrations() {
       sqlite.exec(`ALTER TABLE email_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ${def}`);
     }
   }
+  // 2026-09: C3's own reply-to. The From address is send-only — it exists on
+  // the verified Resend domain and has no mailbox behind it — so anybody who
+  // pressed Reply or Reply-All on a C3 email got a delivery failure back from
+  // Microsoft with the whole original header block attached. The portals have
+  // had a reply-to since July; the main sender did not. Empty keeps the old
+  // behaviour, which is no Reply-To header at all.
+  if (!emailCols.find(c => c.name === 'reply_to')) {
+    sqlite.exec(`ALTER TABLE email_settings ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''`);
+  }
   // Whether creating a portal login mails a welcome automatically.
   // Who receives submitted result documents, per portal. Empty = nobody.
   for (const col of ['lap_files_recipient', 'lop_files_recipient']) {
