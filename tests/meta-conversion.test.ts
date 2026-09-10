@@ -175,3 +175,91 @@ test("the dashboard card hides itself when LeadVault is unconfigured", () => {
   assert.ok(page.includes('queryKey: [`/api/meta-conversion?days=${metaDays}`]'));
   assert.ok(page.includes("Couldn&apos;t reach LeadVault"), "must distinguish failure from zero");
 });
+
+// ── The Refresh button (owner 10 Sep 2026) ─────────────────────────────────
+// A half-hour cache is the right default and the wrong answer when somebody
+// has just changed something in Bonzo and wants to see it land.
+
+test("Refresh reads upstream again even though the cache is fresh", async () => {
+  resetMetaConversionCache();
+  let calls = 0;
+  const restore = stubFetch(async () => {
+    calls++;
+    return { ok: true, json: async () => OK_PAYLOAD } as any;
+  });
+  try {
+    const t0 = 1_000_000;
+    await metaConversion(28, deps({ now: () => t0 }));
+    assert.equal(calls, 1);
+    // Inside the TTL: an ordinary read must NOT go upstream…
+    await metaConversion(28, deps({ now: () => t0 + 1_000 }));
+    assert.equal(calls, 1, "the cache still absorbs ordinary reads");
+    // …but a forced one must, once the force cooldown allows it.
+    const forced = await metaConversion(28, deps({ now: () => t0 + 61_000 }), { force: true });
+    assert.equal(calls, 2, "Refresh has to actually ask LeadVault");
+    assert.equal(forced.stale, false);
+    assert.equal(forced.throttled, undefined);
+  } finally { restore(); resetMetaConversionCache(); }
+});
+
+test("holding the button down costs LeadVault nothing", async () => {
+  resetMetaConversionCache();
+  let calls = 0;
+  const restore = stubFetch(async () => {
+    calls++;
+    return { ok: true, json: async () => OK_PAYLOAD } as any;
+  });
+  try {
+    const t0 = 2_000_000;
+    const first = await metaConversion(28, deps({ now: () => t0 }), { force: true });
+    assert.equal(calls, 1);
+    assert.equal(first.throttled, undefined);
+    // Three more presses inside the minute: same answer, no round trips, and
+    // the card is told so rather than being left to flash a spinner over an
+    // unchanged number.
+    for (const at of [t0 + 1_000, t0 + 30_000, t0 + 59_999]) {
+      const again = await metaConversion(28, deps({ now: () => at }), { force: true });
+      assert.equal(again.throttled, true);
+      assert.equal(again.stale, false, "a throttled answer is current, not stale");
+      assert.deepEqual(again.flows, first.flows);
+    }
+    assert.equal(calls, 1, "one forced read per window per minute");
+  } finally { restore(); resetMetaConversionCache(); }
+});
+
+test("a failed Refresh falls back to the cached copy rather than blanking", async () => {
+  resetMetaConversionCache();
+  let calls = 0;
+  const restore = stubFetch(async () => {
+    calls++;
+    if (calls === 1) return { ok: true, json: async () => OK_PAYLOAD } as any;
+    return { ok: false, json: async () => ({}) } as any;
+  });
+  try {
+    const t0 = 3_000_000;
+    await metaConversion(28, deps({ now: () => t0 }));
+    const forced = await metaConversion(28, deps({ now: () => t0 + 61_000 }), { force: true });
+    assert.equal(calls, 2);
+    assert.equal(forced.flows.length, 2, "the numbers must not vanish because a refresh failed");
+    // Not "stale": the cached copy is a minute old and perfectly good. What
+    // failed is the REFRESH, and that is the thing the person who pressed the
+    // button needs told.
+    assert.equal(forced.stale, false);
+    assert.equal(forced.refreshFailed, true);
+  } finally { restore(); resetMetaConversionCache(); }
+});
+
+test("Refresh is wired end to end: route, button, and no self-defeating invalidate", () => {
+  const routes = readFileSync(new URL("../server/routes.ts", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../client/src/pages/manager-dashboard.tsx", import.meta.url), "utf8");
+  const fn = routes.slice(routes.indexOf('app.get("/api/meta-conversion"'), routes.indexOf("async function leadvaultCallToolsByDay"));
+  assert.match(fn, /req\.query\.refresh === "1"/);
+  assert.match(fn, /\{ force \}/);
+  assert.match(page, /data-testid="button-refresh-meta-conversion"/);
+  assert.match(page, /days=\$\{metaDays\}&refresh=1/);
+  // An invalidate here would re-fetch WITHOUT ?refresh=1 and could overwrite
+  // the copy the button just pulled with the one it was getting past.
+  const mutation = page.slice(page.indexOf("const refreshMeta = useMutation"), page.indexOf("const metaFetchedAgo"));
+  assert.match(mutation, /queryClient\.setQueryData/);
+  assert.ok(!/invalidateQueries/.test(mutation), "must not invalidate its own result away");
+});

@@ -19131,10 +19131,14 @@ ${note}` : daysLine;
   // that single query feeds the entire Advanced Dashboard, and a LeadVault
   // timeout inside it would leave the whole page on skeletons.
   app.get("/api/meta-conversion", requireAuth, async (req: any, res) => {
+    // ?refresh=1 is the card's Refresh button: read past the thirty-minute
+    // cache. Rate-limited inside metaConversion to one forced read per window
+    // per minute, so holding the button costs LeadVault nothing.
+    const force = req.query.refresh === "1" || req.query.refresh === "true";
     const result = await metaConversion(req.query.days, {
       token: leadvaultReportingToken,
       baseUrl: () => process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud",
-    });
+    }, { force });
     res.json(result);
   });
 

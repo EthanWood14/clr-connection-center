@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
@@ -87,6 +87,10 @@ type MetaConversionResp = {
   flows: MetaConversionFlow[];
   fetchedAt: string | null;
   stale: boolean;
+  /** A Refresh that came too soon after the last one. Same answer, on purpose. */
+  throttled?: boolean;
+  /** A Refresh that was attempted and failed. Not the same as stale data. */
+  refreshFailed?: boolean;
 };
 
 type Alert = { level: "warn" | "danger" | "info"; text: string; href?: string };
@@ -740,6 +744,44 @@ export default function ManagerDashboard() {
     queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
     refetchInterval: 60_000,
   });
+
+  /**
+   * Refresh this card, for real.
+   *
+   * The poll above and the page's own Refresh both re-ask C3, which answers
+   * from a thirty-minute cache — so neither of them can tell you whether
+   * something you just changed in Bonzo has landed. This one carries
+   * ?refresh=1, which reads LeadVault again. The server rate-limits it to one
+   * forced read a minute per window, so it cannot be leaned on.
+   */
+  const refreshMeta = useMutation({
+    mutationFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}&refresh=1`),
+    onSuccess: (fresh: any) => {
+      // Write the answer straight into the cache rather than invalidating:
+      // an invalidate would re-fetch WITHOUT ?refresh=1 and could overwrite
+      // what we just pulled with the copy we were trying to get past.
+      queryClient.setQueryData([`/api/meta-conversion?days=${metaDays}`], fresh);
+      toast(fresh?.throttled
+        ? { title: "Already up to date", description: "This was refreshed less than a minute ago." }
+        : fresh?.refreshFailed
+          ? { title: "Could not reach LeadVault", description: "Showing the last copy we have.", variant: "destructive" as const }
+          : { title: "Meta numbers refreshed" });
+    },
+    onError: (e: any) => toast({ title: "Refresh failed", description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
+  /** "12m ago" for the copy on screen, so Refresh has something to change. */
+  const metaFetchedAgo = (() => {
+    const iso = metaConv.data?.fetchedAt;
+    if (!iso) return "";
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return "";
+    const mins = Math.max(0, Math.round((Date.now() - then) / 60_000));
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    return hrs < 24 ? `${hrs}h ago` : new Date(iso).toLocaleDateString();
+  })();
 
   const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
     queryKey: ["/api/manager-dashboard"],
@@ -1853,7 +1895,24 @@ export default function ManagerDashboard() {
           <div>
             <SectionTitle icon={Target}
               action={
-                <RangePills options={META_RANGE_OPTIONS} value={metaDays} onChange={setMetaDays} ariaLabel="Meta conversion range" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <RangePills options={META_RANGE_OPTIONS} value={metaDays} onChange={setMetaDays} ariaLabel="Meta conversion range" />
+                  {/* These numbers come from LeadVault through a half-hour
+                      cache, so neither the page's Refresh nor the minute poll
+                      can show you something you changed in Bonzo two minutes
+                      ago. This one goes and asks (owner 10 Sep 2026). */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={refreshMeta.isPending}
+                    onClick={() => refreshMeta.mutate()}
+                    data-testid="button-refresh-meta-conversion"
+                    title="Read these numbers from LeadVault again, ignoring the cache"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${refreshMeta.isPending ? "animate-spin" : ""}`} />
+                    {refreshMeta.isPending ? "Refreshing…" : "Refresh"}
+                  </Button>
+                </div>
               }
             >
               Meta leads that reached an LO — last {metaConv.data.days} days
@@ -1894,6 +1953,7 @@ export default function ManagerDashboard() {
                       took. Transfers sync from C3 every few hours, so the last day or two
                       always reads low.
                       {metaConv.data.stale ? " Showing the last copy we could fetch." : ""}
+                      {metaConv.data.fetchedAt ? ` Read from LeadVault ${metaFetchedAgo}.` : ""}
                     </p>
                   </>
                 )}

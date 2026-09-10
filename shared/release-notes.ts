@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.82.0",
+    headline: "Refresh the Meta numbers without waiting half an hour.",
+    items: [
+      { text: "The Meta conversion card on the Advanced Dashboard has a Refresh button. Those numbers come from LeadVault through a thirty-minute cache, so until now neither the page's Refresh nor the minute-by-minute poll could show you something you had just changed in Bonzo. This one goes and asks.", audience: "manager" },
+      { text: "The card also says when the figures on screen were last read from LeadVault, so Refresh has something visible to change.", audience: "manager" },
+      { text: "Pressing it twice in a minute tells you it is already up to date instead of pretending to fetch, and a refresh that cannot reach LeadVault says so and keeps the last good numbers rather than blanking the card.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.81.0",
     headline: "Settings is finally in your sidebar, and Tools is down to four.",
     items: [
