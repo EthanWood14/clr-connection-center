@@ -78,6 +78,22 @@ const META_RANGE_OPTIONS: { key: string; label: string }[] = [
   { key: "90", label: "90d" },
 ];
 
+type LoSplitWindow = "today" | "week" | "month" | "all";
+const LO_SPLIT_OPTIONS: { key: LoSplitWindow; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "all", label: "All time" },
+];
+type LoSplitRow = { loId: number; name: string; helper: number; others: number; total: number };
+type LoSplitResp = {
+  helperName: string;
+  helperUserId: number | null;
+  helperNotice: string | null;
+  today: string;
+  windows: Record<LoSplitWindow, LoSplitRow[]>;
+};
+
 type MetaConversionFlow = {
   flow: string; label: string; leads: number; transferred: number; rate: number;
 };
@@ -735,10 +751,19 @@ export default function ManagerDashboard() {
   const [clrTrendShowAvg, setClrTrendShowAvg] = useState(true);
   const [clrTrendAvgWindow, setClrTrendAvgWindow] = useState(7); // trailing window in business days
   const [pipelineRange, setPipelineRange] = useState<PipelineRange>("1d");
+  const [loSplitWindow, setLoSplitWindow] = useState<LoSplitWindow>("today");
 
   // Own query on purpose. The page's single /api/manager-dashboard call feeds
   // every other section, so a LeadVault timeout folded into it would leave the
   // whole dashboard sitting on skeletons.
+  // Its own query for the same reason the Meta card has one: the all-time
+  // window reads every transfer ever, and folding that into the page's single
+  // dashboard call would put every other section behind it.
+  const loSplit = useQuery<LoSplitResp>({
+    queryKey: ["/api/lo-transfer-split"],
+    refetchInterval: 120_000,
+  });
+
   const metaConv = useQuery<MetaConversionResp>({
     queryKey: [`/api/meta-conversion?days=${metaDays}`],
     queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
@@ -1961,6 +1986,95 @@ export default function ManagerDashboard() {
             </Card>
           </div>
         ) : null}
+
+        {/* Transfers per LO, split by who sent them. Elleine logs more than
+            twice what the next busiest CLR does, so an LO who looks well fed
+            can be well fed by ONE person — a different fact, and a single
+            point of failure that a plain top-LOs list cannot show. */}
+        <div>
+          <SectionTitle icon={Users}
+            action={<RangePills options={LO_SPLIT_OPTIONS} value={loSplitWindow} onChange={setLoSplitWindow} ariaLabel="Transfers by LO range" />}
+          >
+            Transfers by loan officer — {LO_SPLIT_OPTIONS.find((o) => o.key === loSplitWindow)?.label}
+          </SectionTitle>
+          <Card>
+            <CardContent className="p-4">
+              {loSplit.data?.helperNotice && (
+                <p className="mb-3 text-xs text-amber-700 dark:text-amber-400" data-testid="lo-split-helper-notice">
+                  {loSplit.data.helperNotice}
+                </p>
+              )}
+              {(() => {
+                const rows = loSplit.data?.windows?.[loSplitWindow] ?? [];
+                const helperName = loSplit.data?.helperName ?? "Helper";
+                if (!loSplit.data) {
+                  return <div className="py-6 text-center text-sm text-muted-foreground">Loading…</div>;
+                }
+                if (rows.length === 0) {
+                  return <div className="py-6 text-center text-sm text-muted-foreground">No transfers in this range</div>;
+                }
+                const totals = rows.reduce(
+                  (a, r) => ({ helper: a.helper + r.helper, others: a.others + r.others, total: a.total + r.total }),
+                  { helper: 0, others: 0, total: 0 },
+                );
+                const max = rows[0].total || 1;
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm" data-testid="lo-split-table">
+                      <thead>
+                        <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                          <th className="py-1.5 pr-3 text-left font-medium">Loan officer</th>
+                          <th className="py-1.5 px-2 text-right font-medium whitespace-nowrap">{helperName}</th>
+                          <th className="py-1.5 px-2 text-right font-medium whitespace-nowrap">Everyone else</th>
+                          <th className="py-1.5 pl-2 text-right font-medium">Total</th>
+                          <th className="w-24 py-1.5 pl-3" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r) => (
+                          <tr key={r.loId} className="border-t" data-testid={`lo-split-row-${r.loId}`}>
+                            <td className="py-1.5 pr-3 truncate brand-text font-medium">{r.name}</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums" style={{ color: r.helper ? PURPLE : undefined }}>
+                              {r.helper || <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="py-1.5 px-2 text-right tabular-nums">
+                              {r.others || <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="py-1.5 pl-2 text-right tabular-nums font-semibold">{r.total}</td>
+                            <td className="py-1.5 pl-3">
+                              {/* One bar, two parts: how much of this LO's
+                                  work came from the helper is the whole point,
+                                  and two numbers in a row do not show it the
+                                  way one divided bar does. */}
+                              <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                <div className="h-full" style={{ width: `${(r.helper / max) * 100}%`, backgroundColor: PURPLE }} />
+                                <div className="h-full" style={{ width: `${(r.others / max) * 100}%`, backgroundColor: GREEN }} />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 font-semibold" data-testid="lo-split-totals">
+                          <td className="py-1.5 pr-3">All loan officers</td>
+                          <td className="py-1.5 px-2 text-right tabular-nums" style={{ color: PURPLE }}>{totals.helper}</td>
+                          <td className="py-1.5 px-2 text-right tabular-nums">{totals.others}</td>
+                          <td className="py-1.5 pl-2 text-right tabular-nums">{totals.total}</td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Counted as whole transfers to the loan officer who received them, split by
+                      who logged the call. A shotgun lead shared between two CLRs is still one
+                      borrower who reached this LO.
+                    </p>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Top states by NPA — render only if there's any data, otherwise hidden */}
         {(statesBlock?.topStates?.length ?? 0) > 0 ? (

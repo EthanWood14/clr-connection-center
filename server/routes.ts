@@ -125,6 +125,7 @@ import {
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
+import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId } from "./lo-transfer-split";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -19130,6 +19131,69 @@ ${note}` : daysLine;
   // Deliberately its OWN endpoint rather than folded into /api/manager-dashboard:
   // that single query feeds the entire Advanced Dashboard, and a LeadVault
   // timeout inside it would leave the whole page on skeletons.
+  /**
+   * Transfers per loan officer — today, this week, this month, all time —
+   * split by whether the helper (Elleine) logged them or somebody else did.
+   *
+   * Its own endpoint rather than another block on /api/manager-dashboard: the
+   * all-time window reads every transfer ever, and folding that into the call
+   * that already feeds fifteen sections would put the whole page behind it.
+   *
+   * One statement for all four windows. Running four would read the transfer
+   * table four times for three answers that are subsets of the fourth.
+   */
+  app.get("/api/lo-transfer-split", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1;
+    const db = storageExtra.getRawSqlite();
+    const today = businessTodayForRequest(req, db);
+    const week = resolveNamedPeriod("week");
+    const month = resolveNamedPeriod("month");
+
+    const helperName = String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine");
+    const helperUserId = resolveHelperUserId(storage.getUsers() as any[], helperName);
+
+    // NO exclude_from_stats filter here, deliberately, and it is the whole
+    // reason this table works. ELLEINE IS EXCLUDED FROM STATS — she is
+    // flagged that way precisely because she is not one CLR among fifteen —
+    // and 1,336 of production's 3,296 transfers to a loan officer are hers.
+    // Applying the exclusion the rest of the dashboard applies would have
+    // made her column read zero on every row, which is the one number this
+    // card exists to show. It is also the right answer on its own terms: an
+    // LO received the transfer whoever logged it, and whose scorecard it
+    // counts towards is a different question from how fed that LO is.
+
+    // A row per transfer per window it falls in. 'all' always matches, so a
+    // transfer inside today's date appears four times and is counted once per
+    // list — which is exactly what four independent tables need.
+    const rows = db.prepare(`
+      SELECT o.lo_id, lo.full_name AS name, o.assistant_id, w.window
+      FROM lead_outcomes o
+      JOIN loan_officers lo ON lo.id = o.lo_id
+      JOIN (SELECT 'today' AS window UNION ALL SELECT 'week' UNION ALL SELECT 'month' UNION ALL SELECT 'all') w
+      WHERE o.outcome_type = 'transfer'
+        AND o.org_id = @orgId
+        AND o.lo_id IS NOT NULL
+        AND (
+          (w.window = 'all')
+          OR (w.window = 'today' AND o.date = @today)
+          OR (w.window = 'week'  AND o.date >= @weekStart  AND o.date <= @weekEnd)
+          OR (w.window = 'month' AND o.date >= @monthStart AND o.date <= @monthEnd)
+        )
+    `).all({
+      orgId, today,
+      weekStart: week.startDate, weekEnd: week.endDate,
+      monthStart: month.startDate, monthEnd: month.endDate,
+    }) as any[];
+
+    res.json({
+      helperName,
+      helperUserId,
+      helperNotice: helperNoticeFor(helperName, helperUserId),
+      today,
+      windows: foldLoSplitRows(rows, helperUserId),
+    });
+  });
+
   app.get("/api/meta-conversion", requireAuth, async (req: any, res) => {
     // ?refresh=1 is the card's Refresh button: read past the thirty-minute
     // cache. Rate-limited inside metaConversion to one forced read per window

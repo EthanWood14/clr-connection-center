@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.83.0",
+    headline: "How many transfers each loan officer got — and how much of it was Elleine.",
+    items: [
+      { text: "New table on the Advanced Dashboard: transfers per loan officer for today, this week, this month and all time, counted twice over — once for Elleine, once for everyone else. Each row has a two-colour bar so you can see at a glance which LOs are being fed mostly by one person.", audience: "manager" },
+      { text: "Whole transfers to the LO who received them, split by who logged the call — a shotgun lead shared between two CLRs is still one borrower who reached that LO.", audience: "manager" },
+      { text: "The helper's name comes from the setting, so if the person in that seat changes, change the name in Settings and the table follows.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.82.0",
     headline: "Refresh the Meta numbers without waiting half an hour.",
     items: [
