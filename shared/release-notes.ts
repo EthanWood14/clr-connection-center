@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.90.0",
+    headline: "A read-only numbers feed, for tooling rather than people.",
+    items: [
+      { text: "C3 can now hand its team statistics — transfers by week and by month, per CLR, with Elleine reported separately — to an outside tool over a locked-down read-only feed. Nothing in it identifies a borrower: no names, numbers, addresses or write-up text, only counts.", audience: "manager" },
+      { text: "It is off unless a token is configured, refuses anything else, is rate limited, and every read is written to the audit log.", audience: "manager" },
+      { text: "Nothing changed on any screen.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.89.0",
     headline: "Input Results keeps what you typed.",
     items: [

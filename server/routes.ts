@@ -126,6 +126,7 @@ import {
 import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
+import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -5709,6 +5710,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // organization's public wall; legacy display links still resolve their
     // revocable, organization-scoped token inside the handler.
     if (req.path.startsWith("/tv/")) return next();
+    // Read-only statistics feed for an automated session. Its caller holds a
+    // token, not a cookie, so requireAuth would 401 before the handler ran.
+    // The handler is fail-closed on AGENT_API_TOKEN and returns no borrower
+    // data of any kind — see server/agent-stats.ts for why that is the
+    // security design rather than a detail.
+    if (req.path === "/agent/stats") return next();
     // Narrow bootstrap-token escape hatch for /api/loan-officers/import only.
     // The route handler itself ALSO validates the token, so this just lets
     // that single endpoint be reached from automation without a session.
@@ -19158,6 +19165,89 @@ ${note}` : daysLine;
    * One statement for all four windows. Running four would read the transfer
    * table four times for three answers that are subsets of the fourth.
    */
+  /**
+   * GET /api/agent/stats — the numbers, with the caveats attached.
+   *
+   * Auth: x-api-token against AGENT_API_TOKEN, compared in constant time,
+   * REFUSED when the variable is unset. Unconfigured means shut, not open.
+   * The token never travels in the query string, where it would end up in
+   * access logs and in anything that proxies this.
+   *
+   * Read-only by construction: GET only, no writes anywhere in the handler,
+   * and nothing it returns identifies a borrower.
+   */
+  const AGENT_WINDOW_MS = 60_000;
+  const agentHits = new Map<string, { n: number; at: number }>();
+  function agentOverLimit(key: string, max: number): boolean {
+    const now = Date.now();
+    const hit = agentHits.get(key);
+    if (!hit || now - hit.at > AGENT_WINDOW_MS) { agentHits.set(key, { n: 1, at: now }); return false; }
+    hit.n += 1;
+    return hit.n > max;
+  }
+
+  app.get("/api/agent/stats", (req: any, res) => {
+    const expected = String(process.env.AGENT_API_TOKEN || "").trim();
+    if (!expected) return res.status(503).json({ error: "agent_api_not_configured" });
+    const presented = String(req.headers["x-api-token"] ?? "").trim();
+    const ok = presented.length > 0
+      && presented.length === expected.length
+      && crypto.timingSafeEqual(
+        crypto.createHash("sha256").update(presented).digest(),
+        crypto.createHash("sha256").update(expected).digest(),
+      );
+    if (!ok) {
+      // Rate limit FAILURES hard. A wrong token is either a bug or somebody
+      // guessing, and neither needs thirty tries a minute.
+      if (agentOverLimit("agent-fail", 10)) return res.status(429).json({ error: "rate_limited" });
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    // And limit successes too — an agent in a loop should not be able to sit
+    // on the database.
+    if (agentOverLimit("agent-ok", 60)) return res.status(429).json({ error: "rate_limited" });
+
+    const orgId = Number(currentOrgId() ?? 1) || 1;
+    const db = storageExtra.getRawSqlite();
+    const today = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+    const months = Math.min(Math.max(parseInt(String(req.query.months ?? "6"), 10) || 6, 1), 24);
+    const from = `${new Date(new Date(`${today}T12:00:00Z`).setUTCMonth(new Date(`${today}T12:00:00Z`).getUTCMonth() - months)).toISOString().slice(0, 7)}-01`;
+
+    const helperName = String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine");
+    const helperUserId = resolveHelperUserId(
+      db.prepare(`SELECT id, name, is_active FROM users WHERE org_id = ?`).all(orgId) as any[],
+      helperName,
+    );
+
+    // Only what the roll-up needs. Selecting * here would drag borrower names
+    // and phone numbers into a payload that must never carry them.
+    const rows = db.prepare(`
+      SELECT date, assistant_id AS assistantId, outcome_type AS outcomeType, lo_id AS loId
+      FROM lead_outcomes
+      WHERE org_id = ? AND date >= ? AND date <= ?
+    `).all(orgId, from, today) as any[];
+
+    const thisWeek = weekStartOf(today);
+    const thisMonth = monthStartOf(today);
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      today,
+      from,
+      helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek),
+      definitions: definitionsFor(helperName, helperUserId != null),
+    });
+
+    // Recorded after the response: the trail matters, but a failure to write
+    // it must not cost the caller their answer.
+    audit({
+      userId: 0, userName: "Agent API", action: "read", entityType: "agent_stats",
+      entityId: null, entityLabel: "Statistics feed read",
+      details: JSON.stringify({ months, rows: rows.length }),
+    } as any);
+  });
+
   app.get("/api/lo-transfer-split", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1;
     const db = storageExtra.getRawSqlite();
