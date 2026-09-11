@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.92.1",
+    headline: "Correct a transfer's information after logging it.",
+    items: [
+      { text: "Use the pencil next to your outcome in Input Results to edit the borrower, phone, lead source, transfer write-up, qualification notes and next steps. The pencil stays visible now.", audience: "everyone" },
+      { text: "Saving recalculates the write-up score from the corrected information without logging another transfer. Keep qualification answers on their labeled lines so they are counted.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.92.0",
     headline: "Your outcomes get today's date, not your laptop's idea of it.",
     items: [

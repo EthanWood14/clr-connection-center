@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from "react";
+import { transferInformationPatch } from "@shared/transfer-edit";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { LoaPicker } from "@/components/loa-controls";
@@ -1199,6 +1200,13 @@ const editOutcomeSchema = z.object({
   loId: z.coerce.number().min(1, "Select a loan officer"),
   borrowerName: z.string().optional(),
   phoneNumber: z.string().optional(),
+  leadSource: z.string().optional(),
+  conversationNotes: z.string().optional(),
+  prequalificationNotes: z.string().optional(),
+  loActionPlan: z.string().optional(),
+  nextSteps: z.string().optional(),
+  leadGoal: z.string().optional(),
+  leadTimeframe: z.string().optional(),
   followUpDate: z.string().optional(),
   notes: z.string().optional(),
 }).superRefine((val, ctx) => {
@@ -1265,6 +1273,13 @@ function EditOutcomeDialog({
         loId: outcome.loId,
         borrowerName: outcome.borrowerName ?? "",
         phoneNumber: outcome.phoneNumber ?? "",
+        leadSource: outcome.leadSource ?? "",
+        conversationNotes: outcome.conversationNotes ?? "",
+        prequalificationNotes: outcome.prequalificationNotes ?? "",
+        loActionPlan: outcome.loActionPlan ?? "",
+        nextSteps: outcome.nextSteps ?? "",
+        leadGoal: outcome.leadGoal ?? "",
+        leadTimeframe: outcome.leadTimeframe ?? "",
         followUpDate: outcome.followUpDate ?? "",
         notes: outcome.notes ?? "",
       });
@@ -1276,7 +1291,8 @@ function EditOutcomeDialog({
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-lg p-0 gap-0 max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
-          <DialogTitle>Edit Outcome</DialogTitle>
+          <DialogTitle>{isTransfer ? "Edit Transfer Information" : "Edit Outcome"}</DialogTitle>
+          {isTransfer && <p className="text-sm text-muted-foreground">Saving updates this transfer and recalculates its write-up score. It does not log another transfer.</p>}
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col min-h-0 flex-1">
@@ -1348,7 +1364,7 @@ function EditOutcomeDialog({
                     <SelectTrigger data-testid="select-edit-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
+                    {los.filter((lo: any) => lo.internalStatus === "active" || lo.id === outcome?.loId).map((lo: any) => (
                       <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1368,6 +1384,27 @@ function EditOutcomeDialog({
                 <FormControl><Input type="tel" {...field} placeholder="Optional" data-testid="input-edit-phone-number" /></FormControl>
               </FormItem>
             )} />
+            {isTransfer && <>
+              <FormField control={form.control} name="leadSource" render={({ field }) => (
+                <FormItem><FormLabel>Lead Source</FormLabel><FormControl><Input {...field} data-testid="input-edit-lead-source" /></FormControl></FormItem>
+              )} />
+              <FormField control={form.control} name="conversationNotes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Transfer Write-Up &amp; Qualification Answers</FormLabel>
+                  <p className="text-xs text-muted-foreground">Keep each answer on its own “Label: answer” line (for example, “Owns Home: Yes”). These answers count toward your write-up score.</p>
+                  <FormControl><Textarea {...field} rows={12} data-testid="textarea-edit-conversation-notes" /></FormControl>
+                </FormItem>
+              )} />
+              {([
+                ["prequalificationNotes", "Prequalification Notes"],
+                ["leadGoal", "Lead Goal"], ["leadTimeframe", "Timeframe"],
+                ["loActionPlan", "LO Action Plan"], ["nextSteps", "Next Steps"],
+              ] as const).map(([name, label]) => (
+                <FormField key={name} control={form.control} name={name} render={({ field }) => (
+                  <FormItem><FormLabel>{label}</FormLabel><FormControl><Textarea {...field} rows={2} data-testid={`textarea-edit-${name}`} /></FormControl></FormItem>
+                )} />
+              ))}
+            </>}
             {showFollowUp && (
               <FormField control={form.control} name="followUpDate" render={({ field }) => (
                 <FormItem>
@@ -1588,8 +1625,7 @@ export default function Outcomes() {
         outcomeType: data.outcomeType,
         transferType: data.outcomeType === "transfer" ? data.transferType : null,
         loId: data.loId,
-        borrowerName: data.borrowerName ?? "",
-        notes: data.notes ?? "",
+        ...transferInformationPatch(data),
       };
       // Moving an appointment happens HERE — the edit dialog has no appointment
       // field of its own, and showFollowUp always shows the follow-up field for
@@ -1870,9 +1906,10 @@ export default function Outcomes() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="w-7 h-7 opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground"
+                          className="w-7 h-7 hover:text-foreground"
+                          aria-label="Edit transfer or outcome information"
                           onClick={() => setEditTarget(o)}
-                          title={!isOwner && isAdmin ? "Editing another CLR's record" : undefined}
+                          title={!isOwner && isAdmin ? "Editing another CLR's record" : "Edit information"}
                           data-testid={`button-edit-outcome-${o.id}`}
                         >
                           <Pencil className="w-3.5 h-3.5" />
