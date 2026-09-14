@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.95.0",
+    headline: "The calling script has a Vintage lead option.",
+    items: [
+      { text: "Calling a lead whose inquiry is months old? The first choice on the Calling Script is now \"Vintage lead (months old)\". It swaps in an opener built for them: \"A couple of months ago you were looking at taking out some cash via a HELOC or refinancing? What made you decide not to move in that direction?\"", audience: "everyone" },
+      { text: "Whatever they answer — still want the cash, rates, later, selling, another lender, wrong person — takes you into the same branches the script already had, so the rest of the call reads exactly as before.", audience: "everyone" },
+      { text: "It was added to the live default script rather than by replacing it, so any edits made to the default are kept. Personal copies of the script are not changed — clone the default again if you want the new opener in yours.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.94.0",
     headline: "Calls and texts are counted by the phone system now, not typed in.",
     items: [

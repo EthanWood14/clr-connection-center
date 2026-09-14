@@ -9,6 +9,7 @@ import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
+import { ensureVintageLeadBranch } from "./script-vintage-lead";
 import { auditDetails, detailsHasPlaintextSecret } from "./audit-details";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
@@ -5119,6 +5120,13 @@ function seedEthanScript() {
     .run('ethan_wcl_script_v5');
 }
 try { seedEthanScript(); } catch (e: any) { console.error("[seed] seedEthanScript v5 failed:", e?.message ?? e); }
+// Additive branch on the seeded default: see server/script-vintage-lead.ts.
+try {
+  const vintage = ensureVintageLeadBranch(sqlite);
+  if (vintage.applied) {
+    console.log(`[seed] vintage-lead branch added to the default script (node ${vintage.nodeId}, ${vintage.wired} answers wired${vintage.skipped.length ? `, skipped: ${vintage.skipped.join(", ")}` : ""})`);
+  }
+} catch (e: any) { console.error("[seed] vintage-lead branch failed:", e?.message ?? e); }
 
 
 // Add owner_id column to existing DBs that don't have it
