@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.92.2",
+    headline: "New lead alerts arrive in the bottom-left corner.",
+    items: [
+      { text: "While C3 is open, fresh leads for today's assigned loan officers pop up on any C3 page. Dismiss an alert or open your call list without losing your place.", audience: "everyone" },
+      { text: "Shotgun offers now appear in a bottom-left card instead of taking over the screen. The countdown, chime, confirmation and Pass action still work as before.", audience: "everyone" },
+      { text: "Repeated checks and page refreshes do not replay the same assigned-LO alert. Older leads stay in your call list without creating a backlog of pop-ups.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.92.1",
     headline: "Correct a transfer's information after logging it.",
     items: [

@@ -24,6 +24,8 @@ import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
+import { AssignedLoLeadAlert } from "@/components/assigned-lo-lead-alert";
+import { LeadPopupDock } from "@/components/lead-popup-dock";
 import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
 import { TaskOverduePopup } from "@/components/task-overdue-popup";
 import { UpdatePrompt } from "@/components/update-prompt";
@@ -437,7 +439,10 @@ function AuthenticatedApp() {
                 {/* Floating glass main panel */}
                 <main className="glass-panel flex-1 overflow-auto flex flex-col pb-16 md:pb-0">
                   <div className="flex-1">
-                    <ShotgunOfferAlert />
+                    <LeadPopupDock key={`${user.orgId}:${user.id}`}>
+                      <ShotgunOfferAlert />
+                      <AssignedLoLeadAlert />
+                    </LeadPopupDock>
                     <ShotgunResultPrompt />
                     {/* Only the page swaps on navigation — the shell around it
                         stays put, so a route change is not a full blank. */}
