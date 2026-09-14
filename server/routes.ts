@@ -19489,6 +19489,27 @@ ${note}` : daysLine;
     return { ok: true, rows: flat.length, matched, unmatched: Array.from(unmatched) };
   }
 
+  // The hourly cron is too coarse for a form someone is looking at NOW.
+  // LeadVault is about two minutes behind the phone, so a CLR who dialled at
+  // 9:20 saw nothing on their EOD until the :15 sync ran at 10:15 — and the
+  // report they filed at 5pm carried whatever the last hourly pull had seen.
+  // Refresh on demand instead, at most once a minute per org, reusing the
+  // cron's own sync (under the same org context) so the agent matching, the
+  // links and the org guard stay in one place. Failure is silent: the stored
+  // row is still the best answer there is.
+  const LIVE_DIALPAD_MIN_INTERVAL_MS = 60_000;
+  const liveDialpadRefreshedAt = new Map<number, number>();
+  async function refreshDialpadStatsIfStale(orgId: number): Promise<void> {
+    const now = Date.now();
+    if (now - (liveDialpadRefreshedAt.get(orgId) ?? 0) < LIVE_DIALPAD_MIN_INTERVAL_MS) return;
+    liveDialpadRefreshedAt.set(orgId, now);
+    try {
+      await runWithOrg({ orgId, superAdmin: false }, () => syncDialpadStats(orgId));
+    } catch (e: any) {
+      console.error(`[dialpad-sync] live refresh for org ${orgId} failed:`, e?.message ?? e);
+    }
+  }
+
   // Through the day, so an EOD opened at any hour sees a current number.
   // Have the outbound-call rollup in memory before the first manager arrives.
   // Cold, that upstream takes ~3.5s and used to block the whole dashboard.
@@ -19511,12 +19532,15 @@ ${note}` : daysLine;
 
   // What Dialpad recorded for the signed-in CLR on a date. The EOD form uses
   // this to fill the calls field in.
-  app.get("/api/dialpad/my-calls", requireAuth, (req: any, res) => {
+  app.get("/api/dialpad/my-calls", requireAuth, async (req: any, res) => {
     const userId = Number(req.session_user?.userId);
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const date = (typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date))
       ? req.query.date
       : businessTodayForRequest(req, storageExtra.getRawSqlite());
+    if (date === businessTodayForRequest(req, storageExtra.getRawSqlite())) {
+      await refreshDialpadStatsIfStale(orgId);
+    }
     const hit = storageExtra.getDialpadCallsFor(orgId, userId, date);
     res.json({
       date,
@@ -20401,7 +20425,7 @@ ${note}` : daysLine;
 
     // ── EOD Reports ───────────────────────────────────────────────────────────────────
 
-  app.get('/api/eod-reports', requireAuth, (req: any, res) => {
+  app.get('/api/eod-reports', requireAuth, async (req: any, res) => {
     const userId = req.session_user?.userId;
     // Default through the same 7pm, user-timezone business clock as every EOD
     // gate. UTC midnight is 4/5pm Pacific and must never advance this date.
@@ -20501,6 +20525,11 @@ ${note}` : daysLine;
     const callToolsActivity = callSyncActivitySummary(date, date, Number(userId));
     // Dialpad calls for the same day, alongside the CallTools figures. Both are
     // imported observations of the same shift from different systems.
+    // Today's number is pulled live (throttled) rather than read from the
+    // last hourly snapshot. Past days are settled and stay as stored.
+    if (date === businessTodayForRequest(req, storageExtra.getRawSqlite())) {
+      await refreshDialpadStatsIfStale(Number(req.session_user?.orgId ?? 1) || 1);
+    }
     const dialpadHit = storageExtra.getDialpadCallsFor(
       Number(req.session_user?.orgId ?? 1) || 1, Number(userId), date,
     );
@@ -21047,6 +21076,11 @@ ${note}` : daysLine;
     const additionalIds = normalizeIds(additionalLosCalled);
     const otherNotesStr = typeof additionalLosOtherNotes === "string" ? additionalLosOtherNotes : null;
     const importedActivity = callSyncActivitySummary(reportDate, reportDate, Number(userId));
+    // Filing today's report: pull Dialpad live first, so the snapshot below is
+    // the shift's real count and not whatever the :15 cron last saw.
+    if (reportDate === businessTodayForRequest(req, storageExtra.getRawSqlite())) {
+      await refreshDialpadStatsIfStale(Number(req.session_user?.orgId ?? 1) || 1);
+    }
     const report = storageExtra.upsertEodReport({
       reportDate,
       assistantId: userId,

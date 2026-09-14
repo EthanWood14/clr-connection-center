@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.93.0",
+    headline: "Your Dialpad calls show up on the EOD within a couple of minutes.",
+    items: [
+      { text: "The Dialpad calls tile on the EOD report used to update once an hour, so a call you made at 9:20 did not appear until 10:15. It now checks for new calls whenever you open the form or come back to it, and the report you file at the end of the day carries the real count for the whole shift.", audience: "everyone" },
+      { text: "Calls made after 5pm were being filed under the next day, because they were grouped by a clock several hours ahead of the office. That is fixed at the source, so the last hours of a shift land on the right day.", audience: "everyone" },
+      { text: "Past days are settled and stay exactly as they were filed. Only today is pulled live.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.92.2",
     headline: "New lead alerts arrive in the bottom-left corner.",
     items: [

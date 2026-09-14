@@ -154,7 +154,10 @@ export default function EodReport() {
   const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; texts: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
-    refetchInterval: 10 * 60_000,
+    // Two minutes, not ten: the server now pulls today's Dialpad count live on
+    // this request (throttled to once a minute), so this poll is what decides
+    // how long a call takes to show up on the tile.
+    refetchInterval: 2 * 60_000,
   });
 
   // Today's report (independent of selectedDate) — drives whether the user is
