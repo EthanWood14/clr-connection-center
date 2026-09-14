@@ -45,6 +45,7 @@ const LoPriorityLink = lazy(() => import("@/pages/lo-priority-link"));
 const TvBoard = lazy(() => import("@/pages/tv"));
 const Leaderboard = lazy(() => import("@/pages/leaderboard"));
 const TeamStats = lazy(() => import("@/pages/team-stats"));
+const Tournament = lazy(() => import("@/pages/tournament"));
 const Settings = lazy(() => import("@/pages/settings"));
 const StateLookup = lazy(() => import("@/pages/state-lookup"));
 const CallHours = lazy(() => import("@/pages/call-hours"));
@@ -133,6 +134,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/appointments": "Appointments",
   "/fall-throughs": "Fall-Throughs",
   "/leaderboard":  "Team Stats",
+  "/tournament":   "Transfer Tournament",
   "/seating-map":      "Seating Map",
   "/clr-training":     "CLR Training",
   "/clr-sop":          "Call SOP",
@@ -203,6 +205,7 @@ function AppRouter() {
       <Route path="/fall-throughs" component={FallThroughs} />
       <Route path="/leaderboard" component={TeamStats} />
       <Route path="/team-stats" component={TeamStats} />
+      <Route path="/tournament" component={Tournament} />
       <Route path="/leaderboard-classic" component={Leaderboard} />
       <Route path="/seating-map" component={SeatingChart} />
       <Route path="/clr-training" component={ClrTraining} />

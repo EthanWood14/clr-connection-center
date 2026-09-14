@@ -258,6 +258,7 @@ const toolItems: NavItem[] = [
 const referenceItems: NavItem[] = [
   { title: "Seating Map", url: "/seating-map", icon: Armchair },
   { title: "Team Stats", url: "/leaderboard", icon: Trophy, help: help.stats },
+  { title: "Transfer Tournament", url: "/tournament", icon: Trophy },
   { title: "Office TV", url: "/tv", icon: MonitorPlay, external: true },
   // The two NMLS pages sit together: the tracker is the work, the licences are
   // the record. Moved out of Tools with the Glossary (owner 9/10/26) — the

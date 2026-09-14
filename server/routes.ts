@@ -2,6 +2,7 @@ import { raw, type Express, type Request, type Response, type NextFunction } fro
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import * as storageExtra from "./storage";
+import { TOURNAMENT_TZ, todayInTz, tournamentWindow, tournamentStandings, tournamentPhase } from "../shared/tournament";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
 import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL, selfReportedCountsOn } from "@shared/self-reported";
@@ -13662,6 +13663,38 @@ ${note}` : daysLine;
     }
 
     res.json({ periods: results });
+  });
+
+  // The Transfer Tournament: most transfers LOGGED between 12:30 and 5:30 PM
+  // Pacific on one calendar day (shared/tournament.ts). Default is today.
+  app.get("/api/tournament", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const now = new Date();
+    const requested = String(req.query.date ?? "").trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : todayInTz(now.getTime(), TOURNAMENT_TZ);
+    const window = tournamentWindow(date);
+    const sqlite = storageExtra.getRawSqlite();
+    // created_at is UTC in two spellings (ISO with Z, or SQLite's
+    // "YYYY-MM-DD HH:MM:SS"); both start with the UTC calendar date, so pull
+    // the day either side and let the shared helper do the exact comparison.
+    const days = [addIsoDays(date, -1), date, addIsoDays(date, 1)];
+    const rows = sqlite.prepare(`
+      SELECT o.id, o.assistant_id, o.shotgun_sender_id, o.outcome_type, o.created_at, o.borrower_name, o.transfer_type,
+             l.full_name AS lo_name
+        FROM lead_outcomes o LEFT JOIN loan_officers l ON l.id = o.lo_id
+       WHERE o.org_id = ? AND o.outcome_type = 'transfer' AND substr(o.created_at, 1, 10) IN (?, ?, ?)`).all(orgId, ...days) as any[];
+    const people = (sqlite.prepare(`SELECT id, name FROM users WHERE org_id = ? AND is_active = 1 AND is_clr = 1 ORDER BY name`).all(orgId) as any[])
+      .map((u) => ({ id: Number(u.id), name: String(u.name ?? "") }));
+    const standings = tournamentStandings(rows, people, window);
+    const label = (ms: number) => new Intl.DateTimeFormat("en-US", { timeZone: TOURNAMENT_TZ, hour: "numeric", minute: "2-digit" }).format(new Date(ms));
+    res.json({
+      date,
+      window: { startIso: window.startIso, endIso: window.endIso, startLabel: label(window.startMs), endLabel: label(window.endMs), tz: TOURNAMENT_TZ },
+      phase: tournamentPhase(now.getTime(), window),
+      serverNow: now.toISOString(),
+      standings,
+      totalCredit: standings.reduce((sum, s) => sum + s.credit, 0),
+    });
   });
 
   app.get("/api/leaderboard", (req, res) => {

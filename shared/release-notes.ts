@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.109.0",
+    headline: "Transfer Tournament: who logs the most transfers between 12:30 and 5:30 today.",
+    items: [
+      { text: "New Tournament tab on the Dashboard (and a full-screen board at /tournament for the wall): every CLR ranked by transfers logged between 12:30 and 5:30 PM Pacific today, with a countdown to the start, a live clock to the finish, a podium for the top three, and each transfer listed by time and borrower. It updates every ten seconds.", audience: "everyone" },
+      { text: "Scoring matches the leaderboard: a transfer counts the moment it is logged in C3, and a Shotgun transfer is half to whoever put it up and half to whoever took it. A tie goes to whoever scored first.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.108.0",
     headline: "Log the whole transfer or appointment from the Shotgun result — and a 30-second warning before a claimed lead goes back.",
     items: [
