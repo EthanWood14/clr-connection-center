@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.100.0",
+    headline: "A manager can leave someone out of the morning check-in email for a day.",
+    items: [
+      { text: "When excusing a late ahead of time, a manager can also keep that person out of that day's check-in email entirely — not listed as late, not listed as excused, simply not in it. The excuse itself still applies to the check-in and the 90-day count as before.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.99.0",
     headline: "An excused late is not a late — and it can be excused ahead of time.",
     items: [

@@ -244,6 +244,10 @@ try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_external_schedules_org_subject
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_decision TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_rationale TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_model TEXT`); } catch {}
+// An approved excuse can also keep the person OUT of the morning digest for
+// that day entirely — not listed as late, not listed as excused. "Just don't
+// have him in it today."
+try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN hide_from_digest INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN auto_decided_at TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN human_review_requested INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE attendance_excuse_requests ADD COLUMN human_review_requested_at TEXT`); } catch {}
@@ -6885,6 +6889,17 @@ export function saveCheckin(data: {
  * null) — the board treats the person as excused rather than missing, and
  * saveCheckin applies the excuse to the row when it arrives.
  */
+/** CLR user ids an approved excuse keeps out of that day's morning digest entirely. */
+export function digestHiddenUserIds(orgIdValue: number, attendanceDateValue: string): Set<number> {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const attendanceDate = attendanceLocalDate(attendanceDateValue);
+  const rows = sqlite.prepare(`
+    SELECT subject_id FROM attendance_excuse_requests
+    WHERE org_id = ? AND attendance_date = ? AND subject_type = 'user' AND status = 'approved' AND hide_from_digest = 1
+  `).all(orgId, attendanceDate) as any[];
+  return new Set(rows.map((r) => Number(r.subject_id)));
+}
+
 export function getApprovedAdvanceLateExcusesForDate(orgIdValue: number, attendanceDateValue: string): AttendanceExcuseRequest[] {
   const orgId = attendancePositiveId(orgIdValue, "Organization id");
   const attendanceDate = attendanceLocalDate(attendanceDateValue);
@@ -6907,12 +6922,15 @@ export function getApprovedAdvanceLateExcusesForDate(orgIdValue: number, attenda
  */
 export function excuseLateInAdvance(input: {
   orgId: number; userId: number; date: string; reason: string; adminUserId: number;
+  /** Leave the person out of that day's morning digest altogether. */
+  hideFromDigest?: boolean;
 }): { request: AttendanceExcuseRequest; checkin: any | null; appliedNow: boolean } {
   const orgId = attendancePositiveId(input.orgId, "Organization id");
   const userId = attendancePositiveId(input.userId, "User id");
   const attendanceDate = attendanceLocalDate(input.date);
   const adminUserId = attendancePositiveId(input.adminUserId, "Reviewing user id");
   const reason = String(input.reason ?? "").trim().slice(0, 500) || "Excused in advance by a manager.";
+  const hide = input.hideFromDigest ? 1 : 0;
   const now = new Date().toISOString();
   const tx = sqlite.transaction(() => {
     assertAttendanceSubjectInOrg(orgId, "user", userId);
@@ -6922,15 +6940,17 @@ export function excuseLateInAdvance(input: {
     sqlite.prepare(`
       INSERT INTO attendance_excuse_requests (
         org_id, subject_type, subject_id, attendance_date, kind, checkin_id, expected_start, reason,
-        status, requested_via, requested_by_user_id, requested_at, reviewed_by, reviewed_at, reviewer_note, updated_at
-      ) VALUES (?, 'user', ?, ?, 'late', ?, ?, ?, 'approved', 'admin', ?, ?, ?, ?, ?, ?)
+        status, requested_via, requested_by_user_id, requested_at, reviewed_by, reviewed_at, reviewer_note, updated_at,
+        hide_from_digest
+      ) VALUES (?, 'user', ?, ?, 'late', ?, ?, ?, 'approved', 'admin', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(org_id, subject_type, subject_id, attendance_date, kind) DO UPDATE SET
         status='approved', reason=excluded.reason, reviewer_note=excluded.reviewer_note,
         reviewed_by=excluded.reviewed_by, reviewed_at=excluded.reviewed_at,
         checkin_id=COALESCE(attendance_excuse_requests.checkin_id, excluded.checkin_id),
+        hide_from_digest=excluded.hide_from_digest,
         updated_at=excluded.updated_at
     `).run(orgId, userId, attendanceDate, checkin?.id ?? null, checkin?.expected_start ?? null, reason,
-      adminUserId, now, adminUserId, now, reason, now);
+      adminUserId, now, adminUserId, now, reason, now, hide);
     let appliedNow = false;
     if (checkin && Number(checkin.on_time) === 0 && !checkin.late_excused) {
       sqlite.prepare(`UPDATE morning_checkins SET late_excused=1, excused_by=?, excused_at=?, excuse_reason=? WHERE id=?`)

@@ -16383,7 +16383,10 @@ ${note}` : daysLine;
     const who = storage.getUserById(userId) as any;
     if (!who || Number(who.orgId ?? who.org_id ?? 1) !== orgId) return res.status(404).json({ error: "Team member not found." });
     try {
-      const result = storageExtra.excuseLateInAdvance({ orgId, userId, date, reason, adminUserId: actorId });
+      const result = storageExtra.excuseLateInAdvance({
+        orgId, userId, date, reason, adminUserId: actorId,
+        hideFromDigest: req.body?.omitFromDigest === true || req.body?.omitFromDigest === 1 || req.body?.omitFromDigest === "yes",
+      });
       audit({
         userId: actorId, userName: actor?.name ?? "Unknown", action: "update",
         entityType: "checkin", entityId: Number(result.checkin?.id ?? 0),
@@ -16497,8 +16500,11 @@ ${note}` : daysLine;
       startPassed: s.startPassed,
     });
     // CLRs first, then the portal roster, in one list — managers care about who
-    // was late, not which table the row came from.
-    const all: DigestSubject[] = [...clrs, ...los, ...loas].map(toSubject);
+    // was late, not which table the row came from. A person a manager has
+    // deliberately kept out of today's email ("just don't have him in it")
+    // is dropped before anything is counted or rendered.
+    const hidden = storageExtra.digestHiddenUserIds(orgId, date);
+    const all: DigestSubject[] = [...clrs.filter((s: any) => !hidden.has(Number(s.userId))), ...los, ...loas].map(toSubject);
 
     // Nothing to report when nobody was due in — this is what keeps weekends and
     // holidays quiet without hard-coding which days those are.

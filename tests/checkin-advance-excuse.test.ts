@@ -62,9 +62,22 @@ test("excuseLateInAdvance records an approved request, and excuses an existing l
   assert.match(fn, /assertAttendanceSubjectInOrg\(orgId, "user", userId\)/);
 });
 
+test("an excuse can keep the person out of the digest entirely — not late, not excused, not there", () => {
+  assert.match(storage, /ALTER TABLE attendance_excuse_requests ADD COLUMN hide_from_digest INTEGER NOT NULL DEFAULT 0/);
+  assert.match(storage, /export function digestHiddenUserIds\(/);
+  assert.match(storage, /hide_from_digest=excluded\.hide_from_digest/);
+  const digest = routes.slice(routes.indexOf("async function sendCheckinDigest("), routes.indexOf("async function sendCheckinDigest(") + 4000);
+  assert.match(digest, /const hidden = storageExtra\.digestHiddenUserIds\(orgId, date\);/);
+  // Dropped BEFORE counting and rendering, so the subject line can't count them either.
+  assert.ok(digest.indexOf("digestHiddenUserIds") < digest.indexOf("anyoneExpected(all)"));
+  assert.match(digest, /clrs\.filter\(\(s: any\) => !hidden\.has\(Number\(s\.userId\)\)\)/);
+  const route = routes.slice(routes.indexOf('app.post("/api/checkin/advance-excuse"'), routes.indexOf('app.post("/api/checkin/manual-lates"'));
+  assert.match(route, /hideFromDigest: req\.body\?\.omitFromDigest === true/);
+});
+
 test("managers reach it at POST /api/checkin/advance-excuse, and nobody excuses themselves", () => {
   const route = routes.slice(routes.indexOf('app.post("/api/checkin/advance-excuse"'), routes.indexOf('app.post("/api/checkin/manual-lates"'));
   assert.match(route, /requireManagerOrAdmin\(req, res\)/);
   assert.match(route, /userId === actorId && actor\?\.role !== "admin"/);
-  assert.match(route, /storageExtra\.excuseLateInAdvance\(\{ orgId, userId, date, reason, adminUserId: actorId \}\)/);
+  assert.match(route, /storageExtra\.excuseLateInAdvance\(\{\s*\n\s*orgId, userId, date, reason, adminUserId: actorId,/);
 });
