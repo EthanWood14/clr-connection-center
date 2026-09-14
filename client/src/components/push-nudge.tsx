@@ -1,33 +1,37 @@
 /**
- * PushNudge — biweekly in-app prompt to enable push notifications.
+ * PushNudge — the in-app prompt to enable push notifications.
  *
- * Logic:
- * - Never shows if push is already enabled OR browser permission is denied.
- * - Never shows if the user has clicked "Don't ask again" (permanent dismiss).
- * - After a temporary dismiss ("Later"), re-appears after 14 days.
- * - Appears as a toast-style banner anchored above the bottom nav.
+ * For CLRs it is REQUIRED (14 Sep 2026): new leads for their LOs and Shotgun
+ * offers reach them by notification when C3 is not the front tab — which is
+ * most of the day, since the work happens in Bonzo and Dialpad. The floor
+ * test that day found 7 of 11 CLRs with no subscription at all. So for a CLR:
+ *   - the prompt stays until notifications are on;
+ *   - "Later" puts it off for four hours, not three days;
+ *   - there is no "Don't ask again";
+ *   - a browser-level block shows how to unblock instead of hiding.
+ * Managers and everyone else keep the gentler version (3-day snooze, opt out).
  *
- * The Enable button now runs the full subscribe flow inline (request
- * permission → fetch VAPID key → subscribe → save to server). Previously it
- * routed users to /settings, which was 3 clicks deep and meant most users
- * never actually finished subscribing.
+ * The Enable button runs the full subscribe flow inline (request permission →
+ * fetch VAPID key → subscribe → save to server). Routing to /settings was three
+ * clicks deep and most people never finished it.
  */
 
 import { useState, useEffect } from "react";
-import { Bell, X, ArrowRight, Loader2 } from "lucide-react";
+import { Bell, X, ArrowRight, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 
-// Bumped key suffix (v3) — re-surface the (now stronger) prompt once for
-// everyone, including users who previously clicked "Don't ask again". Old keys
-// are left in localStorage harmlessly.
-const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed_v3";
-const SNOOZE_KEY        = "clr_push_nudge_snoozed_until_v3";
-const FIRST_SHOWN_KEY   = "clr_push_first_shown_v3";
-// Re-nudge every 3 days after a "Later" — notifications are how leads, grab-it
-// posts, and reminders reach the team, so we prompt persistently until on.
+// Bumped key suffix (v4) — re-surface the prompt once for everyone, including
+// anyone who clicked "Don't ask again" on v3. Old keys stay in localStorage
+// harmlessly.
+const PERM_DISMISS_KEY  = "clr_push_nudge_perm_dismissed_v4";
+const SNOOZE_KEY        = "clr_push_nudge_snoozed_until_v4";
+/** Non-CLRs: re-nudge every 3 days after "Later". */
 const SNOOZE_MS         = 3 * 24 * 60 * 60 * 1000;
+/** CLRs: notifications are required, so "Later" means later today. */
+export const CLR_SNOOZE_MS = 4 * 60 * 60 * 1000;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -50,8 +54,16 @@ async function isPushEnabled(): Promise<boolean> {
   }
 }
 
+/** Whether this person must have notifications on: CLRs and anyone doing CLR work. */
+export function pushRequiredFor(user: { isClr?: boolean; role?: string } | null | undefined): boolean {
+  return !!user && (!!user.isClr || String(user.role ?? "") === "assistant");
+}
+
 export function PushNudge() {
+  const { user } = useAuth();
+  const required = pushRequiredFor(user);
   const [visible, setVisible] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 
@@ -62,13 +74,19 @@ export function PushNudge() {
       // Unsupported browser
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
 
-      // Browser-level permission already denied — no point nudging
-      if (Notification.permission === "denied") return;
+      // Browser-level block. A CLR is told how to lift it; anyone else is
+      // left alone, as before.
+      if (Notification.permission === "denied") {
+        if (required && !cancelled) { setBlocked(true); setVisible(true); }
+        return;
+      }
 
-      // User permanently dismissed
-      try {
-        if (localStorage.getItem(PERM_DISMISS_KEY) === "1") return;
-      } catch {}
+      // Permanent dismiss — only ever possible for non-CLRs.
+      if (!required) {
+        try {
+          if (localStorage.getItem(PERM_DISMISS_KEY) === "1") return;
+        } catch {}
+      }
 
       // Already enabled
       if (await isPushEnabled()) return;
@@ -79,31 +97,21 @@ export function PushNudge() {
         if (Date.now() < until) return;
       } catch {}
 
-      if (!cancelled) {
-        // First ever load — show immediately, no delay
-        let firstTime = false;
-        try {
-          if (localStorage.getItem(FIRST_SHOWN_KEY) === null) {
-            localStorage.setItem(FIRST_SHOWN_KEY, "1");
-            firstTime = true;
-          }
-        } catch {}
-        // Show right away — a delayed nudge is easy to miss.
-        void firstTime;
-        setVisible(true);
-      }
+      // Show right away — a delayed nudge is easy to miss.
+      if (!cancelled) setVisible(true);
     }
 
     check();
     return () => { cancelled = true; };
-  }, []);
+  }, [required]);
 
   function snooze() {
-    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS)); } catch {}
+    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + (required ? CLR_SNOOZE_MS : SNOOZE_MS))); } catch {}
     setVisible(false);
   }
 
   function permDismiss() {
+    if (required) return; // not offered to CLRs — the button is not rendered either
     try { localStorage.setItem(PERM_DISMISS_KEY, "1"); } catch {}
     setVisible(false);
   }
@@ -123,7 +131,7 @@ export function PushNudge() {
           description: "Allow notifications in your browser to continue.",
           variant: perm === "denied" ? "destructive" : undefined,
         });
-        if (perm === "denied") setVisible(false);
+        if (perm === "denied") { if (required) setBlocked(true); else setVisible(false); }
         return;
       }
       const keyRes = await fetch("/api/push/vapid-public-key", { credentials: "include" });
@@ -156,47 +164,71 @@ export function PushNudge() {
       aria-live="polite"
       className="fixed bottom-20 left-0 right-0 z-[9998] flex justify-center px-4 pointer-events-none
                  md:bottom-6 md:left-auto md:right-6 md:max-w-sm"
+      data-testid="push-nudge"
+      data-required={required ? "1" : "0"}
     >
       <div className="w-full pointer-events-auto rounded-xl border border-border bg-background/95 backdrop-blur-md shadow-2xl overflow-hidden">
         {/* Accent bar */}
-        <div className="h-1 w-full bg-gradient-to-r from-primary to-blue-500" />
+        <div className={`h-1 w-full bg-gradient-to-r ${required ? "from-orange-500 to-red-500" : "from-primary to-blue-500"}`} />
 
         <div className="p-4 space-y-3">
           {/* Header row */}
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 mt-0.5 animate-pulse">
-              <Bell className="w-5 h-5 text-primary" />
+              {blocked ? <Lock className="w-5 h-5 text-primary" /> : <Bell className="w-5 h-5 text-primary" />}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-foreground leading-tight">🔔 Turn on notifications</p>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                <strong className="text-foreground">Don't miss a lead.</strong> Notifications are how grab-it leads, appointment reminders, and team alerts reach you — even when C3 is closed. It takes one tap.
-              </p>
+              {blocked ? (
+                <>
+                  <p className="text-sm font-bold text-foreground leading-tight">🔒 Notifications are blocked in this browser</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed" data-testid="push-nudge-unblock">
+                    Click the <strong className="text-foreground">lock icon</strong> next to the address bar → <strong className="text-foreground">Notifications</strong> → <strong className="text-foreground">Allow</strong>, then reload this page. New leads and Shotgun offers can't reach you until it's on.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-bold text-foreground leading-tight">🔔 Turn on notifications{required ? " — required" : ""}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                    {required
+                      ? <><strong className="text-foreground">New leads for your LOs and Shotgun offers</strong> reach you this way when C3 isn't the tab in front — which is most of the day. One click, then Allow.</>
+                      : <><strong className="text-foreground">Don't miss a lead.</strong> Notifications are how grab-it leads, appointment reminders, and team alerts reach you — even when C3 isn't open.</>}
+                  </p>
+                </>
+              )}
             </div>
-            <button
-              onClick={snooze}
-              aria-label="Remind me later"
-              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded flex-shrink-0 -mt-0.5 -mr-1"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            {!required && (
+              <button
+                onClick={snooze}
+                aria-label="Remind me later"
+                className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded flex-shrink-0 -mt-0.5 -mr-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {/* Actions */}
           <div className="flex items-center gap-2 pt-0.5">
-            <Button
-              size="sm"
-              className="h-9 text-sm font-semibold gap-1.5 flex-1"
-              onClick={enableNow}
-              disabled={busy}
-              data-testid="button-push-nudge-enable"
-            >
-              {busy ? (
-                <>Enabling… <Loader2 className="w-3.5 h-3.5 animate-spin" /></>
-              ) : (
-                <>Turn on notifications <ArrowRight className="w-3.5 h-3.5" /></>
-              )}
-            </Button>
+            {!blocked && (
+              <Button
+                size="sm"
+                className="h-9 text-sm font-semibold gap-1.5 flex-1"
+                onClick={enableNow}
+                disabled={busy}
+                data-testid="button-push-nudge-enable"
+              >
+                {busy ? (
+                  <>Enabling… <Loader2 className="w-3.5 h-3.5 animate-spin" /></>
+                ) : (
+                  <>Turn on notifications <ArrowRight className="w-3.5 h-3.5" /></>
+                )}
+              </Button>
+            )}
+            {blocked && (
+              <Button size="sm" className="h-9 text-sm font-semibold gap-1.5 flex-1" onClick={() => window.location.reload()} data-testid="button-push-nudge-reload">
+                I've allowed it — reload
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -204,15 +236,17 @@ export function PushNudge() {
               onClick={snooze}
               data-testid="button-push-nudge-later"
             >
-              Later
+              {required ? "Later today" : "Later"}
             </Button>
-            <button
-              onClick={permDismiss}
-              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap underline underline-offset-2"
-              data-testid="button-push-nudge-never"
-            >
-              Don't ask again
-            </button>
+            {!required && (
+              <button
+                onClick={permDismiss}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap underline underline-offset-2"
+                data-testid="button-push-nudge-never"
+              >
+                Don't ask again
+              </button>
+            )}
           </div>
         </div>
       </div>

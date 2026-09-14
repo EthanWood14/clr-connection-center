@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.104.0",
+    headline: "CLRs: notifications are required now — one click turns them on.",
+    items: [
+      { text: "New leads for your LOs and Shotgun offers reach you by notification when C3 is not the tab in front — which is most of the day. So for CLRs the \"Turn on notifications\" prompt stays until it is on: \"Later\" only puts it off for a few hours, and there is no \"Don't ask again\". One click, allow, done.", audience: "everyone" },
+      { text: "If your browser has notifications blocked, the prompt now tells you how to unblock them (the lock icon next to the address bar → Notifications → Allow) instead of silently giving up.", audience: "everyone" },
+      { text: "Everyone who had dismissed the old prompt sees it once more. Managers and non-CLRs keep the gentler version.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.103.0",
     headline: "A new lead for your LO now works like a Shotgun lead.",
     items: [
