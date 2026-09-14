@@ -6856,9 +6856,93 @@ export function saveCheckin(data: {
         AND attendance_date=? AND kind='absence' AND status='approved'`)
       .run(now, "Automatically cancelled because a check-in was recorded.", now,
         data.orgId, data.userId, data.date);
+    // A late excused IN ADVANCE — a manager knew before the check-in existed —
+    // lands on the row the moment there is one, so neither the digest nor the
+    // limit alert ever sees an unexcused late. An on-time arrival just links
+    // the request. Re-submits are idempotent: the row is already excused.
+    const advance = sqlite.prepare(`SELECT id, reason, reviewed_by FROM attendance_excuse_requests
+      WHERE org_id=? AND subject_type='user' AND subject_id=? AND attendance_date=?
+        AND kind='late' AND status='approved'`).get(data.orgId, data.userId, data.date) as any;
+    if (advance) {
+      const row = sqlite.prepare(`SELECT id, on_time, late_excused FROM morning_checkins WHERE user_id=? AND date=?`)
+        .get(data.userId, data.date) as any;
+      if (row) {
+        if (Number(row.on_time) === 0 && !row.late_excused) {
+          sqlite.prepare(`UPDATE morning_checkins SET late_excused=1, excused_by=?, excused_at=?, excuse_reason=? WHERE id=?`)
+            .run(advance.reviewed_by ?? null, now, String(advance.reason ?? "").slice(0, 300), row.id);
+        }
+        sqlite.prepare(`UPDATE attendance_excuse_requests SET checkin_id=COALESCE(checkin_id, ?), updated_at=? WHERE id=?`)
+          .run(row.id, now, advance.id);
+      }
+    }
   });
   tx.immediate();
   return getCheckinForUserDate(data.userId, data.date);
+}
+
+/**
+ * Approved late excuses recorded BEFORE the check-in exists (checkin_id still
+ * null) — the board treats the person as excused rather than missing, and
+ * saveCheckin applies the excuse to the row when it arrives.
+ */
+export function getApprovedAdvanceLateExcusesForDate(orgIdValue: number, attendanceDateValue: string): AttendanceExcuseRequest[] {
+  const orgId = attendancePositiveId(orgIdValue, "Organization id");
+  const attendanceDate = attendanceLocalDate(attendanceDateValue);
+  return sqlite.prepare(`
+    SELECT * FROM attendance_excuse_requests
+    WHERE org_id = ? AND attendance_date = ? AND kind = 'late' AND status = 'approved' AND checkin_id IS NULL
+    ORDER BY subject_type, subject_id
+  `).all(orgId, attendanceDate) as AttendanceExcuseRequest[];
+}
+
+/**
+ * Excuse a CLR's late for a date, whether or not they have checked in yet.
+ *
+ * "Don't show Skyler late in this morning's email" — said at 7:27am, before
+ * he had checked in. The existing excuse path needs a check-in row to attach
+ * to, so a manager who knew in advance had to wait for the row and race the
+ * 10am digest. This records an approved late request for the day; if the
+ * check-in already exists and is late, it is excused right now, otherwise
+ * saveCheckin excuses it on arrival. An on-time arrival needs nothing.
+ */
+export function excuseLateInAdvance(input: {
+  orgId: number; userId: number; date: string; reason: string; adminUserId: number;
+}): { request: AttendanceExcuseRequest; checkin: any | null; appliedNow: boolean } {
+  const orgId = attendancePositiveId(input.orgId, "Organization id");
+  const userId = attendancePositiveId(input.userId, "User id");
+  const attendanceDate = attendanceLocalDate(input.date);
+  const adminUserId = attendancePositiveId(input.adminUserId, "Reviewing user id");
+  const reason = String(input.reason ?? "").trim().slice(0, 500) || "Excused in advance by a manager.";
+  const now = new Date().toISOString();
+  const tx = sqlite.transaction(() => {
+    assertAttendanceSubjectInOrg(orgId, "user", userId);
+    assertAttendanceReviewerInOrg(orgId, adminUserId);
+    const checkin = sqlite.prepare(`SELECT * FROM morning_checkins WHERE org_id=? AND user_id=? AND date=?`)
+      .get(orgId, userId, attendanceDate) as any;
+    sqlite.prepare(`
+      INSERT INTO attendance_excuse_requests (
+        org_id, subject_type, subject_id, attendance_date, kind, checkin_id, expected_start, reason,
+        status, requested_via, requested_by_user_id, requested_at, reviewed_by, reviewed_at, reviewer_note, updated_at
+      ) VALUES (?, 'user', ?, ?, 'late', ?, ?, ?, 'approved', 'admin', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(org_id, subject_type, subject_id, attendance_date, kind) DO UPDATE SET
+        status='approved', reason=excluded.reason, reviewer_note=excluded.reviewer_note,
+        reviewed_by=excluded.reviewed_by, reviewed_at=excluded.reviewed_at,
+        checkin_id=COALESCE(attendance_excuse_requests.checkin_id, excluded.checkin_id),
+        updated_at=excluded.updated_at
+    `).run(orgId, userId, attendanceDate, checkin?.id ?? null, checkin?.expected_start ?? null, reason,
+      adminUserId, now, adminUserId, now, reason, now);
+    let appliedNow = false;
+    if (checkin && Number(checkin.on_time) === 0 && !checkin.late_excused) {
+      sqlite.prepare(`UPDATE morning_checkins SET late_excused=1, excused_by=?, excused_at=?, excuse_reason=? WHERE id=?`)
+        .run(adminUserId, now, reason.slice(0, 300), checkin.id);
+      appliedNow = true;
+    }
+    const request = sqlite.prepare(`SELECT * FROM attendance_excuse_requests
+      WHERE org_id=? AND subject_type='user' AND subject_id=? AND attendance_date=? AND kind='late'`)
+      .get(orgId, userId, attendanceDate) as AttendanceExcuseRequest;
+    return { request, checkin: checkin ? getCheckinForUserDate(userId, attendanceDate) : null, appliedNow };
+  });
+  return tx.immediate();
 }
 
 export function markMissingCheckinLate(input: {

@@ -16165,6 +16165,10 @@ ${note}` : daysLine;
     const absenceBySubject = new Map<string, any>(
       approvedAbsences.map((r) => [`${r.subject_type}:${r.subject_id}`, r]),
     );
+    // A late excused before the check-in exists: not missing, excused.
+    const advanceLateBySubject = new Map<string, any>(
+      (storageExtra.getApprovedAdvanceLateExcusesForDate(orgId, date) as any[]).map((r) => [`${r.subject_type}:${r.subject_id}`, r]),
+    );
     const approvedTimeOff = new Set<number>();
     try {
       const timeOffRows = storageExtra.getRawSqlite().prepare(`SELECT user_id FROM time_off_requests
@@ -16180,7 +16184,8 @@ ${note}` : daysLine;
         const ci = byUser.get(u.id) ?? null;
         const absence = absenceBySubject.get(`user:${u.id}`) ?? null;
         const timeOff = approvedTimeOff.has(Number(u.id));
-        const absenceExcused = !ci && (absence != null || timeOff);
+        const advanceLate = advanceLateBySubject.get(`user:${u.id}`) ?? null;
+        const absenceExcused = !ci && (absence != null || timeOff || advanceLate != null);
         const startPassed = !!(exp.working && exp.start
           && attendanceStartHasPassed(date, exp.start, checkinTzFor(Number(u.id))));
         return {
@@ -16204,7 +16209,7 @@ ${note}` : daysLine;
           noSchedule: exp.source === "none",
           absenceExcused,
           absenceExcuseId: !ci && absence ? Number(absence.id) : null,
-          absenceExcuseSource: absenceExcused ? (absence ? "admin" : "time_off") : null,
+          absenceExcuseSource: absenceExcused ? (absence ? "admin" : timeOff ? "time_off" : "advance_late") : null,
           startPassed,
           absenceEligible: !ci && !absenceExcused && startPassed,
           lateCount, lateOverLimit: lateCount > CHECKIN_LATE_ALLOWANCE, lateAtLimit: lateCount >= CHECKIN_LATE_ALLOWANCE,
@@ -16358,6 +16363,46 @@ ${note}` : daysLine;
   // registerRoutes(). cron.schedule() may be called from anywhere, and
   // registerRoutes() runs exactly once at boot.
 
+  // Excuse a CLR's late for a date BEFORE they have checked in (or after —
+  // either way). The excuse lands on the check-in row the moment it exists, so
+  // the digest and the limit alert never see the late.
+  app.post("/api/checkin/advance-excuse", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const actorId = Number(req.session_user?.userId);
+    const actor = storage.getUserById(actorId) as any;
+    const userId = Number(req.body?.userId);
+    const date = String(req.body?.date ?? "");
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: "Choose a valid team member." });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Enter a valid attendance date." });
+    if (reason.length > 500) return res.status(400).json({ error: "Reason must be 500 characters or fewer." });
+    if (userId === actorId && actor?.role !== "admin" && !actor?.superAdmin) {
+      return res.status(403).json({ error: "You can't excuse your own late — ask an admin." });
+    }
+    const who = storage.getUserById(userId) as any;
+    if (!who || Number(who.orgId ?? who.org_id ?? 1) !== orgId) return res.status(404).json({ error: "Team member not found." });
+    try {
+      const result = storageExtra.excuseLateInAdvance({ orgId, userId, date, reason, adminUserId: actorId });
+      audit({
+        userId: actorId, userName: actor?.name ?? "Unknown", action: "update",
+        entityType: "checkin", entityId: Number(result.checkin?.id ?? 0),
+        entityLabel: `${who.name} late on ${date} excused${result.checkin ? "" : " in advance"}`,
+        details: JSON.stringify({ date, reason: reason || null, appliedNow: result.appliedNow }),
+      });
+      try {
+        (storage as any).createNotification?.({
+          userId, type: "checkin", title: "Late excused",
+          message: `Your late on ${date} ${result.checkin ? "was" : "will be"} excused by ${actor?.name ?? "a manager"}${reason ? ` — ${reason}` : ""}. It does not count toward your 90-day total.`,
+        });
+      } catch {}
+      res.json({ ok: true, ...result });
+    } catch (error: any) {
+      const status = Number(error?.status) || (error?.code ? 400 : 500);
+      res.status(status).json({ error: String(error?.message ?? "Could not record the excuse.") });
+    }
+  });
+
   app.post("/api/checkin/manual-lates", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -16431,6 +16476,9 @@ ${note}` : daysLine;
       putReason(row.subject_type, row.subject_id, row.excuse_reason);
     }
     for (const row of storageExtra.getApprovedAbsenceExcusesForDate(orgId, date) as any[]) {
+      putReason(row.subject_type, row.subject_id, row.reason);
+    }
+    for (const row of storageExtra.getApprovedAdvanceLateExcusesForDate(orgId, date) as any[]) {
       putReason(row.subject_type, row.subject_id, row.reason);
     }
     try {

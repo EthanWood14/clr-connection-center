@@ -43,7 +43,11 @@ export type DigestStatus =
 export function digestStatus(s: DigestSubject): DigestStatus {
   if (s.checkin) {
     if (s.checkin.on_time === 1) return "on_time";
-    if (s.checkin.on_time === 0) return "late";
+    // An excused late is not a late. It used to sit in the late list with an
+    // "(excused)" tag and still count toward the "N late" in the subject line —
+    // so a manager who had already excused it read it as a late all the same.
+    // It belongs with the other excused people, reason attached.
+    if (s.checkin.on_time === 0) return s.checkin.late_excused ? "excused" : "late";
     return "unjudged";
   }
   if (s.scheduledOff) return "off";

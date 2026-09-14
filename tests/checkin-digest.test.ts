@@ -95,12 +95,12 @@ test("repeat offenders are flagged against the 90-day allowance", () => {
   assert.match(html, /5 lates \/ 90d/);
 });
 
-test("an excused late is still shown, but marked", () => {
-  const html = buildCheckinDigestHtml("2026-08-05", [
-    subject({ name: "Excused Late", checkin: { on_time: 0, minutes_late: 9, late_excused: true }, excuseReason: "Doctor appointment" }),
-  ]);
-  assert.match(html, /Excused Late/);
-  assert.match(html, /excused — Doctor appointment/);
+test("an excused late is listed as excused, with its reason — not as a late", () => {
+  const s = subject({ name: "Excused Late", checkin: { on_time: 0, minutes_late: 9, late_excused: true }, excuseReason: "Doctor appointment" });
+  assert.equal(digestStatus(s), "excused");
+  const html = buildCheckinDigestHtml("2026-08-05", [s]);
+  assert.match(html, /Excused:<\/strong> Excused Late — Doctor appointment/);
+  assert.doesNotMatch(html, /9 min late/);
 });
 
 test("an excused absence includes its escaped reason", () => {

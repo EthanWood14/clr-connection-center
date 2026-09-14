@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.99.0",
+    headline: "An excused late is not a late — and it can be excused ahead of time.",
+    items: [
+      { text: "The morning check-in email lists an excused late under Excused, with the reason, instead of in the late list with a tag. The \"N late\" in the subject line no longer counts them.", audience: "manager" },
+      { text: "A manager can excuse a CLR's late for a day before they have checked in. The excuse attaches itself to the check-in the moment it is submitted, so the digest and the late-limit alert never see it. Until the check-in arrives the person shows as excused, not missing.", audience: "manager" },
+      { text: "If a manager excuses your late ahead of time you get a notification saying so; it does not count toward your 90-day total.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.98.0",
     headline: "An appointment's full write-up now reaches Bonzo.",
     items: [
