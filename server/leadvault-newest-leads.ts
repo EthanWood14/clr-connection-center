@@ -52,8 +52,18 @@ export type NewestLead = {
 
 export type NewestLeadsByLo = { email: string; name: string | null; leads: NewestLead[] };
 
-/** Fresh enough to serve without asking again. */
-export const NEWEST_LEADS_TTL_MS = 20_000;
+/**
+ * Fresh enough to serve without asking again.
+ *
+ * Five seconds, down from twenty (14 Sep 2026: "can we make this faster").
+ * Affordable because of the fan-in below: however many CLRs are polling,
+ * the floor costs LeadVault one request per TTL — twelve a minute.
+ */
+export const NEWEST_LEADS_TTL_MS = 5_000;
+/** How long an address stays in the floor-wide fan-in set after it was last asked for. */
+export const NEWEST_LEADS_FANIN_WINDOW_MS = 15 * 60_000;
+/** LeadVault caps one request at forty addresses; past that, callers fall back to their own set. */
+export const NEWEST_LEADS_FANIN_MAX = 40;
 /** Past this the cached copy is too old to show at all, and a caller waits. */
 export const NEWEST_LEADS_STALE_MAX_MS = 10 * 60_000;
 
@@ -163,11 +173,49 @@ export type NewestLeadsResult = {
   stale: boolean;
 };
 
+/**
+ * ── FAN-IN: ONE UPSTREAM CALL FOR THE WHOLE FLOOR ──────────────────────────
+ * Every CLR asks about a different handful of loan officers, so a cache keyed
+ * on each CLR's own set still cost LeadVault one call per CLR per TTL. The
+ * fan-in remembers every address asked for in the last fifteen minutes and,
+ * when a caller arrives, asks upstream about the UNION — one request, one
+ * cache entry, every CLR served a filtered slice of it. LeadVault caps a
+ * request at forty addresses; today's floor is around twenty, and a floor
+ * that outgrows the cap simply drops back to the per-set path.
+ */
+const askedRecently = new Map<string, number>();
+
+function fanInSet(requested: string[], hours: number, per: number, now: number): string[] {
+  for (const e of requested) askedRecently.set(e, now);
+  const union: string[] = [];
+  for (const [email, at] of Array.from(askedRecently.entries())) {
+    if (now - at > NEWEST_LEADS_FANIN_WINDOW_MS) { askedRecently.delete(email); continue; }
+    union.push(email);
+  }
+  // per/hours are part of the cache key, so a caller asking for a different
+  // burst shape shares the addresses but not the entry; that is fine.
+  void hours; void per;
+  return union.length <= NEWEST_LEADS_FANIN_MAX ? union.sort() : requested;
+}
+
 export async function newestLeadsForLos(
   emails: string[], opts: { hours: number; per: number }, deps: NewestLeadsDeps,
 ): Promise<NewestLeadsResult> {
   const now = (deps.now ?? Date.now)();
   if (!deps.token()) return { configured: false, los: [], fetchedAt: null, stale: false };
+  const requested = Array.from(new Set(emails.map((e) => String(e ?? "").trim().toLowerCase()).filter(Boolean)));
+  if (!requested.length) return { configured: true, los: [], fetchedAt: null, stale: false };
+  const set = fanInSet(requested, opts.hours, opts.per, now);
+  const result = await newestLeadsForSet(set, opts, deps);
+  if (set.length === requested.length) return result;
+  const mine = new Set(requested);
+  return { ...result, los: result.los.filter((row) => mine.has(row.email)) };
+}
+
+async function newestLeadsForSet(
+  emails: string[], opts: { hours: number; per: number }, deps: NewestLeadsDeps,
+): Promise<NewestLeadsResult> {
+  const now = (deps.now ?? Date.now)();
   if (!emails.length) return { configured: true, los: [], fetchedAt: null, stale: false };
 
   const key = newestLeadsCacheKey(emails, opts.hours, opts.per);
@@ -198,4 +246,5 @@ export async function newestLeadsForLos(
 export function resetNewestLeadsCache(): void {
   cache.clear();
   inFlight.clear();
+  askedRecently.clear();
 }

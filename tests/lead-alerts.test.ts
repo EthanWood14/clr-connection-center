@@ -103,7 +103,8 @@ test("assigned-LO polling stays private, respects locks, and never mutates lead 
   assert.match(popup, /useContext\(EodLockGateActive\)/);
   assert.match(popup, /enabled: eligible && !blocked/);
   assert.match(popup, /"popups", user\?\.orgId, user\?\.id/);
-  assert.match(popup, /refetchInterval: 20_000/);
+  // Five seconds: the server's fan-in makes the poll cheap, and a lead should be on screen in seconds.
+  assert.match(popup, /refetchInterval: 5_000/);
   assert.match(popup, /hours=72&per=5/);
   assert.doesNotMatch(popup, /apiRequest\("(?:POST|PUT|PATCH|DELETE)"/);
 });

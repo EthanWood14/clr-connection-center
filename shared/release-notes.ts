@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.102.0",
+    headline: "New-lead alerts for your assigned LOs arrive in seconds, not most of a minute.",
+    items: [
+      { text: "The bottom-left alert for a new lead on one of your assigned loan officers now shows up within about ten seconds of the lead landing in Bonzo. It used to be up to forty.", audience: "everyone" },
+      { text: "Done without adding load on LeadVault: C3 now asks it once for the whole floor's loan officers every five seconds and hands each person their slice, instead of one request per CLR.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.101.0",
     headline: "Claimed a Shotgun lead? Three minutes later C3 checks you're still on it.",
     items: [

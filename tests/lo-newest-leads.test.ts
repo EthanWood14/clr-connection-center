@@ -156,3 +156,29 @@ test("the card says nothing when there is nothing to say", () => {
   assert.match(fn, /refetchInterval: 20_000/);
   assert.match(page, /<NewestLeadsCard \/>/);
 });
+
+test("the floor fans in: different CLRs, different LOs, one upstream call, each their own slice", async () => {
+  // Two CLRs with two different loan officers used to cost two upstream calls
+  // per TTL each. Now the second caller widens the ask to the union, and from
+  // then on every poll from either is served from that one entry — filtered,
+  // so nobody sees a loan officer they were not assigned.
+  resetNewestLeadsCache();
+  const calls = { n: 0 };
+  const restore = stubDeps(calls, payload(["a@wcl.com", "b@wcl.com"]));
+  try {
+    const a1 = await newestLeadsForLos(["a@wcl.com"], { hours: 72, per: 1 }, deps);
+    const b1 = await newestLeadsForLos(["b@wcl.com"], { hours: 72, per: 1 }, deps);
+    const warm = calls.n; // a's own set, then the union — the last widening
+    for (let i = 0; i < 10; i++) {
+      await newestLeadsForLos(["a@wcl.com"], { hours: 72, per: 1 }, deps);
+      await newestLeadsForLos(["b@wcl.com"], { hours: 72, per: 1 }, deps);
+    }
+    assert.equal(calls.n, warm, "twenty more polls from two CLRs cost nothing");
+    const a2 = await newestLeadsForLos(["a@wcl.com"], { hours: 72, per: 1 }, deps);
+    const b2 = await newestLeadsForLos(["b@wcl.com"], { hours: 72, per: 1 }, deps);
+    assert.deepEqual(a2.los.map((r) => r.email), ["a@wcl.com"]);
+    assert.deepEqual(b2.los.map((r) => r.email), ["b@wcl.com"]);
+    assert.equal(a1.configured && b1.configured, true);
+    assert.equal(NEWEST_LEADS_TTL_MS, 5_000);
+  } finally { restore(); resetNewestLeadsCache(); }
+});

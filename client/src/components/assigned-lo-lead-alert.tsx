@@ -24,7 +24,10 @@ export function AssignedLoLeadAlert() {
     queryKey: ["/api/lo-newest-leads", "popups", user?.orgId, user?.id],
     queryFn: () => apiRequest("GET", "/api/lo-newest-leads?hours=72&per=5"),
     enabled: eligible && !blocked,
-    refetchInterval: 20_000,
+    // Five seconds: the server answers from a floor-wide cache it refreshes
+    // every five seconds with ONE upstream call, so this poll is cheap and a
+    // lead is on screen within ten seconds of landing rather than forty.
+    refetchInterval: 5_000,
     refetchOnWindowFocus: true,
     staleTime: 0,
     retry: 1,
