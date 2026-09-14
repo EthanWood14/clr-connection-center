@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.94.0",
+    headline: "Calls and texts are counted by the phone system now, not typed in.",
+    items: [
+      { text: "From today, your calls are what Dialpad and CallTools recorded and your texts are what Dialpad recorded. The \"Additional Calls\" and \"Additional Texts\" boxes are gone from the EOD report, the morning \"log yesterday's calls\" screen no longer appears, and the Log Calls button on the dashboard is gone — there is nothing to type.", audience: "everyone" },
+      { text: "Every screen that shows calls or messages — the dashboard, How we're doing, the leaderboard, CLR profiles, the manager digest and the EOD history — reads the counted figure. Days before today are left exactly as they were filed.", audience: "manager" },
+      { text: "Expect the numbers to be smaller than you are used to. On the 11th the team typed in 1,146 calls and 7,743 texts against 423 calls and 1,130 texts actually seen by Dialpad. The smaller number is the real one.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.93.0",
     headline: "Your Dialpad calls show up on the EOD within a couple of minutes.",
     items: [

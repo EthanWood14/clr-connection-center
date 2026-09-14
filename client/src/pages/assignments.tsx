@@ -1724,68 +1724,9 @@ export default function Assignments() {
         </div>
       )}
 
-      {/* ── EOD Call Count Panel ── */}
-      {assignments.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3 pt-4 px-4">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <Phone className="w-4 h-4 text-primary" />
-              EOD Call Count
-              <span className="text-xs font-normal text-muted-foreground ml-1">— log total calls made for {dateLabel(currentDate)}</span>
-            </CardTitle>
-          </CardHeader>
-          <Separator />
-          <CardContent className="p-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {assistants.map((user: any) => {
-                const saved = (callLogs as any[]).find(l => l.assistantId === user.id);
-                const inputVal = callInputs[user.id] ?? (saved ? String(saved.callsMade) : "");
-                return (
-                  <div key={user.id} className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
-                      {user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{user.name}</p>
-                      {saved && callInputs[user.id] === undefined && (
-                        <p className="text-[10px] text-muted-foreground">Saved: {saved.callsMade} calls</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Input
-                        type="number"
-                        min={0}
-                        placeholder="0"
-                        value={inputVal}
-                        onChange={e => setCallInputs(prev => ({ ...prev, [user.id]: e.target.value }))}
-                        className="w-20 h-8 text-sm text-center"
-                        data-testid={`input-calls-${user.id}`}
-                      />
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-8 w-8 shrink-0"
-                        disabled={saveCallLogMutation.isPending || inputVal === ""}
-                        onClick={() => {
-                          const count = parseInt(inputVal, 10);
-                          if (!isNaN(count)) {
-                            saveCallLogMutation.mutate({ assistantId: user.id, callsMade: count });
-                            setCallInputs(prev => { const n = { ...prev }; delete n[user.id]; return n; });
-                          }
-                        }}
-                        data-testid={`button-save-calls-${user.id}`}
-                        title="Save call count"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* A panel for a manager to type each CLR's call total for the day used
+          to sit here. Typed-in calls stopped counting on 2026-09-14; the
+          count is Dialpad's now (shared/self-reported.ts). */}
 
       <StatusDialog
         open={!!statusDialog}

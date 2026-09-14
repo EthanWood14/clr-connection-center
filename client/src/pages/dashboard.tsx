@@ -178,12 +178,8 @@ function CallEntryWidget() {
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
   });
 
-  function handleSubmit() {
-    const n = parseInt(callInput, 10);
-    if (isNaN(n) || n < 0) { toast({ title: "Enter a valid number", variant: "destructive" }); return; }
-    logMutation.mutate(n);
-  }
-
+  // Nothing to submit any more: since 2026-09-14 the count comes from Dialpad
+  // (the call-log rows the query above returns ARE Dialpad's from that date).
   const isLogged = myCallsToday !== null;
 
   return (
@@ -198,43 +194,15 @@ function CallEntryWidget() {
               <p className="text-xs font-semibold text-foreground">My Calls Today</p>
               <p className="text-xs text-muted-foreground">
                 {isLogged ? (
-                  <span className="font-medium text-green-700 dark:text-green-400">{myCallsToday} calls logged — update anytime before EOD</span>
+                  <span className="font-medium text-green-700 dark:text-green-400">{myCallsToday} calls so far — counted from Dialpad, nothing to type</span>
                 ) : (
-                  <span className="font-medium text-orange-600 dark:text-orange-400">Log your total calls at the end of the day</span>
+                  <span className="font-medium text-orange-600 dark:text-orange-400">No calls counted yet today — they come in from Dialpad on their own</span>
                 )}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {editing ? (
-              <>
-                <Input
-                  type="number"
-                  min={0}
-                  placeholder="e.g. 42"
-                  value={callInput}
-                  onChange={e => setCallInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") handleSubmit(); if (e.key === "Escape") setEditing(false); }}
-                  className="w-28 h-8 text-sm"
-                  autoFocus
-                />
-                <Button size="sm" className="h-8" onClick={handleSubmit} disabled={logMutation.isPending}>
-                  {logMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : "Save"}
-                </Button>
-                <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditing(false)}>Cancel</Button>
-              </>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={() => { setCallInput(myCallsToday !== null ? String(myCallsToday) : ""); setEditing(true); }}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                {isLogged ? "Update" : "Log Calls"}
-              </Button>
-            )}
             <Link href="/eod-report">
               <Button size="sm" variant={isLogged ? "outline" : "default"} className="h-8 gap-1.5">
                 <CalendarClock className="w-3.5 h-3.5" />

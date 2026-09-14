@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
+import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
@@ -2179,7 +2180,7 @@ export class Storage implements IStorage {
         return new Date().toISOString().split("T")[0];
       }
     })();
-    const todayLogs = sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ?${orgWhere}${userWhere}${excludeWhere}`).all(todayStr) as any[];
+    const todayLogs = sqlite.prepare(`SELECT * FROM ${COUNTED_CALL_LOG_SQL} WHERE log_date = ?${orgWhere}${userWhere}${excludeWhere}`).all(todayStr) as any[];
     const totalCallsToday = todayLogs.reduce((sum: number, l: any) => sum + (l.calls_made ?? 0), 0);
     const callTransferRatio = totalCallsToday > 0 ? ((transfers / totalCallsToday) * 100).toFixed(1) : null;
 
@@ -2219,22 +2220,16 @@ export class Storage implements IStorage {
     return stats.sort((a, b) => b.transfers - a.transfers);
   }
 
+  // Both read through countedCallLogRows: typed-in logs before the cutoff,
+  // Dialpad after it. Every consumer that sums calls_made off these rows
+  // stopped counting self-reported numbers the day that landed, without
+  // knowing it. See shared/self-reported.ts.
   getDailyCallLogs(date: string) {
-    const oid = currentOrgId();
-    if (oid != null) {
-      return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date = ? AND org_id = ?`).all(date, oid) as any[];
-    }
-    return db.select().from(dailyCallLogs).where(eq(dailyCallLogs.logDate, date)).all();
+    return countedCallLogRows(date, date, currentOrgId());
   }
 
   getCallLogsByRange(from: string, to: string) {
-    const oid = currentOrgId();
-    if (oid != null) {
-      return sqlite.prepare(`SELECT * FROM daily_call_logs WHERE log_date >= ? AND log_date <= ? AND org_id = ?`).all(from, to, oid) as any[];
-    }
-    return db.select().from(dailyCallLogs)
-      .where(and(gte(dailyCallLogs.logDate, from), lte(dailyCallLogs.logDate, to)))
-      .all();
+    return countedCallLogRows(from, to, currentOrgId());
   }
 
   upsertDailyCallLog(data: InsertDailyCallLog) {
@@ -4642,8 +4637,71 @@ export function restoreUser(id: number): void {
 }
 
 // ── EOD Reports ───────────────────────────────────────────────────────────────
+/**
+ * Call-log rows in the shape daily_call_logs always had, sourced by date:
+ * what a CLR typed in before the cutoff, what Dialpad recorded from it.
+ *
+ * Self-reported calls stopped counting on SELF_REPORTED_CUTOFF (the story is
+ * in shared/self-reported.ts). Rather than touch the twenty places that sum
+ * calls_made off these rows, the rows themselves changed meaning: from the
+ * cutoff a "call log" is a Dialpad day, summed per person so a CLR mapped to
+ * two agent names still comes back as one row a day. Before it, the original
+ * row — id, notes, contacts_reached and dnc_hits included, because the
+ * screens that show history still read those.
+ */
+export const COUNTED_CALL_LOG_SQL = `(
+    SELECT id, log_date, assistant_id, COALESCE(calls_made, 0) AS calls_made, notes, updated_at, org_id,
+           COALESCE(contacts_reached, 0) AS contacts_reached, COALESCE(dnc_hits, 0) AS dnc_hits
+      FROM daily_call_logs
+     WHERE log_date < '${SELF_REPORTED_CUTOFF}'
+    UNION ALL
+    SELECT NULL AS id, stat_date AS log_date, user_id AS assistant_id, COALESCE(SUM(calls), 0) AS calls_made,
+           NULL AS notes, MAX(synced_at) AS updated_at, org_id, 0 AS contacts_reached, 0 AS dnc_hits
+      FROM dialpad_daily_stats
+     WHERE stat_date >= '${SELF_REPORTED_CUTOFF}' AND user_id IS NOT NULL
+     GROUP BY org_id, stat_date, user_id
+  )`;
+
+export function countedCallLogRows(from: string, to: string, orgId: number | null): any[] {
+  const org = orgId != null ? ` AND org_id = ${Number(orgId)}` : "";
+  return sqlite.prepare(`
+    SELECT * FROM ${COUNTED_CALL_LOG_SQL}
+     WHERE log_date >= ? AND log_date <= ?${org}
+     ORDER BY log_date, assistant_id
+  `).all(from, to) as any[];
+}
+
+/**
+ * An EOD report row with its calls and messages as they COUNT, not as typed.
+ *
+ * From the cutoff, calls_made is the Dialpad snapshot the report carries
+ * (taken live when it was filed) and messages_sent is the Dialpad texts for
+ * that person on that day. The typed values stay in the table untouched; they
+ * just stop being what anyone reads. Rows before the cutoff pass through.
+ * `self_reported` says which kind a row is, for screens that want to label it.
+ */
+export function countedEodRow<T extends Record<string, any>>(r: T, orgByUser?: Map<number, number>): T {
+  if (!r || String(r.report_date ?? "") < SELF_REPORTED_CUTOFF) {
+    return r ? { ...r, self_reported: true } : r;
+  }
+  const assistantId = Number(r.assistant_id);
+  let orgId = orgByUser?.get(assistantId);
+  if (orgId == null) {
+    const u = sqlite.prepare(`SELECT org_id FROM users WHERE id=?`).get(assistantId) as any;
+    orgId = Number(u?.org_id ?? currentOrgId() ?? 1) || 1;
+    orgByUser?.set(assistantId, orgId);
+  }
+  return {
+    ...r,
+    calls_made: Number(r.dialpad_calls ?? 0) || 0,
+    messages_sent: getDialpadTextsFor(orgId, assistantId, String(r.report_date), String(r.report_date)),
+    self_reported: false,
+  };
+}
+
 export function getEodReport(reportDate: string, assistantId: number): any {
-  return sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
+  const row = sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date=? AND assistant_id=?`).get(reportDate, assistantId) as any ?? null;
+  return row ? countedEodRow(row) : null;
 }
 
 export function upsertEodReport(data: { reportDate: string; assistantId: number; callsMade: number; messagesSent?: number; additionalConversations?: number; callToolsConversations?: number; callToolsActiveSeconds?: number; dialpadCalls?: number; transfers: number; appointments: number; notes?: string | null; assignedLosCalled?: number[]; additionalLosCalled?: number[]; additionalLosOtherNotes?: string | null; bulkTextAllLos?: number | null; workedRespondedNew?: number | null; retailMetaLeads?: number | null; retailUngraduatedLeads?: number | null; submittedLate?: number }): any {
@@ -4743,8 +4801,9 @@ export function deleteEodActivity(id: number, assistantId?: number, scope: EodAc
 
 export function getEodReportsByRange(from: string, to: string): any[] {
   const reports = sqlite.prepare(`SELECT * FROM eod_reports WHERE report_date>=? AND report_date<=? ORDER BY report_date DESC`).all(from, to) as any[];
-  const users = sqlite.prepare(`SELECT id, name FROM users`).all() as any[];
-  return reports.map(r => ({ ...r, assistant: users.find(u => u.id === r.assistant_id) }));
+  const users = sqlite.prepare(`SELECT id, name, org_id FROM users`).all() as any[];
+  const orgByUser = new Map<number, number>(users.map((u) => [Number(u.id), Number(u.org_id ?? 1) || 1]));
+  return reports.map(r => ({ ...countedEodRow(r, orgByUser), assistant: users.find(u => u.id === r.assistant_id) }));
 }
 
 // ── Call Scripts ──────────────────────────────────────────────────────────────
@@ -5522,31 +5581,33 @@ export function incrementDailyCallLog(params: { logDate: string; assistantId: nu
   }
 }
 
+// The three raw readers below are counted rows too (see countedCallLogRows):
+// Ask C3, the dashboard's contacts/DNC tallies and the call-log screen all
+// read through them.
 export function getCallStatsByRange(from: string, to: string) {
-  return sqlite.prepare(
-    `SELECT assistant_id, SUM(calls_made) AS total_calls,
-            SUM(COALESCE(contacts_reached,0)) AS total_contacts,
-            SUM(COALESCE(dnc_hits,0)) AS total_dnc
-       FROM daily_call_logs
-      WHERE log_date >= ? AND log_date <= ?
-      GROUP BY assistant_id`
-  ).all(from, to) as any[];
+  const totals = new Map<number, { assistant_id: number; total_calls: number; total_contacts: number; total_dnc: number }>();
+  for (const r of countedCallLogRows(from, to, null)) {
+    const id = Number(r.assistant_id);
+    const t = totals.get(id) ?? { assistant_id: id, total_calls: 0, total_contacts: 0, total_dnc: 0 };
+    t.total_calls += Number(r.calls_made) || 0;
+    t.total_contacts += Number(r.contacts_reached) || 0;
+    t.total_dnc += Number(r.dnc_hits) || 0;
+    totals.set(id, t);
+  }
+  return Array.from(totals.values());
 }
 
 export function getCallLogsByRangeRaw(from: string, to: string) {
-  return sqlite.prepare(
-    `SELECT * FROM daily_call_logs WHERE log_date >= ? AND log_date <= ?`
-  ).all(from, to) as any[];
+  return countedCallLogRows(from, to, null);
 }
 
 export function getCallStatsForDay(date: string) {
-  return sqlite.prepare(
-    `SELECT assistant_id,
-            COALESCE(calls_made,0) AS calls_made,
-            COALESCE(contacts_reached,0) AS contacts_reached,
-            COALESCE(dnc_hits,0) AS dnc_hits
-       FROM daily_call_logs WHERE log_date = ?`
-  ).all(date) as any[];
+  return countedCallLogRows(date, date, null).map((r) => ({
+    assistant_id: r.assistant_id,
+    calls_made: Number(r.calls_made) || 0,
+    contacts_reached: Number(r.contacts_reached) || 0,
+    dnc_hits: Number(r.dnc_hits) || 0,
+  }));
 }
 
 export function getCallScripts(): any[] {

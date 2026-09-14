@@ -840,36 +840,10 @@ export default function EodReport() {
                 <p className="text-xs text-muted-foreground mt-1">Enter only activity missing from the imported figures above. Leave blank if there is nothing to add.</p>
               </div>
               <div className="grid gap-4 sm:grid-cols-3">
-              {/* Optional work completed outside CallTools. */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <PhoneCall className="w-3.5 h-3.5" /> Additional Calls
-                </label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number" min={0} placeholder="0"
-                    value={callsMade}
-                    onChange={e => { setCallsMade(e.target.value); setDirty(true); }}
-                    className="h-9 max-w-[240px]"
-                    data-testid="input-additional-calls"
-                  />
-                </div>
-              </div>
-
-              {/* Texts sent outside the connected CallTools workflow. */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <MessageSquare className="w-3.5 h-3.5" /> Additional Texts
-                </label>
-                <Input
-                  type="number" min={0} placeholder="0"
-                  value={messagesSent}
-                  onChange={e => { setMessagesSent(e.target.value); setDirty(true); }}
-                  className="h-9 max-w-[200px]"
-                  data-testid="input-additional-texts"
-                />
-              </div>
-
+              {/* "Additional Calls" and "Additional Texts" used to sit here.
+                  Typed-in calls and texts stopped counting on 2026-09-14:
+                  calls are what Dialpad and CallTools recorded, texts are
+                  what Dialpad recorded (shared/self-reported.ts). */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                   <Users className="w-3.5 h-3.5" /> Additional Conversations
@@ -1231,8 +1205,17 @@ function EodPrintSheet({
           <tr><td>CallTools Active Time</td><td className="num">{formatActiveTime(importedActiveSeconds)}</td></tr>
           <tr><td>Dialpad Calls</td><td className="num">{importedDialpadCalls}</td></tr>
           <tr><td>Additional Conversations</td><td className="num">{additionalConversations}</td></tr>
-          <tr><td>Additional Calls</td><td className="num">{callsMade}</td></tr>
-          <tr><td>Additional Texts</td><td className="num">{messagesSent}</td></tr>
+          {/* Before 2026-09-14 these two were typed in by the CLR; from then
+              on the server reports Dialpad's numbers under the same keys. */}
+          {(report as any)?.self_reported !== false && (
+            <>
+              <tr><td>Additional Calls</td><td className="num">{callsMade}</td></tr>
+              <tr><td>Additional Texts</td><td className="num">{messagesSent}</td></tr>
+            </>
+          )}
+          {(report as any)?.self_reported === false && (
+            <tr><td>Dialpad Texts</td><td className="num">{messagesSent}</td></tr>
+          )}
           <tr><td>Total Outcomes Logged</td><td className="num">{totalLogged}</td></tr>
           <tr><td>Transfer / Conversation Ratio</td><td className="num">{ratio}</td></tr>
         </tbody>

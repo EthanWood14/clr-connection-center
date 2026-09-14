@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
+import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL, selfReportedCountsOn } from "@shared/self-reported";
 import { notesBetween } from "@shared/release-notes";
 import {
   questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT,
@@ -2571,8 +2572,8 @@ function runGoalAutoAdjust() {
 
       // Tally last week's actuals for this user
       const callsRow = sqlite.prepare(`
-        SELECT COALESCE(SUM(calls_made),0) AS n FROM daily_call_logs
-        WHERE assistant_id = ? AND log_date BETWEEN ? AND ?
+        SELECT COALESCE(SUM(calls),0) AS n FROM ${COUNTED_CALLS_SQL}
+        WHERE assistant_id = ? AND d BETWEEN ? AND ?
       `).get(userId, startDate, endDate) as any;
       const actualCalls = callsRow?.n ?? 0;
 
@@ -3442,14 +3443,16 @@ cron.schedule("5 19 * * 1-5", async () => {
     // Today's date in PT (matches report_date stored by CLRs)
     const todayPT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD
 
-    const allRows = db.prepare(`
-      SELECT e.report_date, e.assistant_id, e.calls_made, e.messages_sent, e.transfers, e.appointments, e.notes,
+    // Through countedEodRow, so the digest shows the same calls and messages
+    // as every screen: Dialpad's from the cutoff, the typed ones before it.
+    const allRows = (db.prepare(`
+      SELECT e.report_date, e.assistant_id, e.calls_made, e.messages_sent, e.dialpad_calls, e.transfers, e.appointments, e.notes,
              u.name AS clr_name, u.email AS clr_email, u.exclude_from_stats AS excluded
       FROM eod_reports e
       JOIN users u ON u.id = e.assistant_id
       WHERE e.report_date = ?
       ORDER BY u.name ASC
-    `).all(todayPT) as any[];
+    `).all(todayPT) as any[]).map((r: any) => storageExtra.countedEodRow(r));
 
     if (allRows.length === 0) {
       console.log("[eod-digest] no submissions today, skipping manager digest");
@@ -12835,7 +12838,7 @@ ${note}` : daysLine;
     const orgClause = oidForSum != null ? ` AND org_id = ${Number(oidForSum)}` : "";
     const sumCallsSql = (extraWhere: string, params: any[]): number => {
       const row = sqliteDb.prepare(
-        `SELECT COALESCE(SUM(calls_made), 0) AS total FROM daily_call_logs WHERE log_date >= ? AND log_date <= ?${extraWhere}${orgClause}`
+        `SELECT COALESCE(SUM(calls), 0) AS total FROM ${COUNTED_CALLS_SQL} WHERE d >= ? AND d <= ?${extraWhere}${orgClause}`
       ).get(startDate, endDate, ...params) as any;
       return Number(row?.total ?? 0);
     };
@@ -12843,7 +12846,7 @@ ${note}` : daysLine;
     const sumMessagesSql = (extraWhere: string, params: any[]): number => {
       try {
         const row = sqliteDb.prepare(
-          `SELECT COALESCE(SUM(messages_sent), 0) AS total FROM eod_reports WHERE report_date >= ? AND report_date <= ?${extraWhere}`
+          `SELECT COALESCE(SUM(messages), 0) AS total FROM ${COUNTED_MESSAGES_SQL} WHERE d >= ? AND d <= ?${extraWhere}`
         ).get(startDate, endDate, ...params) as any;
         return Number(row?.total ?? 0);
       } catch { return 0; }
@@ -13728,9 +13731,9 @@ ${note}` : daysLine;
       outcomesByUser[uid].transfer = Number(r.credit) || 0;
     }
     const monthCallsRows = sqlite.prepare(`
-      SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
-      FROM daily_call_logs
-      WHERE log_date >= ? AND log_date <= ?${exClause}
+      SELECT assistant_id, COALESCE(SUM(calls), 0) AS calls
+      FROM ${COUNTED_CALLS_SQL}
+      WHERE d >= ? AND d <= ?${exClause}
       GROUP BY assistant_id
     `).all(month.startDate, month.endDate) as any[];
     const callsByUserMonth = new Map<number, number>();
@@ -13851,11 +13854,11 @@ ${note}` : daysLine;
         ORDER BY date ASC
       `).all(startDate, endDate) as any[];
       const callsRows = sqlite.prepare(`
-        SELECT log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
-        FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?${exClause}
-        GROUP BY log_date
-        ORDER BY log_date ASC
+        SELECT d AS date, COALESCE(SUM(calls), 0) AS calls
+        FROM ${COUNTED_CALLS_SQL}
+        WHERE d >= ? AND d <= ?${exClause}
+        GROUP BY d
+        ORDER BY d ASC
       `).all(startDate, endDate) as any[];
       const callsByDate = new Map<string, number>();
       for (const r of callsRows) callsByDate.set(r.date, Number(r.calls) || 0);
@@ -14030,9 +14033,9 @@ ${note}` : daysLine;
         lbByUser[uid].transfers = Number(r.credit) || 0;
       }
       const lbCalls = sqlite.prepare(`
-        SELECT assistant_id, COALESCE(SUM(calls_made), 0) AS calls
-        FROM daily_call_logs
-        WHERE log_date >= ? AND log_date <= ?${exClause}
+        SELECT assistant_id, COALESCE(SUM(calls), 0) AS calls
+        FROM ${COUNTED_CALLS_SQL}
+        WHERE d >= ? AND d <= ?${exClause}
         GROUP BY assistant_id
       `).all(startDate, endDate) as any[];
       const lbCallsByUser = new Map<number, number>();
@@ -14040,9 +14043,9 @@ ${note}` : daysLine;
       const lbCallActivity = callSyncActivityByUser(startDate, endDate);
       // Messages sent (from EOD reports) per CLR for this range.
       const lbMsgs = sqlite.prepare(`
-        SELECT assistant_id, COALESCE(SUM(messages_sent), 0) AS messages
-        FROM eod_reports
-        WHERE report_date >= ? AND report_date <= ?${exClause}
+        SELECT assistant_id, COALESCE(SUM(messages), 0) AS messages
+        FROM ${COUNTED_MESSAGES_SQL}
+        WHERE d >= ? AND d <= ?${exClause}
         GROUP BY assistant_id
       `).all(startDate, endDate) as any[];
       const lbMsgsByUser = new Map<number, number>();
@@ -14489,8 +14492,8 @@ ${note}` : daysLine;
         `).all(startDate, endDate) as any[]).map((r: any) => ({ ...r, outcome_type: "transfer" })),
       );
       const clrCallRows = sqlite.prepare(`
-        SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
-        FROM daily_call_logs
+        SELECT assistant_id, log_date AS date, COALESCE(SUM(calls), 0) AS calls
+        FROM (SELECT assistant_id, org_id, d AS log_date, calls FROM ${COUNTED_CALLS_SQL})
         WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY assistant_id, log_date
       `).all(startDate, endDate) as any[];
@@ -14566,8 +14569,8 @@ ${note}` : daysLine;
 
       // Calls heatmap (CLR × day)
       const callsHmRows = sqlite.prepare(`
-        SELECT assistant_id, log_date AS date, COALESCE(SUM(calls_made), 0) AS calls
-        FROM daily_call_logs
+        SELECT assistant_id, log_date AS date, COALESCE(SUM(calls), 0) AS calls
+        FROM (SELECT assistant_id, org_id, d AS log_date, calls FROM ${COUNTED_CALLS_SQL})
         WHERE log_date >= ? AND log_date <= ?${exClause}
         GROUP BY assistant_id, log_date
       `).all(startDate, endDate) as any[];
@@ -16461,8 +16464,8 @@ ${note}` : daysLine;
     ).all(orgId, from, to) as any[];
     const callsByUser = new Map<number, number>();
     for (const r of sqlite.prepare(
-      `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS c FROM daily_call_logs
-        WHERE org_id=? AND log_date >= ? AND log_date <= ? GROUP BY assistant_id`,
+      `SELECT assistant_id, COALESCE(SUM(calls),0) AS c FROM ${COUNTED_CALLS_SQL}
+        WHERE org_id=? AND d >= ? AND d <= ? GROUP BY assistant_id`,
     ).all(orgId, from, to) as any[]) callsByUser.set(Number(r.assistant_id), Number(r.c) || 0);
     const activity = callSyncActivityByUser(from, to);
     return clrs.map((u) => {
@@ -16853,6 +16856,13 @@ ${note}` : daysLine;
     const user = storage.getUserById(userId) as any;
     const timezone = tzFromRequest(req, storageExtra.getRawSqlite());
     const reportDate = requiredEodWeekdaysInTz(timezone, new Date(), 1, 7)[0];
+    // The morning gate asked for yesterday's call count. From the cutoff that
+    // number comes from Dialpad, so there is nothing to ask for — the gate
+    // stays closed for everyone. The outcome breakdown is still returned for
+    // any screen that shows it.
+    if (!selfReportedCountsOn(reportDate)) {
+      return res.json({ hasLog: true, date: reportDate, exempt: true, outcomes: getOutcomeBreakdownFor(userId, reportDate) });
+    }
 
     // Demo users cannot create call logs because every demo mutation is
     // intentionally blocked. Exempt them before the CLR gate can trap the
@@ -16923,6 +16933,11 @@ ${note}` : daysLine;
     const assistantId = userId;
     if (!logDate || callsMade === undefined) {
       return res.status(400).json({ error: "logDate and callsMade are required" });
+    }
+    // Nothing typed counts from the cutoff. Refused rather than accepted and
+    // ignored, so an old tab or script learns it immediately.
+    if (!selfReportedCountsOn(String(logDate))) {
+      return res.status(410).json({ error: "Calls are counted from Dialpad and CallTools now — there is nothing to log by hand." });
     }
     // Post-EOD rollover: count calls logged after today's EOD toward tomorrow.
     let effectiveLogDate = String(logDate);
@@ -21064,12 +21079,18 @@ ${note}` : daysLine;
       const parsed = Number(value);
       return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
     };
-    const callsNum = nonNegativeWhole(callsMade);
-    const messagesNum = nonNegativeWhole(messagesSent ?? textsSent);
+    const typedCallsNum = nonNegativeWhole(callsMade);
+    const typedMessagesNum = nonNegativeWhole(messagesSent ?? textsSent);
     const additionalConversationsNum = nonNegativeWhole(additionalConversations);
-    if (callsNum === null || messagesNum === null || additionalConversationsNum === null) {
+    if (typedCallsNum === null || typedMessagesNum === null || additionalConversationsNum === null) {
       return res.status(400).json({ error: 'Additional calls, texts, and conversations must be zero or a positive number.' });
     }
+    // From the cutoff, nothing a person typed is stored as a count. The
+    // report's calls are the Dialpad snapshot taken below; its texts are read
+    // from Dialpad whenever the row is served (see countedEodRow).
+    const typedCountsCount = selfReportedCountsOn(String(reportDate));
+    const callsNum = typedCountsCount ? typedCallsNum : 0;
+    const messagesNum = typedCountsCount ? typedMessagesNum : 0;
     const normalizeIds = (x: any): number[] =>
       Array.isArray(x) ? x.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n)) : [];
     const assignedIds = normalizeIds(assignedLosCalled);
@@ -21114,8 +21135,10 @@ ${note}` : daysLine;
       // moment they file, which a later reader cannot reconstruct.
       submittedLate,
     });
-    // Also sync call log for the day
-    storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: callsNum, notes: null });
+    // Also sync call log for the day — only while typed counts still count.
+    if (typedCountsCount) {
+      storage.upsertDailyCallLog({ logDate: reportDate, assistantId: userId, callsMade: callsNum, notes: null });
+    }
 
     // ── Sync daily_assignments + loan_officers freshness from EOD coverage ──
     // Without this, the algorithm sees the LO's lastWorkedDate as stale and re-recommends
@@ -21175,7 +21198,7 @@ ${note}` : daysLine;
         const wkEndStr = fmtD(wkEnd);
 
         const wkCallsRow = sqlite2.prepare(
-          `SELECT COALESCE(SUM(calls_made),0) AS n FROM daily_call_logs WHERE assistant_id=? AND log_date BETWEEN ? AND ?`
+          `SELECT COALESCE(SUM(calls),0) AS n FROM ${COUNTED_CALLS_SQL} WHERE assistant_id=? AND d BETWEEN ? AND ?`
         ).get(userId, wkStartStr, wkEndStr) as any;
         const wkCalls = wkCallsRow?.n ?? 0;
 
@@ -21933,8 +21956,8 @@ ${note}` : daysLine;
       }
     });
     const callRows = sqlite.prepare(
-      `SELECT assistant_id, COALESCE(SUM(calls_made),0) AS calls, MIN(log_date) AS first_day, MAX(log_date) AS last_day
-         FROM daily_call_logs WHERE org_id=? GROUP BY assistant_id`,
+      `SELECT assistant_id, COALESCE(SUM(calls),0) AS calls, MIN(d) AS first_day, MAX(d) AS last_day
+         FROM ${COUNTED_CALLS_SQL} WHERE org_id=? GROUP BY assistant_id`,
     ).all(orgId) as any[];
     // A business workday counts when the CLR actually checked in, clocked in,
     // logged an outcome, or placed calls through either C3 or CallTools. The
