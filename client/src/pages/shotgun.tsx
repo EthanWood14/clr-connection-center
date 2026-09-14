@@ -33,6 +33,8 @@ export type ShotgunLead = {
   currentAssigneeName: string | null;
   offerExpiresAt: string | null;
   claimedAt: string | null;
+  /** When the holder answered "still there?" — null until they do. */
+  presenceConfirmedAt?: string | null;
   called: boolean;
   texted: boolean;
   resultNotes: string;

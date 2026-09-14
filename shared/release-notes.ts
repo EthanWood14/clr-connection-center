@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.101.0",
+    headline: "Claimed a Shotgun lead? Three minutes later C3 checks you're still on it.",
+    items: [
+      { text: "Three minutes after you claim a Shotgun lead, a card appears on whatever page you are on: \"Still on this lead?\" with a one-minute countdown. One click keeps it. If nobody answers, the lead goes back into the rotation for the next ready CLR, and you get a notification saying so.", audience: "everyone" },
+      { text: "You are asked once per lead — after you have said you're here, the rest of the write-up is yours. Letting it lapse does not take you out of the rotation; it only returns that lead.", audience: "everyone" },
+      { text: "This closes the hole where a claimed lead could sit with someone who had stepped away while the rotation skipped them.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.100.0",
     headline: "A manager can leave someone out of the morning check-in email for a day.",
     items: [

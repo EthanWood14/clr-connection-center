@@ -5,7 +5,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
  * is heard, not just seen. Web Audio, no asset to load; browsers that refuse
  * audio before a user gesture just stay silent — the popup still shows.
  */
-function playShotgunChime(ctxRef: { current: AudioContext | null }) {
+export function playShotgunChime(ctxRef: { current: AudioContext | null }) {
   try {
     const Ctx = window.AudioContext ?? (window as any).webkitAudioContext;
     if (!Ctx) return;

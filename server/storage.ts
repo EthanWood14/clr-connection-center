@@ -862,6 +862,9 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN email_key TEXT`); } catch {}
   try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN state_code TEXT NOT NULL DEFAULT ''`); } catch {}
   try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN transfer_outcome_id INTEGER REFERENCES lead_outcomes(id)`); } catch {}
+  // "Still there?" answered on a claimed lead (shared/shotgun-presence.ts).
+  // NULL past the window means the CLR walked away and the lead goes back.
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN presence_confirmed_at TEXT`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_leads_org_status ON shotgun_leads(org_id, status, created_at DESC)`); } catch {}
   try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_transfer_outcome ON shotgun_leads(transfer_outcome_id) WHERE transfer_outcome_id IS NOT NULL`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offers_lead ON shotgun_offers(lead_id, offered_at)`); } catch {}

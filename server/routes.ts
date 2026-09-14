@@ -131,6 +131,7 @@ import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
 import { canonicalLeadSource } from "@shared/lead-source";
+import { presenceReleaseCutoff } from "@shared/shotgun-presence";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -8384,6 +8385,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     currentAssigneeName: row.current_assignee_name ? String(row.current_assignee_name) : null,
     offerExpiresAt: row.offer_expires_at ? String(row.offer_expires_at) : null,
     claimedAt: row.claimed_at ? String(row.claimed_at) : null,
+    presenceConfirmedAt: row.presence_confirmed_at ? String(row.presence_confirmed_at) : null,
     called: !!row.called, texted: !!row.texted, resultNotes: String(row.result_notes ?? ""),
     transferOutcomeId: row.transfer_outcome_id == null ? null : Number(row.transfer_outcome_id),
     transferType: row.result_transfer_type ? String(row.result_transfer_type) : null,
@@ -8516,6 +8518,32 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           message: `The offer for ${m.leadName} expired after ${SHOTGUN_OFFER_SECONDS} seconds and went to the next CLR. You won't be offered leads until you press Ready again on the Shotgun page.`, isRead: false } as any);
       } catch {}
       sendPushToUser(m.userId, { title: "Missed Shotgun lead", body: `${m.leadName} moved on. Press Ready on the Shotgun page to rejoin the rotation.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    }
+    // A claimed lead nobody confirmed they were still on. Three minutes after
+    // the claim the holder is asked, on every page, whether they are still
+    // working it; no answer inside the window and it goes back to the queue —
+    // the rotation had been skipping them for as long as they held it. The
+    // status guard means a write-up landing at the same instant wins.
+    const walked = db.transaction(() => {
+      const rows = db.prepare(`SELECT id,org_id,lead_name,current_assignee_id FROM shotgun_leads
+        WHERE status='claimed' AND presence_confirmed_at IS NULL AND claimed_at IS NOT NULL AND claimed_at<=?
+        ORDER BY id LIMIT 100`).all(presenceReleaseCutoff(Date.parse(nowIso))) as any[];
+      const out: Array<{ leadId: number; userId: number; leadName: string }> = [];
+      for (const row of rows) {
+        const changed = db.prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,claimed_at=NULL,
+            presence_confirmed_at=NULL,called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL,updated_at=?
+          WHERE id=? AND status='claimed' AND current_assignee_id=? AND presence_confirmed_at IS NULL`)
+          .run(nowIso, row.id, row.current_assignee_id);
+        if (changed.changes) out.push({ leadId: Number(row.id), userId: Number(row.current_assignee_id), leadName: String(row.lead_name) });
+      }
+      return out;
+    })();
+    for (const w of walked) {
+      try {
+        storage.createNotification({ userId: w.userId, type: "shotgun_requeued", title: "Shotgun lead went back to the rotation",
+          message: `${w.leadName} was returned to the queue — you didn't confirm you were still on it within the window after claiming.`, isRead: false } as any);
+      } catch {}
+      sendPushToUser(w.userId, { title: "Shotgun lead returned", body: `${w.leadName} went back to the rotation — no answer to "still there?".`, url: "/#/shotgun" });
     }
     const queued = db.prepare(`SELECT id FROM shotgun_leads WHERE status='queued' ORDER BY created_at,id LIMIT 100`).all() as any[];
     const assignments: any[] = [];
@@ -8966,6 +8994,18 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // CLR out of the rotation — a fast "not this one" is exactly the behaviour
   // Shotgun wants, and the lead moves to the next CLR immediately instead of
   // burning the rest of the 20-second window.
+  // "I'm here — keep it." The holder answers the three-minute presence check.
+  app.post("/api/shotgun/:id/still-here", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const leadId = Number(req.params.id);
+    const now = new Date().toISOString();
+    const changed = shotgunDb().prepare(`UPDATE shotgun_leads SET presence_confirmed_at=COALESCE(presence_confirmed_at, ?),updated_at=?
+      WHERE id=? AND org_id=? AND status='claimed' AND current_assignee_id=?`).run(now, now, leadId, orgId, userId);
+    if (!changed.changes) return res.status(409).json({ error: "This lead is no longer yours to keep — it may already have gone back to the rotation." });
+    res.json({ ok: true, presenceConfirmedAt: now });
+  });
+
   app.post("/api/shotgun/:id/deny", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;

@@ -24,6 +24,7 @@ import { PushNudge } from "@/components/push-nudge";
 import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
+import { ShotgunPresencePrompt } from "@/components/shotgun-presence-prompt";
 import { AssignedLoLeadAlert } from "@/components/assigned-lo-lead-alert";
 import { LeadPopupDock } from "@/components/lead-popup-dock";
 import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
@@ -441,6 +442,7 @@ function AuthenticatedApp() {
                   <div className="flex-1">
                     <LeadPopupDock key={`${user.orgId}:${user.id}`}>
                       <ShotgunOfferAlert />
+                      <ShotgunPresencePrompt />
                       <AssignedLoLeadAlert />
                     </LeadPopupDock>
                     <ShotgunResultPrompt />
