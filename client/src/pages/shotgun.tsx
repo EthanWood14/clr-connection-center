@@ -181,6 +181,54 @@ export default function Shotgun() {
   const myActive = useMemo(() => payload.leads.filter((lead) => lead.currentAssigneeId === user?.id && lead.status === "claimed"), [payload.leads, user?.id]);
 
   if (isLoading) return <div className="mx-auto max-w-7xl p-6"><div className="h-72 animate-pulse rounded-3xl bg-muted" /></div>;
+
+  // Rendered in two places: inside the publish card for publishers, and on its
+  // own card for everyone else. Since extension 1.3.0 counts the calls a CLR
+  // places inside Bonzo, every login needs a way to install and connect it.
+  const extensionDialog = (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5 self-start" data-testid="button-extension-window">
+          <Zap className="h-3.5 w-3.5 text-orange-600" /> Get the Chrome extension
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-orange-600" /> The C3 extension for Bonzo</DialogTitle>
+          <DialogDescription>
+            Install it once. Every prospect in Bonzo gets an orange ⚡ button that sends them into the Shotgun rotation, and the calls you place inside Bonzo are counted under your name.
+          </DialogDescription>
+        </DialogHeader>
+        <ol className="list-decimal space-y-2 pl-5 text-sm">
+          <li><span className="font-semibold">Download</span> the extension below and <span className="font-semibold">unzip</span> it.</li>
+          <li>Open <code className="rounded bg-muted px-1 py-0.5 text-xs">chrome://extensions</code> and turn on <span className="font-semibold">Developer mode</span> (top right).</li>
+          <li>Click <span className="font-semibold">Load unpacked</span> and pick the unzipped folder — the one with <code className="rounded bg-muted px-1 py-0.5 text-xs">manifest.json</code> directly inside.</li>
+          <li>Stay logged in to C3 in this same Chrome — that is how the extension knows who you are.</li>
+        </ol>
+        <Button asChild size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700">
+          <a href="/c3-shotgun-extension.zip" download data-testid="link-extension-download"><Download className="h-5 w-5" /> Download the extension</a>
+        </Button>
+        <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+          <p><span className="font-semibold text-foreground">Not connecting?</span> Being logged in to C3 in this same Chrome is normally all it needs. If the extension's popup says you're not connected, generate a key and paste it there.</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" variant="outline" disabled={mintExtensionKey.isPending} onClick={() => mintExtensionKey.mutate()} data-testid="button-extension-key">
+              {mintExtensionKey.isPending ? "Generating…" : "Get my key"}
+            </Button>
+          </div>
+          {extensionKey && (
+            <div className="mt-2 space-y-1">
+              <p className="font-semibold text-amber-600">Copy this key now — it's shown only once. Generating again replaces the old one.</p>
+              <div className="flex gap-2">
+                <Input readOnly value={extensionKey} className="h-8 font-mono text-xs" data-testid="shotgun-extension-key" onFocus={(event) => event.currentTarget.select()} />
+                <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(extensionKey); toast({ title: "Key copied" }); }}>Copy</Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="min-h-full bg-gradient-to-b from-orange-50/70 via-background to-rose-50/50 p-4 dark:from-orange-950/15 dark:to-rose-950/10 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-5">
@@ -228,51 +276,25 @@ export default function Shotgun() {
                 </div>
                 <div className="space-y-1.5"><Label>What should the CLR know?</Label><Textarea rows={3} value={managerNotes} onChange={(event) => setManagerNotes(event.target.value)} placeholder="Context, urgency, product, preferred callback…" /></div>
                 <Button size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700" disabled={publish.isPending || leadName.trim().length < 2 || (!phone.trim() && !email.trim()) || (!!phone.trim() && !stateCode)} onClick={() => publish.mutate()}><Zap className="h-5 w-5" /> Publish to Shotgun</Button>
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5 self-start" data-testid="button-extension-window">
-                      <Zap className="h-3.5 w-3.5 text-orange-600" /> Get the Chrome extension
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-orange-600" /> One-click Shotgun from Bonzo</DialogTitle>
-                      <DialogDescription>
-                        Install the Chrome extension once, and every prospect in Bonzo gets an orange ⚡ button that sends them straight into the Shotgun rotation.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <ol className="list-decimal space-y-2 pl-5 text-sm">
-                      <li><span className="font-semibold">Download</span> the extension below and <span className="font-semibold">unzip</span> it.</li>
-                      <li>Open <code className="rounded bg-muted px-1 py-0.5 text-xs">chrome://extensions</code> and turn on <span className="font-semibold">Developer mode</span> (top right).</li>
-                      <li>Click <span className="font-semibold">Load unpacked</span> and pick the unzipped folder — the one with <code className="rounded bg-muted px-1 py-0.5 text-xs">manifest.json</code> directly inside.</li>
-                      <li>Open any prospect in Bonzo and click the orange ⚡ button — that's the whole workflow.</li>
-                    </ol>
-                    <Button asChild size="lg" className="gap-2 bg-orange-600 hover:bg-orange-700">
-                      <a href="/c3-shotgun-extension.zip" download data-testid="link-extension-download"><Download className="h-5 w-5" /> Download the extension</a>
-                    </Button>
-                    <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                      <p><span className="font-semibold text-foreground">Not connecting?</span> Being logged in to C3 in this same Chrome is normally all it needs. If the extension's popup says you're not connected, generate a key and paste it there.</p>
-                      <div className="mt-2 flex gap-2">
-                        <Button size="sm" variant="outline" disabled={mintExtensionKey.isPending} onClick={() => mintExtensionKey.mutate()} data-testid="button-extension-key">
-                          {mintExtensionKey.isPending ? "Generating…" : "Get my key"}
-                        </Button>
-                      </div>
-                      {extensionKey && (
-                        <div className="mt-2 space-y-1">
-                          <p className="font-semibold text-amber-600">Copy this key now — it's shown only once. Generating again replaces the old one.</p>
-                          <div className="flex gap-2">
-                            <Input readOnly value={extensionKey} className="h-8 font-mono text-xs" data-testid="shotgun-extension-key" onFocus={(event) => event.currentTarget.select()} />
-                            <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(extensionKey); toast({ title: "Key copied" }); }}>Copy</Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                {extensionDialog}
               </CardContent>
             </Card>
             <Card><CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Ready right now <Badge variant="secondary">{payload.readyUsers.length}</Badge></CardTitle></CardHeader><CardContent>{payload.readyUsers.length ? <div className="space-y-2">{payload.readyUsers.map((person) => <div key={person.id} className="flex items-center gap-3 rounded-xl border bg-emerald-50/60 p-3 dark:bg-emerald-950/20"><span className="h-3 w-3 animate-pulse rounded-full bg-emerald-500" /><span className="font-semibold">{person.name}</span><span className="ml-auto text-xs text-emerald-700">Ready</span></div>)}</div> : <div className="py-10 text-center text-sm text-muted-foreground"><Users className="mx-auto mb-3 h-10 w-10 opacity-30" />No CLRs are ready. Published leads will wait safely in queue.</div>}</CardContent></Card>
           </div>
+        )}
+
+        {/* Not a publisher: the extension still matters, because it is what
+            counts the calls this person places inside Bonzo. */}
+        {!(payload.canManage || payload.canPublish) && (
+          <Card data-testid="extension-card">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
+              <div className="space-y-1">
+                <p className="font-semibold">Chrome extension</p>
+                <p className="text-sm text-muted-foreground">Counts the calls you place inside Bonzo under your name. Install it once, and stay logged in to C3 in the same Chrome.</p>
+              </div>
+              {extensionDialog}
+            </CardContent>
+          </Card>
         )}
 
         {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} /><ShotgunResultCard lead={lead} /></CardContent></Card>)}</section>}

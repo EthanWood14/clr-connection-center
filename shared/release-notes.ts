@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.97.0",
+    headline: "Everyone can connect the Chrome extension now.",
+    items: [
+      { text: "The \"Get the Chrome extension\" button and the personal connection key on the Shotgun page are available to every C3 login, not only people who can publish leads. Since the extension now counts the calls you place inside Bonzo, everybody needs to be able to connect it — being logged in to C3 in the same Chrome is normally enough, and the key is the fallback if the popup says you are not connected.", audience: "everyone" },
+      { text: "Publishing to Shotgun is unchanged: it still needs publish access, granted in Settings.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.96.0",
     headline: "Calls you place inside Bonzo are counted — and counted to you.",
     items: [

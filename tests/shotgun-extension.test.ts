@@ -97,7 +97,12 @@ test("extension auth accepts the session cookie or a hashed per-user key", () =>
   assert.match(auth, /isDemoOrg\(orgId\)/);
   assert.match(auth, /runWithOrg\(\{ orgId, superAdmin: false \}/);
   const mint = routes.slice(routes.indexOf('app.post("/api/shotgun/extension-key"'), routes.indexOf('app.post("/api/shotgun/from-bonzo"'));
-  assert.match(mint, /taskManager\(me\) \|\| !!\(me\?\.canPublishShotgun/, "only publishers can mint keys");
+  // Any C3 staff login may hold a key — the extension counts Bonzo calls for
+  // everyone since 1.3.0, and a CLR without publish access still needs to
+  // connect. Portal-confined accounts (LAP/LOP) cannot. Publishing itself is
+  // gated at the publish route, not here.
+  assert.match(mint, /if \(!me \|\| isPortalAccount\(me\)\) return res\.status\(403\)/, "staff-only key minting");
+  assert.doesNotMatch(mint, /taskManager\(me\) \|\| !!\(me\?\.canPublishShotgun/, "publish access must not gate the key");
   assert.match(mint, /UPDATE users SET extension_key_hash=\?/);
   assert.doesNotMatch(mint, /INSERT INTO users/);
   // Mass-assignment guard covers the credential column.

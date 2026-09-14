@@ -8862,8 +8862,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   app.post("/api/shotgun/extension-key", requireAuth, (req: any, res) => {
     const userId = Number(req.session_user?.userId) || 0;
     const me = storage.getUserById(userId) as any;
-    const mayPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
-    if (!mayPublish) return res.status(403).json({ error: "You don't have Shotgun publish access. Ask an admin to grant it in Settings." });
+    // Any signed-in C3 user may hold a key. It used to require Shotgun publish
+    // access, which was right when the extension only published — but since
+    // 1.3.0 it also reports the calls a CLR places inside Bonzo, and a CLR
+    // whose cookie does not reach the extension had no way to connect and so
+    // no calls counted. Publishing itself is still gated where it happens.
+    if (!me || isPortalAccount(me)) return res.status(403).json({ error: "The extension is for C3 staff accounts." });
     const key = `c3sk_${crypto.randomBytes(24).toString("hex")}`;
     const hash = crypto.createHash("sha256").update(key).digest("hex");
     shotgunDb().prepare(`UPDATE users SET extension_key_hash=? WHERE id=?`).run(hash, userId);
