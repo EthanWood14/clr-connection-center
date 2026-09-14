@@ -131,7 +131,11 @@ import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadEscalateAt, loNewLeadIsFresh } fr
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
-import { canonicalLeadSource } from "@shared/lead-source";
+import { canonicalLeadSource, LEAD_SOURCE_OPTIONS } from "@shared/lead-source";
+import {
+  composeLeadCaptureNotes, resolveLeadSource, leadCaptureFrom,
+  QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, INVESTMENT_ROUTING_HINT, OUTCOME_TYPE_OPTIONS,
+} from "@shared/lead-capture";
 import { presenceReleaseCutoff } from "@shared/shotgun-presence";
 
 /**
@@ -5709,7 +5713,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // shotgunExtensionAuth (session cookie OR hashed per-user key). The key
     // exists precisely for requests the strict same-site cookie cannot ride —
     // which requireAuth here would 401 before the route ever ran.
-    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo" || req.path === "/bonzo-calls") return next();
+    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo" || req.path === "/bonzo-calls"
+      || req.path === "/extension/outcome" || req.path === "/extension/outcome-options") return next();
     // LO priority share link — no C3 login. Every request resolves a single
     // revocable, expiring token inside the handler before touching anything,
     // and the link can only move priority tiers.
@@ -8883,6 +8888,103 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const since = addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), -7);
     res.json({ since, countsPattern: BONZO_CALL_PATH_SOURCE, candidatePattern: BONZO_CALL_CANDIDATE_SOURCE, paths: storageExtra.bonzoCallPathsObserved(orgId, since) });
+  });
+
+  // ── Log a result from the Bonzo page (Chrome extension) ───────────────────
+  // What the panel needs to draw itself: the result choices, the lead sources,
+  // the lead-card questions (all from shared/lead-capture.ts, so the extension
+  // asks exactly what Input Results asks), and the loan officers — today's
+  // assigned ones first.
+  app.get("/api/extension/outcome-options", shotgunExtensionAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(userId) as any;
+    const date = businessTodayInTz(checkinTzFor(userId));
+    const assigned = new Set<number>((storage.getDailyAssignments(date) as any[])
+      .filter((a) => Number(a.assistantId ?? a.assistant_id) === userId)
+      .map((a) => Number(a.loId ?? a.lo_id)));
+    const los = (storage.getLoanOfficers() as any[])
+      .filter((lo) => (lo.isActive ?? lo.is_active) !== false && (lo.isActive ?? lo.is_active) !== 0)
+      .map((lo) => ({ id: Number(lo.id), name: String(lo.fullName ?? lo.full_name ?? ""), assignedToday: assigned.has(Number(lo.id)) }))
+      .sort((a, b) => Number(b.assignedToday) - Number(a.assignedToday) || a.name.localeCompare(b.name));
+    void orgId;
+    res.json({
+      me: { id: userId, name: String(me?.name ?? "") },
+      date,
+      outcomeTypes: OUTCOME_TYPE_OPTIONS,
+      transferTypes: [{ value: "direct", label: "Direct (live) transfer" }, { value: "appointment", label: "Appointment transfer" }],
+      leadSources: LEAD_SOURCE_OPTIONS,
+      qualQuestions: QUAL_QUESTIONS,
+      infoFields: INFO_FIELDS,
+      sectionToggles: SECTION_TOGGLES,
+      investmentHint: INVESTMENT_ROUTING_HINT,
+      los,
+    });
+  });
+
+  // The submit. The extension sends the prospect it is looking at, the result,
+  // and the lead card; the server fetches the borrower's name and number from
+  // Bonzo (never trusting the page for them), composes the write-up with the
+  // same composer Input Results uses, and logs it through the same path — so
+  // Bonzo notes, LAP, the TV and every report see it exactly as if it had been
+  // typed into C3.
+  app.post("/api/extension/outcome", shotgunExtensionAuth, async (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    if (!me || isPortalAccount(me)) return res.status(403).json({ error: "Only C3 staff can log a result." });
+    const b = req.body ?? {};
+    const outcomeType = String(b.outcomeType ?? "").trim();
+    if (!OUTCOME_TYPE_OPTIONS.some((o) => o.value === outcomeType)) return res.status(400).json({ error: "Pick a result." });
+    const transferType = outcomeType === "transfer" ? String(b.transferType ?? "").trim() : null;
+    if (outcomeType === "transfer" && transferType !== "direct" && transferType !== "appointment") {
+      return res.status(400).json({ error: "Pick direct or appointment for the transfer." });
+    }
+    const loId = Number(b.loId) > 0 ? Math.trunc(Number(b.loId)) : null;
+    if (!loId && outcomeType !== "appointment") return res.status(400).json({ error: "Pick the loan officer." });
+    if (loId && !storage.getLoanOfficerById(loId)) return res.status(400).json({ error: "That loan officer is not in C3." });
+    const appointmentDatetime = outcomeType === "appointment" ? String(b.appointmentDatetime ?? "").trim() : "";
+    if (outcomeType === "appointment" && !appointmentDatetime) return res.status(400).json({ error: "Set the appointment date and time." });
+
+    // Borrower identity from Bonzo, by prospect id, when the extension has one.
+    let borrowerName = String(b.borrowerName ?? "").trim().slice(0, 140);
+    let phoneNumber = String(b.phone ?? "").trim().slice(0, 40);
+    const prospectId = extractProspectId(b.prospectId ?? b.url);
+    if (prospectId && bonzoConfigured()) {
+      try {
+        const fetched = await getProspectDetail(prospectId);
+        if (fetched.ok) {
+          if (fetched.detail.fullName.length >= 2) borrowerName = fetched.detail.fullName;
+          if (fetched.detail.phone) phoneNumber = fetched.detail.phone;
+        }
+      } catch { /* the page's own values stand */ }
+    }
+    if (borrowerName.length < 2) return res.status(400).json({ error: "The borrower's name is missing — open the prospect in Bonzo and try again." });
+
+    const capture = leadCaptureFrom(b.capture);
+    const notes = String(b.notes ?? "").trim().slice(0, 4000);
+    const yesNo = (v: unknown) => (v === true || v === 1 || v === "yes" ? true : v === false || v === 0 || v === "no" ? false : null);
+    const body: Record<string, unknown> = {
+      assistantId: userId,
+      date: businessTodayInTz(checkinTzFor(userId)),
+      loId,
+      outcomeType,
+      transferType,
+      borrowerName,
+      phoneNumber: phoneNumber || null,
+      notes: notes || null,
+      conversationNotes: outcomeType === "transfer" || outcomeType === "appointment" ? composeLeadCaptureNotes(capture) || null : null,
+      leadSource: resolveLeadSource(capture),
+      appointmentDatetime: appointmentDatetime || null,
+      followUpDate: appointmentDatetime || null,
+      bulkTexter: yesNo(b.bulkTexter),
+      helperAssisted: yesNo(b.helperAssisted),
+      journeyId: prospectId ? String(prospectId) : null,
+    };
+    const result = createOutcomeFromBody(req.session_user, body);
+    if (result.status !== 200) return res.status(result.status).json(result.body);
+    const lo = loId ? (storage.getLoanOfficerById(loId) as any) : null;
+    res.json({ ok: true, outcomeId: Number(result.body?.id), outcomeType, borrowerName, loName: lo?.fullName ?? null,
+      celebration: result.body?.transferCelebration ?? null });
   });
 
   // Mint (or replace) the caller's extension key. Only the SHA-256 lands in
@@ -12199,8 +12301,15 @@ ${note}` : daysLine;
     };
   };
 
-  app.post("/api/outcomes", (req: any, res) => {
+  /**
+   * Log an outcome exactly as POST /api/outcomes does — same attribution
+   * guard, same validation, same Bonzo/LAP/Zapier follow-through. Extracted
+   * so the Chrome extension can log a transfer from the Bonzo page through
+   * the identical path rather than a second copy of it.
+   */
+  function createOutcomeFromBody(sessionUser: any, rawBody: any): { status: number; body: any } {
     try {
+      const req: any = { session_user: sessionUser, body: rawBody };
       const body = { ...req.body };
       // Attribution guard: a CLR can only log their OWN transfers. Force the
       // assistant to the logged-in user unless they are an admin/manager (who may
@@ -12219,11 +12328,11 @@ ${note}` : daysLine;
       // than by the column, because the same table holds both.
       if (body.loId === "" || body.loId === undefined || Number(body.loId) <= 0) body.loId = null;
       if (body.loId == null && body.outcomeType !== "appointment") {
-        return res.status(400).json({ error: "loId is required for everything except appointments" });
+        return { status: 400, body: { error: "loId is required for everything except appointments" } };
       }
       if (body.outcomeType === "transfer") {
         if (body.transferType !== "direct" && body.transferType !== "appointment") {
-          return res.status(400).json({ error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" });
+          return { status: 400, body: { error: "transferType is required for transfer outcomes (must be 'direct' or 'appointment')" } };
         }
         // A transfer must never schedule a calendar appointment, even an
         // appointment-type transfer. Strip any appointment datetime defensively.
@@ -12305,12 +12414,17 @@ ${note}` : daysLine;
       if (outcome.outcomeType === "transfer") {
         setImmediate(() => syncTransferToBonzo(outcome.id).catch((e: any) => console.error("[bonzo-transfer] sync failed:", e?.message ?? e)));
       }
-      res.json(outcome.outcomeType === "transfer"
+      return { status: 200, body: outcome.outcomeType === "transfer"
         ? { ...outcome, celebrateTransfer: true, transferCelebration: transferCelebration(Number(outcome.assistantId), String(outcome.date), lo?.fullName ?? null, outcome.borrowerName ?? null) }
-        : outcome);
+        : outcome };
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      return { status: 400, body: { error: e.message } };
     }
+  }
+
+  app.post("/api/outcomes", (req: any, res) => {
+    const result = createOutcomeFromBody(req.session_user, req.body);
+    res.status(result.status).json(result.body);
   });
 
   // Resurrect a fall-through: ANY CLR can revive a fell-through lead and record

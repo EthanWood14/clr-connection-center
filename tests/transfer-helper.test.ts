@@ -37,7 +37,9 @@ test("every Drizzle column on lead_outcomes is actually created in the database"
 
 test("the helper flag is only ever set on transfers", () => {
   // A non-transfer outcome carrying helper_assisted=1 would inflate her pay.
-  const post = routes.slice(routes.indexOf(`app.post("/api/outcomes"`), routes.indexOf(`app.patch("/api/outcomes/:id"`));
+  // The handler body lives in createOutcomeFromBody (shared with the Chrome
+  // extension's submit); the route itself is three lines.
+  const post = routes.slice(routes.indexOf(`function createOutcomeFromBody(`), routes.indexOf(`app.patch("/api/outcomes/:id"`));
   assert.match(post, /body\.helperAssisted = toBulk\(body\.helperAssisted\)/,
     "transfers must normalize the flag to 1/0/null");
   assert.match(post, /body\.helperAssisted = null/,

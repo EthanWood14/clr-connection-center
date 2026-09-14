@@ -58,3 +58,13 @@ app makes (only the request *path* is sent, never a body), and a click on one
 of Bonzo's own call controls (a `tel:` link or a button labelled "Call"). C3
 folds a click and the request it fires in the same minute into one call. The
 popup shows today's count.
+
+## Log the result from the Bonzo page (v1.4.0)
+
+On any prospect, **📋 Log result in C3** opens a panel with everything Input
+Results asks — the result, the loan officer (today's assigned first), the lead
+source, the qualification questions and the full lead card. The questions come
+from C3 itself, so they always match. Submitting logs it through the same C3
+path as Input Results: Bonzo notes, LAP, the TV and every report see it the
+same way. C3 re-reads the borrower's name and number from Bonzo; only the
+prospect id and what you typed leave the page.

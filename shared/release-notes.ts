@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.105.0",
+    headline: "Log a transfer straight from the Bonzo page.",
+    items: [
+      { text: "The Chrome extension has a second button on every Bonzo prospect: \"📋 Log result in C3\". It opens a panel with everything Input Results asks — result, loan officer (your assigned ones first), lead source, the qualification questions and the full lead card — and logs it exactly as C3 would: Bonzo notes, LAP, the TV and the reports all see it the same way. No switching tabs mid-call.", audience: "everyone" },
+      { text: "Reload the extension to pick it up: it is version 1.4.0, and the Shotgun page has a fresh download. Borrower name and number are re-read from Bonzo by C3 when you submit, so they cannot be mistyped.", audience: "everyone" },
+      { text: "The questions in the panel come from C3 itself, so a change to the lead card in C3 shows up in the extension the next time it opens — nothing to reinstall for that.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.104.0",
     headline: "CLRs: notifications are required now — one click turns them on.",
     items: [

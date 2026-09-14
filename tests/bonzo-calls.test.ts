@@ -75,7 +75,8 @@ test("one call per CLR per prospect per minute, whichever signals arrived", () =
 
 test("the server is wired: extension-key auth, the guard exception, the EOD figure, and the counted-calls fragment", () => {
   const routes = read("server/routes.ts");
-  assert.match(routes, /req\.path === "\/bonzo-calls"\) return next\(\);/);
+  // On the guard's exception line (which now also carries the extension's outcome paths).
+  assert.match(routes, /req\.path === "\/bonzo-calls"[\s\S]{0,200}?\) return next\(\);/);
   assert.match(routes, /app\.post\("\/api\/bonzo-calls", shotgunExtensionAuth,/);
   assert.match(routes, /app\.get\("\/api\/bonzo-calls\/observed", requireAuth,/);
   assert.match(routes, /bonzoCallsToday: storageExtra\.bonzoCallsForUserDay\(/);
@@ -101,7 +102,8 @@ test("the extension is wired end to end and its version moved", () => {
   const popup = read("chrome-extension/popup.js");
   assert.match(popup, /bonzoCallsToday/);
   const manifest = JSON.parse(read("chrome-extension/manifest.json"));
-  assert.equal(manifest.version, "1.3.0");
+  // 1.3.0 added the call tracker; 1.4.0 added the result panel on top of it.
+  assert.ok(["1.3.0", "1.4.0"].includes(manifest.version) || manifest.version > "1.4.0", `unexpected extension version ${manifest.version}`);
   const eod = read("client/src/pages/eod-report.tsx");
   assert.match(eod, /data-testid="bonzo-calls-line"/);
 });

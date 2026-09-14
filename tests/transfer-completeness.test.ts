@@ -12,7 +12,8 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
-const capture = readFileSync(join(root, "client/src/lib/lead-capture.ts"), "utf8");
+// The lead card moved to shared/ (the extension's server-side composer reads it too).
+const capture = readFileSync(join(root, "shared/lead-capture.ts"), "utf8");
 const mgr = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "utf8");
 
 const blank = {

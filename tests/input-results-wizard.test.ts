@@ -10,14 +10,16 @@ const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const schema = readFileSync(join(root, "shared/schema.ts"), "utf8");
 const appts = readFileSync(join(root, "client/src/pages/appointments.tsx"), "utf8");
 
-const lib = readFileSync(join(root, "client/src/lib/lead-capture.ts"), "utf8");
+// The lead card lives in shared/ now (the client file re-exports it).
+const lib = readFileSync(join(root, "shared/lead-capture.ts"), "utf8");
 
 test("every outcome asks which lead source it came from, with a self-fill option", () => {
   assert.match(page, /Which lead source did this come in from\?/);
   // The list itself moved to shared/lead-source.ts on 11 Sep 2026 and was
   // split finer there; tests/lead-source-split.test.ts pins its contents.
   // What this test cares about is that the page asks the question at all.
-  assert.match(lib, /from "@shared\/lead-source"/);
+  // shared/ imports its sibling relatively; the client re-exports the whole module.
+  assert.match(lib, /from "(?:@shared|\.)\/lead-source"/);
   assert.match(page, /LEAD_SOURCE_OPTIONS\.map/, "the page renders the shared option list");
   assert.match(page, /Other — type it in/, "a CLR must be able to answer outside the list");
   assert.match(page, /data-testid="input-lead-source-other"/);

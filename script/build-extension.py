@@ -29,7 +29,7 @@ ZIP_OUT = os.path.join(ROOT, "client", "public", "c3-shotgun-extension.zip")
 
 # Files that ship inside the zip (everything Chrome needs, nothing else).
 SHIPPED = [
-    "manifest.json", "background.js", "content.js", "page-hook.js",
+    "manifest.json", "background.js", "content.js", "page-hook.js", "outcome-panel.js",
     "popup.html", "popup.js", "README.md",
     "icons/16.png", "icons/48.png", "icons/128.png",
 ]

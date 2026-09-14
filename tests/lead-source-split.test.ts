@@ -11,7 +11,8 @@ const read = (rel: string) => readFileSync(join(root, rel), "utf8");
 const routes = read("server/routes.ts");
 const outcomes = read("client/src/pages/outcomes.tsx");
 const panel = read("client/src/components/lead-capture-panel.tsx");
-const lib = read("client/src/lib/lead-capture.ts");
+// The lead card lives in shared/ now (the client file re-exports it).
+const lib = read("shared/lead-capture.ts");
 
 test("the seven the owner asked for, and Mojo is gone", () => {
   assert.deepEqual([...LEAD_SOURCE_OPTIONS], [
@@ -33,7 +34,7 @@ test("both places that ask the question read the same list", () => {
   // answers would stop being comparable without anybody noticing.
   assert.match(outcomes, /LEAD_SOURCE_OPTIONS\.map/);
   assert.match(panel, /LEAD_SOURCE_OPTIONS\.map/);
-  assert.match(lib, /export \{ LEAD_SOURCE_OPTIONS, canonicalLeadSource \} from "@shared\/lead-source";/);
+  assert.match(lib, /export \{ LEAD_SOURCE_OPTIONS, canonicalLeadSource \} from "(?:@shared|\.)\/lead-source";/);
 });
 
 test("a pure rename folds, so one source is not two rows on the wall", () => {

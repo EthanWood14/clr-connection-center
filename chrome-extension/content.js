@@ -58,8 +58,28 @@
     boxShadow: "0 6px 20px rgba(234,88,12,.45)", cursor: "pointer",
     maxWidth: "340px", textAlign: "left", whiteSpace: "normal",
   });
+  // "Log result" — opens the panel (outcome-panel.js) for the prospect on
+  // screen. Same anchoring rule as the Shotgun button: it only ever names the
+  // prospect the URL or the page's own API traffic named.
+  const logBtn = document.createElement("button");
+  logBtn.id = "c3-log-result-button";
+  logBtn.type = "button";
+  Object.assign(logBtn.style, {
+    position: "fixed", right: "18px", bottom: "70px", zIndex: "2147483000",
+    display: "none", alignItems: "center", gap: "8px",
+    padding: "10px 16px", border: "none", borderRadius: "999px",
+    background: "linear-gradient(180deg,#0ea5e9,#0284c7)", color: "#fff",
+    font: "700 13px/1.2 system-ui, -apple-system, sans-serif",
+    boxShadow: "0 6px 20px rgba(2,132,199,.4)", cursor: "pointer",
+  });
+  logBtn.textContent = "📋 Log result in C3";
+  logBtn.onclick = () => {
+    if (!current) return;
+    window.dispatchEvent(new CustomEvent("c3:open-outcome", { detail: { prospectId: current.id, fields: current.fields || null, url: location.href } }));
+  };
   const ensureMounted = () => {
     if (!btn.isConnected && document.body) document.body.appendChild(btn);
+    if (!logBtn.isConnected && document.body) document.body.appendChild(logBtn);
   };
 
   const firstName = () => {
@@ -89,6 +109,8 @@
       btn.onclick = null;
     }
     btn.style.display = "inline-flex";
+    // The result panel is only for a prospect the page has actually named.
+    logBtn.style.display = current ? "inline-flex" : "none";
     reportSeen();
   };
 
