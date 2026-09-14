@@ -3485,6 +3485,36 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_bonzo_calls_user_date
     ON bonzo_call_events(org_id, user_id, business_date, counts)`);
 
+  // New leads on today's assigned loan officers, as seen in LeadVault's feed.
+  // One row per lead: who it was announced to, whether a CLR claimed it inside
+  // the window, and the Shotgun lead it became if nobody did
+  // (shared/lo-new-leads.ts).
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS lo_new_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    external_id TEXT NOT NULL,
+    lo_id INTEGER,
+    lo_email TEXT NOT NULL,
+    lo_name TEXT,
+    borrower_name TEXT,
+    phone TEXT,
+    email TEXT,
+    state TEXT,
+    source TEXT,
+    landed_at TEXT,
+    assigned_user_ids TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'new',
+    first_seen_at TEXT NOT NULL,
+    claimed_by INTEGER,
+    claimed_at TEXT,
+    shotgun_lead_id INTEGER,
+    escalated_at TEXT,
+    escalate_error TEXT,
+    UNIQUE(org_id, external_id)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_lo_new_leads_status
+    ON lo_new_leads(org_id, status, first_seen_at)`);
+
   // Every CallTools historical disposition is an immutable activity event.
   // Outcomes are a subset; keeping activity separate lets dashboards count
   // unique contacts and human conversations without inflating outcomes.
@@ -4785,6 +4815,60 @@ export function bonzoCallPathsObserved(orgId: number, sinceDate: string): any[] 
       GROUP BY kind, method, path, counts
       ORDER BY events DESC`,
   ).all(orgId, sinceDate) as any[];
+}
+
+// ── New leads on assigned loan officers (shared/lo-new-leads.ts) ─────────────
+
+export type LoNewLeadInput = {
+  orgId: number; externalId: string; loId: number | null; loEmail: string; loName: string | null;
+  borrowerName: string | null; phone: string | null; email: string | null; state: string | null;
+  source: string | null; landedAt: string | null; assignedUserIds: number[];
+};
+
+/** Record a lead the feed just showed. Idempotent: the second sighting is not a second arrival. */
+export function recordLoNewLead(input: LoNewLeadInput): { inserted: boolean; row: any } {
+  const now = new Date().toISOString();
+  const res = sqlite.prepare(`
+    INSERT OR IGNORE INTO lo_new_leads
+      (org_id, external_id, lo_id, lo_email, lo_name, borrower_name, phone, email, state, source, landed_at, assigned_user_ids, status, first_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)`)
+    .run(input.orgId, input.externalId, input.loId, input.loEmail.toLowerCase(), input.loName, input.borrowerName,
+      input.phone, input.email, input.state, input.source, input.landedAt, JSON.stringify(input.assignedUserIds), now);
+  const row = sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND external_id=?`).get(input.orgId, input.externalId);
+  return { inserted: res.changes > 0, row };
+}
+
+/** "Got it — I'm calling." Only a lead still in its window can be claimed. */
+export function claimLoNewLead(orgId: number, externalId: string, userId: number): any | null {
+  const now = new Date().toISOString();
+  const res = sqlite.prepare(`UPDATE lo_new_leads SET status='claimed', claimed_by=?, claimed_at=?
+    WHERE org_id=? AND external_id=? AND status='new'`).run(userId, now, orgId, externalId);
+  if (!res.changes) return null;
+  return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND external_id=?`).get(orgId, externalId);
+}
+
+/** Unclaimed leads whose window closed at or before `cutoffIso`. */
+export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string): any[] {
+  return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND status='new' AND first_seen_at<=? ORDER BY first_seen_at, id LIMIT 50`)
+    .all(orgId, cutoffIso) as any[];
+}
+
+export function markLoNewLeadEscalated(id: number, shotgunLeadId: number | null, error: string | null): void {
+  const now = new Date().toISOString();
+  sqlite.prepare(`UPDATE lo_new_leads SET status=?, shotgun_lead_id=?, escalated_at=?, escalate_error=? WHERE id=? AND status='new'`)
+    .run(error ? "escalate_failed" : "escalated", shotgunLeadId, now, error ? error.slice(0, 300) : null, id);
+}
+
+/** What the feed should say about each lead's claim, keyed by external id. */
+export function loNewLeadStates(orgId: number, externalIds: string[]): Map<string, any> {
+  const out = new Map<string, any>();
+  if (!externalIds.length) return out;
+  const marks = externalIds.map(() => "?").join(",");
+  const rows = sqlite.prepare(`SELECT l.external_id, l.status, l.first_seen_at, l.claimed_by, l.claimed_at, l.shotgun_lead_id, u.name AS claimed_by_name
+    FROM lo_new_leads l LEFT JOIN users u ON u.id=l.claimed_by
+    WHERE l.org_id=? AND l.external_id IN (${marks})`).all(orgId, ...externalIds) as any[];
+  for (const r of rows) out.set(String(r.external_id), r);
+  return out;
 }
 
 export function getEodReport(reportDate: string, assistantId: number): any {

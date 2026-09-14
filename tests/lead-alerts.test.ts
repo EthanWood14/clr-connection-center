@@ -106,5 +106,7 @@ test("assigned-LO polling stays private, respects locks, and never mutates lead 
   // Five seconds: the server's fan-in makes the poll cheap, and a lead should be on screen in seconds.
   assert.match(popup, /refetchInterval: 5_000/);
   assert.match(popup, /hours=72&per=5/);
-  assert.doesNotMatch(popup, /apiRequest\("(?:POST|PUT|PATCH|DELETE)"/);
+  // The only write the card makes is the claim — nothing else mutates from a popup.
+  const writes = popup.match(/apiRequest\("(?:POST|PUT|PATCH|DELETE)", "[^"]+"/g) ?? [];
+  assert.deepEqual(writes, ['apiRequest("POST", "/api/lo-new-leads/claim"']);
 });

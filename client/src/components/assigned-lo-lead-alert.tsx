@@ -1,14 +1,23 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, BellRing, X } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowUpRight, BellRing, Phone, X, Zap } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { activeLeadAlerts, collectLeadAlerts, leadAlertStorageKey, parseSeenLeadAlerts, type LoLeadAlert, type LoLeadFeed } from "@/lib/lead-alerts";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadSecondsLeft } from "@shared/lo-new-leads";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
+import { playShotgunChime } from "@/components/shotgun-offer-alert";
 import { Button } from "@/components/ui/button";
 
+/**
+ * A new lead on one of this CLR's assigned loan officers, the moment
+ * LeadVault sees it. It behaves like a Shotgun lead: a tap-to-call number,
+ * a "got it" claim, and a three-minute window — a lead nobody claims goes to
+ * the Shotgun rotation, where the twenty-second offer moves it on
+ * (shared/lo-new-leads.ts).
+ */
 export function AssignedLoLeadAlert() {
   const { user } = useAuth();
   const dailyBlocked = useContext(DailyReportGateActive);
@@ -28,6 +37,13 @@ export function AssignedLoLeadAlert() {
     // every five seconds with ONE upstream call, so this poll is cheap and a
     // lead is on screen within ten seconds of landing rather than forty.
     refetchInterval: 5_000,
+    // A CLR lives in Bonzo and Dialpad, not in C3. Without this the poll
+    // PAUSES the moment C3 is not the front tab — which is nearly always — and
+    // the first test on the floor (Skyler, 14 Sep 2026) showed exactly that:
+    // heartbeats arriving, zero feed polls. The browser still throttles a
+    // hidden tab, so the push notification the server sends is the real
+    // guarantee; this keeps the on-screen card as current as the tab allows.
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     staleTime: 0,
     retry: 1,
@@ -46,10 +62,30 @@ export function AssignedLoLeadAlert() {
   }, [data, dataUpdatedAt, blocked, eligible, storageKey]);
 
   const lead = queue[0];
+  // Server clock for the countdown, as the Shotgun cards do.
+  const [now, setNow] = useState(Date.now());
+  const serverTime = Date.parse(data?.fetchedAt ?? "");
+  const clockNow = Math.max(now, dataUpdatedAt) + (Number.isFinite(serverTime) ? serverTime - dataUpdatedAt : 0);
+  useEffect(() => { if (!lead) return; const t = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(t); }, [lead?.key]);
+  // Heard, not just seen: the same chime as a Shotgun offer, once per lead.
+  const audioRef = useRef<AudioContext | null>(null);
+  useEffect(() => { if (lead) playShotgunChime(audioRef); }, [lead?.key]);
+
+  const claim = useMutation({
+    mutationFn: (externalId: string) => apiRequest("POST", "/api/lo-new-leads/claim", { externalId }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/lo-newest-leads"] }),
+  });
+  useEffect(() => { claim.reset(); }, [lead?.key]);
+
   if (!eligible || blocked || !lead) return null;
   const dismiss = () => setQueue(current => current.filter(row => row.key !== lead.key));
+  const escalateAt = lead.claim?.escalateAt ?? new Date(Date.parse(lead.landedAt) + LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString();
+  const left = loNewLeadSecondsLeft(escalateAt, clockNow);
+  const mm = Math.floor(left / 60);
+  const ss = String(Math.floor(left % 60)).padStart(2, "0");
+  const tel = lead.phone ? `tel:${String(lead.phone).replace(/[^\d+]/g, "")}` : null;
   return (
-    <section className="pointer-events-auto rounded-2xl border-2 border-emerald-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4" aria-label="New lead for your assigned loan officer" data-testid="assigned-lo-lead-popup">
+    <section className="pointer-events-auto rounded-2xl border-2 border-emerald-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4" aria-label="New lead for an assigned loan officer" data-testid="assigned-lo-lead-alert">
       <div className="flex items-start justify-between gap-3">
         <div role="status" aria-live="polite" className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400"><BellRing className="h-4 w-4 shrink-0" />New lead for your LO</p>
@@ -59,10 +95,23 @@ export function AssignedLoLeadAlert() {
         </div>
         <Button variant="ghost" size="icon" className="-mr-2 -mt-2 shrink-0" aria-label="Dismiss new lead alert" onClick={dismiss}><X className="h-4 w-4" /></Button>
       </div>
+      {tel && (
+        <a href={tel} data-testid="assigned-lo-lead-call" className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-bold text-white hover:bg-emerald-700">
+          <Phone className="h-5 w-5" /> Call {lead.phone}
+        </a>
+      )}
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="assigned-lo-lead-countdown">
+        <Zap className="h-3.5 w-3.5 text-orange-500" />
+        {left > 0 ? <>Goes to Shotgun in <span className="font-bold tabular-nums text-foreground">{mm}:{ss}</span> unless somebody claims it</> : "Going to Shotgun now"}
+      </p>
+      {claim.isError && <p className="mt-2 text-sm text-red-600" role="alert">{(claim.error as any)?.message || "Could not claim it — it may already be taken."}</p>}
       <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{queue.length > 1 ? `${queue.length - 1} more waiting` : "Live from LeadVault"}</span>
-        <Button size="sm" asChild><Link href="/assignments" onClick={dismiss}>View call list <ArrowUpRight className="ml-1 h-4 w-4" /></Link></Button>
+        <Button size="sm" variant="outline" asChild><Link href="/assignments" onClick={dismiss}>Call list <ArrowUpRight className="ml-1 h-4 w-4" /></Link></Button>
+        <Button size="sm" disabled={claim.isPending || left <= 0} onClick={() => claim.mutate(lead.externalId, { onSuccess: dismiss })} data-testid="assigned-lo-lead-claim">
+          {claim.isPending ? "Claiming…" : "Got it — I'm calling"}
+        </Button>
       </div>
+      {queue.length > 1 && <p className="mt-2 text-xs text-muted-foreground">{queue.length - 1} more waiting</p>}
     </section>
   );
 }

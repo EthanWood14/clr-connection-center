@@ -124,7 +124,28 @@ export type NewestLeadsDeps = {
   token: () => string;
   baseUrl: () => string;
   now?: () => number;
+  /**
+   * Called with every successful upstream read — the whole fetched set, not a
+   * diff. The route uses it to push "new lead for your LO" notifications, and
+   * does its own dedupe, because whether a lead is NEW to a person depends on
+   * who they are, not on this cache.
+   */
+  onFresh?: (los: NewestLeadsByLo[]) => void;
 };
+
+/**
+ * The floor-wide set the fan-in is currently asking about — every address
+ * polled in the last fifteen minutes. The route's ticker refreshes this set
+ * on its own clock so a lead is noticed (and pushed) even when every C3 tab
+ * on the floor is in the background and the browser has throttled its poll.
+ */
+export function newestLeadsFanInEmails(now: number = Date.now()): string[] {
+  const out: string[] = [];
+  for (const [email, at] of Array.from(askedRecently.entries())) {
+    if (now - at <= NEWEST_LEADS_FANIN_WINDOW_MS) out.push(email);
+  }
+  return out.sort();
+}
 
 async function fetchUpstream(
   key: string, emails: string[], hours: number, per: number, deps: NewestLeadsDeps,
@@ -153,6 +174,7 @@ async function fetchUpstream(
       // back, so nothing back means the shape changed.
       if (!los.length) return null;
       cache.set(key, { at: (deps.now ?? Date.now)(), los });
+      try { deps.onFresh?.(los); } catch { /* a listener must never break the read */ }
       return los;
     } catch {
       return null;

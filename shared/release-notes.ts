@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.103.0",
+    headline: "A new lead for your LO now works like a Shotgun lead.",
+    items: [
+      { text: "When a lead lands on one of your assigned loan officers you get the card, a chime, a bell notification and a push — with a big Call button (tap to dial) and a \"Got it — I'm calling\" claim. You have three minutes. If nobody claims it, it goes into the Shotgun rotation, where the normal twenty-second offer moves it from CLR to CLR until somebody takes it.", audience: "everyone" },
+      { text: "The card and its chime now keep working while C3 is a background tab, and the Shotgun offer card does too — before today both went quiet the moment you were in Bonzo. The phone number on a Shotgun offer is tap-to-call as well.", audience: "everyone" },
+      { text: "A lead that goes to Shotgun this way is published under an admin account with the LO's name in the source and a note saying it went unclaimed. Managers see it on the Shotgun board like any other lead.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.102.0",
     headline: "New-lead alerts for your assigned LOs arrive in seconds, not most of a minute.",
     items: [

@@ -126,7 +126,8 @@ import {
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
-import { loEmailsFor, newestLeadsForLos } from "./leadvault-newest-leads";
+import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
@@ -19265,6 +19266,148 @@ ${note}` : daysLine;
    * addresses, so the whole floor polling every fifteen seconds costs
    * LeadVault a couple of requests a minute.
    */
+  // ── New leads behave like Shotgun leads (shared/lo-new-leads.ts) ──────────
+  // Every successful read of the LeadVault feed passes through here. A lead
+  // that landed in the last ten minutes on one of today's assigned LOs is
+  // recorded once and announced to the CLR(s) working that LO — bell, push —
+  // and the popup on their screen shows a tap-to-call number and a claim
+  // button. The ticker below hands any lead nobody claimed inside the window
+  // to the Shotgun rotation, where the twenty-second offer takes over.
+  const LO_NEW_LEAD_POLL_HOURS = 72;
+  const LO_NEW_LEAD_POLL_PER = 5;
+
+  function todaysAssignmentsByLo(orgId: number): { date: string; byLo: Map<number, number[]> } {
+    const date = businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ);
+    const byLo = new Map<number, number[]>();
+    for (const a of storage.getDailyAssignments(date) as any[]) {
+      const loId = Number(a.loId ?? a.lo_id);
+      const uid = Number(a.assistantId ?? a.assistant_id);
+      if (!loId || !uid) continue;
+      if (!byLo.has(loId)) byLo.set(loId, []);
+      byLo.get(loId)!.push(uid);
+    }
+    void orgId;
+    return { date, byLo };
+  }
+
+  function announceFreshLoLeads(orgId: number, los: NewestLeadsByLo[]): void {
+    const now = Date.now();
+    const losByEmail = new Map<string, any>();
+    for (const lo of storage.getLoanOfficers() as any[]) {
+      const email = String(lo?.bonzoUsername ?? lo?.bonzo_username ?? "").trim().toLowerCase();
+      if (email) losByEmail.set(email, lo);
+    }
+    const { byLo } = todaysAssignmentsByLo(orgId);
+    for (const row of los) {
+      const lo = losByEmail.get(String(row.email).toLowerCase());
+      if (!lo) continue;
+      const assigned = byLo.get(Number(lo.id)) ?? [];
+      if (!assigned.length) continue; // nobody is calling for this LO today — not a CLR's lead
+      const loName = String(lo.fullName ?? lo.full_name ?? row.name ?? "");
+      for (const lead of row.leads) {
+        if (!lead.externalId || !loNewLeadIsFresh(lead.landedAt, now)) continue;
+        const { inserted } = storageExtra.recordLoNewLead({
+          orgId, externalId: String(lead.externalId), loId: Number(lo.id), loEmail: row.email, loName,
+          borrowerName: lead.borrowerName ?? null, phone: lead.phone ?? null, email: null,
+          state: lead.state ?? null, source: lead.source ?? null, landedAt: lead.landedAt ?? null,
+          assignedUserIds: assigned,
+        });
+        if (!inserted) continue;
+        const who = lead.borrowerName || "A new borrower";
+        const detail = [lead.state, lead.source].filter(Boolean).join(" · ");
+        for (const userId of assigned) {
+          try {
+            storage.createNotification({ userId, type: "lo_new_lead", title: `New lead — ${loName}`,
+              message: `${who}${detail ? ` · ${detail}` : ""}. Claim it within 3 minutes or it goes to Shotgun.`, isRead: false } as any);
+          } catch {}
+          sendPushToUser(userId, { title: `New lead — ${loName}`, body: `${who}${detail ? ` · ${detail}` : ""} — tap to call, 3 min before Shotgun`, url: "/#/assignments", portal: "c3" }).catch(() => {});
+        }
+        console.log(`[lo-new-lead] ${loName}: ${lead.externalId} announced to ${assigned.length} CLR(s)`);
+      }
+    }
+  }
+
+  function newestLeadsDeps(orgId: number) {
+    return {
+      token: leadvaultReportingToken,
+      baseUrl: () => process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud",
+      onFresh: (los: NewestLeadsByLo[]) => { try { announceFreshLoLeads(orgId, los); } catch (e: any) { console.error("[lo-new-lead] announce failed:", e?.message ?? e); } },
+    };
+  }
+
+  /** Hand every lead nobody claimed inside the window to the Shotgun rotation. */
+  function escalateUnclaimedLoLeads(orgId: number): void {
+    const cutoff = new Date(Date.now() - LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString();
+    const due = storageExtra.loNewLeadsDueForShotgun(orgId, cutoff);
+    if (!due.length) return;
+    // Published under the first active admin: Shotgun wants a publisher, and a
+    // lead the feed handed over has no human one.
+    const publisher = (storage.getUsers() as any[]).find((u) => u.role === "admin" && (u.isActive ?? u.is_active) && (u.portal == null || u.portal === "c3"));
+    for (const lead of due) {
+      const assignedNames = (() => {
+        try { return (JSON.parse(lead.assigned_user_ids || "[]") as number[]).map((id) => String((storage.getUserById(id) as any)?.name ?? id)).join(", "); } catch { return ""; }
+      })();
+      const landed = lead.landed_at ? new Date(lead.landed_at).toLocaleTimeString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ, hour: "numeric", minute: "2-digit" }) : "just now";
+      const result = publisher
+        ? createShotgunLeadFromFields(orgId, Number(publisher.id), publisher, {
+            leadName: lead.borrower_name || "New lead",
+            phone: lead.phone || "",
+            email: lead.email || "",
+            stateCode: normalizeStateCode(lead.state || ""),
+            source: `New lead — ${lead.lo_name || lead.lo_email}`,
+            managerNotes: `Landed for ${lead.lo_name || lead.lo_email} at ${landed} and was not claimed within 3 minutes${assignedNames ? ` (assigned: ${assignedNames})` : ""}. Call now — it is fresh.`,
+          }, "lo-feed")
+        : { status: 500, body: { error: "No active admin to publish under." } };
+      const ok = result.status === 200;
+      storageExtra.markLoNewLeadEscalated(Number(lead.id), ok ? Number(result.body?.leadId) || null : null, ok ? null : String(result.body?.error ?? `HTTP ${result.status}`));
+      console.log(`[lo-new-lead] ${lead.lo_name}: ${lead.external_id} ${ok ? `→ Shotgun lead #${result.body?.leadId}` : `NOT escalated: ${result.body?.error}`}`);
+    }
+  }
+
+  // The watcher runs on its own clock, so a lead is noticed, announced and —
+  // if nobody claims it — escalated even when every C3 tab on the floor is a
+  // background tab whose poll the browser has throttled. Asks about today's
+  // assigned LOs plus whatever the floor has been polling, in the same shape
+  // the popup asks for, so it shares that cache entry rather than adding load.
+  const loLeadWatcher = setInterval(async () => {
+    try {
+      const orgs = (storageExtra.getRawSqlite().prepare(`SELECT DISTINCT org_id FROM users WHERE is_active=1`).all() as any[])
+        .map((r) => Number(r.org_id)).filter(Number.isFinite);
+      for (const orgId of orgs) {
+        await runWithOrg({ orgId, superAdmin: false }, async () => {
+          const { byLo } = todaysAssignmentsByLo(orgId);
+          const los = (storage.getLoanOfficers() as any[]).filter((lo) => byLo.has(Number(lo.id)));
+          const emails = Array.from(new Set([...loEmailsFor(los), ...newestLeadsFanInEmails()]));
+          if (emails.length) await newestLeadsForLos(emails, { hours: LO_NEW_LEAD_POLL_HOURS, per: LO_NEW_LEAD_POLL_PER }, newestLeadsDeps(orgId));
+          escalateUnclaimedLoLeads(orgId);
+        });
+      }
+    } catch (e: any) { console.error("[lo-new-lead] watcher failed:", e?.message ?? e); }
+  }, 5_000);
+  loLeadWatcher.unref?.();
+
+  // "Got it — I'm calling." Any active CLR may claim; the window then closes
+  // for everyone and the lead never goes to Shotgun.
+  app.post("/api/lo-new-leads/claim", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const externalId = String(req.body?.externalId ?? "").trim().slice(0, 64);
+    if (!externalId) return res.status(400).json({ error: "externalId required" });
+    const me = storage.getUserById(userId) as any;
+    if (!me || isPortalAccount(me)) return res.status(403).json({ error: "Only C3 staff can claim a lead." });
+    const row = storageExtra.claimLoNewLead(orgId, externalId, userId);
+    if (!row) {
+      const state = storageExtra.loNewLeadStates(orgId, [externalId]).get(externalId);
+      const why = state?.status === "claimed" ? `${state.claimed_by_name ?? "Someone"} already claimed it.`
+        : state?.status === "escalated" ? "It already went to Shotgun."
+        : "This lead is not open to claim.";
+      return res.status(409).json({ error: why });
+    }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "lo_new_lead", entityId: Number(row.id),
+      entityLabel: `${row.borrower_name ?? "New lead"} (${row.lo_name ?? row.lo_email})`, details: JSON.stringify({ externalId, action: "claim" }) });
+    res.json({ ok: true, externalId, claimedAt: row.claimed_at });
+  });
+
   app.get("/api/lo-newest-leads", requireAuth, async (req: any, res) => {
     const userId = Number(req.session_user?.userId) || 0;
     const hours = Math.min(Math.max(parseInt(String(req.query.hours ?? "72"), 10) || 72, 1), 24 * 14);
@@ -19295,10 +19438,17 @@ ${note}` : daysLine;
       if (email) loByEmail.set(email, { id: Number(lo.id), name: String(lo.fullName ?? lo.full_name ?? "") });
     }
 
-    const result = await newestLeadsForLos(emails, { hours, per }, {
-      token: leadvaultReportingToken,
-      baseUrl: () => process.env.LEADVAULT_BASE_URL || "https://www.leadvault.cloud",
-    });
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const result = await newestLeadsForLos(emails, { hours, per }, newestLeadsDeps(orgId));
+    // What each lead's claim window looks like right now, so the card can show
+    // the countdown, a colleague's claim, or that it already went to Shotgun.
+    const claimStates = storageExtra.loNewLeadStates(orgId, result.los.flatMap((row) => row.leads.map((l) => String(l.externalId))));
+    const claimFor = (externalId: string) => {
+      const s = claimStates.get(externalId);
+      if (!s) return null;
+      return { status: String(s.status), escalateAt: s.status === "new" ? loNewLeadEscalateAt(String(s.first_seen_at)) : null,
+        claimedBy: s.claimed_by_name ?? null, shotgunLeadId: s.shotgun_lead_id ?? null };
+    };
 
     res.json({
       ...result,
@@ -19308,7 +19458,11 @@ ${note}` : daysLine;
       // usually that nobody filled in their Bonzo address in C3.
       askedFor: emails.length,
       withoutBonzoLogin: chosen.length - emails.length,
-      los: result.los.map((row) => ({ ...row, lo: loByEmail.get(row.email) ?? null })),
+      los: result.los.map((row) => ({
+        ...row,
+        lo: loByEmail.get(row.email) ?? null,
+        leads: row.leads.map((l) => ({ ...l, claim: claimFor(String(l.externalId)) })),
+      })),
     });
   });
 

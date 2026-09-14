@@ -50,6 +50,11 @@ export function ShotgunOfferAlert() {
     queryKey: ["/api/shotgun"],
     enabled: eligible && !blocked,
     refetchInterval: (query) => (query.state.data as ShotgunPayload | undefined)?.isReady ? 2_000 : 15_000,
+    // An offer lasts twenty seconds and the CLR is usually in Bonzo, not on
+    // this tab. Polling only while C3 was in front left the chime silent
+    // until they happened to come back; the push covered it, this makes the
+    // card and chime keep up too.
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
@@ -106,7 +111,7 @@ export function ShotgunOfferAlert() {
       <p className="mt-1 text-xs text-orange-100">Confirm before C3 sends it to the next ready CLR.</p>
       <div className="my-3 max-h-40 space-y-1 overflow-y-auto rounded-xl bg-white/10 p-3 text-sm">
         <p className="break-words text-lg font-bold">{offered.leadName}</p>
-        {offered.phone && <p className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" />{offered.phone}</p>}
+        {offered.phone && <p className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" /><a href={`tel:${String(offered.phone).replace(/[^\d+]/g, "")}`} className="underline decoration-orange-300 underline-offset-2 hover:text-orange-200" data-testid="shotgun-offer-call">{offered.phone}</a></p>}
         {offered.email && <p className="flex items-center gap-2 break-all"><Mail className="h-4 w-4 shrink-0" />{offered.email}</p>}
         {offered.stateCode && <p className="flex items-center gap-2"><MapPin className="h-4 w-4 shrink-0" />{offered.stateCode}</p>}
         {offered.source && <p className="break-words text-orange-100">Source: {offered.source}</p>}

@@ -22,6 +22,9 @@ export function ShotgunPresencePrompt() {
     queryKey: ["/api/shotgun"],
     enabled: eligible,
     refetchInterval: (query) => ((query.state.data as ShotgunPayload | undefined)?.holding ? 3_000 : 15_000),
+    // Keep asking while C3 is a background tab — that is where a CLR holding
+    // a lead usually is — so the chime can fire before the window closes.
+    refetchIntervalInBackground: true,
     staleTime: 0,
   });
   const [now, setNow] = useState(Date.now());
