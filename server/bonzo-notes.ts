@@ -104,6 +104,11 @@ export function transferNoteMarker(outcomeId: number): string {
   return `C3 transfer #${outcomeId}`;
 }
 
+/** Same job for an appointment's write-up note. Distinct text: one outcome is never both. */
+export function appointmentNoteMarker(outcomeId: number): string {
+  return `C3 appointment #${outcomeId}`;
+}
+
 /** Normalized plain text of a note — used to spot a CLR's manual paste. */
 export function notePlainText(html: string): string {
   return String(html ?? "")

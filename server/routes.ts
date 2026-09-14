@@ -81,7 +81,7 @@ import { foldLapNoteBatch, type LapNoteBatchEntry } from "./lap-note-batch";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
 import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
-import { notesToBonzoHtml, transferNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
+import { notesToBonzoHtml, transferNoteMarker, appointmentNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate } from "./clr-workday-rate";
@@ -25165,12 +25165,28 @@ ${note}` : daysLine;
       if (t.ok) taskId = t.id;
       else console.error(`[bonzo-appt] outcome=${outcomeId}: task create failed: ${t.error}`);
     }
-    const note = await addProspectNote(
-      prospect.id,
-      `📅 Appointment scheduled for ${whenLabel} — set in C3 by ${clr?.name ?? "a CLR"} (LO: ${lo?.fullName ?? "unassigned"}).` +
-      (o.notes ? `\n${o.notes}` : "") + mismatch,
-    );
-    if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: note failed: ${note.error}`);
+    // The WHOLE write-up, not just the free-text line. This used to post
+    // o.notes alone, so the capture block — credit, address, home value,
+    // balance and rate, cash needed, income — never reached the LO: Mike
+    // Kelly's 2026-09-14 appointment arrived in Bonzo as "asked about the
+    // rate on the HELOC" and nothing else, while C3 held fifteen fields. Same
+    // rule the transfer note already follows: both halves, real HTML (plain
+    // newlines collapse in Bonzo), and a marker so a re-sync never posts it
+    // twice.
+    const halves = [String(o.conversation_notes ?? "").trim(), String(o.notes ?? "").trim()].filter(Boolean);
+    const marker = appointmentNoteMarker(outcomeId);
+    let alreadyNoted = false;
+    try { alreadyNoted = (await getProspectNotes(prospect.id)).some((n) => n.content.includes(marker)); } catch {}
+    if (!alreadyNoted) {
+      const note = await addProspectNote(
+        prospect.id,
+        notesToBonzoHtml([...halves, mismatch.trim()].filter(Boolean).join("\n\n"), {
+          title: `📅 Appointment scheduled for ${whenLabel} — set in C3 by ${clr?.name ?? "a CLR"} (LO: ${lo?.fullName ?? "unassigned"})`,
+          subtitle: `Logged in C3 · ${o.date ?? todayIso()} · ${marker}`,
+        }),
+      );
+      if (!note.ok) console.error(`[bonzo-appt] outcome=${outcomeId}: note failed: ${note.error}`);
+    }
     db.prepare(`UPDATE lead_outcomes SET bonzo_prospect_id=?, bonzo_task_id=?, bonzo_synced_at=? WHERE id=?`)
       .run(prospect.id, taskId, new Date().toISOString(), outcomeId);
     console.log(`[bonzo-appt] outcome=${outcomeId} → prospect=${prospect.id} task=${taskId ?? "none"} assignee=${prospect.assignedUserName ?? "?"}`);

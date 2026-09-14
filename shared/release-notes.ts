@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.98.0",
+    headline: "An appointment's full write-up now reaches Bonzo.",
+    items: [
+      { text: "When you log an appointment, everything you gathered on the lead card — credit, address, home value, balance and rate, cash needed, income — now lands on the borrower's Bonzo record as a note, laid out one field per line. Before, only the short Notes box went across; the transfer note already did this, the appointment note did not.", audience: "everyone" },
+      { text: "Found on Mike Kelly's 14 September appointment, which reached Bonzo as \"asked about the rate on the HELOC\" and nothing else. His record has been completed by hand.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.97.0",
     headline: "Everyone can connect the Chrome extension now.",
     items: [
