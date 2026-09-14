@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  SHOTGUN_PRESENCE_AFTER_MS, SHOTGUN_PRESENCE_RESPOND_MS, presenceReleaseCutoff, presenceState,
+  SHOTGUN_PRESENCE_AFTER_MS, SHOTGUN_PRESENCE_RELEASE_AFTER_MS, SHOTGUN_PRESENCE_RESPOND_MS, presenceReleaseCutoff, presenceState,
 } from "../shared/shotgun-presence";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,33 +21,45 @@ const routes = read("server/routes.ts");
 const CLAIMED = "2026-09-14T15:00:00.000Z";
 const t = (offsetMs: number) => Date.parse(CLAIMED) + offsetMs;
 
-test("nothing is asked for the first three minutes", () => {
-  assert.equal(SHOTGUN_PRESENCE_AFTER_MS, 3 * 60_000);
+// "A shotgun/new lead that is accepted should not be dismissed without a 30
+// second warning that it's going to be dismissed after 3 minutes." — Ethan,
+// 14 Sep 2026. Release at 3:00; the warning is on screen from 2:30.
+test("nothing is asked for the first two and a half minutes", () => {
+  assert.equal(SHOTGUN_PRESENCE_RELEASE_AFTER_MS, 3 * 60_000);
+  assert.equal(SHOTGUN_PRESENCE_RESPOND_MS, 30_000);
+  assert.equal(SHOTGUN_PRESENCE_AFTER_MS, 2.5 * 60_000);
   assert.deepEqual(presenceState(CLAIMED, null, t(0)), { kind: "none" });
   assert.deepEqual(presenceState(CLAIMED, null, t(SHOTGUN_PRESENCE_AFTER_MS - 1)), { kind: "none" });
 });
 
-test("at three minutes the prompt opens, with a one-minute window that counts down", () => {
-  assert.equal(SHOTGUN_PRESENCE_RESPOND_MS, 60_000);
+test("thirty seconds before the three-minute mark the warning opens and counts down to it", () => {
   const s = presenceState(CLAIMED, null, t(SHOTGUN_PRESENCE_AFTER_MS));
   assert.equal(s.kind, "prompt");
   if (s.kind !== "prompt") return;
-  assert.equal(s.deadlineAt, new Date(t(SHOTGUN_PRESENCE_AFTER_MS + SHOTGUN_PRESENCE_RESPOND_MS)).toISOString());
-  assert.equal(Math.round(s.secondsLeft), 60);
-  const later = presenceState(CLAIMED, null, t(SHOTGUN_PRESENCE_AFTER_MS + 45_000));
-  assert.equal(later.kind === "prompt" && Math.round(later.secondsLeft), 15);
+  assert.equal(s.deadlineAt, "2026-09-14T15:03:00.000Z", "the release is exactly three minutes after the claim");
+  assert.equal(Math.round(s.secondsLeft), 30);
+  const later = presenceState(CLAIMED, null, t(SHOTGUN_PRESENCE_AFTER_MS + 20_000));
+  assert.equal(later.kind === "prompt" && Math.round(later.secondsLeft), 10);
 });
 
-test("no answer inside the window means release; an answer means never asked again", () => {
-  assert.deepEqual(presenceState(CLAIMED, null, t(SHOTGUN_PRESENCE_AFTER_MS + SHOTGUN_PRESENCE_RESPOND_MS)), { kind: "expired" });
-  assert.deepEqual(presenceState(CLAIMED, "2026-09-14T15:03:20.000Z", t(60 * 60_000)), { kind: "none" });
+test("no answer by three minutes means release; an answer means never asked again", () => {
+  assert.deepEqual(presenceState(CLAIMED, null, t(3 * 60_000)), { kind: "expired" });
+  assert.deepEqual(presenceState(CLAIMED, "2026-09-14T15:02:50.000Z", t(60 * 60_000)), { kind: "none" });
   // Nothing to judge without a claim time.
   assert.deepEqual(presenceState(null, null, t(60 * 60_000)), { kind: "none" });
 });
 
-test("the release cutoff is exactly four minutes before now", () => {
+test("the release cutoff is exactly three minutes before now", () => {
   const now = t(10 * 60_000);
-  assert.equal(presenceReleaseCutoff(now), new Date(now - 4 * 60_000).toISOString());
+  assert.equal(presenceReleaseCutoff(now), new Date(now - 3 * 60_000).toISOString());
+});
+
+test("the warning says how many seconds are left and the new-lead card shouts in its last thirty", () => {
+  const prompt = read("client/src/components/shotgun-presence-prompt.tsx");
+  assert.match(prompt, /goes back to the rotation in <strong>\{Math\.ceil\(state\.secondsLeft\)\} seconds<\/strong>/);
+  const card = read("client/src/components/assigned-lo-lead-alert.tsx");
+  assert.match(card, /left > 0 && left <= 30 \? <>Going to Shotgun in/);
+  assert.match(card, /role=\{left > 0 && left <= 30 \? "alert" : undefined\}/);
 });
 
 test("the rotation engine releases an unanswered claim back to the queue, atomically", () => {

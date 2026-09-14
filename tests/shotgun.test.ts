@@ -92,8 +92,23 @@ test("Shotgun transfer completion creates one real C3 transfer outcome atomicall
   assert.match(resultCard, /shotgun-transfer-lo/);
   assert.match(resultCard, /Direct/);
   assert.match(resultCard, /Appointment/);
-  assert.match(resultCard, /\/api\/settings\/bulk-texter/);
-  assert.match(resultCard, /\/api\/settings\/helper/);
+  // "Add the ability to input information for an appt or a transfer like all
+  // of it" (Ethan, 14 Sep 2026): the result card opens the SAME form as the
+  // Outcomes page and sends every field; the server makes the outcome with
+  // the same code as POST /api/outcomes, after taking the lead out of
+  // "claimed" so a double click cannot make two.
+  assert.match(resultCard, /import\("@\/pages\/outcomes"\)\.then\(\(m\) => \(\{ default: m\.OutcomeFormDialog \}\)\)/);
+  assert.match(resultCard, /onSubmit=\{\(values\) => save\.mutate\(\{ outcome: values \}\)\}/);
+  assert.match(resultCard, /outcome: outcome \? shotgunOutcomeBody\(outcome\) : undefined/);
+  assert.match(resultCard, /followUpDate: values\.followUpDate \|\| values\.appointmentDatetime \|\| ""/);
+  assert.match(resultCard, /borrowerName: lead\.leadName,\s*\n\s*phoneNumber: lead\.phone,/);
+  assert.match(result, /const fullOutcome = req\.body\?\.outcome && typeof req\.body\.outcome === "object"/);
+  assert.match(result, /if \(kind !== "transfer" && kind !== "appointment"\)/);
+  assert.match(result, /status='done',done_at=\?,updated_at=\?\s*\n\s*WHERE id=\? AND org_id=\? AND current_assignee_id=\? AND status='claimed'/, "the lead leaves claimed before the outcome exists");
+  assert.match(result, /createOutcomeFromBody\(req\.session_user, \{\s*\n\s*\.\.\.fullOutcome,/);
+  assert.match(result, /shotgunSenderId: shotgunSenderToStamp\(lead\.created_by_user_id, userId, publisherIsOnClrRoster\(lead\.created_by_user_id\)\)/);
+  assert.match(result, /SET status='claimed',done_at=NULL,updated_at=\? WHERE id=\? AND org_id=\? AND current_assignee_id=\? AND status='done' AND transfer_outcome_id IS NULL/, "a refused outcome hands the lead back");
+  assert.match(result, /shotgunResultInFlight\.has\(leadId\)/);
   assert.match(result, /Mark the lead as called before logging a transfer/);
   assert.match(result, /Select the loan officer who received the transfer/);
   assert.match(result, /storage\.getLoanOfficerById\(loId\)/, "the selected LO must be scoped to the signed-in organization");

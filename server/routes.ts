@@ -9151,6 +9151,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     res.json({ ok: true });
   });
 
+  // Leads whose full write-up is being saved right now. The full-form path
+  // below creates the outcome outside the lead's own write, so a double click
+  // must be refused here rather than by the row lock.
+  const shotgunResultInFlight = new Set<number>();
   app.patch("/api/shotgun/:id/result", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
@@ -9171,6 +9175,64 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const helperAssisted = transfer ? triState(req.body?.helperAssisted) : null;
     if (done && !called && !texted) return res.status(400).json({ error: "Select called or sent a text before marking this lead done." });
     if (done && notes.length < 2) return res.status(400).json({ error: "Add notes explaining what happened before marking this lead done." });
+    const tellPublisherDone = () => {
+      const creatorId = Number(lead.created_by_user_id);
+      if (!creatorId || creatorId === userId) return;
+      storage.createNotification({ userId: creatorId, type: "shotgun_done", title: `Shotgun lead completed: ${lead.lead_name}`,
+        message: `${me?.name ?? "A CLR"} marked the lead done. Open Shotgun to review the result.`, isRead: false } as any);
+      sendPushToUser(creatorId, { title: "Shotgun lead completed", body: `${lead.lead_name} — ${me?.name ?? "CLR"}`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    };
+
+    // The full form. "Add the ability to input information for an appt or a
+    // transfer like all of it" — Ethan, 14 Sep 2026. The result dialog can
+    // now send every field the Outcomes page takes, and the outcome is made
+    // by the same code as POST /api/outcomes, so the write-up, the Bonzo
+    // sync, the appointment task and the transfer credit are exactly what
+    // logging it from the Outcomes page would have produced — plus the
+    // Shotgun sender stamp. The lead is taken out of "claimed" FIRST, so a
+    // second request cannot make a second outcome; if the outcome is then
+    // refused, the lead goes back to claimed with the CLR's typing intact.
+    const fullOutcome = req.body?.outcome && typeof req.body.outcome === "object" ? req.body.outcome : null;
+    if (fullOutcome) {
+      const kind = String(fullOutcome.outcomeType ?? "");
+      if (!done) return res.status(400).json({ error: "A transfer or appointment can only be logged when the Shotgun lead is completed." });
+      if (kind !== "transfer" && kind !== "appointment") return res.status(400).json({ error: "Choose Transfer or Appointment for a Shotgun lead." });
+      if (kind === "transfer" && !called) return res.status(400).json({ error: "Mark the lead as called before logging a transfer." });
+      if (shotgunResultInFlight.has(leadId)) return res.status(409).json({ error: "This result is already being saved." });
+      shotgunResultInFlight.add(leadId);
+      const now = new Date().toISOString();
+      try {
+        const taken = db.prepare(`UPDATE shotgun_leads SET called=?,texted=?,result_notes=?,status='done',done_at=?,updated_at=?
+          WHERE id=? AND org_id=? AND current_assignee_id=? AND status='claimed'`)
+          .run(called ? 1 : 0, texted ? 1 : 0, notes, now, now, leadId, orgId, userId);
+        if (!taken.changes) return res.status(409).json({ error: "This lead is no longer assigned to you." });
+        const created = createOutcomeFromBody(req.session_user, {
+          ...fullOutcome,
+          date: businessTodayForRequest(req, db),
+          assistantId: userId,
+          borrowerName: String(fullOutcome.borrowerName ?? "").trim() || String(lead.lead_name ?? ""),
+          phoneNumber: String(fullOutcome.phoneNumber ?? "").trim() || String(lead.phone ?? "").trim() || null,
+          leadSource: String(fullOutcome.leadSource ?? "").trim() || String(lead.source ?? "").trim() || "Shotgun",
+          notes: String(fullOutcome.notes ?? "").trim() || notes,
+          shotgunSenderId: shotgunSenderToStamp(lead.created_by_user_id, userId, publisherIsOnClrRoster(lead.created_by_user_id)),
+        });
+        if (created.status !== 200) {
+          db.prepare(`UPDATE shotgun_leads SET status='claimed',done_at=NULL,updated_at=? WHERE id=? AND org_id=? AND current_assignee_id=? AND status='done' AND transfer_outcome_id IS NULL`)
+            .run(now, leadId, orgId, userId);
+          return res.status(created.status).json(created.body);
+        }
+        const full = created.body;
+        db.prepare(`UPDATE shotgun_leads SET transfer_outcome_id=?,updated_at=? WHERE id=? AND org_id=?`).run(full.id, now, leadId, orgId);
+        tellPublisherDone();
+        audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+          entityId: leadId, entityLabel: String(lead.lead_name), details: JSON.stringify({ called, texted, done: true, transfer: kind === "transfer", outcomeType: kind, transferOutcomeId: full.id, fullForm: true }) });
+        return res.json({ ok: true, done: true, transferOutcomeId: full.id, outcomeType: kind,
+          celebrateTransfer: !!full.celebrateTransfer, transferCelebration: full.transferCelebration ?? null });
+      } finally {
+        shotgunResultInFlight.delete(leadId);
+      }
+    }
+
     if (transfer && !done) return res.status(400).json({ error: "A transfer can only be logged when the Shotgun lead is completed." });
     if (transfer && !called) return res.status(400).json({ error: "Mark the lead as called before logging a transfer." });
     if (transfer && (!Number.isInteger(loId) || loId <= 0)) return res.status(400).json({ error: "Select the loan officer who received the transfer." });
@@ -9225,14 +9287,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(400).json({ error: error?.message ?? "The Shotgun result could not be saved." });
     }
     if (!changed) return res.status(409).json({ error: "This lead is no longer assigned to you." });
-    if (done) {
-      const creatorId = Number(lead.created_by_user_id);
-      if (creatorId && creatorId !== userId) {
-        storage.createNotification({ userId: creatorId, type: "shotgun_done", title: `Shotgun lead completed: ${lead.lead_name}`,
-          message: `${me?.name ?? "A CLR"} marked the lead done. Open Shotgun to review the result.`, isRead: false } as any);
-        sendPushToUser(creatorId, { title: "Shotgun lead completed", body: `${lead.lead_name} — ${me?.name ?? "CLR"}`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
-      }
-    }
+    if (done) tellPublisherDone();
     if (outcome) {
       audit({ userId, userName: me?.name ?? "CLR", action: "create", entityType: "outcome", entityId: outcome.id,
         entityLabel: outcome.borrowerName ?? transferLo?.fullName ?? null,

@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.108.0",
+    headline: "Log the whole transfer or appointment from the Shotgun result — and a 30-second warning before a claimed lead goes back.",
+    items: [
+      { text: "Shotgun result: choosing \"Yes — log a transfer or appointment\" now opens the full Outcomes form right there — loan officer, Direct or Appointment, lead source, the qualification checklist, borrower details, appointment date and time, Bulk Texter and helper questions, and the Bonzo write-up. Saving it creates the real transfer or appointment and finishes the lead in one go, with the borrower's name and phone already filled in.", audience: "everyone" },
+      { text: "A claimed Shotgun lead is never released without warning. Thirty seconds before the three-minute mark the \"Still on this lead?\" card appears with the seconds counting down; \"I'm here — keep it\" keeps it. No answer by three minutes and it goes back to the rotation, as before.", audience: "everyone" },
+      { text: "The new-lead card for your assigned loan officer turns into a warning in its last thirty seconds: \"Going to Shotgun in 30s — claim it now to keep it.\"", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.107.0",
     headline: "Hawaii is back — Chris Redoble and Nathan Coutino route there again.",
     items: [

@@ -51,12 +51,12 @@ export function ShotgunPresencePrompt() {
   }, [prompting, held?.id]);
   if (!held || state.kind !== "prompt") return null;
   return (
-    <section aria-label="Still working this lead?" data-testid="shotgun-presence-prompt" className="pointer-events-auto relative rounded-2xl border-2 border-sky-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">
+    <section aria-label="Still working this lead?" data-testid="shotgun-presence-prompt" className="pointer-events-auto relative rounded-2xl border-2 border-orange-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 role="alert" className="flex items-center gap-2 text-base font-black text-sky-300"><Hand className="h-5 w-5" />Still on this lead?</h2>
-        <span aria-label="Time remaining" className="flex items-center gap-1 text-lg font-bold tabular-nums"><Clock3 className="h-4 w-4" />{Math.ceil(state.secondsLeft)}s</span>
+        <h2 role="alert" className="flex items-center gap-2 text-base font-black text-orange-300"><Hand className="h-5 w-5" />Still on this lead?</h2>
+        <span aria-label="Time remaining" className="flex items-center gap-1 text-2xl font-black tabular-nums text-orange-300"><Clock3 className="h-5 w-5" />{Math.ceil(state.secondsLeft)}s</span>
       </div>
-      <p className="mt-1 text-xs text-sky-100">You claimed <strong className="break-words">{held.leadName}</strong> three minutes ago. If nobody answers, it goes back to the rotation for the next ready CLR.</p>
+      <p className="mt-1 text-xs text-orange-100"><strong className="break-words">{held.leadName}</strong> goes back to the rotation in <strong>{Math.ceil(state.secondsLeft)} seconds</strong> — three minutes after you claimed it — unless you keep it. Nobody else is offered it until then.</p>
       {stillHere.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(stillHere.error as any)?.message || "Could not confirm — the lead may already have moved."}</p>}
       <Button className="mt-3 w-full bg-white font-bold text-slate-950 hover:bg-sky-100" disabled={stillHere.isPending} onClick={() => stillHere.mutate(held.id)} data-testid="shotgun-still-here">
         {stillHere.isPending ? "…" : "I'M HERE — KEEP IT"}

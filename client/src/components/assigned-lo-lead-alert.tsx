@@ -100,9 +100,12 @@ export function AssignedLoLeadAlert() {
           <Phone className="h-5 w-5" /> Call {lead.phone}
         </a>
       )}
-      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="assigned-lo-lead-countdown">
+      {/* The last thirty seconds are a warning, not a countdown: louder, so
+          nobody loses a lead they meant to claim without being told. */}
+      <p className={left > 0 && left <= 30 ? "mt-2 flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-50 px-2 py-1.5 text-sm font-bold text-orange-800 dark:bg-orange-950/40 dark:text-orange-200" : "mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"} data-testid="assigned-lo-lead-countdown" role={left > 0 && left <= 30 ? "alert" : undefined}>
         <Zap className="h-3.5 w-3.5 text-orange-500" />
-        {left > 0 ? <>Goes to Shotgun in <span className="font-bold tabular-nums text-foreground">{mm}:{ss}</span> unless somebody claims it</> : "Going to Shotgun now"}
+        {left > 0 && left <= 30 ? <>Going to Shotgun in <span className="tabular-nums">{Math.ceil(left)}s</span> — claim it now to keep it</>
+          : left > 0 ? <>Goes to Shotgun in <span className="font-bold tabular-nums text-foreground">{mm}:{ss}</span> unless somebody claims it</> : "Going to Shotgun now"}
       </p>
       {claim.isError && <p className="mt-2 text-sm text-red-600" role="alert">{(claim.error as any)?.message || "Could not claim it — it may already be taken."}</p>}
       <div className="mt-3 flex items-center justify-between gap-2">
