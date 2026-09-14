@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.106.0",
+    headline: "Completing an appointment as a transfer no longer wipes the form mid-way.",
+    items: [
+      { text: "On Upcoming Appointments, \"Complete as transfer\" opens the full transfer form prefilled from the appointment. Anything you typed into it could vanish part-way through — the page quietly refreshed itself (switching back from Bonzo was enough) and the form reset to the prefill. It now keeps what you have typed until you save or close it.", audience: "everyone" },
+      { text: "The same guard is on the Edit Appointment and Edit Outcome dialogs: a list refresh behind an open dialog no longer re-seeds it.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.105.0",
     headline: "Log a transfer straight from the Bonzo page.",
     items: [

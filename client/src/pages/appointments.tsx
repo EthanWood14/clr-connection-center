@@ -177,7 +177,10 @@ function EditDialog({
       });
       setBonzoLogged(false);
     }
-  }, [open, outcome, form]);
+    // The row's id, not the row: a refetched list must not re-seed a dialog
+    // somebody is typing in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, outcome?.id]);
 
   const allOutcomeTypes = [
     "appointment", "deferral", "transfer", "fell_through",

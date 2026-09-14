@@ -536,6 +536,15 @@ export function OutcomeFormDialog({
     }
   }, [watchedType, form]);
 
+  // Keyed on the CONTENT of the prefill, never its identity. The Appointments
+  // page passes `initialValues={{ ... }}` inline, so the object was new on
+  // every parent render — and the parent re-renders whenever its query
+  // refetches (switching back from Bonzo, a poll, any other mutation). Each
+  // one ran this reset and wiped whatever the CLR had typed into the transfer
+  // mid-attempt: "it magically gets rid of everything and refreshes in the
+  // middle" (14 Sep 2026). Only a genuinely different prefill, or the dialog
+  // opening, may reset the form now.
+  const initialKey = initialValues ? JSON.stringify(initialValues) : "";
   useEffect(() => {
     if (!open) return;
     setConfirmBonzo(false);
@@ -548,7 +557,8 @@ export function OutcomeFormDialog({
     } else if (meId) {
       form.setValue("assistantId", meId, { shouldValidate: false });
     }
-  }, [open, initialValues, meId, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialKey, meId]);
 
   /**
    * Put back whatever was typed before the page went away.
@@ -1285,7 +1295,10 @@ function EditOutcomeDialog({
       });
       setBonzoLogged(false);
     }
-  }, [open, outcome, form]);
+    // The row's id, not the row: a refetched list must not re-seed a dialog
+    // somebody is typing in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, outcome?.id]);
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
