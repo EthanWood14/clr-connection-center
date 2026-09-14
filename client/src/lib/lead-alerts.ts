@@ -58,7 +58,7 @@ export function collectLeadAlerts(feed: LoLeadFeed, previous: string[], now: num
   }
   // A burst is queued oldest first, not overwritten by the next polling result.
   alerts.sort((a, b) => Date.parse(a.landedAt) - Date.parse(b.landedAt));
-  return { seen: [...seen].slice(-LEAD_ALERT_SEEN_LIMIT), alerts };
+  return { seen: Array.from(seen).slice(-LEAD_ALERT_SEEN_LIMIT), alerts };
 }
 
 export function activeLeadAlerts(queue: LoLeadAlert[], feed: LoLeadFeed, now: number) {
