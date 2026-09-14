@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "C3 Shotgun for Bonzo",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "One click: send the Bonzo prospect you're viewing into C3's Shotgun rotation.",
   "icons": {
     "16": "icons/16.png",

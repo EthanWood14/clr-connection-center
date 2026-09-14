@@ -151,7 +151,7 @@ export default function EodReport() {
   const skipAutoSaveRef = useRef(false);
 
   // EOD report + activities
-  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; texts: number; agentName: string | null; syncedAt: string | null; matched: boolean } }>({
+  const { data, isLoading, refetch } = useQuery<{ report: any; activities: any[]; callToolsActivity: { contacts: number; conversations: number; activeSeconds: number }; dialpadActivity?: { calls: number; texts: number; agentName: string | null; syncedAt: string | null; matched: boolean }; bonzoActivity?: { calls: number } }>({
     queryKey: ["/api/eod-reports", selectedDate],
     queryFn: () => fetch(`/api/eod-reports?date=${selectedDate}`).then(r => r.json()),
     // Two minutes, not ten: the server now pulls today's Dialpad count live on
@@ -477,6 +477,8 @@ export default function EodReport() {
   // snapshotted when it was filed, not whatever a later re-sync now says.
   const importedDialpadCalls = Number(report?.dialpad_calls ?? data?.dialpadActivity?.calls ?? 0);
   const importedDialpadTexts = Number(data?.dialpadActivity?.texts ?? 0);
+  // Calls placed inside Bonzo, reported by the Shotgun extension.
+  const importedBonzoCalls = Number(data?.bonzoActivity?.calls ?? 0);
   const dialpadAgentName = data?.dialpadActivity?.agentName ?? null;
   const dialpadMatched = !!data?.dialpadActivity?.matched || Number(report?.dialpad_calls ?? 0) > 0;
 
@@ -827,6 +829,11 @@ export default function EodReport() {
                       ? <>Imported automatically{dialpadAgentName ? <> as "{dialpadAgentName}"</> : null}</>
                       : "Not linked to a Dialpad agent yet — ask a manager to map you"}
                   </p>
+                  {importedBonzoCalls > 0 && (
+                    <p className="text-[11px] text-muted-foreground" data-testid="bonzo-calls-line">
+                      + {importedBonzoCalls} placed inside Bonzo (counted from the extension)
+                    </p>
+                  )}
                 </div>
                 <div className="rounded-lg border bg-fuchsia-50/60 dark:bg-fuchsia-950/20 p-3" data-testid="dialpad-texts-tile">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dialpad Texts</p>

@@ -35,7 +35,17 @@ function seeded(): InstanceType<typeof Database> {
     CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, org_id INTEGER);
     CREATE TABLE dialpad_sms_events (id INTEGER PRIMARY KEY, org_id INTEGER, external_event_id TEXT, agent_key TEXT, user_id INTEGER, message_date TEXT);
     CREATE TABLE dialpad_agent_links (id INTEGER PRIMARY KEY, org_id INTEGER, agent_key TEXT, user_id INTEGER);
+    CREATE TABLE bonzo_call_events (id INTEGER PRIMARY KEY, org_id INTEGER, user_id INTEGER, event_id TEXT, prospect_id INTEGER, kind TEXT, path TEXT, method TEXT, counts INTEGER, occurred_at TEXT, business_date TEXT, page_url TEXT, received_at TEXT);
   `);
+  // Calls placed inside Bonzo: a click and the request it fired in the same
+  // minute are ONE call; a candidate (counts = 0) is never a call; a call
+  // before the cutoff is ignored like every other imported figure then.
+  const bonzo = db.prepare(`INSERT INTO bonzo_call_events (org_id, user_id, event_id, prospect_id, kind, path, method, counts, occurred_at, business_date) VALUES (1, 7, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  bonzo.run("e1", 555, "click", "/prospects/555", "CLICK", 1, `${AFTER}T16:04:10.000Z`, AFTER);
+  bonzo.run("e2", 555, "network", "/api/v3/prospects/555/call", "POST", 1, `${AFTER}T16:04:12.000Z`, AFTER);
+  bonzo.run("e3", 556, "network", "/api/v3/calls", "POST", 1, `${AFTER}T16:40:00.000Z`, AFTER);
+  bonzo.run("e4", 557, "network", "/api/v3/prospects/557/phone_numbers", "PATCH", 0, `${AFTER}T17:00:00.000Z`, AFTER);
+  bonzo.run("e5", 558, "network", "/api/v3/calls", "POST", 1, `${BEFORE}T16:00:00.000Z`, BEFORE);
   db.prepare(`INSERT INTO users (id, name, org_id) VALUES (7, 'Seven One', 1)`).run();
   // Typed-in calls on both sides of the cutoff; Dialpad on both sides too.
   db.prepare(`INSERT INTO daily_call_logs (log_date, assistant_id, calls_made, org_id) VALUES (?,?,?,1)`).run(BEFORE, 7, 400);
@@ -68,12 +78,12 @@ test("calls: typed-in before the cutoff, Dialpad from it, summed per person", ()
   const db = seeded();
   const byDay = db.prepare(`SELECT d, SUM(calls) AS calls FROM ${COUNTED_CALLS_SQL} WHERE assistant_id = 7 GROUP BY d ORDER BY d`).all() as any[];
   assert.deepEqual(byDay, [
-    { d: BEFORE, calls: 400 }, // what was typed — Dialpad's 31 that day is NOT added
-    { d: AFTER, calls: 30 },   // 26 + 4 across two agent names; the typed 550 is gone
+    { d: BEFORE, calls: 400 }, // what was typed — Dialpad's 31 and the Bonzo call that day are NOT added
+    { d: AFTER, calls: 32 },   // 26 + 4 Dialpad across two agent names, + 2 Bonzo calls (click+request = 1, plus 1); the typed 550 is gone
   ]);
   // The unmapped stranger's 99 land on nobody.
   const total = db.prepare(`SELECT SUM(calls) AS n FROM ${COUNTED_CALLS_SQL}`).get() as any;
-  assert.equal(total.n, 430);
+  assert.equal(total.n, 432);
 });
 
 test("messages: the EOD's typed number before the cutoff, Dialpad texts from it", () => {

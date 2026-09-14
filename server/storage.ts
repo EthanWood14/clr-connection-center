@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
 import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
+import { BONZO_CALLS_BY_DAY_SQL, classifyBonzoCallEvent, type BonzoCallKind } from "@shared/bonzo-calls";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
@@ -3454,6 +3455,29 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_dialpad_sms_user_date
     ON dialpad_sms_events(org_id, user_id, message_date)`);
 
+  // Calls placed inside Bonzo, reported by the Shotgun extension against the
+  // signed-in CLR. `counts` is decided at insert (shared/bonzo-calls.ts):
+  // 1 for a real call shape or a click on a call control, 0 for a request
+  // kept only so the exact Bonzo shape can be pinned from real traffic.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_call_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    prospect_id INTEGER,
+    kind TEXT NOT NULL,
+    path TEXT NOT NULL,
+    method TEXT NOT NULL,
+    counts INTEGER NOT NULL DEFAULT 0,
+    occurred_at TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    page_url TEXT,
+    received_at TEXT NOT NULL,
+    UNIQUE(org_id, event_id)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_bonzo_calls_user_date
+    ON bonzo_call_events(org_id, user_id, business_date, counts)`);
+
   // Every CallTools historical disposition is an immutable activity event.
   // Outcomes are a subset; keeping activity separate lets dashboards count
   // unique contacts and human conversations without inflating outcomes.
@@ -4656,11 +4680,18 @@ export const COUNTED_CALL_LOG_SQL = `(
       FROM daily_call_logs
      WHERE log_date < '${SELF_REPORTED_CUTOFF}'
     UNION ALL
-    SELECT NULL AS id, stat_date AS log_date, user_id AS assistant_id, COALESCE(SUM(calls), 0) AS calls_made,
-           NULL AS notes, MAX(synced_at) AS updated_at, org_id, 0 AS contacts_reached, 0 AS dnc_hits
-      FROM dialpad_daily_stats
-     WHERE stat_date >= '${SELF_REPORTED_CUTOFF}' AND user_id IS NOT NULL
-     GROUP BY org_id, stat_date, user_id
+    SELECT NULL AS id, d AS log_date, assistant_id, COALESCE(SUM(calls), 0) AS calls_made,
+           NULL AS notes, MAX(at) AS updated_at, org_id, 0 AS contacts_reached, 0 AS dnc_hits
+      FROM (
+        SELECT org_id, user_id AS assistant_id, stat_date AS d, calls, synced_at AS at
+          FROM dialpad_daily_stats
+         WHERE stat_date >= '${SELF_REPORTED_CUTOFF}' AND user_id IS NOT NULL
+        UNION ALL
+        SELECT org_id, assistant_id, d, calls, NULL AS at
+          FROM ${BONZO_CALLS_BY_DAY_SQL}
+         WHERE d >= '${SELF_REPORTED_CUTOFF}'
+      )
+     GROUP BY org_id, d, assistant_id
   )`;
 
 export function countedCallLogRows(from: string, to: string, orgId: number | null): any[] {
@@ -4692,12 +4723,61 @@ export function countedEodRow<T extends Record<string, any>>(r: T, orgByUser?: M
     orgId = Number(u?.org_id ?? currentOrgId() ?? 1) || 1;
     orgByUser?.set(assistantId, orgId);
   }
+  const date = String(r.report_date);
   return {
     ...r,
-    calls_made: Number(r.dialpad_calls ?? 0) || 0,
-    messages_sent: getDialpadTextsFor(orgId, assistantId, String(r.report_date), String(r.report_date)),
+    calls_made: (Number(r.dialpad_calls ?? 0) || 0) + bonzoCallsForUserDay(orgId, assistantId, date),
+    messages_sent: getDialpadTextsFor(orgId, assistantId, date, date),
     self_reported: false,
   };
+}
+
+// ── Calls placed inside Bonzo (Shotgun extension) ─────────────────────────────
+
+export type BonzoCallEventInput = {
+  orgId: number; userId: number; eventId: string; prospectId: number | null;
+  kind: BonzoCallKind; path: string; method: string; occurredAt: string; businessDate: string; pageUrl: string | null;
+};
+
+/** Record a batch from one CLR's extension. Idempotent on event_id; returns what was new. */
+export function insertBonzoCallEvents(rows: BonzoCallEventInput[]): { accepted: number; counted: number; candidates: number } {
+  const now = new Date().toISOString();
+  const stmt = sqlite.prepare(`
+    INSERT OR IGNORE INTO bonzo_call_events
+      (org_id, user_id, event_id, prospect_id, kind, path, method, counts, occurred_at, business_date, page_url, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  let accepted = 0, counted = 0, candidates = 0;
+  const tx = sqlite.transaction(() => {
+    for (const r of rows) {
+      const klass = classifyBonzoCallEvent(r.kind, r.path, r.method);
+      if (!klass) continue;
+      const counts = klass === "call" ? 1 : 0;
+      const res = stmt.run(r.orgId, r.userId, r.eventId, r.prospectId, r.kind, r.path.slice(0, 300), r.method.slice(0, 8),
+        counts, r.occurredAt, r.businessDate, r.pageUrl ? r.pageUrl.slice(0, 300) : null, now);
+      if (res.changes) { accepted++; if (counts) counted++; else candidates++; }
+    }
+  });
+  tx();
+  return { accepted, counted, candidates };
+}
+
+/** Deduped Bonzo calls for one CLR on one business day. */
+export function bonzoCallsForUserDay(orgId: number, userId: number, date: string): number {
+  const row = sqlite.prepare(
+    `SELECT COALESCE(SUM(calls), 0) AS n FROM ${BONZO_CALLS_BY_DAY_SQL} WHERE org_id = ? AND assistant_id = ? AND d = ?`,
+  ).get(orgId, userId, date) as any;
+  return Number(row?.n ?? 0) || 0;
+}
+
+/** What the extensions have seen, by path — for pinning Bonzo's real call shape. */
+export function bonzoCallPathsObserved(orgId: number, sinceDate: string): any[] {
+  return sqlite.prepare(
+    `SELECT kind, method, path, counts, COUNT(*) AS events, COUNT(DISTINCT user_id) AS clrs, MAX(occurred_at) AS last_seen
+       FROM bonzo_call_events
+      WHERE org_id = ? AND business_date >= ?
+      GROUP BY kind, method, path, counts
+      ORDER BY events DESC`,
+  ).all(orgId, sinceDate) as any[];
 }
 
 export function getEodReport(reportDate: string, assistantId: number): any {

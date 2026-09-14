@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.96.0",
+    headline: "Calls you place inside Bonzo are counted — and counted to you.",
+    items: [
+      { text: "The Shotgun extension now notices when you place a call from inside Bonzo and reports it to C3 under your name. Those calls never went through Dialpad, so until today they counted for nobody. They now sit in your calls on the dashboard, the EOD report (\"+ N placed inside Bonzo\" under Dialpad Calls) and everywhere else calls are shown.", audience: "everyone" },
+      { text: "Reload the extension in Chrome to pick this up: it is version 1.3.0, and the Shotgun page has a fresh download. The extension popup shows how many Bonzo calls have been counted for you today.", audience: "everyone" },
+      { text: "Managers: the exact shape Bonzo uses to place a call is being confirmed from real traffic over the first day or two. Every call-shaped request the extensions see is recorded; only the strict ones count. Ask Ethan for the observed list if the numbers look low.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.95.0",
     headline: "The calling script has a Vintage lead option.",
     items: [

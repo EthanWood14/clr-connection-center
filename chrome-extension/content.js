@@ -146,6 +146,53 @@
     }, 60000);
   };
 
+  // ── Calls placed inside Bonzo ─────────────────────────────────────────────
+  // Two signals, both forwarded to C3 against the signed-in CLR: a
+  // call-shaped request the page-hook saw, and a click on one of Bonzo's own
+  // call controls (a tel: link, or a button labelled "Call"). C3 folds a
+  // click and the request it fired in the same minute into one call. Sent
+  // one at a time — a CLR places tens of calls a day, not thousands.
+  const newEventId = () => {
+    try { return crypto.randomUUID(); } catch { return "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+  };
+  const sendCall = (ev) => {
+    try {
+      chrome.runtime.sendMessage({
+        type: "c3shotgun.call",
+        event: {
+          eventId: ev.eventId || newEventId(),
+          kind: ev.kind,
+          method: ev.method,
+          path: ev.path,
+          prospectId: ev.prospectId || (current ? current.id : null),
+          occurredAt: ev.occurredAt || new Date().toISOString(),
+          url: location.href,
+        },
+      }, () => { void chrome.runtime.lastError; });
+    } catch {}
+  };
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const d = event.data;
+    if (!d || d.type !== "C3_BONZO_CALL" || !d.path) return;
+    sendCall(d);
+  });
+  document.addEventListener("click", (ev) => {
+    try {
+      const t = ev.target;
+      const el = t && t.closest && t.closest('a[href^="tel:"], button, [role="button"]');
+      if (!el) return;
+      const href = String(el.getAttribute("href") || "");
+      const label = String(el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").replace(/\s+/g, " ").trim();
+      const isTel = /^tel:/i.test(href);
+      // Exact labels only: a tab or a menu item that merely contains the word
+      // is not a call being placed.
+      const isCall = !isTel && /^(call|call now|dial|start call|place call)$/i.test(label);
+      if (!isTel && !isCall) return;
+      sendCall({ kind: "click", method: "CLICK", path: isTel ? "tel:" : "click:" + label.toLowerCase() });
+    } catch {}
+  }, true);
+
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     const d = event.data;

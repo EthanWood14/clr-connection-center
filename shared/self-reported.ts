@@ -15,6 +15,8 @@
  * Every consumer goes through the two SQL fragments below so the cutoff lives
  * in one place. The date is an ISO business day, compared as text.
  */
+import { BONZO_CALLS_BY_DAY_SQL } from "./bonzo-calls";
+
 export const SELF_REPORTED_CUTOFF = "2026-09-14";
 
 /** True when a business day still uses the numbers people typed in. */
@@ -26,9 +28,10 @@ export function selfReportedCountsOn(isoDate: string): boolean {
  * Calls per CLR per day, as a subquery: hand-logged before the cutoff,
  * Dialpad after it. Columns: org_id, assistant_id, d, calls.
  *
- * Only Dialpad here. CallTools is added by the consumers that already add it
- * (callSyncActivitySummary), the same way they did before, so nothing is
- * counted twice.
+ * Dialpad plus calls placed inside Bonzo (reported by the Shotgun extension,
+ * see shared/bonzo-calls.ts). CallTools is added by the consumers that
+ * already add it (callSyncActivitySummary), the same way they did before, so
+ * nothing is counted twice.
  */
 export const COUNTED_CALLS_SQL = `(
   SELECT org_id, assistant_id, log_date AS d, COALESCE(calls_made, 0) AS calls
@@ -36,6 +39,9 @@ export const COUNTED_CALLS_SQL = `(
   UNION ALL
   SELECT org_id, user_id AS assistant_id, stat_date AS d, COALESCE(calls, 0) AS calls
     FROM dialpad_daily_stats WHERE stat_date >= '${SELF_REPORTED_CUTOFF}' AND user_id IS NOT NULL
+  UNION ALL
+  SELECT org_id, assistant_id, d, calls
+    FROM ${BONZO_CALLS_BY_DAY_SQL} WHERE d >= '${SELF_REPORTED_CUTOFF}'
 )`;
 
 /**

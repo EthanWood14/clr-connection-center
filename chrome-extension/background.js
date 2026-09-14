@@ -40,4 +40,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     c3("/api/shotgun/extension-status").then(sendResponse);
     return true;
   }
+  // A call placed inside Bonzo, against whoever this browser is signed in as.
+  if (msg && msg.type === "c3shotgun.call" && msg.event) {
+    c3("/api/bonzo-calls", {
+      method: "POST",
+      body: JSON.stringify({ events: [msg.event] }),
+    }).then(sendResponse);
+    return true;
+  }
 });

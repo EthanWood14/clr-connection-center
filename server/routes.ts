@@ -5,6 +5,8 @@ import * as storageExtra from "./storage";
 import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, insertAlgorithmSettingsSchema, type InsertAuditLog } from "@shared/schema";
 import { APP_VERSION } from "@shared/version";
 import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL, selfReportedCountsOn } from "@shared/self-reported";
+import { BONZO_CALL_EVENT_BATCH_MAX, BONZO_CALL_KINDS, BONZO_CALL_PATH_SOURCE, BONZO_CALL_CANDIDATE_SOURCE, type BonzoCallKind } from "@shared/bonzo-calls";
+import type { BonzoCallEventInput } from "./storage";
 import { notesBetween } from "@shared/release-notes";
 import {
   questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT,
@@ -5705,7 +5707,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // shotgunExtensionAuth (session cookie OR hashed per-user key). The key
     // exists precisely for requests the strict same-site cookie cannot ride —
     // which requireAuth here would 401 before the route ever ran.
-    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo") return next();
+    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo" || req.path === "/bonzo-calls") return next();
     // LO priority share link — no C3 login. Every request resolves a single
     // revocable, expiring token inside the handler before touching anything,
     // and the link can only move priority tiers.
@@ -8803,9 +8805,55 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // What the extension popup shows: who the cookie/key resolves to and whether
   // they can publish. Doubles as the connectivity probe.
   app.get("/api/shotgun/extension-status", shotgunExtensionAuth, (req: any, res) => {
-    const me = storage.getUserById(Number(req.session_user?.userId) || 0) as any;
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const me = storage.getUserById(userId) as any;
     const canPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
-    res.json({ ok: true, name: String(me?.name ?? ""), canPublish });
+    const today = businessTodayInTz(checkinTzFor(userId));
+    res.json({ ok: true, name: String(me?.name ?? ""), canPublish, bonzoCallsToday: storageExtra.bonzoCallsForUserDay(orgId, userId, today) });
+  });
+
+  // Calls placed inside Bonzo, reported by the extension against the signed-in
+  // CLR. Same auth as the Shotgun button; the guard above lets it through for
+  // the extension key. Counting rules live in shared/bonzo-calls.ts.
+  app.post("/api/bonzo-calls", shotgunExtensionAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const raw = Array.isArray(req.body?.events) ? req.body.events : [];
+    if (!raw.length) return res.status(400).json({ error: "events required" });
+    if (raw.length > BONZO_CALL_EVENT_BATCH_MAX) return res.status(400).json({ error: `At most ${BONZO_CALL_EVENT_BATCH_MAX} events per request.` });
+    const tz = checkinTzFor(userId);
+    const rows: BonzoCallEventInput[] = [];
+    for (const e of raw) {
+      const eventId = String(e?.eventId ?? "").trim().slice(0, 64);
+      const path = String(e?.path ?? "").trim();
+      const method = String(e?.method ?? "GET").trim().toUpperCase();
+      const kind = String(e?.kind ?? "network");
+      const at = new Date(String(e?.occurredAt ?? ""));
+      const prospect = Number(e?.prospectId);
+      if (!eventId || !path || !BONZO_CALL_KINDS.includes(kind as BonzoCallKind) || Number.isNaN(at.getTime())) continue;
+      // A clock the extension got wrong must not file calls into next week.
+      const skewMs = Math.abs(Date.now() - at.getTime());
+      const occurredAt = skewMs > 6 * 3_600_000 ? new Date() : at;
+      rows.push({
+        orgId, userId, eventId, kind: kind as BonzoCallKind, path, method,
+        prospectId: Number.isFinite(prospect) && prospect > 0 ? Math.trunc(prospect) : null,
+        occurredAt: occurredAt.toISOString(),
+        businessDate: businessTodayInTz(tz, occurredAt),
+        pageUrl: typeof e?.url === "string" ? e.url : null,
+      });
+    }
+    const result = storageExtra.insertBonzoCallEvents(rows);
+    res.json({ ok: true, ...result, today: storageExtra.bonzoCallsForUserDay(orgId, userId, businessTodayInTz(tz)) });
+  });
+
+  // Managers: which request shapes the extensions have seen, so the counting
+  // pattern can be pinned to Bonzo's real one rather than a guess.
+  app.get("/api/bonzo-calls/observed", requireAuth, (req: any, res) => {
+    if (!requireManagerOrAdmin(req, res)) return;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const since = addIsoDays(businessTodayInTz(BUSINESS_DAY_DEFAULT_TZ), -7);
+    res.json({ since, countsPattern: BONZO_CALL_PATH_SOURCE, candidatePattern: BONZO_CALL_CANDIDATE_SOURCE, paths: storageExtra.bonzoCallPathsObserved(orgId, since) });
   });
 
   // Mint (or replace) the caller's extension key. Only the SHA-256 lands in
@@ -20557,7 +20605,12 @@ ${note}` : daysLine;
       syncedAt: dialpadHit?.syncedAt ?? null,
       matched: !!dialpadHit,
     };
-    res.json({ report, activities, callToolsActivity, dialpadActivity });
+    // Calls placed inside Bonzo, reported by the extension — the third phone
+    // system, alongside CallTools and Dialpad.
+    const bonzoActivity = {
+      calls: storageExtra.bonzoCallsForUserDay(Number(req.session_user?.orgId ?? 1) || 1, Number(userId), date),
+    };
+    res.json({ report, activities, callToolsActivity, dialpadActivity, bonzoActivity });
   });
 
   app.post("/api/lap/results/:id/merge", requireAuth, (req: any, res) => {

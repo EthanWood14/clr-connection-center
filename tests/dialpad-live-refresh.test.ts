@@ -43,7 +43,7 @@ test("there is one throttled live refresh, and it reuses the cron's own sync und
 });
 
 test("the EOD report read pulls today live before reading the Dialpad row, and leaves other days alone", () => {
-  const get = handler(/app\.get\('\/api\/eod-reports', requireAuth, async \(req: any, res\) => \{/, "res.json({ report, activities, callToolsActivity, dialpadActivity });");
+  const get = handler(/app\.get\('\/api\/eod-reports', requireAuth, async \(req: any, res\) => \{/, "res.json({ report, activities, callToolsActivity, dialpadActivity, bonzoActivity });");
   const refresh = get.indexOf("await refreshDialpadStatsIfStale(");
   const read = get.indexOf("const dialpadHit = storageExtra.getDialpadCallsFor(");
   assert.ok(refresh > 0 && read > refresh, "refresh must run before the read");

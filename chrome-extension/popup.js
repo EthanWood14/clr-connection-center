@@ -12,12 +12,14 @@ function refreshStatus() {
       return;
     }
     if (resp.ok && resp.body) {
+      const calls = Number(resp.body.bonzoCallsToday);
+      const callsNote = Number.isFinite(calls) ? ` · ${calls} Bonzo call${calls === 1 ? "" : "s"} counted today` : "";
       if (resp.body.canPublish) {
         statusEl.className = "ok";
-        statusEl.textContent = `Connected as ${resp.body.name || "you"} — Shotgun publishing enabled ✓`;
+        statusEl.textContent = `Connected as ${resp.body.name || "you"} — Shotgun publishing enabled ✓${callsNote}`;
       } else {
         statusEl.className = "warn";
-        statusEl.textContent = `Connected as ${resp.body.name || "you"}, but you don't have Shotgun publish access. Ask an admin to grant it in C3 Settings.`;
+        statusEl.textContent = `Connected as ${resp.body.name || "you"}, but you don't have Shotgun publish access. Ask an admin to grant it in C3 Settings.${callsNote}`;
       }
     } else if (resp.status === 401) {
       statusEl.className = "warn";

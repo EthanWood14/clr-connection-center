@@ -115,6 +115,59 @@
     } catch {}
   };
 
+  // ── Calls placed inside Bonzo ─────────────────────────────────────────────
+  // Not every call goes through Dialpad — Bonzo places some itself, and those
+  // reach no other system. A call being placed looks like a non-GET request to
+  // a call-shaped path, so report those to the content script, which forwards
+  // them to C3 against the signed-in CLR. That is the point: WHO is calling.
+  //
+  // The two patterns are copied VERBATIM from shared/bonzo-calls.ts and a
+  // test keeps them identical. The strict one is what C3 counts; the wide one
+  // is only recorded, so Bonzo's real shape can be pinned from real traffic
+  // (C3 → Integrations → Bonzo calls) rather than guessed. Nothing here talks
+  // to C3, and no request body ever leaves the page — only the path.
+  const CALL_PATH_SOURCE = "/(?:calls?|dial(?:er)?)(?:/|$)";
+  const CALL_CANDIDATE_SOURCE = "(?:^|[/_-])(?:calls?|dial(?:er)?|voice|phone|twilio|telephony)(?:[/_?.-]|$)";
+  const CALL_CANDIDATE_RE = new RegExp(CALL_CANDIDATE_SOURCE, "i");
+  void CALL_PATH_SOURCE; // decided server-side; kept here so the pair stays in one place
+  const PROSPECT_IN_PATH = /\/prospects?\/(\d+)/i;
+  const pathOf = (url) => {
+    try { return new URL(String(url || ""), location.origin).pathname; } catch { return String(url || "").split("?")[0]; }
+  };
+  const newEventId = () => {
+    try { return crypto.randomUUID(); } catch { return "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+  };
+  // The prospect a call is for, when the request names it. Only a value
+  // under a prospect-named key, only a positive integer — same rule as the
+  // conversation walker above. Bodies are read, never forwarded.
+  const prospectFromBody = (body) => {
+    try {
+      if (!body || typeof body !== "string") return null;
+      const j = JSON.parse(body);
+      const v = j && (j.prospect_id ?? j.prospectId ?? (j.prospect && j.prospect.id));
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch { return null; }
+  };
+  const reportCall = (method, url, body) => {
+    try {
+      const m = String(method || "GET").toUpperCase();
+      if (m === "GET") return;
+      const path = pathOf(url);
+      if (!CALL_CANDIDATE_RE.test(path)) return;
+      const inPath = path.match(PROSPECT_IN_PATH);
+      window.postMessage({
+        type: "C3_BONZO_CALL",
+        eventId: newEventId(),
+        kind: "network",
+        method: m,
+        path,
+        prospectId: inPath ? Number(inPath[1]) : prospectFromBody(body),
+        occurredAt: new Date().toISOString(),
+      }, window.location.origin);
+    } catch {}
+  };
+
   const origFetch = window.fetch;
   window.fetch = function (...args) {
     const p = origFetch.apply(this, args);
@@ -122,6 +175,7 @@
       const req = args[0];
       const url = typeof req === "string" ? req : req && req.url;
       const method = ((args[1] && args[1].method) || (req && req.method) || "GET").toUpperCase();
+      reportCall(method, url, args[1] && args[1].body);
       if (method === "GET" && WATCHED_RE.test(String(url || ""))) {
         // Known trade-off: observing the promise marks a rejected detail-GET
         // as handled, so Bonzo's own unhandledrejection telemetry won't see
@@ -134,9 +188,17 @@
     return p;
   };
 
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) {
+    try { reportCall(this.__c3Method, this.__c3Url, body); } catch {}
+    return origSend.call(this, body);
+  };
+
   const origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     try {
+      this.__c3Method = method;
+      this.__c3Url = url;
       if (String(method).toUpperCase() === "GET" && WATCHED_RE.test(String(url || ""))) {
         this.addEventListener("load", () => {
           let body = null;

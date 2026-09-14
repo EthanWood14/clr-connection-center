@@ -48,3 +48,13 @@ it once:
 - Server side lives in `server/routes.ts` (`/api/shotgun/from-bonzo`,
   `/api/shotgun/extension-status`, `/api/shotgun/extension-key`) and
   `server/shotgun-bonzo.ts` + `server/bonzo.ts` (`getProspectDetail`).
+
+## Calls placed inside Bonzo (v1.3.0)
+
+Not every call goes through Dialpad — Bonzo places some itself. The extension
+reports those to C3 against whoever this browser is signed in as, so C3 knows
+**which CLR is calling on Bonzo**. Two signals: a call-shaped request Bonzo's
+app makes (only the request *path* is sent, never a body), and a click on one
+of Bonzo's own call controls (a `tel:` link or a button labelled "Call"). C3
+folds a click and the request it fires in the same minute into one call. The
+popup shows today's count.
