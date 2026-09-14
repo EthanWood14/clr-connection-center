@@ -154,20 +154,25 @@ test("the W2 flag is in the accessible name, not only the colour", () => {
   assert.doesNotMatch(map, /aria-label=\{`[^`]*loan officer/);
 });
 
-test("nobody may be licensed in Hawaii, Illinois, Massachusetts or New York", () => {
+test("nobody may be licensed in Illinois, Massachusetts or New York — and Hawaii is back", () => {
   // IL, MA and NY were already the only three states with no licensed loan
-  // officer on the roster; Hawaii joined them 1 Sep 2026.
-  assert.deepEqual([...NO_LICENSE_STATES].sort(), ["HI", "IL", "MA", "NY"]);
+  // officer on the roster. Hawaii joined them 1 Sep 2026 and left again 14 Sep
+  // 2026: Chris Redoble and Nathan Coutino are licensed there.
+  assert.deepEqual([...NO_LICENSE_STATES].sort(), ["IL", "MA", "NY"]);
   for (const s of NO_LICENSE_STATES) assert.ok(isNoLicenseState(s));
-  assert.ok(isNoLicenseState("hi"), "matching is case-insensitive");
+  assert.ok(isNoLicenseState("ny"), "matching is case-insensitive");
+  assert.ok(!isNoLicenseState("HI"), "Hawaii is licensable again");
   assert.ok(!isNoLicenseState("CA"));
 });
 
 test("the block applies to everyone, not just the named exclusion", () => {
   // The W2 rule is one person's; this one is the company's.
   const anyone = applyW2OnlyExclusions("Nathan Coutino", ["CA", "HI", "TX"]);
-  assert.deepEqual(anyone.states, ["CA", "TX"]);
-  assert.deepEqual(anyone.removed, ["HI"]);
+  assert.deepEqual(anyone.states, ["CA", "HI", "TX"], "Hawaii survives the sweep");
+  assert.deepEqual(anyone.removed, []);
+  const stillBlocked = applyW2OnlyExclusions("Nathan Coutino", ["CA", "NY"]);
+  assert.deepEqual(stillBlocked.states, ["CA"]);
+  assert.deepEqual(stillBlocked.removed, ["NY"]);
   const alsoAnyone = applyW2OnlyExclusions("", ["NY", "MA", "AZ"]);
   assert.deepEqual(alsoAnyone.states, ["AZ"]);
   assert.deepEqual(alsoAnyone.removed.sort(), ["MA", "NY"]);

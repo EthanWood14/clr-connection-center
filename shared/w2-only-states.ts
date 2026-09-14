@@ -70,14 +70,15 @@ export function isW2OnlyState(abbr: unknown): boolean {
  * stricter one.
  *
  * Chosen from the roster, not invented: Illinois, Massachusetts and New York
- * were already the only three states with zero licensed loan officers, and
- * Hawaii joins them by Ethan's instruction on 1 Sep 2026.
+ * were already the only three states with zero licensed loan officers. Hawaii
+ * was added by Ethan's instruction on 1 Sep 2026 and taken back off on 14 Sep
+ * 2026 ("add the hawaii lo's back") — Christopher Redoble and Nathan Coutino
+ * hold Hawaii licences and route there again.
  *
  * Business purpose loans do not need the licence, which is why the note about
  * them is the one thing these states still say.
  */
 export const NO_LICENSE_STATES = [
-  "HI", // Hawaii
   "IL", // Illinois
   "MA", // Massachusetts
   "NY", // New York

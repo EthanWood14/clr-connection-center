@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.107.0",
+    headline: "Hawaii is back — Chris Redoble and Nathan Coutino route there again.",
+    items: [
+      { text: "Hawaii is no longer a no-licence state. It was made one on 1 September, which took both Hawaii-licensed loan officers out of routing; Christopher Redoble and Nathan Coutino have their Hawaii licence back on their profiles and Hawaii leads go to them again. Illinois, Massachusetts and New York stay no-licence.", audience: "everyone" },
+      { text: "On the licensing map Hawaii is painted by its LO count again rather than flat red.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.106.0",
     headline: "Completing an appointment as a transfer no longer wipes the form mid-way.",
     items: [
