@@ -43,6 +43,7 @@ import {
 import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
 import { formatTransferCount } from "@shared/transfer-credit";
+import type { TvCarAppearance } from "@shared/tv-car";
 
 // ── types (mirror server/tv-board.ts) ───────────────────────────────────────
 type Kind = "transfer" | "appointment" | "rescheduled" | "fell_through" | "missed_appointment";
@@ -53,6 +54,7 @@ interface Person {
   id: number; name: string; transfersToday: number; transfersWeek: number;
   appointmentsToday: number; appointmentsWeek: number; goalTransfersWeekly: number; goalAppointmentsWeekly: number;
   lastTransferAt?: string | null; lastCallAt?: string | null;
+  car?: TvCarAppearance;
 }
 /** A lead that just landed in LeadVault. Transient — see server/tv-leads.ts. */
 interface NewLead { id: number; name: string; source: string | null; at: string }
@@ -719,7 +721,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     if (!data) return;
     cursorRef.current = data.cursor;
     const next: Moment[] = [];
-    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday }));
+    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday, car: p.car }));
     const before = prevStandingsDay.current === data.today ? prevStandings.current : null;
     const moves = planRaceTransition(before, standings);
     const overtakes = detectOvertakes(before, standings, data.today).filter(o=>moves.some(m=>m.id===o.passerId&&m.passedIds.length>0));

@@ -108,6 +108,40 @@ test("driver colors follow identity when scoring changes the order", () => {
   for (const row of before) assert.equal(after.find(next => next.id === row.id)?.color, row.color);
 });
 
+test("saved paint and livery follow the driver without changing credit or race position", () => {
+  const base = [driver(1, 8), driver(2, 7.5), driver(3, 7.5)];
+  const plain = raceGrid(base);
+  const appearance = { bodyColor: "#123abc", accentColor: "#fedcba", livery: "double-stripe" as const };
+  const custom = raceGrid(base.map(row => ({ ...row, car: appearance })));
+  for (let i=0;i<custom.length;i++) {
+    assert.deepEqual(custom[i].car, appearance);
+    assert.equal(custom[i].color, appearance.bodyColor);
+    for (const key of ["id", "name", "rank", "gap", "distance", "lane", "transfersToday"] as const) {
+      assert.equal(custom[i][key], plain[i][key]);
+    }
+  }
+});
+
+test("legacy feeds and invalid appearance data fall back to stable default cars", () => {
+  const [legacy] = raceGrid([driver(1, 2)]);
+  const [invalid] = raceGrid([{ ...driver(1, 2), car: { bodyColor: "url(https://example.invalid)", accentColor: null, livery: "turbo" } as any }]);
+  assert.deepEqual(invalid, legacy);
+  assert.equal(legacy.color, "#49b8ec");
+  assert.equal(legacy.car.livery, "stripe");
+});
+
+test("TV propagates org-scoped cosmetics into both manual and earned race scenes", () => {
+  const routes = readFileSync(new URL("../server/routes.ts", import.meta.url), "utf8");
+  const tv = readFileSync(new URL("../client/src/pages/tv.tsx", import.meta.url), "utf8");
+  const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
+  assert.match(routes, /FROM tv_car_preferences WHERE org_id=\?[\s\S]{0,50}\.all\(orgId\)/);
+  assert.match(routes, /car: normalizeTvCarAppearance\(carPreferences\.get\(Number\(c\.id\)\), Number\(c\.id\)\)/);
+  assert.match(tv, /const standings: RankRow\[\].*car: p\.car/);
+  assert.match(scene, /accent=material\(driver\.car\.accentColor/);
+  assert.match(scene, /driver\.car\.livery==="double-stripe"/);
+  assert.match(scene, /driver\.car\.livery==="stripe"\?\[0\]:\[\]/);
+});
+
 test("track points follow the circular corner at the cardinal angles", () => {
   for (const [angle, x, z] of [
     [0, 42, 0],

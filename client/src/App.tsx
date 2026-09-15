@@ -47,6 +47,7 @@ const Leaderboard = lazy(() => import("@/pages/leaderboard"));
 const TeamStats = lazy(() => import("@/pages/team-stats"));
 const Tournament = lazy(() => import("@/pages/tournament"));
 const Settings = lazy(() => import("@/pages/settings"));
+const TvCar = lazy(() => import("@/pages/tv-car"));
 const StateLookup = lazy(() => import("@/pages/state-lookup"));
 const CallHours = lazy(() => import("@/pages/call-hours"));
 const Appointments = lazy(() => import("@/pages/appointments"));
@@ -149,6 +150,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/nmls-status":  "NMLS License Status",
   "/reporting":    "Reporting",
   "/settings":     "Settings",
+  "/tv-car":       "My TV Car",
   "/audit-log":    "Audit Log",
   "/lo-performance": "LO Performance",
   "/chat":           "Team Chat",
@@ -222,6 +224,7 @@ function AppRouter() {
       <Route path="/snooze" component={Snooze} />
       <Route path="/reporting" component={Reporting} />
       <Route path="/settings" component={Settings} />
+      <Route path="/tv-car" component={TvCar} />
       <Route path="/audit-log" component={AuditLog} />
       <Route path="/lo-performance" component={LoPerformance} />
       <Route path="/nmls-checks" component={NmlsChecks} />

@@ -122,6 +122,8 @@ import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignm
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 import { registerTransferDetailRoutes } from "./transfer-detail-routes";
 import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
+import { registerTvCarRoutes } from "./tv-car-routes";
+import { normalizeTvCarAppearance } from "@shared/tv-car";
 import {
   peopleFromPayload, fallbackPeopleFromLos,
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
@@ -19663,21 +19665,25 @@ ${note}` : daysLine;
   }, 5_000);
   loLeadWatcher.unref?.();
 
-  // "Got it — I'm calling." Any active CLR may claim; the window then closes
-  // for everyone and the lead never goes to Shotgun.
+  // "Got it — I'm calling." The assigned CLR has a 45-second head start,
+  // then other active C3 CLRs may claim until the three-minute deadline.
+  // Storage rechecks eligibility, ownership and time atomically with the write.
   app.post("/api/lo-new-leads/claim", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
     const externalId = String(req.body?.externalId ?? "").trim().slice(0, 64);
     if (!externalId) return res.status(400).json({ error: "externalId required" });
     const me = storage.getUserById(userId) as any;
-    if (!me || isPortalAccount(me)) return res.status(403).json({ error: "Only C3 staff can claim a lead." });
+    if (!me || !(me.isActive ?? me.is_active) || !clrRoleMatches(me)
+      || (me.portal != null && me.portal !== "c3") || Number(me.orgId ?? me.org_id) !== orgId) {
+      return res.status(403).json({ error: "Only active C3 CLRs can claim a lead." });
+    }
     const row = storageExtra.claimLoNewLead(orgId, externalId, userId);
     if (!row) {
       const state = storageExtra.loNewLeadStates(orgId, [externalId]).get(externalId);
       const why = state?.status === "claimed" ? `${state.claimed_by_name ?? "Someone"} already claimed it.`
         : state?.status === "escalated" ? "It already went to Shotgun."
-        : "This lead is not open to claim.";
+        : "This lead is not open to you yet, its claim window expired, or you are not eligible to claim it.";
       return res.status(409).json({ error: why });
     }
     audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "lo_new_lead", entityId: Number(row.id),
@@ -22753,6 +22759,22 @@ ${note}` : daysLine;
     },
   });
 
+  registerTvCarRoutes(app, {
+    requireAuth,
+    db: () => storageExtra.getRawSqlite(),
+    sessionFor: (req: any) => req.session_user ?? null,
+    audit: ({ owner, before, after }) => audit({
+      userId: owner.id,
+      userName: owner.name,
+      orgId: owner.org_id,
+      action: "update",
+      entityType: "tv_car_preferences",
+      entityId: owner.id,
+      entityLabel: "My TV Car",
+      details: JSON.stringify({ before, after }),
+    } as any),
+  });
+
   // Reading back what was written on each transfer. Registered from its own
   // file so the whole feature stays in one place; see transfer-detail-routes.
   registerTransferDetailRoutes(app, {
@@ -22952,6 +22974,10 @@ ${note}` : daysLine;
     // names the gap between the team total and the list it shows, which is
     // where that reconciliation belongs.
     const ids = clrs.map((c) => Number(c.id));
+    const carPreferences = new Map((sqlite.prepare(
+      `SELECT user_id, body_color AS bodyColor, accent_color AS accentColor, livery
+         FROM tv_car_preferences WHERE org_id=?`,
+    ).all(orgId) as any[]).map(row => [Number(row.user_id), row]));
     const counts = new Map<string, number>();
     if (ids.length) {
       // Appointments are counted; TRANSFERS ARE CREDITED. A shotgun transfer is
@@ -23035,6 +23061,7 @@ ${note}` : daysLine;
     const people: PersonStats[] = clrs.map((c) => ({
       id: Number(c.id),
       name: String(c.name ?? ""),
+      car: normalizeTvCarAppearance(carPreferences.get(Number(c.id)), Number(c.id)),
       transfersToday: counts.get(`${c.id}:transfer:today`) ?? 0,
       transfersWeek: counts.get(`${c.id}:transfer:week`) ?? 0,
       appointmentsToday: counts.get(`${c.id}:appointment:today`) ?? 0,

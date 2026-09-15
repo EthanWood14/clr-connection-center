@@ -12,7 +12,7 @@ export function cornerPosition(t: number, lane = 0) {
     angle: angle*180/Math.PI, scale: .45+.8*u };
 }
 
-export function fieldStandings(people: { id: number; name: string; transfersToday: number }[]) {
+export function fieldStandings<T extends { id: number; name: string; transfersToday: number }>(people: T[]) {
   const sorted = [...people].sort((a,b) => b.transfersToday-a.transfersToday || a.name.localeCompare(b.name));
   const high = sorted[0]?.transfersToday ?? 0;
   const span = Math.max(2, high-(sorted.at(-1)?.transfersToday ?? 0));

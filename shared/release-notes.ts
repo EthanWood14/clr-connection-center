@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.8", headline: "Your TV car, your colors — and harder-to-miss assigned leads.", items: [
+    { text: "CLRs can open Advanced Settings → Personal → My TV Car to choose body and accent colors plus classic, twin-stripe, or solid paint. Preview and save your design for the TV race; scores, speed and standings do not change.", audience: "everyone" },
+    { text: "New leads for your assigned LOs now show a prominent repeating alert with the Shotgun chime. A 10-second snooze replaces permanent dismissal, and unresolved alerts return after reload. Claiming or calling stops the reminders. The assigned CLR's 45-second head start and three-minute claim deadline are also enforced on the server.", audience: "everyone" },
+  ] },
   { version: "4.113.7", headline: "Faster TV racing, every car named, and real overtakes.", items: [{ text: "Cars run five times faster with name tags on every visible car. When transfer standings change, scorers pull out and pass the people they overtook; catching a tie brings cars alongside instead. Actual scores and ties stay unchanged, and reduced-motion displays keep a still view.", audience: "everyone" }] },
   { version: "4.113.6", headline: "The TV race is now rendered in real 3D.", items: [{ text: "A rebuilt trackside race uses modeled cars, spinning wheels, lighting, shadows, a banked stadium corner and a close camera pass. The running-order tower preserves actual transfer credits and ties. The scene preloads only on the TV, respects reduced motion, and retains standings when 3D is unavailable.", audience: "everyone" }] },
   { version: "4.113.5", headline: "Watch the team race from the grandstand.", items: [{ text: "The TV race now brings cars around a sweeping corner toward a trackside spectator camera, with cheering fans, flags, raised car bodies and live standings. Transfer totals still determine the order.", audience: "everyone" }] },

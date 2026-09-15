@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { activeLeadAlerts, collectLeadAlerts, leadAlertStorageKey, parseSeenLeadAlerts, LEAD_ALERT_MAX_AGE_MS, LEAD_ALERT_SEEN_LIMIT, type LoLeadFeed } from "../client/src/lib/lead-alerts";
+import { activeLeadAlerts, collectLeadAlerts, leadAlertStorageKey, parseSeenLeadAlerts, renewAssignedLeadAlerts, leadAlertIsActionable, LEAD_ALERT_CHIME_INTERVAL_MS, LEAD_ALERT_SNOOZE_MS, LEAD_ALERT_MAX_AGE_MS, LEAD_ALERT_SEEN_LIMIT, type LoLeadFeed } from "../client/src/lib/lead-alerts";
 
 const now = Date.parse("2026-09-13T18:00:00Z");
 const feed = (ids = ["1"], at = now - 30_000): LoLeadFeed => ({
@@ -18,12 +18,110 @@ test("fresh arrivals show immediately, not three days of history on sign-in", ()
   assert.equal(collectLeadAlerts(feed(["old"], now - LEAD_ALERT_MAX_AGE_MS - 1), [], now).alerts.length, 0);
 });
 
-test("polling, dismissing, route changes and reloads do not replay an arrival", () => {
+test("arrival history still deduplicates polls; unresolved assigned claims are restored separately", () => {
   const first = collectLeadAlerts(feed(), [], now);
   assert.equal(collectLeadAlerts(feed(), first.seen, now + 20_000).alerts.length, 0);
   const restored = parseSeenLeadAlerts(JSON.stringify(first.seen));
   assert.equal(collectLeadAlerts(feed(), restored, now + 40_000).alerts.length, 0);
   assert.deepEqual(collectLeadAlerts(feed(["1", "2"]), restored, now).alerts.map(row => row.key), ["7:2"]);
+});
+
+function pendingFeed(ids = ["1"], deadline = now + 120_000): LoLeadFeed {
+  const payload = feed(ids);
+  for (const lead of payload.los[0].leads) lead.claim = {
+    status: "new", escalateAt: new Date(deadline).toISOString(), claimedBy: null, shotgunLeadId: null,
+  };
+  return payload;
+}
+
+test("seen-but-unclaimed original assignments return on reload without duplicating the queue", () => {
+  const payload = pendingFeed();
+  const arrived = collectLeadAlerts(payload, [], now);
+  assert.deepEqual(collectLeadAlerts(payload, arrived.seen, now).alerts, []);
+  const restored = renewAssignedLeadAlerts([], payload, now);
+  assert.equal(restored.length, 1, "the server still says this is my open assignment");
+  assert.deepEqual(renewAssignedLeadAlerts([...restored, ...restored], payload, now), restored);
+});
+
+test("original assignments snooze briefly rather than disappearing permanently", () => {
+  const payload = pendingFeed();
+  const until = { "7:1": now + LEAD_ALERT_SNOOZE_MS };
+  assert.equal(LEAD_ALERT_SNOOZE_MS, 10_000);
+  assert.equal(renewAssignedLeadAlerts([], payload, now + 9_999, until).length, 0);
+  assert.equal(renewAssignedLeadAlerts([], payload, now + 10_000, until).length, 1);
+  assert.equal(renewAssignedLeadAlerts([], payload, now, {}, new Set(["7:1"])).length, 0,
+    "an acknowledged server success does not reappear while its invalidation finishes");
+});
+
+test("floor cards and legacy untracked arrivals are not repeatedly resurrected", () => {
+  const floor = pendingFeed();
+  floor.los[0].leads[0].openToFloor = true;
+  assert.equal(renewAssignedLeadAlerts([], floor, now).length, 0);
+  assert.equal(renewAssignedLeadAlerts([], feed(), now).length, 0);
+  const arrived = collectLeadAlerts(floor, [], now).alerts;
+  assert.equal(renewAssignedLeadAlerts(arrived, floor, now).length, 1, "a real fresh floor arrival still displays once");
+});
+
+test("claimed, expired, stale, unmapped and missing lead cards stop immediately", () => {
+  const payload = pendingFeed();
+  const cards = renewAssignedLeadAlerts([], payload, now);
+  for (const invalid of [{ ...payload, stale: true }, { ...payload, configured: false },
+    { ...payload, los: [] }, { ...payload, los: [{ lo: payload.los[0].lo, leads: [] }] },
+    pendingFeed(["1"], now), pendingFeed(["1"], now - 1),
+  ]) assert.deepEqual(renewAssignedLeadAlerts(cards, invalid, now), []);
+  for (const status of ["claimed", "escalated", "escalate_failed"] as const) {
+    const settled = pendingFeed();
+    settled.los[0].leads[0].claim!.status = status;
+    assert.deepEqual(renewAssignedLeadAlerts(cards, settled, now), []);
+  }
+  assert.equal(leadAlertIsActionable(cards[0], now + 120_000), false, "expiry does not depend on a successful later network poll");
+});
+
+test("the server deadline wins over the lead's original creation age", () => {
+  const payload = pendingFeed();
+  payload.los[0].leads[0].landedAt = new Date(now - 11 * 60_000).toISOString();
+  const current = renewAssignedLeadAlerts([], payload, now);
+  assert.equal(current.length, 1, "a lead first seen later still gets its actual open server window");
+  payload.los[0].leads[0].claim!.escalateAt = "bad";
+  assert.deepEqual(renewAssignedLeadAlerts(current, payload, now), []);
+});
+
+test("original assignments take priority over floor cards and then sort by deadline", () => {
+  const payload = pendingFeed(["early", "later"]);
+  payload.los[0].leads[1].claim!.escalateAt = new Date(now + 150_000).toISOString();
+  const floor = pendingFeed(["floor"], now + 30_000).los[0];
+  floor.leads[0].openToFloor = true;
+  payload.los.push(floor);
+  const arrivals = collectLeadAlerts(payload, [], now).alerts;
+  assert.deepEqual(renewAssignedLeadAlerts(arrivals, payload, now).map(row => row.externalId), ["early", "later", "floor"]);
+});
+
+test("original-assignment reminders match Shotgun cadence without auto-accept or focus stealing", () => {
+  const popup = read("client/src/components/assigned-lo-lead-alert.tsx");
+  assert.equal(LEAD_ALERT_CHIME_INTERVAL_MS, 2_500);
+  assert.match(popup, /setInterval\(chime, LEAD_ALERT_CHIME_INTERVAL_MS\)/);
+  assert.match(popup, /Date\.now\(\) < expiresAt/);
+  assert.match(popup, /lead\.openToFloor \? null : setInterval/);
+  assert.match(popup, /if \(!eligible \|\| blocked \|\| !lead\) return/);
+  assert.match(popup, /Remind me in 10 seconds/);
+  assert.match(popup, /renewAssignedLeadAlerts/);
+  assert.match(popup, /Your LO has a new lead!/);
+  assert.match(popup, /motion-safe:animate-pulse/);
+  assert.match(popup, /window\.addEventListener\("pointerdown", unlockAudio\)/);
+  assert.match(popup, /window\.removeEventListener\("pointerdown", unlockAudio\)/);
+  assert.doesNotMatch(popup, /<Dialog|autoFocus|\.focus\(/);
+  assert.equal((popup.match(/claim\.mutate\(/g) ?? []).length, 2, "only the two explicit buttons claim");
+});
+
+test("account or org switches hide the prior queue and reset all in-memory acknowledgements", () => {
+  const popup = read("client/src/components/assigned-lo-lead-alert.tsx");
+  assert.match(popup, /queueIdentity === storageKey && eligible/);
+  const reset = popup.slice(popup.indexOf("identity.current = storageKey;"), popup.indexOf("}, [storageKey]);") + 19);
+  for (const statement of ["seen.current = [];", "snoozedUntil.current = {};", "resolved.current = new Set();", "setQueue([]);", "setQueueIdentity(storageKey);"]) {
+    assert.ok(reset.includes(statement), statement);
+  }
+  assert.ok(popup.indexOf("identity.current = storageKey;") < popup.indexOf("collectLeadAlerts(feed"));
+  assert.match(popup, /if \(identity\.current !== storageKey\) return;/, "a previous account's late response cannot resolve the next account's card");
 });
 
 test("a burst yields every returned new lead, without duplicate queue entries", () => {

@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, CalendarCheck, ClipboardList,
-  Trophy, Settings, MapPin, BedDouble,
+  Trophy, Settings, MapPin, BedDouble, CarFront,
   BarChart2, PhoneForwarded, LogOut, ScrollText, TrendingUp, TrendingDown, MessageCircle, MessagesSquare, ShieldCheck, Sparkles,
   FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch, ArrowRightLeft, BadgeCheck
 } from "lucide-react";
@@ -208,6 +208,7 @@ const advancedPersonalItems: NavItem[] = [
   // non-admin back there if they land on an admin tab. Every admin section
   // inside it is gated on its own, so the link is safe here (owner 9/10/26).
   { title: "Settings",        url: "/settings",      icon: Settings,        help: help.settings },
+  { title: "My TV Car",       url: "/tv-car",        icon: CarFront },
 ];
 
 const teamItems: NavItem[] = [
@@ -307,6 +308,9 @@ const viewerItems: NavItem[] = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+  const canCustomizeTvCar = !!user
+    && (user.portal == null || user.portal === "c3")
+    && (user.role === "assistant" || (user.role === "admin" && user.isClr));
 
   // Advanced Settings folder — collapsed by default; preference persisted.
   const [advancedOpen, setAdvancedOpen] = useState(() => {
@@ -617,7 +621,7 @@ export function AppSidebar() {
             Personal
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>{renderItems(advancedPersonalItems)}</SidebarMenu>
+            <SidebarMenu>{renderItems(advancedPersonalItems.filter(item => item.url !== "/tv-car" || canCustomizeTvCar))}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 

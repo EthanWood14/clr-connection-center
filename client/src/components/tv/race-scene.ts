@@ -166,7 +166,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const root=new THREE.Group();scene.add(root);
     const tied=grid.filter(p=>p.gap===driver.gap).length;
     root.scale.setScalar(Math.min(1,16/Math.max(1,tied)/2.7));
-    const paint=material(driver.color,.25,.48), accent=material("#f4f2e8",.34,.2);
+    const paint=material(driver.color,.25,.48), accent=material(driver.car.accentColor,.34,.2);
     rounded(root,1.5,.4,3.65,0,.6,0,paint,.16);
     rounded(root,.58,.24,1.7,0,.5,2.05,paint,.1);
     rounded(root,2.0,.24,1.9,0,.48,-.55,paint,.13);
@@ -179,7 +179,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     for(const x of [-.88,.88])box(root,.09,.65,.24,x,.84,-2.05,black);
     for(const x of [-.38,.38])box(root,.08,.34,.75,x,1.11,-.22,black);
     box(root,.8,.09,.12,0,1.29,.16,black);
-    box(root,.2,.015,1.65,0,.82,1.47,accent);
+    const stripeOffsets=driver.car.livery==="double-stripe"?[-.16,.16]:driver.car.livery==="stripe"?[0]:[];
+    for(const x of stripeOffsets) {
+      const width=driver.car.livery==="double-stripe"?.12:.2;
+      box(root,width,.015,1.55,x,.812,1,accent);
+      box(root,width,.015,1.05,x,.628,2.3,accent);
+    }
     const wheels:THREE.Group[]=[];
     for(const x of [-1.03,1.03])for(const z of [-1.42,1.6]) {
       const pivot=new THREE.Group();pivot.position.set(x,.45,z);root.add(pivot);

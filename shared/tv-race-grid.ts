@@ -1,5 +1,6 @@
 import { fieldStandings } from "./tv-field-race";
-export type RaceDriver = { id: number; name: string; transfersToday: number };
+import { normalizeTvCarAppearance, type TvCarAppearance } from "./tv-car";
+export type RaceDriver = { id: number; name: string; transfersToday: number; car?: TvCarAppearance };
 
 export function raceGrid(people: RaceDriver[]) {
   const ranked=fieldStandings(people);
@@ -8,8 +9,8 @@ export function raceGrid(people: RaceDriver[]) {
   return ranked.map(p=>{
     const peers=ranked.filter(r=>r.gap===p.gap);
     const seat=peers.findIndex(r=>r.id===p.id);
-    const colors=['#ef6a35','#49b8ec','#f1d552','#97d765','#a993ff','#ef5e84','#56d4ba','#e998ee','#e8ebe7','#688bef','#d6b571','#67b99a'];
-    return {...p,color:colors[Math.abs(p.id)%colors.length],
+    const car=normalizeTvCarAppearance(p.car,p.id);
+    return {...p,car,color:car.bodyColor,
       // The minimum group spacing keeps fractional-credit neighbors legible.
       distance:groups.indexOf(p.gap)*4.8 + p.gap/high*10,
       lane:peers.length>1?(seat-(peers.length-1)/2)*Math.min(3.2,16/peers.length):((p.rank%3)-1)*3.2,

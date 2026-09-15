@@ -20,6 +20,7 @@
  */
 import { TRAINING_DAYS, type TrainingDay } from "@shared/clr-training";
 import { formatTransferCount } from "@shared/transfer-credit";
+import type { TvCarAppearance } from "@shared/tv-car";
 
 export type TvEventKind =
   | "transfer"
@@ -285,6 +286,7 @@ export interface Milestone {
 export interface PersonStats {
   id: number;
   name: string;
+  car?: TvCarAppearance;
   /**
    * Transfer CREDIT, not a row count. A transfer that came off a shotgun lead
    * is half a transfer for the CLR who published it and half for the one who

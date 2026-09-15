@@ -26,11 +26,14 @@
  * server, or ten seconds of waiting.
  */
 
+import type { TvCarAppearance } from "./tv-car";
+
 /** The part of the scorecard's Person row the ranking cares about. */
 export interface RankRow {
   id: number;
   name: string;
   transfersToday: number;
+  car?: TvCarAppearance;
 }
 
 export interface Overtake {

@@ -7,6 +7,7 @@ import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
 import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
 import { BONZO_CALLS_BY_DAY_SQL, classifyBonzoCallEvent, type BonzoCallKind } from "@shared/bonzo-calls";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS } from "@shared/lo-new-leads";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
@@ -2706,6 +2707,17 @@ function runNewMigrations() {
   )`);
   sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tv_display_links_token ON tv_display_links(token)`);
 
+  // A visual-only preference. Keep it separate from transfers and standings.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_preferences (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    body_color TEXT NOT NULL,
+    accent_color TEXT NOT NULL,
+    livery TEXT NOT NULL CHECK (livery IN ('stripe', 'double-stripe', 'solid')),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+  )`);
+
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss
   // their own, or it would just be a notification they close.
@@ -4893,9 +4905,34 @@ export function recordLoNewLead(input: LoNewLeadInput): { inserted: boolean; row
 
 /** "Got it — I'm calling." Only a lead still in its window can be claimed. */
 export function claimLoNewLead(orgId: number, externalId: string, userId: number): any | null {
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  // The server's first sight starts both clocks, not the borrower's upstream
+  // creation time or the caller's browser clock. Keep every authorization and
+  // timing check inside the write so competing claims have exactly one winner.
+  // Ready is not required for the open-floor card; opting out of Shotgun only
+  // prevents taking somebody else's lead, not the CLR's own assigned arrival.
   const res = sqlite.prepare(`UPDATE lo_new_leads SET status='claimed', claimed_by=?, claimed_at=?
-    WHERE org_id=? AND external_id=? AND status='new'`).run(userId, now, orgId, externalId);
+    WHERE org_id=? AND external_id=? AND status='new'
+      AND first_seen_at <= @now AND first_seen_at > @windowCutoff
+      AND EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.id=@userId AND u.org_id=@orgId AND u.is_active=1
+          AND (u.role='assistant' OR (u.role='admin' AND u.is_clr=1))
+          AND (u.portal IS NULL OR u.portal='c3')
+          AND (
+            EXISTS (
+              SELECT 1 FROM json_each(CASE WHEN json_valid(assigned_user_ids) THEN assigned_user_ids ELSE '[]' END) a
+              WHERE (a.type='integer' AND a.value=@userId)
+                 OR (a.type='text' AND a.value=CAST(@userId AS TEXT))
+            )
+            OR (first_seen_at <= @floorCutoff AND COALESCE(u.shotgun_opted_out,0)=0)
+          )
+      )`).run({
+        now, userId, orgId,
+        windowCutoff: new Date(nowMs - LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString(),
+        floorCutoff: new Date(nowMs - LO_NEW_LEAD_FLOOR_AFTER_MS).toISOString(),
+      }, userId, now, orgId, externalId);
   if (!res.changes) return null;
   return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND external_id=?`).get(orgId, externalId);
 }

@@ -1,6 +1,10 @@
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS } from "@shared/lo-new-leads";
+
 /** Only IDs are remembered; borrower details never go into browser storage. */
 export const LEAD_ALERT_MAX_AGE_MS = 10 * 60_000;
 export const LEAD_ALERT_SEEN_LIMIT = 500;
+export const LEAD_ALERT_CHIME_INTERVAL_MS = 2_500;
+export const LEAD_ALERT_SNOOZE_MS = 10_000;
 
 /** The server's view of the lead's claim window (shared/lo-new-leads.ts). */
 export type LoLeadClaim = {
@@ -65,6 +69,16 @@ export function claimSettled(claim: LoLeadClaim | null | undefined): boolean {
   return !!claim && claim.status !== "new";
 }
 
+export function leadAlertDeadline(alert: Pick<LoLeadAlert, "claim" | "landedAt">): number {
+  return alert.claim
+    ? Date.parse(alert.claim.escalateAt ?? "")
+    : Date.parse(alert.landedAt) + LO_NEW_LEAD_CLAIM_WINDOW_MS;
+}
+
+export function leadAlertIsActionable(alert: Pick<LoLeadAlert, "claim" | "landedAt">, now: number): boolean {
+  return !claimSettled(alert.claim) && Number.isFinite(leadAlertDeadline(alert)) && leadAlertDeadline(alert) > now;
+}
+
 export const leadAlertStorageKey = (orgId: number, userId: number) =>
   `c3-lead-alerts:v1:${orgId}:${userId}`;
 
@@ -91,7 +105,7 @@ export function collectLeadAlerts(feed: LoLeadFeed, previous: string[], now: num
       seen.add(key);
       // Already taken, or already in Shotgun: remembered so it never pops, but
       // not shown — there is nothing for this person to do about it.
-      if (claimSettled(lead.claim)) continue;
+      if (!leadAlertIsActionable({ claim: lead.claim ?? null, landedAt: lead.landedAt }, now)) continue;
       alerts.push({ key, externalId: lead.externalId, loId: row.lo.id, loName: row.lo.name, borrowerName: lead.borrowerName,
         phone: lead.phone ?? null, state: lead.state, source: lead.source, landedAt: lead.landedAt, claim: lead.claim ?? null,
         openToFloor: lead.openToFloor === true });
@@ -103,13 +117,48 @@ export function collectLeadAlerts(feed: LoLeadFeed, previous: string[], now: num
 }
 
 export function activeLeadAlerts(queue: LoLeadAlert[], feed: LoLeadFeed, now: number) {
+  if (!feed.configured || feed.stale) return [];
   const assigned = new Set(feed.los.flatMap(row => row.lo ? [row.lo.id] : []));
   // The latest word on each lead's claim, so a card drops the moment a
   // colleague takes it or it goes to Shotgun — and shows the live countdown.
-  const claims = new Map<string, LoLeadClaim | null>();
-  for (const row of feed.los) for (const lead of row.leads) claims.set(`${row.lo?.id}:${lead.externalId}`, lead.claim ?? null);
+  const claims = new Map<string, { claim: LoLeadClaim | null; openToFloor: boolean }>();
+  for (const row of feed.los) for (const lead of row.leads) claims.set(`${row.lo?.id}:${lead.externalId}`, {
+    claim: lead.claim ?? null, openToFloor: lead.openToFloor === true,
+  });
   return queue
-    .filter(alert => assigned.has(alert.loId) && now - Date.parse(alert.landedAt) <= LEAD_ALERT_MAX_AGE_MS)
-    .map(alert => (claims.has(alert.key) ? { ...alert, claim: claims.get(alert.key) ?? alert.claim } : alert))
-    .filter(alert => !claimSettled(alert.claim));
+    .filter(alert => assigned.has(alert.loId) && claims.has(alert.key))
+    .map(alert => ({ ...alert, ...claims.get(alert.key)! }))
+    .filter(alert => leadAlertIsActionable(alert, now));
+}
+
+/**
+ * Seeing an assigned lead is not accepting it. Bring unresolved original
+ * assignments back after a short snooze or reload, regardless of old "seen"
+ * storage, but never re-alert the whole floor or revive a settled deadline.
+ */
+export function renewAssignedLeadAlerts(
+  queue: LoLeadAlert[], feed: LoLeadFeed, now: number,
+  snoozedUntil: Readonly<Record<string, number>> = {}, resolved: ReadonlySet<string> = new Set(),
+): LoLeadAlert[] {
+  if (!feed.configured || feed.stale) return [];
+  const current = new Map(activeLeadAlerts(queue, feed, now).map(alert => [alert.key, alert]));
+  for (const row of feed.los) {
+    if (!row.lo) continue;
+    for (const lead of row.leads) {
+      if (lead.openToFloor || lead.claim?.status !== "new" || !lead.externalId || !lead.landedAt) continue;
+      if (!leadAlertIsActionable({ claim: lead.claim, landedAt: lead.landedAt }, now)) continue;
+      const key = `${row.lo.id}:${lead.externalId}`;
+      current.set(key, {
+        key, externalId: lead.externalId, loId: row.lo.id, loName: row.lo.name,
+        borrowerName: lead.borrowerName, phone: lead.phone ?? null, state: lead.state,
+        source: lead.source, landedAt: lead.landedAt, claim: lead.claim, openToFloor: false,
+      });
+    }
+  }
+  return [...current.values()]
+    .filter(alert => !resolved.has(alert.key) && !(snoozedUntil[alert.key] > now))
+    // Your assigned work gets first attention, not an older floor-wide card.
+    .sort((a, b) => Number(!!a.openToFloor) - Number(!!b.openToFloor)
+      || leadAlertDeadline(a) - leadAlertDeadline(b) || a.key.localeCompare(b.key))
+    .slice(0, 40);
 }

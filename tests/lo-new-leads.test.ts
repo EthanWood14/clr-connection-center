@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import ts from "typescript";
 
-import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FRESH_MS, loNewLeadEscalateAt, loNewLeadIsFresh, loNewLeadSecondsLeft } from "../shared/lo-new-leads";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, LO_NEW_LEAD_FRESH_MS, loNewLeadEscalateAt, loNewLeadIsFresh, loNewLeadSecondsLeft } from "../shared/lo-new-leads";
 import { activeLeadAlerts, claimSettled, collectLeadAlerts, type LoLeadFeed } from "../client/src/lib/lead-alerts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -97,7 +99,7 @@ test("the feed says where each lead's claim stands, and the claim route refuses 
 
 test("both cards are tap-to-call, and the new-lead card claims and counts down", () => {
   const card = read("client/src/components/assigned-lo-lead-alert.tsx");
-  assert.match(card, /claim\.mutate\(lead\.externalId, \{ onSuccess: \(\) => \{ window\.location\.href = tel; dismiss\(\);/);
+  assert.match(card, /claim\.mutate\(lead\.externalId, \{ onSuccess: \(\) => \{ if \(identity\.current !== storageKey\) return; window\.location\.href = tel; dismiss\(\);/);
   assert.doesNotMatch(card, /href=\{tel\}/);
   assert.match(card, /data-testid="assigned-lo-lead-call"/);
   assert.match(card, /data-testid="assigned-lo-lead-claim"/);
@@ -109,4 +111,126 @@ test("both cards are tap-to-call, and the new-lead card claims and counts down",
   assert.match(offer, /confirm\.mutate\(offered\.id, \{ onSuccess: \(\) => \{ window\.location\.href = tel;/);
   assert.doesNotMatch(offer, /<a href=\{`tel:/);
   assert.match(offer, /refetchIntervalInBackground: true/);
+});
+
+// Execute the production function against a tiny isolated database, without
+// importing storage.ts (its module initialization boots every production table).
+function claimFixture() {
+  const db = new Database(":memory:");
+  db.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, role TEXT,
+      is_active INTEGER, is_clr INTEGER, portal TEXT, shotgun_opted_out INTEGER);
+    INSERT INTO users VALUES
+      (1,1,'assistant',1,1,'c3',0), (2,1,'assistant',1,1,NULL,0),
+      (3,1,'assistant',0,1,'c3',0), (4,1,'assistant',1,1,'lap',0),
+      (5,1,'admin',1,0,'c3',0), (6,1,'viewer',1,0,'c3',0),
+      (7,1,'admin',1,1,'c3',0), (8,2,'assistant',1,1,'c3',0),
+      (9,1,'assistant',1,1,'c3',1), (10,1,'assistant',1,1,'lop',0);
+    CREATE TABLE lo_new_leads (id INTEGER PRIMARY KEY, org_id INTEGER,
+      external_id TEXT, status TEXT, assigned_user_ids TEXT,
+      first_seen_at TEXT, claimed_by INTEGER, claimed_at TEXT);
+    INSERT INTO lo_new_leads VALUES
+      (1,1,'fresh','new','[1]','2026-09-15T15:00:00.000Z',NULL,NULL);
+  `);
+  const firstSeen = Date.parse("2026-09-15T15:00:00.000Z");
+  let clockMs = firstSeen;
+  class ClaimClock extends Date { static now() { return clockMs; } }
+  const start = storage.indexOf("export function claimLoNewLead(");
+  const end = storage.indexOf("/** Unclaimed leads", start);
+  assert.ok(start >= 0 && end > start, "extract the exact production claim function");
+  const source = storage.slice(start, end).replace("export function", "function");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText;
+  const claim = new Function("sqlite", "LO_NEW_LEAD_CLAIM_WINDOW_MS", "LO_NEW_LEAD_FLOOR_AFTER_MS", "Date",
+    `${compiled}\nreturn claimLoNewLead;`)(db, LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, ClaimClock) as
+      (orgId: number, externalId: string, userId: number) => any;
+  return { db, claim, at: (milliseconds: number) => { clockMs = firstSeen + milliseconds; } };
+}
+
+test("an assigned CLR can claim immediately, but another CLR must wait exactly 45 seconds", () => {
+  const f = claimFixture();
+  try {
+    assert.equal(f.claim(1, "fresh", 2), null);
+    f.at(LO_NEW_LEAD_FLOOR_AFTER_MS - 1);
+    assert.equal(f.claim(1, "fresh", 2), null);
+    f.at(0);
+    assert.equal(f.claim(1, "fresh", 1)?.claimed_by, 1);
+    assert.equal(f.claim(1, "fresh", 1), null, "already settled, including the same caller");
+    f.db.prepare("UPDATE lo_new_leads SET status='new',claimed_by=NULL,claimed_at=NULL").run();
+    f.at(LO_NEW_LEAD_FLOOR_AFTER_MS);
+    assert.equal(f.claim(1, "fresh", 2)?.claimed_by, 2);
+  } finally { f.db.close(); }
+});
+
+test("the three-minute deadline is enforced even when the escalation watcher has not run", () => {
+  const f = claimFixture();
+  try {
+    f.at(LO_NEW_LEAD_CLAIM_WINDOW_MS);
+    assert.equal(f.claim(1, "fresh", 1), null, "assigned CLR cannot claim at the deadline");
+    assert.equal(f.claim(1, "fresh", 2), null, "floor cannot claim at the deadline");
+    assert.equal((f.db.prepare("SELECT status FROM lo_new_leads").get() as any)?.status, "new");
+    f.at(LO_NEW_LEAD_CLAIM_WINDOW_MS - 1);
+    assert.equal(f.claim(1, "fresh", 2)?.claimed_by, 2);
+  } finally { f.db.close(); }
+});
+
+test("inactive, portal, non-CLR and cross-org accounts cannot claim even as assigned users", () => {
+  const f = claimFixture();
+  try {
+    f.db.prepare("UPDATE lo_new_leads SET assigned_user_ids=?").run(JSON.stringify([3, 4, 5, 6, 8, 10]));
+    for (const userId of [3, 4, 5, 6, 8, 10]) {
+      assert.equal(f.claim(1, "fresh", userId), null, `user ${userId} is ineligible`);
+    }
+    assert.equal(f.claim(2, "fresh", 8), null, "the lead belongs to another org");
+    f.at(LO_NEW_LEAD_FLOOR_AFTER_MS);
+    assert.equal(f.claim(1, "fresh", 7)?.claimed_by, 7, "active admin explicitly on the CLR roster may claim");
+  } finally { f.db.close(); }
+});
+
+test("Shotgun opt-out preserves own assignments but prevents open-floor claims; Ready is not required", () => {
+  const f = claimFixture();
+  try {
+    f.at(LO_NEW_LEAD_FLOOR_AFTER_MS);
+    assert.equal(f.claim(1, "fresh", 9), null);
+    f.db.prepare("UPDATE lo_new_leads SET assigned_user_ids='[9]'").run();
+    f.at(0);
+    assert.equal(f.claim(1, "fresh", 9)?.claimed_by, 9);
+  } finally { f.db.close(); }
+});
+
+test("future-dated and settled leads cannot be claimed", () => {
+  const f = claimFixture();
+  try {
+    f.at(-1);
+    assert.equal(f.claim(1, "fresh", 1), null);
+    f.at(0);
+    for (const status of ["claimed", "escalated", "escalate_failed"]) {
+      f.db.prepare("UPDATE lo_new_leads SET status=?").run(status);
+      assert.equal(f.claim(1, "fresh", 1), null, status);
+    }
+  } finally { f.db.close(); }
+});
+
+test("competing claims at the same server instant have exactly one winner", async () => {
+  const f = claimFixture();
+  try {
+    f.at(LO_NEW_LEAD_FLOOR_AFTER_MS);
+    const results = await Promise.all([1, 2, 7].map(userId => new Promise<any>(resolve => {
+      setImmediate(() => resolve(f.claim(1, "fresh", userId)));
+    })));
+    assert.equal(results.filter(Boolean).length, 1);
+    const stored = f.db.prepare("SELECT status,claimed_by FROM lo_new_leads").get() as any;
+    assert.equal(stored.status, "claimed");
+    assert.equal(stored.claimed_by, results.find(Boolean).claimed_by);
+  } finally { f.db.close(); }
+});
+
+test("the claim route checks current active C3 CLR identity before attempting the atomic claim", () => {
+  const route = routes.slice(routes.indexOf('app.post("/api/lo-new-leads/claim"'), routes.indexOf('app.get("/api/lo-newest-leads"'));
+  assert.match(route, /me\.isActive \?\? me\.is_active/);
+  assert.match(route, /clrRoleMatches\(me\)/);
+  assert.match(route, /me\.portal !== "c3"/);
+  assert.match(route, /Number\(me\.orgId \?\? me\.org_id\) !== orgId/);
+  assert.match(route, /Only active C3 CLRs can claim a lead/);
 });
