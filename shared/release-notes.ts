@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.113.1",
+    headline: "Proof that a CLR taken off the Shotgun rotation is really never offered a lead.",
+    items: [
+      { text: "No change on screen. The rotation is now tested against a copy of the real user table, including the off-the-rotation switch, so \"Elleine is not offered leads\" is checked on every build rather than trusted.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.113.0",
     headline: "An unclaimed new lead now goes to the whole floor after 45 seconds instead of sitting with one person for three minutes.",
     items: [

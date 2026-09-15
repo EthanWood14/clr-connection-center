@@ -160,6 +160,19 @@ test("a CLR is not re-offered the same lead inside the cooldown", () => {
   assert.equal(nextCandidate(db, COOLDOWN_MS / 1000 + 1), 101, "and resumes once it has elapsed");
 });
 
+// "Have elleine not receive any shotgun leads." — Ethan, 15 Sep 2026. Off by
+// decision, not by absence: Ready, heartbeating, and still never offered.
+test("a CLR taken off the rotation is skipped even while Ready and beating", () => {
+  const db = seed();
+  db.prepare(`UPDATE users SET shotgun_opted_out=1 WHERE id=101`).run();
+  assert.equal(nextCandidate(db, 0), 102, "the opted-out CLR is passed over, not merely deprioritised");
+  [0, 20].forEach((t) => offerThenExpire(db, t));
+  assert.equal(nextCandidate(db, 40), null, "and never comes up, even when the lap runs out of people");
+  // Putting them back needs nothing but the flag.
+  db.prepare(`UPDATE users SET shotgun_opted_out=0 WHERE id=101`).run();
+  assert.equal(nextCandidate(db, 40), 101);
+});
+
 test("a single Ready CLR is not pinned under a permanently open offer", () => {
   // With one Ready CLR and no cooldown the lead expired and re-offered to the
   // same person within the same tick, so the undismissable full-screen modal
