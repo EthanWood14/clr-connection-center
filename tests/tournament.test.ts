@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  TOURNAMENT_END, TOURNAMENT_START, TOURNAMENT_TZ, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
+  LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, TOURNAMENT_END, TOURNAMENT_START, TOURNAMENT_TZ, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
 } from "../shared/tournament";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,6 +102,23 @@ test("the server pulls the day either side and the board is a Dashboard tab and 
   const app = read("client/src/App.tsx");
   assert.match(app, /<Route path="\/tournament" component=\{Tournament\} \/>/);
   const page = read("client/src/pages/tournament.tsx");
-  assert.match(page, /refetchInterval: 10_000,\s*\n\s*refetchIntervalInBackground: true/);
+  assert.match(page, /refetchInterval: date \? false : 10_000,\s*\n\s*refetchIntervalInBackground: true/);
   assert.match(page, /serverTime - dataUpdatedAt/, "the countdown runs on the server clock");
+});
+
+// "Get rid of it, it shouldn't be back… keep the code tho, for future." —
+// Ethan, 15 Sep 2026. The switch is off; the code stays; /tournament shows
+// the last board as a record.
+test("with no tournament on, the tab and the sidebar link are gone and the page shows the last board", () => {
+  assert.equal(TOURNAMENT_ENABLED, false);
+  assert.equal(LAST_TOURNAMENT_DATE, "2026-09-14");
+  const dashboard = read("client/src/pages/dashboard.tsx");
+  assert.match(dashboard, /\{TOURNAMENT_ENABLED && \(\s*\n\s*<TabsTrigger value="tournament"/);
+  assert.match(dashboard, /\{TOURNAMENT_ENABLED && \(\s*\n\s*<TabsContent value="tournament"/);
+  assert.match(dashboard, /TOURNAMENT_ENABLED \? "w-full sm:w-auto grid grid-cols-5 sm:inline-flex" : "w-full sm:w-auto grid grid-cols-4 sm:inline-flex"/);
+  const sidebar = read("client/src/components/app-sidebar.tsx");
+  assert.match(sidebar, /\.\.\.\(TOURNAMENT_ENABLED \? \[\{ title: "Transfer Tournament"/);
+  const page = read("client/src/pages/tournament.tsx");
+  assert.match(page, /if \(!TOURNAMENT_ENABLED\) \{/);
+  assert.match(page, /<TournamentBoard fullscreen date=\{LAST_TOURNAMENT_DATE\} \/>/);
 });

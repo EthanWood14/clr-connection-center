@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.110.0",
+    headline: "Transfer Tournament wrapped — Elleine Asuncion took it with 12.",
+    items: [
+      { text: "Yesterday's Transfer Tournament is over: Elleine Asuncion won with 12 transfers between 12:30 and 5:30, ahead of Matthew Rosas (7) and Skyler Griffin (5). The Tournament tab is off the Dashboard and out of the sidebar; the final board stays at /tournament for the record.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.109.0",
     headline: "Transfer Tournament: who logs the most transfers between 12:30 and 5:30 today.",
     items: [

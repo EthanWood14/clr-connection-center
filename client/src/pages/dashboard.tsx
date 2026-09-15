@@ -28,6 +28,7 @@ import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAM
 import { copyToClipboard } from "@/lib/utils";
 import ManagerDashboard from "./manager-dashboard";
 import { TournamentBoard } from "./tournament";
+import { TOURNAMENT_ENABLED } from "@shared/tournament";
 import { businessTodayClient } from "@/lib/business-day";
 import { shiftWeekendBucketsToMonday } from "@/lib/weekday-date";
 import { formatTransferCount } from "@shared/transfer-credit";
@@ -1147,15 +1148,18 @@ function ClrDashboard() {
 
       {/* Tabs */}
       <Tabs defaultValue="assignments">
-        <TabsList className="w-full sm:w-auto grid grid-cols-5 sm:inline-flex">
+        <TabsList className={TOURNAMENT_ENABLED ? "w-full sm:w-auto grid grid-cols-5 sm:inline-flex" : "w-full sm:w-auto grid grid-cols-4 sm:inline-flex"}>
           <TabsTrigger value="assignments" className="flex items-center gap-1.5 text-xs sm:text-sm">
             <RefreshCw className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Daily </span>Assignments
           </TabsTrigger>
-          <TabsTrigger value="tournament" className="flex items-center gap-1.5 text-xs sm:text-sm" data-testid="tab-tournament">
-            <Trophy className="w-3.5 h-3.5 text-amber-500" />
-            Tournament
-          </TabsTrigger>
+          {/* Only while a tournament is on — see shared/tournament.ts. */}
+          {TOURNAMENT_ENABLED && (
+            <TabsTrigger value="tournament" className="flex items-center gap-1.5 text-xs sm:text-sm" data-testid="tab-tournament">
+              <Trophy className="w-3.5 h-3.5 text-amber-500" />
+              Tournament
+            </TabsTrigger>
+          )}
           <TabsTrigger value="stats" className="flex items-center gap-1.5 text-xs sm:text-sm">
             <TrendingUp className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Weekly </span>Stats
@@ -1173,9 +1177,11 @@ function ClrDashboard() {
         <TabsContent value="assignments" className="mt-4">
           <TabAssignments todayAssignments={todayAssignments} generateAssignments={generateAssignments} losData={losData} />
         </TabsContent>
-        <TabsContent value="tournament" className="mt-4">
-          <TournamentBoard />
-        </TabsContent>
+        {TOURNAMENT_ENABLED && (
+          <TabsContent value="tournament" className="mt-4">
+            <TournamentBoard />
+          </TabsContent>
+        )}
         <TabsContent value="stats" className="mt-4">
           <TabWeeklyStats stats={stats} leaderboardData={leaderboardData} losData={losData} />
         </TabsContent>

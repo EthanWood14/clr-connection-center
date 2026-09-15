@@ -15,6 +15,17 @@
  */
 import { transferCreditFor } from "./transfer-credit";
 
+/**
+ * Whether a tournament is on. Off since 15 Sep 2026 — Ethan: "get rid of it,
+ * it shouldn't be back… keep the code tho, for future." With this false the
+ * Dashboard tab and the sidebar link are gone and /tournament shows the last
+ * board as a record; flip it to true (and set the window below) to run
+ * another one. The 14 Sep 2026 run: Elleine Asuncion won with 12.
+ */
+export const TOURNAMENT_ENABLED = false;
+/** The most recent run, shown as the record while no tournament is on. */
+export const LAST_TOURNAMENT_DATE = "2026-09-14";
+
 export const TOURNAMENT_TZ = "America/Los_Angeles";
 export const TOURNAMENT_START = "12:30";
 export const TOURNAMENT_END = "17:30";

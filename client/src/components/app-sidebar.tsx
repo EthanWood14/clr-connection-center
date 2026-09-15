@@ -7,6 +7,7 @@ import {
   FileText, PlayCircle, Smartphone, BarChart, LifeBuoy, Video, PhoneCall, PhoneOutgoing, BookOpen, Plane, Webhook, Inbox, Clock, ChevronDown, ChevronRight, Settings2, Wallet, CalendarDays, Timer, Fish, ListFilter, Armchair, GraduationCap, UserCheck, Landmark, ListTodo, Zap, MonitorPlay, FileSearch, ArrowRightLeft, BadgeCheck
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { TOURNAMENT_ENABLED } from "@shared/tournament";
 import { Badge } from "@/components/ui/badge";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -258,7 +259,8 @@ const toolItems: NavItem[] = [
 const referenceItems: NavItem[] = [
   { title: "Seating Map", url: "/seating-map", icon: Armchair },
   { title: "Team Stats", url: "/leaderboard", icon: Trophy, help: help.stats },
-  { title: "Transfer Tournament", url: "/tournament", icon: Trophy },
+  // Only while a tournament is on — see shared/tournament.ts.
+  ...(TOURNAMENT_ENABLED ? [{ title: "Transfer Tournament", url: "/tournament", icon: Trophy } as NavItem] : []),
   { title: "Office TV", url: "/tv", icon: MonitorPlay, external: true },
   // The two NMLS pages sit together: the tracker is the work, the licences are
   // the record. Moved out of Tools with the Glossary (owner 9/10/26) — the
