@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RankRow } from "@shared/tv-overtake";
 import { raceGrid } from "@shared/tv-race-grid";
+import { planRaceTransition } from "@shared/tv-race-transition";
 import { formatTransferCount } from "@shared/transfer-credit";
 
 let sceneImport: Promise<typeof import("./race-scene")> | undefined;
@@ -8,23 +9,25 @@ export function preloadFieldRace() {
   return sceneImport ??= import("./race-scene").catch(error=>{sceneImport=undefined;throw error;});
 }
 
-export function FieldRace({ people, who, reduced, preview = false }: { people: RankRow[]; who: string; reduced: boolean; preview?: boolean }) {
+export function FieldRace({ people, before = null, who, focusId: requestedFocusId, reduced, preview = false }: { people: RankRow[]; before?: RankRow[] | null; who: string; focusId?:number; reduced: boolean; preview?: boolean }) {
   const host=useRef<HTMLDivElement>(null);
   const [status,setStatus]=useState<"loading"|"ready"|"unavailable">("loading");
   const drivers=useMemo(()=>raceGrid(people),[people]);
-  const focusId=drivers.find(p=>p.name===who)?.id;
+  const matching=drivers.filter(p=>p.name===who);
+  const focusId=requestedFocusId??(matching.length===1?matching[0].id:undefined);
+  const maneuver=useMemo(()=>planRaceTransition(before,people,focusId).find(p=>p.id===focusId),[before,people,focusId]);
   useEffect(()=>{
     let cancelled=false,cleanup:(()=>void)|undefined;
     setStatus("loading");
     void preloadFieldRace().then(({mountRaceScene})=>{
       if(cancelled||!host.current)return;
       try {
-        cleanup=mountRaceScene(host.current,{drivers,reduced,focusId,onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
+        cleanup=mountRaceScene(host.current,{drivers,before,reduced,focusId,onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
         setStatus("ready");
       }catch{if(!cancelled)setStatus("unavailable");}
     }).catch(()=>{if(!cancelled)setStatus("unavailable");});
     return()=>{cancelled=true;cleanup?.();};
-  },[drivers,reduced,focusId]);
+  },[drivers,before,reduced,focusId]);
   const leader=drivers[0];
   return <section className="absolute inset-0 z-30 overflow-hidden bg-[#111e29] text-white" data-testid="tv-field-race" data-scene-status={status}>
     <div ref={host} className="absolute inset-y-0 left-0 right-[22%] overflow-hidden" style={{background:"linear-gradient(160deg,#617886,#183338 65%,#0f202c)"}} />
@@ -32,7 +35,7 @@ export function FieldRace({ people, who, reduced, preview = false }: { people: R
     <div className="pointer-events-none absolute inset-0" style={{background:"linear-gradient(180deg,rgba(3,10,18,.65),transparent 26%,transparent 70%,rgba(3,10,18,.78))"}}/>
     <header className="absolute left-[3%] top-[4%] right-[25%]">
       <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[.25em]"><span className="bg-red-600 px-2 py-1 tracking-widest">Live</span><span className="text-white/85">C3 Grand Prix</span><span className="h-3 w-px bg-white/40"/><span className="text-white/65">Turn 03 · Trackside</span></div>
-      <h2 className="mt-3 text-[clamp(24px,3vw,52px)] font-black italic leading-none tracking-tight">{preview?'THE CHASE IS ON':`${who.split(' ')[0].toUpperCase()} MOVES THE FIELD`}</h2>
+      <h2 className="mt-3 text-[clamp(24px,3vw,52px)] font-black italic leading-none tracking-tight">{preview?'THE CHASE IS ON':maneuver?.passedIds.length?`${who.split(' ')[0].toUpperCase()} MAKES THE PASS`:maneuver?.tieIds.length?`${who.split(' ')[0].toUpperCase()} DRAWS LEVEL`:`${who.split(' ')[0].toUpperCase()} MOVES THE FIELD`}</h2>
     </header>
     <aside className="absolute right-0 inset-y-0 flex w-[22%] flex-col border-l border-white/15 bg-[#08131f]/95 px-[1.4%] py-[3%]">
       <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-black uppercase tracking-[.15em]">Running order</h3><span className="rounded-sm border border-white/25 px-1.5 py-0.5 text-[10px] text-white/60">TODAY</span></div>

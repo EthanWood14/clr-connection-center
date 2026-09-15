@@ -929,12 +929,16 @@ test("an overtake is worked out between polls and plays its own race scene", () 
   // The feed is stateless, so a CHANGE between two polls cannot come from the
   // server — the board holds the previous standings and compares.
   assert.match(page, /const prevStandings = useRef<RankRow\[\] \| null>\(null\);/);
-  assert.match(page, /detectOvertakes\(prevStandings\.current, standings, data\.today\)/);
+  assert.match(page, /prevStandingsDay\.current === data\.today \? prevStandings\.current : null/);
+  assert.match(page, /detectOvertakes\(before, standings, data\.today\)/);
   assert.match(page, /prevStandings\.current = standings;/);
   // It goes through the same played-set as every other moment, so a pass that
   // is still true on the next poll cannot play twice.
   const enqueue = page.slice(page.indexOf("cursorRef.current = data.cursor;"), page.indexOf("}, [data]);"));
   assert.match(enqueue, /!played\.current\.has\(o\.key\)/);
+  assert.match(enqueue, /overtakes\.length===0 && !fieldRaceQueued/, "sampled/tie scenes yield to one full-field pass replay");
+  assert.match(enqueue, /if \(next\.some\(m=>\(m\.type==="event"\|\|m\.type==="overtake"\)&&m\.fieldRace\)\) break;/, "simultaneous scorers do not replay the same field repeatedly");
+  assert.match(enqueue, /fieldRace: standings, raceBefore: before/);
   // Its own scene, its own hold, its own sound.
   assert.match(page, /<RaceScene passerName=\{o\.passerName\} passedName=\{o\.passedName\} count=\{o\.count\} reduced=\{reduced\} \/>/);
   assert.match(page, /overtake: 8500,/);

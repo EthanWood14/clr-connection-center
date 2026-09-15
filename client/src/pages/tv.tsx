@@ -34,6 +34,7 @@ import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
 import { FieldRace, preloadFieldRace } from "@/components/tv/field-race";
 import { showsFieldRace } from "@shared/tv-field-race";
+import { planRaceTransition } from "@shared/tv-race-transition";
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
@@ -80,9 +81,9 @@ interface Feed {
 }
 
 type Moment =
-  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[]; preview?: boolean }
+  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null; preview?: boolean }
   | { type: "milestone"; key: string; milestone: Milestone }
-  | { type: "overtake"; key: string; overtake: Overtake };
+  | { type: "overtake"; key: string; overtake: Overtake; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null };
 
 const POLL_MS = 10_000;
 /**
@@ -521,7 +522,8 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
 function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
-  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} who={moment.event.who} reduced={reduced} preview={moment.preview} />;
+  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} before={moment.raceBefore} who={moment.event.who} reduced={reduced} preview={moment.preview} />;
+  if (moment.type === "overtake" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} before={moment.raceBefore} who={moment.overtake.passerName} focusId={moment.overtake.passerId} reduced={reduced} />;
   // The race is its own scene rather than a hype screen: it is about two
   // people on the board, not one thing that happened.
   if (moment.type === "overtake") {
@@ -701,6 +703,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   const [current, setCurrent] = useState<Moment | null>(null);
   /** Last poll's standings, for spotting one CLR passing another. */
   const prevStandings = useRef<RankRow[] | null>(null);
+  const prevStandingsDay = useRef<string | null>(null);
   const played = useRef<Set<string>>(new Set());
   useEffect(() => {
     try { const raw = localStorage.getItem(PLAYED_KEY); if (raw) played.current = new Set(JSON.parse(raw)); } catch { /* fresh TV */ }
@@ -716,6 +719,10 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     if (!data) return;
     cursorRef.current = data.cursor;
     const next: Moment[] = [];
+    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday }));
+    const before = prevStandingsDay.current === data.today ? prevStandings.current : null;
+    const moves = planRaceTransition(before, standings);
+    const overtakes = detectOvertakes(before, standings, data.today).filter(o=>moves.some(m=>m.id===o.passerId&&m.passedIds.length>0));
     const playbackKey = data.racePlayback ? `manual-race:${data.racePlayback.id}` : null;
     if (playbackKey && !played.current.has(playbackKey)) next.push({
       type: "event", key: playbackKey, preview: true, fieldRace: data.scorecard.people,
@@ -724,8 +731,12 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     for (const ev of data.events) {
       if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
       const raceKey = `${ev.id}:field-race`;
-      if (ev.kind === "transfer" && showsFieldRace(ev.id) && !played.current.has(raceKey)) {
-        next.push({ type: "event", key: raceKey, event: ev, fieldRace: data.scorecard.people });
+      const matching = standings.filter(p=>p.name===ev.who);
+      const move = matching.length===1 ? moves.find(m=>m.id===matching[0].id) : undefined;
+      const catchesTie = !!move?.tieIds.length;
+      const fieldRaceQueued = next.some(m=>(m.type==="event"||m.type==="overtake")&&m.fieldRace);
+      if (ev.kind === "transfer" && overtakes.length===0 && !fieldRaceQueued && (showsFieldRace(ev.id) || catchesTie) && !played.current.has(raceKey)) {
+        next.push({ type: "event", key: raceKey, event: ev, fieldRace: standings, raceBefore: before });
       }
     }
     for (const m of data.milestones) if (!played.current.has(m.id)) next.push({ type: "milestone", key: m.id, milestone: m });
@@ -733,11 +744,16 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     // rather than on the server because it is a change BETWEEN two polls, and
     // the feed is stateless. The first poll after a load has no previous
     // standing to compare against and stays quiet, like events do.
-    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday }));
-    for (const o of detectOvertakes(prevStandings.current, standings, data.today)) {
-      if (!played.current.has(o.key)) next.push({ type: "overtake", key: o.key, overtake: o });
+    for (const o of overtakes) {
+      // One scene replays the whole poll, including simultaneous scorers.
+      if (next.some(m=>(m.type==="event"||m.type==="overtake")&&m.fieldRace)) break;
+      if (!played.current.has(o.key)) {
+        next.push({ type: "overtake", key: o.key, overtake: o, fieldRace: standings, raceBefore: before });
+        break;
+      }
     }
     prevStandings.current = standings;
+    prevStandingsDay.current = data.today;
     if (next.length) setQueue((q) => {
       const have = new Set(q.map((x) => x.key));
       return [...q, ...next.filter((x) => !have.has(x.key))];
@@ -801,7 +817,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   // Seen live on the rescheduled scene. A hard cut cannot do either.
   useEffect(() => {
     if (!current) return;
-    const hold = current.type === "event" && current.fieldRace ? 12_000 : current.type === "milestone" ? HOLD_MS.milestone
+    const hold = (current.type === "event" || current.type === "overtake") && current.fieldRace ? 12_000 : current.type === "milestone" ? HOLD_MS.milestone
       : current.type === "overtake" ? HOLD_MS.overtake
       : HOLD_MS[current.event.kind];
     const done = setTimeout(() => setCurrent(null), hold);

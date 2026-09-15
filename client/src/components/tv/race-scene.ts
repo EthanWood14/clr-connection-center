@@ -2,8 +2,10 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
+import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
+import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
 
-type Options = { drivers: RaceDriver[]; reduced: boolean; focusId?: number; onFailure: () => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void };
 
 /** No downloaded assets or production reads. Everything belongs to this one 12s scene. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -159,6 +161,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const helmetGeo=keep(new THREE.SphereGeometry(.24,12,8));
   const glass=keep(new THREE.MeshPhysicalMaterial({color:"#234353",roughness:.17,metalness:.5,clearcoat:1}));
   const grid=raceGrid(options.drivers);
+  const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
   const racers=grid.map(driver=>{
     const root=new THREE.Group();scene.add(root);
     const tied=grid.filter(p=>p.gap===driver.gap).length;
@@ -188,12 +191,19 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     return {driver,root,wheels};
   });
 
-  // Only the lead car and scorer get floating tags; the tower identifies every car.
-  const tags=racers.filter(r=>r.driver.index===0||r.driver.id===options.focusId).map(r=>{
+  // Every driver is named. Screen-space placement keeps nearby nameplates readable.
+  const tags=racers.map(r=>{
     const element=document.createElement("div");
-    element.style.cssText="position:absolute;pointer-events:none;transform:translate(-50%,-100%);padding:7px 11px;border-left:3px solid #e9c96c;background:#101a25ee;color:white;font:700 13px system-ui;white-space:nowrap;box-shadow:0 4px 15px #0005;";
-    element.textContent=`${r.driver.rank===1?'LEADER · ':''}${r.driver.name.split(' ')[0]}`;
-    host.appendChild(element);tagElements.push(element);return {element,racer:r};
+    element.style.cssText="position:absolute;pointer-events:none;padding:5px 8px;border-left:3px solid;background:#101a25ed;color:white;font:700 clamp(11px,1vw,17px) system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 12px #0004;";
+    element.style.borderColor=r.driver.color;
+    element.textContent=r.driver.name;
+    element.title=r.driver.name;
+    element.dataset.driverId=String(r.driver.id);
+    const line=document.createElement("div");
+    line.style.cssText="position:absolute;pointer-events:none;height:1px;transform-origin:0 50%;opacity:.7;";
+    line.style.background=r.driver.color;
+    host.append(line,element);tagElements.push(line,element);
+    return {element,line,racer:r,width:element.offsetWidth,height:element.offsetHeight};
   });
 
   let start:number|undefined, previous=0, draw:(now:number)=>void;
@@ -201,6 +211,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const resize=()=>{
     const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);
     renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+    for(const tag of tags){
+      const display=tag.element.style.display;tag.element.style.display='block';
+      tag.element.style.maxWidth=`${Math.max(1,w-20)}px`;
+      tag.width=tag.element.offsetWidth;tag.height=tag.element.offsetHeight;
+      tag.element.style.display=display;
+    }
     if(options.reduced&&draw)draw(performance.now());
   };
   observer=new ResizeObserver(resize);observer.observe(host);resize();
@@ -214,22 +230,39 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const elapsed=options.reduced?4.6:Math.min(11.8,(now-start)/1000);
     if(!options.reduced && now-previous<32){frame=requestAnimationFrame(draw);return;}
     previous=now;
-    const lead=.06+elapsed*.115;
+    const motionTime=options.reduced?4.6:elapsed;
+    const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
+    const lead=.06+motionTime*speed;
     for(const {driver,root,wheels} of racers) {
-      const point=raceTrackPoint(lead-driver.distance/42,driver.lane);
+      const transition=transitions.get(driver.id)!;
+      const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
+      const point=raceTrackPoint(lead-position.distance/42,position.lane);
       root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw,Math.atan(.075));
-      for(const wheel of wheels)wheel.rotation.x=-elapsed*19;
+      for(const wheel of wheels)wheel.rotation.x=-motionTime*19*(options.reduced?1:RACE_SPEED_MULTIPLIER);
     }
     const shot=THREE.MathUtils.smoothstep(elapsed,3.5,7);
-    camera.position.set(70-shot*25,11-shot*2.5,28+shot*31);
-    const aim=raceTrackPoint(lead-.22,0);camera.lookAt(aim.x,1.4,aim.z);
+    const focusTransition=options.focusId===undefined?undefined:transitions.get(options.focusId);
+    const focusPose=focusTransition?.passing?interpolateRaceTransition(focusTransition,options.reduced?12:elapsed):undefined;
+    // Follow an earned midfield pass too, not only whoever already leads.
+    const focusOffset=focusPose?Math.max(0,focusPose.distance-8)/42:0;
+    // Follow the extra lap travel at trackside height so faster cars stay in view.
+    const orbit=motionTime*(speed-RACE_BASE_ANGULAR_SPEED)-focusOffset,cx=70-shot*25,cz=28+shot*31;
+    camera.position.set(cx*Math.cos(orbit)-cz*Math.sin(orbit),11-shot*2.5,cx*Math.sin(orbit)+cz*Math.cos(orbit));
+    const aim=raceTrackPoint(lead-.22-focusOffset,0);camera.lookAt(aim.x,1.4,aim.z);
     try {renderer.render(scene,camera);}catch{fail();return;}
-    for(const {element,racer} of tags) {
+    const anchors=[];
+    for(const {element,line,racer,width,height} of tags) {
       vector.copy(racer.root.position);vector.y+=2.2;vector.project(camera);
-      const visible=vector.z>-1&&vector.z<1&&Math.abs(vector.x)<.95&&Math.abs(vector.y)<.85;
-      element.style.display=visible?'block':'none';
-      element.style.left=`${(vector.x*.5+.5)*host.clientWidth}px`;
-      element.style.top=`${(-vector.y*.5+.5)*host.clientHeight}px`;
+      const visible=vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
+      element.style.display=line.style.display=visible?'block':'none';
+      if(visible)anchors.push({id:racer.driver.id,x:(vector.x*.5+.5)*host.clientWidth,y:(-vector.y*.5+.5)*host.clientHeight,width,height});
+    }
+    for(const label of layoutRaceLabels(anchors,{width:host.clientWidth,height:host.clientHeight})) {
+      const tag=tags.find(t=>t.racer.driver.id===label.id)!;
+      tag.element.style.left=`${label.left}px`;tag.element.style.top=`${label.top}px`;
+      const dx=label.left+label.width/2-label.x,dy=label.top+label.height-label.y;
+      tag.line.style.left=`${label.x}px`;tag.line.style.top=`${label.y}px`;
+      tag.line.style.width=`${Math.hypot(dx,dy)}px`;tag.line.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;
     }
     if(!options.reduced&&elapsed<11.8)frame=requestAnimationFrame(draw);
   };
