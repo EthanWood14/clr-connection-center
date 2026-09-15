@@ -128,7 +128,7 @@ import {
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
-import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
@@ -8453,6 +8453,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
         WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
           AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
+          -- Off the rotation by decision, not by absence: never offered a lead
+          -- however Ready they look (users.shotgun_opted_out).
+          AND COALESCE(u.shotgun_opted_out,0)=0
           AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
           -- One lead at a time, and that means finished, not merely answered.
           -- 'offered' was already here: nobody should be deciding on two
@@ -8573,7 +8576,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const me = storage.getUserById(userId) as any;
     const canManage = taskManager(me);
     const canPublish = canManage || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
-    const isClr = shotgunUserIsClr(me);
+    // Taken off the rotation by decision: the page must say so rather than
+    // showing a Ready badge that will never be offered anything.
+    const optedOut = !!(me?.shotgunOptedOut ?? me?.shotgun_opted_out);
+    const isClr = shotgunUserIsClr(me) && !optedOut;
     advanceShotgun();
     const ready = isClr ? shotgunDb().prepare(`SELECT is_ready,heartbeat_at FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any : null;
     const cutoff = new Date(Date.now() - SHOTGUN_READY_TTL_MS).toISOString();
@@ -8597,7 +8603,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         : [orgId, userId])) as any[];
     const readyUsers = canPublish ? shotgunDb().prepare(`SELECT u.id,u.name,r.heartbeat_at,r.last_assigned_at
       FROM shotgun_readiness r INNER JOIN users u ON u.id=r.user_id
-      WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1 ORDER BY u.name`).all(orgId, cutoff) : [];
+      WHERE r.org_id=? AND r.is_ready=1 AND r.heartbeat_at>=? AND u.is_active=1
+        AND COALESCE(u.shotgun_opted_out,0)=0 ORDER BY u.name`).all(orgId, cutoff) : [];
     // The lead this CLR still owes a write-up on, if any. While it is set they
     // are skipped by the rotation and refused at the accept, so the page has
     // to be able to say so — a Ready badge and no offers for an hour, with no
@@ -8605,7 +8612,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const holding = isClr ? shotgunDb().prepare(`SELECT id,lead_name,claimed_at FROM shotgun_leads
       WHERE org_id=? AND current_assignee_id=? AND status='claimed' ORDER BY claimed_at LIMIT 1`)
       .get(orgId, userId) as any : null;
-    res.json({ canManage, canPublish, isClr, isReady, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
+    res.json({ canManage, canPublish, isClr, isReady, optedOut, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
       leads: rows.map(shotgunLeadJson), readyUsers,
       holding: holding ? { id: Number(holding.id), leadName: String(holding.lead_name), claimedAt: holding.claimed_at ?? null } : null });
   });
@@ -14384,27 +14391,16 @@ ${note}` : daysLine;
       // stopwatch, and a Shotgun claim is not this number. Ethan, 15 Sep
       // 2026: "include average LO lead assignee time too (not including
       // reassigned/shotgun leads)."
-      const loClaimByUser = new Map<number, { total: number; n: number }>();
+      // Two numbers, because one cannot cover everybody: how FAST they took
+      // the leads they took, and how MANY of the ones they were shown they
+      // took at all. A CLR who never claims has no time to average — the
+      // share is the only honest measurement of them.
+      let loClaimByUser = new Map<number, { offered: number; claimed: number; seconds: number }>();
       try {
-        const claimRows = sqlite.prepare(`
-          SELECT claimed_by AS uid, first_seen_at, claimed_at FROM lo_new_leads
-           WHERE org_id = ? AND status = 'claimed' AND claimed_by IS NOT NULL
-             AND claimed_at IS NOT NULL AND shotgun_lead_id IS NULL
-             AND substr(claimed_at, 1, 10) BETWEEN ? AND ?
-        `).all(Number(currentOrgId() ?? 1), addIsoDays(startDate, -1), addIsoDays(endDate, 1)) as any[];
-        for (const r of claimRows) {
-          const landed = Date.parse(String(r.first_seen_at ?? ""));
-          const claimed = Date.parse(String(r.claimed_at ?? ""));
-          if (!Number.isFinite(landed) || !Number.isFinite(claimed) || claimed < landed) continue;
-          const day = todayInTz(claimed, BUSINESS_DAY_DEFAULT_TZ);
-          if (day < startDate || day > endDate) continue;
-          const uid = Number(r.uid);
-          if (!uid || excludedIds.has(uid)) continue;
-          const s = loClaimByUser.get(uid) ?? { total: 0, n: 0 };
-          s.total += (claimed - landed) / 1000;
-          s.n += 1;
-          loClaimByUser.set(uid, s);
-        }
+        const from = new Date(parseWallClockInTz(`${startDate} 00:00`, BUSINESS_DAY_DEFAULT_TZ)).toISOString();
+        const to = new Date(parseWallClockInTz(`${addIsoDays(endDate, 1)} 00:00`, BUSINESS_DAY_DEFAULT_TZ) - 1).toISOString();
+        loClaimByUser = storageExtra.loNewLeadClaimStats(Number(currentOrgId() ?? 1), from, to);
+        for (const id of Array.from(loClaimByUser.keys())) if (excludedIds.has(id)) loClaimByUser.delete(id);
       } catch (e: any) {
         console.error("[manager-dashboard] LO lead claim stat failed:", e?.message ?? e);
       }
@@ -14786,10 +14782,15 @@ ${note}` : daysLine;
             shotgunRespondPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
               ? Math.round((shotgunByUser.get(u.id)!.responded / shotgunByUser.get(u.id)!.offers) * 100) : null,
             // Seconds from a new lead landing on their LO to them claiming it,
-            // averaged. Null when they claimed none in the range.
-            loLeadClaims: loClaimByUser.get(u.id)?.n ?? 0,
-            loLeadClaimSeconds: (loClaimByUser.get(u.id)?.n ?? 0) > 0
-              ? Math.round(loClaimByUser.get(u.id)!.total / loClaimByUser.get(u.id)!.n) : null,
+            // averaged; and the share of the leads they were shown that they
+            // took. Null percentages when they were shown none — being given
+            // nothing is not the same as ignoring everything.
+            loLeadOffered: loClaimByUser.get(u.id)?.offered ?? 0,
+            loLeadClaims: loClaimByUser.get(u.id)?.claimed ?? 0,
+            loLeadClaimSeconds: (loClaimByUser.get(u.id)?.claimed ?? 0) > 0
+              ? Math.round(loClaimByUser.get(u.id)!.seconds / loClaimByUser.get(u.id)!.claimed) : null,
+            loLeadClaimPct: (loClaimByUser.get(u.id)?.offered ?? 0) > 0
+              ? Math.round((loClaimByUser.get(u.id)!.claimed / loClaimByUser.get(u.id)!.offered) * 100) : null,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,
@@ -19726,6 +19727,35 @@ ${note}` : daysLine;
         claimedBy: s.claimed_by_name ?? null, shotgunLeadId: s.shotgun_lead_id ?? null };
     };
 
+    // Somebody else's lead that has gone unclaimed past the assignee's head
+    // start. Until 15 Sep 2026 one person was the only one who could see a
+    // lead for the full three minutes, so if they were mid-call it simply
+    // timed out; now the rest of the floor gets it for the remainder. Shown
+    // as an ordinary card, with no second bell or push — the people who have
+    // C3 open are exactly the ones who can act inside a minute. Anyone taken
+    // off the Shotgun rotation is left out of this too.
+    const nowMs = Date.now();
+    const meRow = storage.getUserById(userId) as any;
+    const floorLos = (meRow?.shotgunOptedOut ?? meRow?.shotgun_opted_out) ? [] : storageExtra.openFloorLoNewLeads(
+      orgId,
+      new Date(nowMs - LO_NEW_LEAD_FLOOR_AFTER_MS).toISOString(),
+      new Date(nowMs - LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString(),
+      userId,
+    ).map((row: any) => ({
+      email: String(row.lo_email ?? ""),
+      lo: { id: Number(row.lo_id), name: String(row.lo_name ?? "") },
+      leads: [{
+        externalId: String(row.external_id),
+        borrowerName: row.borrower_name ?? null,
+        phone: row.phone ?? null,
+        state: row.state ?? null,
+        source: row.source ?? null,
+        landedAt: row.landed_at ?? row.first_seen_at ?? null,
+        openToFloor: true,
+        claim: { status: "new", escalateAt: loNewLeadEscalateAt(String(row.first_seen_at)), claimedBy: null, shotgunLeadId: null },
+      }],
+    }));
+
     res.json({
       ...result,
       hours,
@@ -19739,6 +19769,7 @@ ${note}` : daysLine;
         lo: loByEmail.get(row.email) ?? null,
         leads: row.leads.map((l) => ({ ...l, claim: claimFor(String(l.externalId)) })),
       })),
+      floorLos,
     });
   });
 

@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.113.0",
+    headline: "An unclaimed new lead now goes to the whole floor after 45 seconds instead of sitting with one person for three minutes.",
+    items: [
+      { text: "New leads: the CLR assigned to that loan officer still gets it first, alone, for forty-five seconds. After that the card appears for every CLR with C3 open, marked \"Unclaimed lead — anyone can take it\", until the three minutes are up and it goes to Shotgun. Yesterday one person was the only one who could see each lead, so a lead landing mid-call simply timed out.", audience: "everyone" },
+      { text: "Transfer Scorecard: Lead grab % joins Lead grab, so every CLR is measured. Lead grab is how fast they took the leads they took; Lead grab % is how many of the leads they were shown they took at all.", audience: "manager" },
+      { text: "Elleine is off the Shotgun rotation and will not be offered leads or shown the floor-wide card. Anyone can be taken off or put back the same way.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.112.0",
     headline: "Everyone's Dialpad texts count again, and the scorecard times how fast a CLR grabs their own LO's new lead.",
     items: [

@@ -87,7 +87,10 @@ function seed(readyIds: number[] = CLRS) {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE users (
     id INTEGER PRIMARY KEY, name TEXT, org_id INTEGER, is_active INTEGER,
-    is_clr INTEGER, role TEXT, portal TEXT)`);
+    is_clr INTEGER, role TEXT, portal TEXT,
+    -- Production adds this by ALTER; the rotation query reads it, so a
+    -- fixture without it passes tests against a schema nobody runs.
+    shotgun_opted_out INTEGER NOT NULL DEFAULT 0)`);
   // Production creates lead_outcomes before Shotgun. Keep that ordering here
   // now that completed Shotgun transfers retain their outcome id.
   db.exec(`CREATE TABLE lead_outcomes (id INTEGER PRIMARY KEY)`);

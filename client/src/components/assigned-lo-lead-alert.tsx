@@ -4,7 +4,7 @@ import { ArrowUpRight, BellRing, Phone, X, Zap } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { activeLeadAlerts, collectLeadAlerts, leadAlertStorageKey, parseSeenLeadAlerts, type LoLeadAlert, type LoLeadFeed } from "@/lib/lead-alerts";
+import { activeLeadAlerts, collectLeadAlerts, feedWithFloor, leadAlertStorageKey, parseSeenLeadAlerts, type LoLeadAlert, type LoLeadFeed } from "@/lib/lead-alerts";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadSecondsLeft } from "@shared/lo-new-leads";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
@@ -55,10 +55,12 @@ export function AssignedLoLeadAlert() {
     try { remembered = parseSeenLeadAlerts(localStorage.getItem(storageKey)); } catch {}
     const fetchedAt = Date.parse(data.fetchedAt ?? "");
     const now = Number.isFinite(fetchedAt) ? fetchedAt : Date.now();
-    const result = collectLeadAlerts(data, [...seen.current, ...remembered], now);
+    // Your own loan officers, plus anything the floor has been opened up on.
+    const feed = feedWithFloor(data);
+    const result = collectLeadAlerts(feed, [...seen.current, ...remembered], now);
     seen.current = result.seen;
     try { localStorage.setItem(storageKey, JSON.stringify(result.seen)); } catch {}
-    setQueue(current => [...activeLeadAlerts(current, data, now), ...result.alerts].slice(-40));
+    setQueue(current => [...activeLeadAlerts(current, feed, now), ...result.alerts].slice(-40));
   }, [data, dataUpdatedAt, blocked, eligible, storageKey]);
 
   const lead = queue[0];
@@ -85,10 +87,14 @@ export function AssignedLoLeadAlert() {
   const ss = String(Math.floor(left % 60)).padStart(2, "0");
   const tel = lead.phone ? `tel:${String(lead.phone).replace(/[^\d+]/g, "")}` : null;
   return (
-    <section className="pointer-events-auto rounded-2xl border-2 border-emerald-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4" aria-label="New lead for an assigned loan officer" data-testid="assigned-lo-lead-alert">
+    <section className={lead.openToFloor
+      ? "pointer-events-auto rounded-2xl border-2 border-sky-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4"
+      : "pointer-events-auto rounded-2xl border-2 border-emerald-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4"} aria-label="New lead for an assigned loan officer" data-testid="assigned-lo-lead-alert">
       <div className="flex items-start justify-between gap-3">
         <div role="status" aria-live="polite" className="min-w-0">
-          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400"><BellRing className="h-4 w-4 shrink-0" />New lead for your LO</p>
+          {lead.openToFloor
+            ? <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-sky-700 dark:text-sky-400" data-testid="assigned-lo-lead-floor"><BellRing className="h-4 w-4 shrink-0" />Unclaimed lead — anyone can take it</p>
+            : <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400"><BellRing className="h-4 w-4 shrink-0" />New lead for your LO</p>}
           <h2 className="mt-2 break-words text-lg font-bold">{lead.loName}</h2>
           <p className="mt-1 break-words text-sm">{lead.borrowerName || "A new borrower"}</p>
           <p className="mt-1 break-words text-xs text-muted-foreground">{[lead.state, lead.source].filter(Boolean).join(" · ")}</p>

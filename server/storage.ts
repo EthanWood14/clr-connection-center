@@ -85,6 +85,11 @@ sqlite.exec(`
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN has_seen_intro INTEGER NOT NULL DEFAULT 0`); } catch {}
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN is_clr INTEGER NOT NULL DEFAULT 1`); } catch {}
+// Off the Shotgun rotation entirely: never offered a lead, never shown the
+// floor-wide card. A CLR whose job is not the queue (Elleine, by Ethan's
+// instruction on 15 Sep 2026) was still being offered leads and letting all
+// of them time out, which cost every lead twenty seconds on its way round.
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN shotgun_opted_out INTEGER NOT NULL DEFAULT 0`); } catch {}
 // Some people do BOTH jobs — their own pipeline as a loan officer, and another
 // officer's desk as an assistant. C3 stores those as two unrelated rows, so
 // the placement stat saw half a workload and called them lightly loaded. This
@@ -3495,6 +3500,20 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   } catch (e: any) {
     console.error("[dialpad-sms] user backfill failed:", e?.message ?? e);
   }
+  // Ethan, 15 Sep 2026: "have elleine not receive any shotgun leads." Seeded
+  // once so it ships with the code rather than living only in a production
+  // edit; the flag is the general mechanism and can be cleared to put anyone
+  // back in the rotation.
+  try {
+    const seeded = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name='shotgun_optout_elleine_v1'`).get();
+    if (!seeded) {
+      const done = sqlite.prepare(`UPDATE users SET shotgun_opted_out=1 WHERE name LIKE 'Elleine%' AND is_active=1`).run();
+      sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("shotgun_optout_elleine_v1", new Date().toISOString());
+      if (done.changes) console.log(`[shotgun] ${done.changes} user(s) taken off the Shotgun rotation by name`);
+    }
+  } catch (e: any) {
+    console.error("[shotgun] opt-out seed failed:", e?.message ?? e);
+  }
 
   // Calls placed inside Bonzo, reported by the Shotgun extension against the
   // signed-in CLR. `counts` is decided at insert (shared/bonzo-calls.ts):
@@ -4885,6 +4904,48 @@ export function claimLoNewLead(orgId: number, externalId: string, userId: number
 export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string): any[] {
   return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND status='new' AND first_seen_at<=? ORDER BY first_seen_at, id LIMIT 50`)
     .all(orgId, cutoffIso) as any[];
+}
+
+/**
+ * Unclaimed leads that are now open to the whole floor: past the assignee's
+ * head start, still inside the claim window, and not this person's own (they
+ * already have the card). Caller supplies the two instants so the rule lives
+ * in shared/lo-new-leads.ts rather than being retyped as SQL.
+ */
+export function openFloorLoNewLeads(orgId: number, floorCutoffIso: string, windowCutoffIso: string, excludeUserId: number): any[] {
+  const rows = sqlite.prepare(`SELECT * FROM lo_new_leads
+     WHERE org_id=? AND status='new' AND first_seen_at<=? AND first_seen_at>?
+     ORDER BY first_seen_at, id LIMIT 20`).all(orgId, floorCutoffIso, windowCutoffIso) as any[];
+  return rows.filter((r) => {
+    try { return !(JSON.parse(r.assigned_user_ids || "[]") as number[]).map(Number).includes(Number(excludeUserId)); }
+    catch { return true; }
+  });
+}
+
+/** How many of the leads shown to each CLR they took themselves, and how fast. */
+export function loNewLeadClaimStats(orgId: number, sinceIso: string, untilIso: string): Map<number, { offered: number; claimed: number; seconds: number }> {
+  const rows = sqlite.prepare(`SELECT assigned_user_ids, status, claimed_by, first_seen_at, claimed_at, shotgun_lead_id
+     FROM lo_new_leads WHERE org_id=? AND first_seen_at>=? AND first_seen_at<=?`).all(orgId, sinceIso, untilIso) as any[];
+  const out = new Map<number, { offered: number; claimed: number; seconds: number }>();
+  const bump = (id: number) => {
+    const v = out.get(id) ?? { offered: 0, claimed: 0, seconds: 0 };
+    out.set(id, v);
+    return v;
+  };
+  for (const r of rows) {
+    let assigned: number[] = [];
+    try { assigned = (JSON.parse(r.assigned_user_ids || "[]") as any[]).map(Number).filter(Boolean); } catch {}
+    for (const id of assigned) bump(id).offered += 1;
+    const claimer = Number(r.claimed_by);
+    if (r.status === "claimed" && claimer && !r.shotgun_lead_id) {
+      const landed = Date.parse(String(r.first_seen_at ?? ""));
+      const took = Date.parse(String(r.claimed_at ?? ""));
+      const v = bump(claimer);
+      v.claimed += 1;
+      if (Number.isFinite(landed) && Number.isFinite(took) && took >= landed) v.seconds += (took - landed) / 1000;
+    }
+  }
+  return out;
 }
 
 export function markLoNewLeadEscalated(id: number, shotgunLeadId: number | null, error: string | null): void {

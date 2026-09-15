@@ -127,7 +127,7 @@ type RangeBlock = {
     callToTransferPct: number | null;
     shotgunOffers?: number; shotgunAccepted?: number; shotgunResponded?: number;
     shotgunAcceptPct?: number | null; shotgunRespondPct?: number | null;
-    loLeadClaims?: number; loLeadClaimSeconds?: number | null;
+    loLeadOffered?: number; loLeadClaims?: number; loLeadClaimSeconds?: number | null; loLeadClaimPct?: number | null;
   }[];
   textTransfersTotal?: number;
   heatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
@@ -478,7 +478,13 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
         : r.loLeadClaimSeconds < 60 ? `${r.loLeadClaimSeconds}s`
         : `${Math.floor(r.loLeadClaimSeconds / 60)}m ${String(r.loLeadClaimSeconds % 60).padStart(2, "0")}s`,
       title: "Average time from a new lead landing on one of this CLR's assigned loan officers to them claiming it. Only leads they took inside the three-minute window count; ones that ran out into Shotgun do not. Lower is better. Dash: they claimed none.",
-      cellTitle: r => (r.loLeadClaims ?? 0) > 0 ? `${r.loLeadClaims} lead${r.loLeadClaims === 1 ? "" : "s"} claimed directly` : undefined },
+      cellTitle: r => (r.loLeadClaims ?? 0) > 0 ? `${r.loLeadClaims} of ${r.loLeadOffered ?? 0} lead${r.loLeadOffered === 1 ? "" : "s"} claimed directly` : undefined },
+    // The companion share, so a CLR who never claims is measured too — they
+    // have no average time to show, and a blank row is not a verdict.
+    { key: "loLeadClaimPct", label: "Lead grab %", get: r => r.loLeadClaimPct ?? null, better: true,
+      fmt: r => r.loLeadClaimPct == null ? "—" : `${r.loLeadClaimPct}%`,
+      title: "Of the new leads shown to this CLR on their own loan officers, the share they claimed themselves. The rest went unclaimed and moved on to Shotgun. Dash: they were shown none.",
+      cellTitle: r => (r.loLeadOffered ?? 0) > 0 ? `${r.loLeadClaims ?? 0} claimed of ${r.loLeadOffered} shown` : undefined },
     // Not a second transfer count: where each one was PUT. Same shape as
     // Write-up above — a share, higher is better, a dash when there is nothing
     // to score, because 0% is a verdict and an empty week has not earned one.

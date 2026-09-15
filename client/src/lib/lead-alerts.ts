@@ -21,6 +21,8 @@ export type LoLeadAlert = {
   source: string | null;
   landedAt: string;
   claim: LoLeadClaim | null;
+  /** Somebody else's lead, unclaimed past the head start — up for grabs. */
+  openToFloor?: boolean;
 };
 
 export type LoLeadFeed = {
@@ -37,9 +39,26 @@ export type LoLeadFeed = {
       source: string | null;
       landedAt: string | null;
       claim?: LoLeadClaim | null;
+      openToFloor?: boolean;
     }>;
   }>;
+  /**
+   * Leads on somebody else's loan officer that nobody claimed inside the
+   * assignee's head start. Same shape as `los`; merged with it by
+   * feedWithFloor so one lead pipeline handles both.
+   */
+  floorLos?: LoLeadFeed["los"];
 };
+
+/**
+ * The feed as the alert card sees it: your own loan officers plus whatever
+ * the floor has been offered. Kept here rather than in the component so the
+ * merge is testable and both alert functions see the same rows.
+ */
+export function feedWithFloor(feed: LoLeadFeed): LoLeadFeed {
+  if (!feed.floorLos?.length) return feed;
+  return { ...feed, los: [...feed.los, ...feed.floorLos] };
+}
 
 /** A lead somebody already took, or that went to Shotgun, is no longer this person's to act on. */
 export function claimSettled(claim: LoLeadClaim | null | undefined): boolean {
@@ -74,7 +93,8 @@ export function collectLeadAlerts(feed: LoLeadFeed, previous: string[], now: num
       // not shown — there is nothing for this person to do about it.
       if (claimSettled(lead.claim)) continue;
       alerts.push({ key, externalId: lead.externalId, loId: row.lo.id, loName: row.lo.name, borrowerName: lead.borrowerName,
-        phone: lead.phone ?? null, state: lead.state, source: lead.source, landedAt: lead.landedAt, claim: lead.claim ?? null });
+        phone: lead.phone ?? null, state: lead.state, source: lead.source, landedAt: lead.landedAt, claim: lead.claim ?? null,
+        openToFloor: lead.openToFloor === true });
     }
   }
   // A burst is queued oldest first, not overwritten by the next polling result.

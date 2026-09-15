@@ -37,17 +37,19 @@ test("each leaderboard row carries the counts and null percentages when nothing 
 // "Include average LO lead assignee time too (not including reassigned/
 // shotgun leads)." — Ethan, 15 Sep 2026.
 test("Lead grab averages the direct claim only, never a lead that timed out into Shotgun", () => {
-  const block = routes.slice(routes.indexOf("const loClaimByUser = new Map"), routes.indexOf("const leaderboard = countedClrs"));
-  assert.match(block, /FROM lo_new_leads/);
-  assert.match(block, /status = 'claimed'/);
-  assert.match(block, /shotgun_lead_id IS NULL/, "a lead that went to Shotgun is somebody else's stopwatch");
-  assert.match(block, /if \(!Number\.isFinite\(landed\) \|\| !Number\.isFinite\(claimed\) \|\| claimed < landed\) continue;/);
-  assert.match(block, /todayInTz\(claimed, BUSINESS_DAY_DEFAULT_TZ\)/);
-  assert.match(routes, /loLeadClaimSeconds: \(loClaimByUser\.get\(u\.id\)\?\.n \?\? 0\) > 0/);
-  // Lower is better — the one column on this table where that is true.
+  const storage = read("server/storage.ts");
+  const stat = storage.slice(storage.indexOf("export function loNewLeadClaimStats"), storage.indexOf("export function markLoNewLeadEscalated"));
+  assert.match(stat, /FROM lo_new_leads WHERE org_id=\? AND first_seen_at>=\? AND first_seen_at<=\?/);
+  assert.match(stat, /for \(const id of assigned\) bump\(id\)\.offered \+= 1;/, "everyone shown a lead is measured");
+  assert.match(stat, /r\.status === "claimed" && claimer && !r\.shotgun_lead_id/, "a lead that went to Shotgun is somebody else's stopwatch");
+  assert.match(routes, /loClaimByUser = storageExtra\.loNewLeadClaimStats\(/);
+  assert.match(routes, /loLeadClaimSeconds: \(loClaimByUser\.get\(u\.id\)\?\.claimed \?\? 0\) > 0/);
+  assert.match(routes, /loLeadClaimPct: \(loClaimByUser\.get\(u\.id\)\?\.offered \?\? 0\) > 0/);
+  // Lower is better on the time — the one column on this table where that is true.
   assert.match(page, /key: "loLeadClaim", label: "Lead grab", get: r => r\.loLeadClaimSeconds \?\? null, better: false/);
   assert.match(page, /r\.loLeadClaimSeconds < 60 \? `\$\{r\.loLeadClaimSeconds\}s`/);
-  assert.match(page, /lead\$\{r\.loLeadClaims === 1 \? "" : "s"\} claimed directly/);
+  assert.match(page, /key: "loLeadClaimPct", label: "Lead grab %", get: r => r\.loLeadClaimPct \?\? null, better: true/);
+  assert.match(page, /\$\{r\.loLeadClaims \?\? 0\} claimed of \$\{r\.loLeadOffered\} shown/);
 });
 
 test("the scorecard shows both as percentage columns with a dash for no offers", () => {
