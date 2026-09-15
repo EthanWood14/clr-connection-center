@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.111.0",
+    headline: "Dialpad texts land on the right day, and the scorecard shows how often each CLR answers a Shotgun offer.",
+    items: [
+      { text: "Transfer Scorecard: Dialpad texts were filed by the UTC date, so every text sent after 5 PM was counted on the NEXT day and \"Today\" was short by the whole evening. Texts now belong to their Pacific day, and past texts have been re-filed the same way, so DP Texts and Messages agree with what the floor actually sent.", audience: "manager" },
+      { text: "Two new Transfer Scorecard stats: SG Accept (of the Shotgun offers shown to a CLR in the range, the share they accepted) and SG Respond (the share they answered at all — accepted or passed — before the twenty seconds ran out). Hover a cell for the counts. A dash means they were offered nothing.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.110.0",
     headline: "Transfer Tournament wrapped — Elleine Asuncion took it with 12.",
     items: [

@@ -125,6 +125,8 @@ type RangeBlock = {
     callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
+    shotgunOffers?: number; shotgunAccepted?: number; shotgunResponded?: number;
+    shotgunAcceptPct?: number | null; shotgunRespondPct?: number | null;
   }[];
   textTransfersTotal?: number;
   heatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
@@ -456,6 +458,17 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
+    // Shotgun offers: of the offers shown to this CLR in the range, the share
+    // they accepted, and the share they answered at all (accepted or passed —
+    // the rest timed out). A dash when they were offered nothing.
+    { key: "shotgunAccept", label: "SG Accept", get: r => r.shotgunAcceptPct ?? null, better: true,
+      fmt: r => r.shotgunAcceptPct == null ? "—" : `${r.shotgunAcceptPct}%`,
+      title: "Of the Shotgun offers shown to this CLR in the range, the share they accepted. Dash: no offers.",
+      cellTitle: r => (r.shotgunOffers ?? 0) > 0 ? `${r.shotgunAccepted ?? 0} accepted of ${r.shotgunOffers} offers` : undefined },
+    { key: "shotgunRespond", label: "SG Respond", get: r => r.shotgunRespondPct ?? null, better: true,
+      fmt: r => r.shotgunRespondPct == null ? "—" : `${r.shotgunRespondPct}%`,
+      title: "Of the Shotgun offers shown to this CLR in the range, the share they answered — accepted or passed — before the 20 seconds ran out. Dash: no offers.",
+      cellTitle: r => (r.shotgunOffers ?? 0) > 0 ? `${r.shotgunResponded ?? 0} answered of ${r.shotgunOffers} offers (${(r.shotgunOffers ?? 0) - (r.shotgunResponded ?? 0)} timed out)` : undefined },
     // Not a second transfer count: where each one was PUT. Same shape as
     // Write-up above — a share, higher is better, a dash when there is nothing
     // to score, because 0% is a verdict and an empty week has not earned one.

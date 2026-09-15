@@ -3461,6 +3461,31 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   )`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_dialpad_sms_user_date
     ON dialpad_sms_events(org_id, user_id, message_date)`);
+  // Texts used to be filed under the UTC date of the event, so everything
+  // sent after 5 PM Pacific sat on TOMORROW's scorecard. New rows are filed
+  // by their Pacific day (server/dialpad-sms.ts); this re-files the old ones
+  // the same way, once.
+  try {
+    const refiled = sqlite.prepare(`SELECT 1 FROM migrations_applied WHERE name='dialpad_sms_pacific_dates_v1'`).get();
+    if (!refiled) {
+      const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" });
+      const rows = sqlite.prepare(`SELECT id, occurred_at, message_date FROM dialpad_sms_events`).all() as any[];
+      const update = sqlite.prepare(`UPDATE dialpad_sms_events SET message_date=? WHERE id=?`);
+      let moved = 0;
+      sqlite.transaction(() => {
+        for (const r of rows) {
+          const ms = Date.parse(String(r.occurred_at ?? ""));
+          if (!Number.isFinite(ms)) continue;
+          const day = dayFmt.format(new Date(ms));
+          if (day !== r.message_date) { update.run(day, r.id); moved += 1; }
+        }
+        sqlite.prepare(`INSERT OR IGNORE INTO migrations_applied (name, applied_at) VALUES (?, ?)`).run("dialpad_sms_pacific_dates_v1", new Date().toISOString());
+      })();
+      console.log(`[dialpad-sms] re-filed ${moved} of ${rows.length} texts by Pacific day`);
+    }
+  } catch (e: any) {
+    console.error("[dialpad-sms] Pacific re-file failed:", e?.message ?? e);
+  }
 
   // Calls placed inside Bonzo, reported by the Shotgun extension against the
   // signed-in CLR. `counts` is decided at insert (shared/bonzo-calls.ts):

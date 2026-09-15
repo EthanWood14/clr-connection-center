@@ -14348,6 +14348,36 @@ ${note}` : daysLine;
       const lbDialpadTextsByUser = storageExtra.getDialpadTextsByUser(
         Number(currentOrgId() ?? 1), startDate, endDate,
       );
+      // Shotgun offers answered. Of the offers each CLR was shown in the
+      // range, how many they accepted (confirmed) and how many they answered
+      // at all (confirmed or declined) — the rest timed out on them. An offer
+      // a manager requeued while it was still pending is nobody's miss and is
+      // left out. Ethan, 15 Sep 2026: "add a new stat for the percentage of
+      // shotguns accepted/responded to." Offers are filed by their Pacific
+      // day, like everything else on this page.
+      const shotgunByUser = new Map<number, { offers: number; accepted: number; responded: number }>();
+      try {
+        const offerRows = sqlite.prepare(`
+          SELECT user_id, offered_at, response FROM shotgun_offer_events
+           WHERE org_id = ? AND response IN ('confirmed','declined','expired')
+             AND substr(offered_at, 1, 10) BETWEEN ? AND ?
+        `).all(Number(currentOrgId() ?? 1), addIsoDays(startDate, -1), addIsoDays(endDate, 1)) as any[];
+        for (const r of offerRows) {
+          const ms = Date.parse(String(r.offered_at ?? ""));
+          if (!Number.isFinite(ms)) continue;
+          const day = todayInTz(ms, BUSINESS_DAY_DEFAULT_TZ);
+          if (day < startDate || day > endDate) continue;
+          const uid = Number(r.user_id);
+          if (!uid || excludedIds.has(uid)) continue;
+          const s = shotgunByUser.get(uid) ?? { offers: 0, accepted: 0, responded: 0 };
+          s.offers += 1;
+          if (r.response === "confirmed") { s.accepted += 1; s.responded += 1; }
+          else if (r.response === "declined") s.responded += 1;
+          shotgunByUser.set(uid, s);
+        }
+      } catch (e: any) {
+        console.error("[manager-dashboard] shotgun offer stat failed:", e?.message ?? e);
+      }
       // Texting-sourced transfers (Bulk Texter) per CLR for this range.
       const lbTextByUser = new Map<number, number>();
       try {
@@ -14716,6 +14746,15 @@ ${note}` : daysLine;
             callToolsCalls: activity.calls,
             messages,
             dialpadTexts,
+            // Shotgun offers shown to them in the range; null percentages when
+            // there were none — no offers is not the same as ignoring them.
+            shotgunOffers: shotgunByUser.get(u.id)?.offers ?? 0,
+            shotgunAccepted: shotgunByUser.get(u.id)?.accepted ?? 0,
+            shotgunResponded: shotgunByUser.get(u.id)?.responded ?? 0,
+            shotgunAcceptPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
+              ? Math.round((shotgunByUser.get(u.id)!.accepted / shotgunByUser.get(u.id)!.offers) * 100) : null,
+            shotgunRespondPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
+              ? Math.round((shotgunByUser.get(u.id)!.responded / shotgunByUser.get(u.id)!.offers) * 100) : null,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,

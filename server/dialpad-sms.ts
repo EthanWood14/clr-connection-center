@@ -11,6 +11,20 @@ export type DialpadSmsObservation = {
   status: string | null;
 };
 
+/**
+ * The business day a text belongs to. Texts used to be filed under the UTC
+ * date of the event, so everything sent after 5 PM Pacific landed on
+ * TOMORROW's scorecard — and "today" on the scorecard was short by the whole
+ * evening (Ethan, 15 Sep 2026: "why are dialpad texts for today off so
+ * much?"). The floor works in Pacific; so does this.
+ */
+export const DIALPAD_SMS_TZ = "America/Los_Angeles";
+const smsDayFormat = new Intl.DateTimeFormat("en-CA", { timeZone: DIALPAD_SMS_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+export function smsMessageDate(occurredAtIso: string): string {
+  const ms = Date.parse(occurredAtIso);
+  return smsDayFormat.format(Number.isFinite(ms) ? new Date(ms) : new Date());
+}
+
 function decodePart(value: string): Buffer {
   return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
@@ -45,7 +59,7 @@ export function normalizeOutboundSms(payload: any): DialpadSmsObservation | null
     agentKey: isUser ? agentKey(agentName) : `dialpad-id:${senderId}`,
     agentName,
     dialpadUserId: String(senderId),
-    messageDate: occurredAt.slice(0, 10),
+    messageDate: smsMessageDate(occurredAt),
     occurredAt,
     status: payload.message_status == null ? null : String(payload.message_status),
   };
