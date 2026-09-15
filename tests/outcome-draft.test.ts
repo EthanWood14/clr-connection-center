@@ -127,7 +127,10 @@ test("the draft dies with the form it belonged to", () => {
   // next; the draft has to go with it, and so must a submitted one.
   const reset = page.slice(page.indexOf("if (!resetSignal) return;"), page.indexOf("}, [resetSignal]);"));
   assert.match(reset, /clearDraft\(meId\)/);
-  assert.match(page, /onSubmit=\{form\.handleSubmit\(\(v\) => \{ clearDraft\(meId\);/);
+  assert.match(page, /if \(!editingTransfer\) \{ clearDraft\(meId\); setRestoredDraft\(false\); \}/,
+    "saving an edit must not erase the CLR's separate new-call draft");
+  assert.match(page, /if \(!confirmBonzo\) \{ e.preventDefault\(\); void handleAttemptSubmit\(\); return; \}/,
+    "Enter must compose answers and show the same confirmation as the button");
   assert.match(page, /clearDraft\(meId\); setRestoredDraft\(false\); onSubmit\(v, true\);/);
 });
 

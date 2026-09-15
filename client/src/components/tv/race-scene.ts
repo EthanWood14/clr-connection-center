@@ -4,10 +4,11 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
+import { isSafeTvCarWrapUrl } from "@shared/tv-car";
 
 type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void };
 
-/** No downloaded assets or production reads. Everything belongs to this one 12s scene. */
+/** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -160,6 +161,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const rimGeometry=keep(new THREE.CylinderGeometry(.25,.25,.36,10));
   const helmetGeo=keep(new THREE.SphereGeometry(.24,12,8));
   const glass=keep(new THREE.MeshPhysicalMaterial({color:"#234353",roughness:.17,metalness:.5,clearcoat:1}));
+  let redrawWraps=()=>{};
+  const wrapLoader=new THREE.ImageLoader();
   const grid=raceGrid(options.drivers);
   const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
   const racers=grid.map(driver=>{
@@ -167,9 +170,28 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const tied=grid.filter(p=>p.gap===driver.gap).length;
     root.scale.setScalar(Math.min(1,16/Math.max(1,tied)/2.7));
     const paint=material(driver.color,.25,.48), accent=material(driver.car.accentColor,.34,.2);
-    rounded(root,1.5,.4,3.65,0,.6,0,paint,.16);
-    rounded(root,.58,.24,1.7,0,.5,2.05,paint,.1);
-    rounded(root,2.0,.24,1.9,0,.48,-.55,paint,.13);
+    // Keep paint on the wings and the chosen livery on top. Only the body
+    // panels wear the picture, so removing it restores the same colors.
+    const bodyPaint=isSafeTvCarWrapUrl(driver.car.wrapUrl)?material(driver.color,.38,.18):paint;
+    if(isSafeTvCarWrapUrl(driver.car.wrapUrl)) {
+      wrapLoader.load(driver.car.wrapUrl,picture=>{
+        if(disposed)return;
+        const canvas=document.createElement("canvas");canvas.width=picture.width;canvas.height=picture.height;
+        const context=canvas.getContext("2d");if(!context)return;
+        // Flatten transparent logos over this driver's paint, not black or an
+        // invisible panel. The upload itself remains reusable with any color.
+        context.fillStyle=driver.color;context.fillRect(0,0,canvas.width,canvas.height);
+        context.drawImage(picture,0,0);
+        const texture=keep(new THREE.CanvasTexture(canvas));
+        texture.colorSpace=THREE.SRGBColorSpace;
+        texture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());
+        bodyPaint.map=texture;bodyPaint.color.set("#ffffff");bodyPaint.needsUpdate=true;
+        redrawWraps();
+      },undefined,()=>{/* A missing/revoked picture leaves the normal paint visible. */});
+    }
+    rounded(root,1.5,.4,3.65,0,.6,0,bodyPaint,.16);
+    rounded(root,.58,.24,1.7,0,.5,2.05,bodyPaint,.1);
+    rounded(root,2.0,.24,1.9,0,.48,-.55,bodyPaint,.13);
     box(root,2.15,.09,4.4,0,.27,.05,black);
     rounded(root,.92,.4,1.4,0,.92,-.25,glass,.2);
     const helmet=new THREE.Mesh(helmetGeo,accent);helmet.position.set(0,1.16,-.13);root.add(helmet);
@@ -271,6 +293,9 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     }
     if(!options.reduced&&elapsed<11.8)frame=requestAnimationFrame(draw);
   };
+  // A late picture also updates a reduced-motion (single-frame) TV without
+  // starting another animation loop or changing its fixed race pose.
+  redrawWraps=()=>{if(!disposed){try{renderer.render(scene,camera);}catch{fail();}}};
   frame=requestAnimationFrame(draw);
   return cleanup;
   } catch(error) { cleanup();throw error; }

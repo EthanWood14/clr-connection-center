@@ -70,11 +70,13 @@ function harness(t: TestContext) {
   const db = new Database(":memory:");
   t.after(() => db.close());
   const source = readFileSync(new URL("../server/storage.ts", import.meta.url), "utf8");
-  const ddl = source.match(/CREATE TABLE IF NOT EXISTS tv_car_preferences \([\s\S]*?\)\`/);
-  assert.ok(ddl, "production startup initializes the preference table");
-  db.exec(ddl[0].slice(0, -1));
-  // Production schema is idempotent on startup.
-  db.exec(ddl[0].slice(0, -1));
+  for (const table of ["tv_car_preferences", "tv_car_wraps"]) {
+    const ddl = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\)\\\``));
+    assert.ok(ddl, "production startup initializes the preference tables");
+    db.exec(ddl[0].slice(0, -1));
+    // Production schema is idempotent on startup.
+    db.exec(ddl[0].slice(0, -1));
+  }
   db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT, role TEXT,
     is_clr INTEGER, is_active INTEGER, portal TEXT);
     INSERT INTO users VALUES (7,1,'Taylor','assistant',1,1,NULL),
@@ -86,6 +88,8 @@ function harness(t: TestContext) {
   registerTvCarRoutes({
     get(path: string, ...handlers: any[]) { routes.set(`GET ${path}`, handlers); },
     patch(path: string, ...handlers: any[]) { routes.set(`PATCH ${path}`, handlers); },
+    post(path: string, ...handlers: any[]) { routes.set(`POST ${path}`, handlers); },
+    delete(path: string, ...handlers: any[]) { routes.set(`DELETE ${path}`, handlers); },
   } as any, {
     requireAuth, db: () => db, sessionFor: req => req.session_user ?? null,
     audit: entry => audits.push(entry),
@@ -108,7 +112,8 @@ test("GET returns defaults and does not create a preference or audit row", (t) =
   assert.deepEqual(h.call("GET"), { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
   assert.equal(h.count(), 0);
   assert.deepEqual(h.audits, []);
-  assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "PATCH /api/me/tv-car"]);
+  assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "PATCH /api/me/tv-car",
+    "POST /api/me/tv-car/wrap", "DELETE /api/me/tv-car/wrap", "GET /api/me/tv-car/wrap", "GET /api/tv/:token/cars/:userId/wrap"]);
 });
 
 test("PATCH persists only this CLR's appearance, rereads it, and audits safe before/after fields", (t) => {

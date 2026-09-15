@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.9", headline: "The full transfer form when editing — and custom picture wraps for your car.", items: [
+    { text: "Editing a saved transfer now opens the same Qualification and Info Gathering form used to record it. Saved answers and N/A choices are filled in, historical notes are preserved, and changes update the existing transfer's write-up score and stats without adding a transfer or changing its original date or CLR credit. A newer edit is protected from being overwritten.", audience: "everyone" },
+    { text: "In Advanced Settings → Personal → My TV Car, upload a photo, logo, or pattern as a custom wrap. Preview it on your car, replace or remove it, and keep your paint and stripes. Your picture appears on the TV's 3D race car without changing scores or standings.", audience: "everyone" },
+  ] },
   { version: "4.113.8", headline: "Your TV car, your colors — and harder-to-miss assigned leads.", items: [
     { text: "CLRs can open Advanced Settings → Personal → My TV Car to choose body and accent colors plus classic, twin-stripe, or solid paint. Preview and save your design for the TV race; scores, speed and standings do not change.", audience: "everyone" },
     { text: "New leads for your assigned LOs now show a prominent repeating alert with the Shotgun chime. A 10-second snooze replaces permanent dismissal, and unresolved alerts return after reload. Claiming or calling stops the reminders. The assigned CLR's 45-second head start and three-minute claim deadline are also enforced on the server.", audience: "everyone" },

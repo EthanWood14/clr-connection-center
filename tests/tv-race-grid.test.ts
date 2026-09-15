@@ -130,12 +130,29 @@ test("legacy feeds and invalid appearance data fall back to stable default cars"
   assert.equal(legacy.car.livery, "stripe");
 });
 
+test("custom pictures follow their driver without affecting race credit, order, gaps or motion", () => {
+  const base = [driver(1, 8), driver(2, 7.5), driver(3, 7.5)];
+  const plain = raceGrid(base);
+  const wrapUrl = `/api/tv/${"a".repeat(32)}/cars/2/wrap?v=${"b".repeat(64)}`;
+  const wrapped = raceGrid(base.map(row => row.id === 2 ? { ...row, car: { bodyColor: "#123abc", accentColor: "#fedcba", livery: "stripe" as const, wrapUrl } } : row));
+  assert.equal(wrapped.find(row => row.id === 2)?.car.wrapUrl, wrapUrl);
+  for (let i = 0; i < plain.length; i++) {
+    for (const key of ["id", "name", "rank", "gap", "distance", "lane", "transfersToday"] as const) {
+      assert.equal(wrapped[i][key], plain[i][key]);
+    }
+  }
+  const malicious = raceGrid([{ ...base[0], car: { ...plain[0].car, wrapUrl: "https://external.invalid/tracking.png" } }]);
+  assert.equal(malicious[0].car.wrapUrl, undefined);
+});
+
 test("TV propagates org-scoped cosmetics into both manual and earned race scenes", () => {
   const routes = readFileSync(new URL("../server/routes.ts", import.meta.url), "utf8");
   const tv = readFileSync(new URL("../client/src/pages/tv.tsx", import.meta.url), "utf8");
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
   assert.match(routes, /FROM tv_car_preferences WHERE org_id=\?[\s\S]{0,50}\.all\(orgId\)/);
-  assert.match(routes, /car: normalizeTvCarAppearance\(carPreferences\.get\(Number\(c\.id\)\), Number\(c\.id\)\)/);
+  assert.match(routes, /car: normalizeTvCarAppearance\(\{\s*\.\.\.carPreferences\.get\(Number\(c\.id\)\)/);
+  assert.match(routes, /FROM tv_car_wraps WHERE org_id=\?[\s\S]{0,50}\.all\(orgId\)/);
+  assert.match(routes, /wrapUrl: displayTvCarWrapUrl\(req\.params\.token, Number\(c\.id\), carWrapVersions\.get\(Number\(c\.id\)\)!\)/);
   assert.match(tv, /const standings: RankRow\[\].*car: p\.car/);
   assert.match(scene, /accent=material\(driver\.car\.accentColor/);
   assert.match(scene, /driver\.car\.livery==="double-stripe"/);

@@ -36,14 +36,17 @@ test("unsaved paint edits are separate from refetched data and scoped to the sig
   assert.match(page, /const appearance = draft \?\? saved/);
   assert.match(page, /const queryKey = \["\/api\/me\/tv-car", user\.orgId, user\.id\]/);
   assert.match(page, /<Garage key=\{`\$\{user\.orgId\}:\$\{user\.id\}`\}/);
-  assert.doesNotMatch(page, /useEffect/, "a query-data effect must not overwrite the current draft");
+  assert.match(page, /useEffect\(\(\) => \(\) => \{ pictureRequest\.current \+= 1; \}, \[\]\)/,
+    "the image cleanup effect only cancels late decoding, never reseeds paint");
+  assert.doesNotMatch(page, /useEffect\([\s\S]*?setDraft\([\s\S]*?\}, \[car\.data/);
 });
 
 test("saving sends only cosmetic fields and protects drafts during a pending save", () => {
   assert.match(page, /apiRequest\("PATCH", "\/api\/me\/tv-car", \{\s*bodyColor: next\.bodyColor, accentColor: next\.accentColor, livery: next\.livery,\s*\}\)/);
   assert.match(page, /queryClient\.cancelQueries\(\{ queryKey, exact: true \}\)/);
-  assert.match(page, /<fieldset disabled=\{save\.isPending\}/);
-  assert.match(page, /disabled=\{!dirty \|\| !valid \|\| save\.isPending\}/);
+  assert.match(page, /const busy = save\.isPending \|\| wrap\.isPending \|\| preparingWrap/);
+  assert.match(page, /<fieldset disabled=\{busy\}/);
+  assert.match(page, /disabled=\{!dirty \|\| !valid \|\| busy \|\| !!preparedWrap\}/);
   assert.match(page, /Your draft is still here; try saving again/);
 });
 
@@ -52,7 +55,33 @@ test("defaults stay a draft, all paint styles are supported, and the preview is 
   for (const value of ["stripe", "double-stripe", "solid"]) assert.ok(page.includes(`value: "${value}"`));
   assert.match(page, /<svg viewBox="0 0 560 300" role="img"/);
   assert.match(page, /type="color"/);
-  assert.match(page, /validateTvCarAppearance\(appearance\)/);
+  assert.match(page, /validateTvCarAppearance\(\{ bodyColor: appearance\.bodyColor, accentColor: appearance\.accentColor, livery: appearance\.livery \}\)/);
   assert.match(page, /cosmetic change only/);
   assert.doesNotMatch(page, /https?:\/\/|mountRaceScene/);
+});
+
+test("pictures preview on the body before an explicit upload and can be replaced or removed", () => {
+  assert.match(page, /type="file" accept="image\/png,image\/jpeg,image\/webp"/);
+  assert.match(page, /prepareTvCarWrap\(file\)/);
+  assert.match(page, /picturePreview=\{preparedWrap\?\.previewUrl\}/);
+  const body = page.slice(page.indexOf('<g clipPath='), page.indexOf('function ColorPicker'));
+  assert.match(body, /<image href=\{wrapUrl\}/);
+  assert.ok(body.indexOf('<image') < body.indexOf('livery === "stripe"'), "stripes remain above the picture");
+  assert.match(page, /isSafeTvCarWrapUrl\(appearance\.wrapUrl\)/);
+  assert.match(page, /data-testid="upload-tv-car-wrap"/);
+  assert.match(page, /data-testid="remove-tv-car-wrap"/);
+  assert.match(page, /Replace your picture/);
+  assert.match(page, /role="alert"/);
+  assert.match(page, /aria-live="polite"/);
+  assert.match(page, /up to 8 MB/);
+  assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
+});
+
+test("picture operations are self-scoped, upload decoded PNG bytes and retain unsaved paint", () => {
+  assert.match(page, /fetch\("\/api\/me\/tv-car\/wrap", \{\s*method: "POST", credentials: "include", headers: \{ "Content-Type": "image\/png" \}, body: change\.picture\.blob/);
+  assert.match(page, /apiRequest\("DELETE", "\/api\/me\/tv-car\/wrap"\)/);
+  assert.match(page, /setDraft\(current => current \? \{ \.\.\.current, wrapUrl: data\.appearance\.wrapUrl \} : null\)/);
+  assert.match(page, /request === pictureRequest\.current/);
+  assert.match(page, /Upload or discard your picture before saving paint/);
+  assert.doesNotMatch(page, /\/api\/users\/|assistantId:|userId:/);
 });

@@ -262,6 +262,93 @@ export function composeLeadCaptureNotes(c: LeadCapture): string {
   return lines.join("\n\n");
 }
 
+/** Read the same labels we write, without guessing answers from legacy prose. */
+export function parseLeadCaptureNotes(notes: string | null | undefined, storedSource?: string | null) {
+  const capture = emptyLeadCapture();
+  const retained: string[] = [];
+  const labels: Record<string, keyof LeadCapture> = {
+    "lead source": "leadSource", "owns home": "qualOwnHome",
+    "bankruptcy last 6 months": "qualBankruptcy", "investment/2nd home": "qualInvestment",
+    "borrower email": "infoBorrowerEmail", "borrower dob": "infoBorrowerDob",
+    "credit score": "infoCreditScore", "exact borrower credit score": "infoCreditScoreExact",
+    "co-borrower name": "infoCoborrowerName", "co-borrower dob": "infoCoborrowerDob",
+    "co-borrower credit score": "infoCoborrowerCreditScore",
+    "property address": "infoAddress", "goal / debts to pay off": "infoGoal",
+    "cash needed / take out": "infoTakeOut", "estimated home value": "infoValue",
+    "first mortgage balance": "infoBalance", "first mortgage rate": "infoRate",
+    "monthly piti / payment": "infoPayment", "heloc balance": "infoHelocBalance",
+    "heloc rate": "infoHelocRate", "heloc monthly payment": "infoHelocPayment",
+    "monthly income": "infoIncome", "w2/se/retired": "infoEmployment", "military": "infoMilitary",
+  };
+  const lines = String(notes ?? "").split(/\r?\n/);
+  const labelOf = (line: string) => line.match(/^([^:]+):[ \t]*(.*)$/);
+  // Conflicting/duplicate legacy labels stay visible as saved details. Never
+  // silently select one and discard another person's write-up.
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    const m = labelOf(line);
+    if (m) counts.set(m[1].trim().toLowerCase(), (counts.get(m[1].trim().toLowerCase()) ?? 0) + 1);
+  }
+  for (const line of lines) {
+    const m = labelOf(line);
+    if (!m) { retained.push(line); continue; }
+    const label = m[1].trim().toLowerCase(), value = m[2].trim();
+    if (counts.get(label) !== 1) { retained.push(line); continue; }
+    const toggle = SECTION_TOGGLES.find(t => t.noteLabel.toLowerCase() === label && t.noteValue.toLowerCase() === value.toLowerCase());
+    if (toggle) { capture[toggle.name] = "yes"; continue; }
+    const key = labels[label];
+    if (!key || !value) { retained.push(line); continue; }
+    if (key.startsWith("qual")) {
+      const answer = value.match(/^(yes|no)(?: — give to LOA Justin, Mateo, or John)?$/i);
+      if (!answer) { retained.push(line); continue; }
+      (capture as any)[key] = answer[1].toLowerCase();
+    } else if (key === "infoEmployment" || key === "infoMilitary") {
+      const options = INFO_FIELDS.find(f => f.name === key)!.options!;
+      const option = options.find(o => value.toLowerCase() === o.toLowerCase() || value.toLowerCase().startsWith(`${o.toLowerCase()} — `));
+      const notesKey = key === "infoEmployment" ? "infoEmploymentNotes" : "infoMilitaryNotes";
+      capture[key] = option || "";
+      capture[notesKey] = option ? value.slice(option.length).replace(/^ — /, "") : value;
+    } else {
+      // Browser date/numeric/email inputs cannot faithfully show these older
+      // free-text answers; retain them visibly instead of showing an empty box.
+      if ((key.endsWith("Dob") && !/^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+          ((key === "infoCreditScoreExact" || key === "infoCoborrowerCreditScore") && (!/^\d{3}$/.test(value) || Number(value) < 300 || Number(value) > 850)) ||
+          (key === "infoBorrowerEmail" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) {
+        retained.push(line); continue;
+      }
+      (capture as any)[key] = value;
+    }
+  }
+  // A section with contradictory legacy details is not silently hidden by N/A.
+  for (const toggle of SECTION_TOGGLES) {
+    if (capture[toggle.name] === "yes" && toggle.covers.some(k => capture[k])) {
+      capture[toggle.name] = "";
+      retained.push(`${toggle.noteLabel}: ${toggle.noteValue}`);
+    }
+  }
+  if (storedSource != null && capture.leadSource && storedSource !== capture.leadSource) {
+    retained.push(`Lead Source: ${capture.leadSource}`);
+  }
+  const source = storedSource != null ? storedSource : capture.leadSource;
+  capture.leadSource = (LEAD_SOURCE_OPTIONS as readonly string[]).includes(source) ? source : source ? "other" : "";
+  capture.leadSourceOther = capture.leadSource === "other" ? source : "";
+  return { capture, retainedNotes: retained.join("\n").replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+/** Preserve an untouched historical write-up byte-for-byte; edits use our one composer. */
+export function composeEditedLeadCaptureNotes(
+  original: string | null | undefined,
+  initial: LeadCapture,
+  current: LeadCapture,
+  initialRetained: string,
+  retained: string,
+): string {
+  if ((Object.keys(emptyLeadCapture()) as Array<keyof LeadCapture>).every(k => initial[k] === current[k]) && initialRetained === retained) {
+    return original ?? "";
+  }
+  return [composeLeadCaptureNotes(current), retained.trim()].filter(Boolean).join("\n\n");
+}
+
 /** The result choices the extension offers — the same set Input Results has. */
 export const OUTCOME_TYPE_OPTIONS = [
   { value: "transfer", label: "Transfer" },

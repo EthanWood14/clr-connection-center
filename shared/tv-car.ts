@@ -2,7 +2,18 @@ export type TvCarAppearance = {
   bodyColor: string;
   accentColor: string;
   livery: "stripe" | "double-stripe" | "solid";
+  /** Read-only, server-issued authenticated image URL. Never supplied by color saves. */
+  wrapUrl?: string;
 };
+
+export const TV_CAR_WRAP_MAX_BYTES = 1024 * 1024;
+export const TV_CAR_WRAP_MAX_EDGE = 1024;
+
+/** Only our self-service or revocable-TV image routes may become a texture. */
+export function isSafeTvCarWrapUrl(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 256
+    && /^\/api\/(?:me\/tv-car\/wrap|tv\/[A-Za-z0-9_-]{16,64}\/cars\/[1-9][0-9]{0,15}\/wrap)\?v=[a-f0-9]{64}$/.test(value);
+}
 
 // Preserve the TV's existing assigned colors until a CLR chooses their own.
 export const TV_CAR_COLORS = [
@@ -29,6 +40,7 @@ export function normalizeTvCarAppearance(raw: unknown, userId: number): TvCarApp
     bodyColor: isColor(value.bodyColor) ? value.bodyColor.toLowerCase() : fallback.bodyColor,
     accentColor: isColor(value.accentColor) ? value.accentColor.toLowerCase() : fallback.accentColor,
     livery: isLivery(value.livery) ? value.livery : fallback.livery,
+    ...(isSafeTvCarWrapUrl(value.wrapUrl) ? { wrapUrl: value.wrapUrl } : {}),
   };
 }
 

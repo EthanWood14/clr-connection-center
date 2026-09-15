@@ -66,6 +66,14 @@ sqlite.exec(`
     data BLOB NOT NULL
   )
 `);
+sqlite.exec(`CREATE TABLE IF NOT EXISTS lapfiles.tv_car_wrap_blobs (
+  org_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  version TEXT NOT NULL,
+  data BLOB NOT NULL,
+  PRIMARY KEY (org_id, user_id)
+)`);
+try { sqlite.exec(`ALTER TABLE lapfiles.tv_car_wrap_blobs ADD COLUMN version TEXT NOT NULL DEFAULT ''`); } catch {}
 
 // ── Critical pre-Drizzle migrations ──────────────────────────────────────────
 // These MUST run before `drizzle(sqlite)` prepares any statements referencing
@@ -2714,6 +2722,16 @@ function runNewMigrations() {
     body_color TEXT NOT NULL,
     accent_color TEXT NOT NULL,
     livery TEXT NOT NULL CHECK (livery IN ('stripe', 'double-stripe', 'solid')),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+  )`);
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_wraps (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    version TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id)
   )`);

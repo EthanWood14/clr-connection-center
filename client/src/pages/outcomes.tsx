@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from "react";
-import { transferInformationPatch } from "@shared/transfer-edit";
+import { transferInformationPatch, transferEditInitialValues, transferInformationChanges } from "@shared/transfer-edit";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { LoaPicker } from "@/components/loa-controls";
@@ -32,7 +32,7 @@ import { useAuth } from "@/lib/auth";
 import { businessTodayClient } from "@/lib/business-day";
 import { clearDraft, loadDraft, saveDraft } from "@/lib/outcome-draft";
 import { timeColumnsPatch } from "@/lib/appointment-datetime";
-import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection, composeLeadCaptureNotes } from "@/lib/lead-capture";
+import { type LeadCapture, emptyLeadCapture, LEAD_SOURCE_OPTIONS, QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, toggleForSection, composeLeadCaptureNotes, composeEditedLeadCaptureNotes } from "@/lib/lead-capture";
 import { copyToClipboard } from "@/lib/utils";
 
 // Compliance reminder displayed above every CLR-facing notes textarea.
@@ -190,6 +190,8 @@ const outcomeFormSchema = z.object({
   appointmentDatetime: z.string().optional(),
   leadGoal: z.string().optional(),
   prequalificationNotes: z.string().optional(),
+  loActionPlan: z.string().optional(),
+  retainedConversationNotes: z.string().optional(),
   missedReason: z.string().optional(),
   rescheduled: z.boolean().optional(),
   rescheduleDatetime: z.string().optional(),
@@ -448,6 +450,7 @@ export function OutcomeFormDialog({
   initialValues,
   title = "Log Outcome",
   submitLabel = "Log Outcome",
+  editingTransfer = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -463,6 +466,8 @@ export function OutcomeFormDialog({
   initialValues?: Partial<OutcomeFormValues>;
   title?: string;
   submitLabel?: string;
+  /** Same intake, but update one saved transfer without changing its credit/date. */
+  editingTransfer?: boolean;
 }) {
   const { user: meUser } = useAuth();
   const meId = Number((meUser as any)?.id) || 0;
@@ -633,6 +638,12 @@ export function OutcomeFormDialog({
       const raw = (v as any)[k];
       if (typeof raw === "string") c[k] = raw as any;
     }
+    if (editingTransfer) {
+      const original = initialValues?.conversationNotes ?? "";
+      const initial = { ...emptyLeadCapture(), ...initialValues } as LeadCapture;
+      return composeEditedLeadCaptureNotes(original, initial, c,
+        initialValues?.retainedConversationNotes ?? "", v.retainedConversationNotes ?? "");
+    }
     return composeLeadCaptureNotes(c);
   };
 
@@ -668,8 +679,22 @@ export function OutcomeFormDialog({
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((v) => { clearDraft(meId); setRestoredDraft(false); onSubmit(v); })} className="flex flex-col min-h-0 flex-1">
+          <form onSubmit={e => {
+            if (!confirmBonzo) { e.preventDefault(); void handleAttemptSubmit(); return; }
+            void form.handleSubmit(v => {
+              if (!editingTransfer) { clearDraft(meId); setRestoredDraft(false); }
+              onSubmit(v);
+            })(e);
+          }} className="flex flex-col min-h-0 flex-1">
             <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 space-y-3">
+
+          {editingTransfer && !confirmBonzo && (
+            <div className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs" data-testid="transfer-edit-explanation">
+              Edit the same questions used when this transfer was recorded. Saving updates its write-up score and stats;
+              it does not add another transfer or change the original date or CLR credit.
+              {initialValues?.assistantId !== meId && <p className="mt-1 font-semibold">You are editing another CLR’s transfer.</p>}
+            </div>
+          )}
 
           {/* Outcome type — the first thing on the page, always visible and
               always changeable. It used to be a separate full-screen step that
@@ -702,7 +727,7 @@ export function OutcomeFormDialog({
               </Button>
             </div>
           )}
-          {!confirmBonzo && (
+          {!confirmBonzo && !editingTransfer && (
             <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="What was the result?">
               {OUTCOME_TILES.map(tile => {
                 const Icon = tile.icon;
@@ -738,14 +763,14 @@ export function OutcomeFormDialog({
             <FormField control={form.control} name="date" render={({ field }) => (
               <FormItem>
                 <FormLabel>Date</FormLabel>
-                <FormControl><Input type="date" {...field} data-testid="input-outcome-date" /></FormControl>
+                <FormControl><Input type="date" {...field} readOnly={editingTransfer} disabled={editingTransfer} data-testid="input-outcome-date" /></FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="assistantId" render={({ field }) => (
               <FormItem>
                 <FormLabel>CLR Assistant</FormLabel>
-                {meIsAdmin ? (
+                {meIsAdmin && !editingTransfer ? (
                   <Select value={String(field.value)} onValueChange={v => field.onChange(Number(v))}>
                     <FormControl>
                       <SelectTrigger data-testid="select-assistant"><SelectValue placeholder="Select assistant" /></SelectTrigger>
@@ -758,7 +783,7 @@ export function OutcomeFormDialog({
                   </Select>
                 ) : (
                   <FormControl>
-                    <Input value={(meUser as any)?.name ?? "You"} readOnly disabled data-testid="select-assistant" />
+                    <Input value={editingTransfer ? users.find(u => u.id === field.value)?.name ?? `CLR #${field.value}` : (meUser as any)?.name ?? "You"} readOnly disabled data-testid="select-assistant" />
                   </FormControl>
                 )}
                 <FormMessage />
@@ -794,7 +819,7 @@ export function OutcomeFormDialog({
               )} />
             )}
             <div className="grid gap-3 sm:grid-cols-2">
-            {isTransfer && askBulkTexter && (
+            {isTransfer && (askBulkTexter || editingTransfer) && (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium">Was Bulk Texter part of this transfer?</p>
@@ -807,7 +832,7 @@ export function OutcomeFormDialog({
                 />
               </div>
             )}
-            {isTransfer && askHelper && (
+            {isTransfer && (askHelper || editingTransfer) && (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium">Was {helperName} part of this transfer?</p>
@@ -833,7 +858,11 @@ export function OutcomeFormDialog({
                   </FormLabel>
                   <Select
                     value={field.value ? String(field.value) : UNASSIGNED_LO}
-                    onValueChange={v => field.onChange(v === UNASSIGNED_LO ? null : Number(v))}
+                    onValueChange={v => {
+                      const nextLo = v === UNASSIGNED_LO ? null : Number(v);
+                      if (nextLo !== field.value) form.setValue("loaId", null, { shouldDirty: true });
+                      field.onChange(nextLo);
+                    }}
                   >
                     <FormControl>
                       <SelectTrigger data-testid="select-lo"><SelectValue placeholder="Select LO" /></SelectTrigger>
@@ -846,7 +875,7 @@ export function OutcomeFormDialog({
                           No LO yet — assign later
                         </SelectItem>
                       )}
-                      {los.filter((lo: any) => lo.internalStatus === "active").map((lo: any) => (
+                      {los.filter((lo: any) => lo.internalStatus === "active" || (editingTransfer && lo.id === initialValues?.loId)).map((lo: any) => (
                         <SelectItem key={lo.id} value={String(lo.id)}>{lo.fullName}</SelectItem>
                       ))}
                     </SelectContent>
@@ -1072,6 +1101,9 @@ export function OutcomeFormDialog({
                               >{opt}</button>
                             ))}
                           </div>
+                          {field.value && !f.options.includes(field.value) && (
+                            <p className="text-xs text-muted-foreground">Saved answer: {field.value}. Choose an option to replace it, or <button type="button" className="underline" onClick={() => field.onChange("")}>clear it</button>.</p>
+                          )}
                           {f.notes && (
                             <FormField control={form.control} name={f.notes as any} render={({ field: notesField }) => (
                               <FormItem className="space-y-0">
@@ -1119,6 +1151,27 @@ export function OutcomeFormDialog({
                   <FormControl><Textarea {...field} rows={2} placeholder="Anything the boxes above did not cover…" data-testid="textarea-other-notes" /></FormControl>
                 </FormItem>
               )} />
+              {editingTransfer && (
+                <details className="rounded-md border px-3 py-2" open={!!form.watch("retainedConversationNotes")}>
+                  <summary className="cursor-pointer text-sm font-medium">Additional saved details</summary>
+                  <p className="my-2 text-xs text-muted-foreground">Older write-up text and handoff details are preserved here. The questions above use the same scoring rules as a new transfer.</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {([
+                      ["retainedConversationNotes", "Saved write-up details"],
+                      ["prequalificationNotes", "Additional qualification notes"],
+                      ["leadGoal", "Saved lead goal"], ["leadTimeframe", "Saved timeframe"],
+                      ["loActionPlan", "LO action plan"], ["nextSteps", "Next steps"],
+                    ] as const).map(([name, label]) => (
+                      <FormField key={name} control={form.control} name={name} render={({ field }) => (
+                        <FormItem className={name === "retainedConversationNotes" ? "sm:col-span-2" : ""}>
+                          <FormLabel>{label}</FormLabel>
+                          <FormControl><Textarea {...field} value={field.value ?? ""} rows={3} data-testid={`edit-${name}`} /></FormControl>
+                        </FormItem>
+                      )} />
+                    ))}
+                  </div>
+                </details>
+              )}
             </>
           )}
 
@@ -1127,11 +1180,11 @@ export function OutcomeFormDialog({
             <div className="space-y-3">
               <div className="rounded-md border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3">
                 <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                  Have you put this call into Bonzo?
+                  {editingTransfer ? "Have you updated these details in Bonzo?" : "Have you put this call into Bonzo?"}
                 </p>
                 <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-1 leading-snug">
                   Copy the notes below, record them in Bonzo using the appropriate notation,
-                  then confirm to log the {OUTCOME_LABELS[watchedType]?.toLowerCase() || "outcome"}.
+                  {editingTransfer ? "then confirm to save this existing transfer." : `then confirm to log the ${OUTCOME_LABELS[watchedType]?.toLowerCase() || "outcome"}.`}
                 </p>
               </div>
               <div className="rounded-md border border-border bg-muted/40 p-3">
@@ -1158,9 +1211,9 @@ export function OutcomeFormDialog({
                 </Button>
                 <div className="flex flex-wrap gap-2">
                   <Button type="submit" disabled={isPending} data-testid="button-confirm-bonzo">
-                    {isPending ? "Saving…" : "Yes, it's in Bonzo — Log Outcome"}
+                    {isPending ? "Saving…" : editingTransfer ? "Save transfer changes" : "Yes, it's in Bonzo — Log Outcome"}
                   </Button>
-                  <Button
+                  {!editingTransfer && <Button
                     type="button"
                     variant="secondary"
                     disabled={isPending}
@@ -1168,7 +1221,7 @@ export function OutcomeFormDialog({
                     data-testid="button-log-and-next"
                   >
                     Log &amp; next
-                  </Button>
+                  </Button>}
                 </div>
               </>
             ) : (
@@ -1177,7 +1230,7 @@ export function OutcomeFormDialog({
                   <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
                 </div>
                 <div className="flex gap-2">
-                  {isTransfer && (
+                  {isTransfer && !editingTransfer && (
                     <Button type="button" variant="ghost" size="sm" onClick={handleSkip}>
                       Skip qualification
                     </Button>
@@ -1683,6 +1736,20 @@ export default function Outcomes() {
     onError: () => toast({ title: "Error updating date", variant: "destructive" }),
   });
 
+  const editTransferMutation = useMutation({
+    mutationFn: ({ before, values }: { before: any; values: OutcomeFormValues }) => {
+      const changes = transferInformationChanges(before, values);
+      if (!Object.keys(changes).length) return Promise.resolve(null);
+      return apiRequest("PATCH", `/api/outcomes/${before.id}`, changes);
+    },
+    onSuccess: () => {
+      refreshAll();
+      setEditTarget(null);
+      toast({ title: "Transfer updated", description: "Write-up score and stats now use the saved information." });
+    },
+    onError: (error: Error) => toast({ title: "Transfer not saved", description: error.message, variant: "destructive" }),
+  });
+
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/outcomes/${id}`),
@@ -1976,7 +2043,21 @@ export default function Outcomes() {
         resetSignal={formResetSignal}
       />
 
-      <EditOutcomeDialog
+      {editTarget?.outcomeType === "transfer" ? (
+        <OutcomeFormDialog
+          key={`edit-transfer-${editTarget.id}`}
+          open
+          editingTransfer
+          title="Edit Transfer Information"
+          submitLabel="Review transfer changes"
+          initialValues={transferEditInitialValues(editTarget)}
+          onClose={() => setEditTarget(null)}
+          onSubmit={values => editTransferMutation.mutate({ before: editTarget, values })}
+          isPending={editTransferMutation.isPending}
+          users={users}
+          los={los}
+        />
+      ) : <EditOutcomeDialog
         outcome={editTarget}
         open={!!editTarget}
         onClose={() => setEditTarget(null)}
@@ -1984,7 +2065,7 @@ export default function Outcomes() {
         isPending={updateMutation.isPending}
         los={los}
         currentUserId={authUser?.id}
-      />
+      />}
 
       {/* Delete confirmation — outcomes (incl. transfers) are real records, so confirm first. */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>

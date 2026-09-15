@@ -1,6 +1,6 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, CheckCircle2, Flag, Loader2, Palette, RotateCcw, Save } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, Flag, ImagePlus, Loader2, Palette, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { useAuth, type AuthUser } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,7 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { defaultTvCarAppearance, normalizeTvCarAppearance, validateTvCarAppearance, type TvCarAppearance } from "@shared/tv-car";
+import { defaultTvCarAppearance, isSafeTvCarWrapUrl, normalizeTvCarAppearance, validateTvCarAppearance, type TvCarAppearance } from "@shared/tv-car";
+import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 
 type CarResponse = { appearance: TvCarAppearance };
 const COLOR_PRESETS = [
@@ -37,11 +38,12 @@ function sameAppearance(a: TvCarAppearance, b: TvCarAppearance) {
 }
 
 /** Lightweight top-down paint preview; never starts the TV's animation loop. */
-function CarPreview({ appearance, name }: { appearance: TvCarAppearance; name: string }) {
+function CarPreview({ appearance, name, picturePreview }: { appearance: TvCarAppearance; name: string; picturePreview?: string }) {
   const id = useId().replace(/:/g, "");
   const { bodyColor, accentColor, livery } = appearance;
+  const wrapUrl = picturePreview ?? (isSafeTvCarWrapUrl(appearance.wrapUrl) ? appearance.wrapUrl : undefined);
   return (
-    <svg viewBox="0 0 560 300" role="img" aria-label={`${name}'s race car with ${livery} paint style`} className="w-full drop-shadow-2xl" data-testid="tv-car-preview">
+    <svg viewBox="0 0 560 300" role="img" aria-label={`${name}'s race car with ${livery} paint style${wrapUrl ? " and a custom picture wrap" : ""}`} className="w-full drop-shadow-2xl" data-testid="tv-car-preview">
       <defs>
         <linearGradient id={`${id}-shine`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#ffffff" stopOpacity=".4" />
@@ -66,6 +68,7 @@ function CarPreview({ appearance, name }: { appearance: TvCarAppearance; name: s
         <rect x="445" y="92" width="7" height="116" rx="2" fill="#273745" stroke="none" />
         <path d="M116 108 Q125 97 166 96 L232 100 L275 118 L421 134 Q445 137 445 150 Q445 163 421 166 L275 182 L232 200 L166 204 Q125 203 116 192 Z" fill={bodyColor} />
         <g clipPath={`url(#${id}-paint)`} stroke="none">
+          {wrapUrl && <image href={wrapUrl} x="116" y="96" width="329" height="108" preserveAspectRatio="xMidYMid slice" data-testid="tv-car-wrap-preview" />}
           {livery === "stripe" && <rect x="115" y="140" width="332" height="20" fill={accentColor} />}
           {livery === "double-stripe" && <>
             <rect x="115" y="133" width="332" height="10" fill={accentColor} />
@@ -118,11 +121,19 @@ function Garage({ user }: { user: AuthUser }) {
   // A draft stays separate from query data: background refreshes must not erase paint edits.
   const [draft, setDraft] = useState<TvCarAppearance | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [preparedWrap, setPreparedWrap] = useState<PreparedTvCarWrap | null>(null);
+  const [preparingWrap, setPreparingWrap] = useState(false);
+  const [wrapError, setWrapError] = useState<string | null>(null);
+  const [wrapNotice, setWrapNotice] = useState<string | null>(null);
+  const pictureInputId = useId();
+  const pictureRequest = useRef(0);
+  // Only cancel obsolete image decoding on unmount; never reseed paint from a refetch.
+  useEffect(() => () => { pictureRequest.current += 1; }, []);
   const saved = normalizeTvCarAppearance(car.data?.appearance, user.id);
   const appearance = draft ?? saved;
   const preview = normalizeTvCarAppearance(appearance, user.id);
   const dirty = draft !== null && !sameAppearance(draft, saved);
-  const valid = validateTvCarAppearance(appearance) !== null;
+  const valid = validateTvCarAppearance({ bodyColor: appearance.bodyColor, accentColor: appearance.accentColor, livery: appearance.livery }) !== null;
   const save = useMutation<CarResponse, Error, TvCarAppearance>({
     mutationFn: next => apiRequest("PATCH", "/api/me/tv-car", {
       bodyColor: next.bodyColor, accentColor: next.accentColor, livery: next.livery,
@@ -134,6 +145,44 @@ function Garage({ user }: { user: AuthUser }) {
       setSavedNotice(true);
     },
   });
+  const wrap = useMutation<CarResponse, Error, { action: "upload"; picture: PreparedTvCarWrap } | { action: "remove" }>({
+    mutationFn: async change => {
+      if (change.action === "remove") return apiRequest("DELETE", "/api/me/tv-car/wrap");
+      const response = await fetch("/api/me/tv-car/wrap", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "image/png" }, body: change.picture.blob,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Your picture could not be uploaded. Please try again.");
+      return result as CarResponse;
+    },
+    onMutate: async () => {
+      setWrapError(null); setWrapNotice(null); setSavedNotice(false);
+      await queryClient.cancelQueries({ queryKey, exact: true });
+    },
+    onSuccess: (data, change) => {
+      queryClient.setQueryData(queryKey, data);
+      // Uploading a picture is independent of unsaved paint. Keep those color
+      // edits while adopting the server's new (or removed) image reference.
+      setDraft(current => current ? { ...current, wrapUrl: data.appearance.wrapUrl } : null);
+      setPreparedWrap(null);
+      setWrapNotice(change.action === "upload" ? "Picture wrap saved. It will show on TV after the next refresh." : "Picture wrap removed. Your paint and stripes are unchanged.");
+    },
+  });
+  const busy = save.isPending || wrap.isPending || preparingWrap;
+
+  async function choosePicture(file: File | undefined) {
+    if (!file) return;
+    const request = ++pictureRequest.current;
+    setPreparingWrap(true); setPreparedWrap(null); setWrapError(null); setWrapNotice(null); wrap.reset();
+    try {
+      const picture = await prepareTvCarWrap(file);
+      if (request === pictureRequest.current) setPreparedWrap(picture);
+    } catch (error) {
+      if (request === pictureRequest.current) setWrapError(error instanceof Error ? error.message : "Could not open this picture. Please try another file.");
+    } finally {
+      if (request === pictureRequest.current) setPreparingWrap(false);
+    }
+  }
 
   function update(next: Partial<TvCarAppearance>) {
     setDraft(current => ({ ...(current ?? saved), ...next }));
@@ -160,7 +209,7 @@ function Garage({ user }: { user: AuthUser }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="mb-1 text-xs font-semibold uppercase tracking-[.2em] text-muted-foreground">Advanced Settings / Personal</p>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">My TV Car</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Your signature colors.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Your colors, stripes, and custom picture wrap.</p>
         </div>
         <Badge variant="outline" className="gap-1.5 px-3 py-1.5"><Flag className="h-3.5 w-3.5" /> C3 Grand Prix</Badge>
       </div>
@@ -169,21 +218,38 @@ function Garage({ user }: { user: AuthUser }) {
         <section className="overflow-hidden rounded-2xl border border-slate-700 bg-[#101b2b] text-slate-100 shadow-lg lg:sticky lg:top-6" aria-label="Car preview">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-5 py-4">
             <span className="text-xs font-semibold uppercase tracking-[.18em] text-slate-300">Garage preview</span>
-            <span className="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200">{dirty ? "Unsaved design" : "Current design"}</span>
+            <span className="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200">{preparedWrap ? "Picture preview — not uploaded" : dirty ? "Unsaved paint" : "Current design"}</span>
           </div>
           <div className="relative px-4 py-10" style={{ backgroundImage: "radial-gradient(ellipse at center, #33445e 0%, #142132 55%, #101b2b 100%)" }}>
             <div className="absolute inset-x-7 top-1/2 border-t border-dashed border-white/10" aria-hidden="true" />
-            <div className="relative"><CarPreview appearance={preview} name={user.name} /></div>
+            <div className="relative"><CarPreview appearance={preview} name={user.name} picturePreview={preparedWrap?.previewUrl} /></div>
           </div>
           <div className="flex items-center gap-3 border-t border-white/10 px-5 py-5">
             <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: preview.bodyColor }} />
             <div className="min-w-0"><p className="truncate font-semibold">{user.name}</p><p className="mt-0.5 text-xs text-slate-400">{LIVERIES.find(item => item.value === appearance.livery)?.label} · TV race appearance</p></div>
           </div>
-          <p className="px-5 pb-5 text-xs leading-relaxed text-slate-400">Preview updates as you customize. Save to show your colors on the TV after its next refresh.</p>
+          <p className="px-5 pb-5 text-xs leading-relaxed text-slate-400">Your picture covers the body panels; your paint stays on the wings and your stripes stay on top. The TV car uses the same picture on its 3D panels.</p>
         </section>
 
-        <form className="space-y-5" onSubmit={event => { event.preventDefault(); if (dirty && valid && !save.isPending) save.mutate(appearance); }}>
-          <fieldset disabled={save.isPending} className="min-w-0 space-y-5 disabled:opacity-70">
+        <form className="space-y-5" onSubmit={event => { event.preventDefault(); if (dirty && valid && !busy && !preparedWrap) save.mutate(appearance); }}>
+          <fieldset disabled={busy} className="min-w-0 space-y-5 disabled:opacity-70">
+            <Card>
+              <CardHeader className="pb-4"><CardTitle className="flex items-center gap-2 text-base"><ImagePlus className="h-4 w-4" /> Custom picture wrap</CardTitle><CardDescription>Add a photo, logo, or pattern to your car’s body.</CardDescription></CardHeader>
+              <CardContent className="space-y-3">
+                <Label htmlFor={pictureInputId}>{saved.wrapUrl ? "Replace your picture" : "Choose a picture"}</Label>
+                <Input id={pictureInputId} type="file" accept="image/png,image/jpeg,image/webp" aria-describedby={`${pictureInputId}-help ${pictureInputId}-status`} aria-invalid={!!wrapError} onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void choosePicture(file); }} data-testid="tv-car-wrap-file" />
+                <p id={`${pictureInputId}-help`} className="text-xs leading-relaxed text-muted-foreground">PNG, JPG, or WebP up to 8 MB. We resize to fit (up to 1024 × 1024). Wide pictures work well; the preview shows the body crop. Upload saves the picture immediately; paint changes save separately.</p>
+                <div id={`${pictureInputId}-status`} role="status" aria-live="polite" className="text-xs text-muted-foreground">
+                  {preparingWrap ? "Preparing your picture…" : preparedWrap ? `${preparedWrap.name} · ${preparedWrap.width} × ${preparedWrap.height} · Preview only until you upload.` : wrapNotice ?? (saved.wrapUrl ? "Your saved picture is on the car." : "No picture wrap yet. Your paint and stripes are still available.")}
+                </div>
+                {preparedWrap && <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" onClick={() => wrap.mutate({ action: "upload", picture: preparedWrap })} data-testid="upload-tv-car-wrap"><Upload className="mr-2 h-4 w-4" />{wrap.isPending ? "Uploading…" : "Upload wrap"}</Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => { setPreparedWrap(null); setWrapError(null); wrap.reset(); }}>Discard picture</Button>
+                </div>}
+                {saved.wrapUrl && !preparedWrap && <Button type="button" variant="outline" size="sm" onClick={() => wrap.mutate({ action: "remove" })} data-testid="remove-tv-car-wrap"><Trash2 className="mr-2 h-3.5 w-3.5" />{wrap.isPending ? "Removing…" : "Remove picture wrap"}</Button>}
+                {(wrapError || wrap.isError) && <p role="alert" className="text-sm text-destructive">{wrapError || wrap.error?.message} Your paint choices are kept; please try again.</p>}
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader className="pb-5"><CardTitle className="flex items-center gap-2 text-base"><Palette className="h-4 w-4" /> Paint shop</CardTitle><CardDescription>Start with a favorite or mix your own.</CardDescription></CardHeader>
               <CardContent className="space-y-6">
@@ -208,7 +274,7 @@ function Garage({ user }: { user: AuthUser }) {
               </div></CardContent>
             </Card>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="ghost" size="sm" onClick={() => update(defaultTvCarAppearance(user.id))}><RotateCcw className="mr-2 h-3.5 w-3.5" /> Reset to defaults</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => update(defaultTvCarAppearance(user.id))}><RotateCcw className="mr-2 h-3.5 w-3.5" /> Reset paint to defaults</Button>
               {dirty && <Button type="button" variant="ghost" size="sm" onClick={() => { setDraft(null); setSavedNotice(false); save.reset(); }}>Discard changes</Button>}
             </div>
           </fieldset>
@@ -217,9 +283,9 @@ function Garage({ user }: { user: AuthUser }) {
           {car.isError && car.data && <p className="text-xs text-destructive" role="status">Could not refresh your saved design. Your current draft has been kept.</p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
             <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
-              {savedNotice ? <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" /> Saved. Your car is ready for TV.</span> : dirty ? "Unsaved changes — save when you’re ready." : "Your saved car is ready for the grid."}
+              {preparedWrap ? "Upload or discard your picture before saving paint." : savedNotice ? <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" /> Saved. Your car is ready for TV.</span> : dirty ? "Unsaved paint changes — save when you’re ready." : "Your saved car is ready for the grid."}
             </div>
-            <Button type="submit" disabled={!dirty || !valid || save.isPending} data-testid="save-tv-car">
+            <Button type="submit" disabled={!dirty || !valid || busy || !!preparedWrap} data-testid="save-tv-car">
               {save.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{save.isPending ? "Saving…" : "Save my car"}
             </Button>
           </div>

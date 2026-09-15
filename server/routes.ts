@@ -124,6 +124,7 @@ import { registerTransferDetailRoutes } from "./transfer-detail-routes";
 import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
 import { registerTvCarRoutes } from "./tv-car-routes";
 import { normalizeTvCarAppearance } from "@shared/tv-car";
+import { displayTvCarWrapUrl } from "./tv-car-wrap";
 import {
   peopleFromPayload, fallbackPeopleFromLos,
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
@@ -12283,6 +12284,24 @@ ${note}` : daysLine;
         appointmentDatetime: o.appointmentDatetime ?? o.appointment_datetime ?? null,
         journeyId: o.journeyId ?? o.journey_id ?? null,
         phoneNumber: o.phoneNumber ?? o.phone_number ?? null,
+        // Reopening the intake must receive the same fields creation saved.
+        // Raw SQL rows otherwise hide these under snake_case keys, making a
+        // saved write-up look blank and dropping the edit's conflict token.
+        conversationNotes: o.conversationNotes ?? o.conversation_notes ?? null,
+        leadSource: o.leadSource ?? o.lead_source ?? null,
+        loActionPlan: o.loActionPlan ?? o.lo_action_plan ?? null,
+        leadTimeframe: o.leadTimeframe ?? o.lead_timeframe ?? null,
+        requiresFollowup: (o.requiresFollowup ?? o.requires_followup) == null ? null : !!(o.requiresFollowup ?? o.requires_followup),
+        followupReason: o.followupReason ?? o.followup_reason ?? null,
+        followupDate: o.followupDate ?? o.followup_date ?? null,
+        leadType: o.leadType ?? o.lead_type ?? null,
+        leadGoal: o.leadGoal ?? o.lead_goal ?? null,
+        prequalificationNotes: o.prequalificationNotes ?? o.prequalification_notes ?? null,
+        missedReason: o.missedReason ?? o.missed_reason ?? null,
+        rescheduleDatetime: o.rescheduleDatetime ?? o.reschedule_datetime ?? null,
+        nextSteps: o.nextSteps ?? o.next_steps ?? null,
+        createdAt: o.createdAt ?? o.created_at ?? null,
+        updatedAt: o.updatedAt ?? o.updated_at ?? null,
         verificationStatus: o.verificationStatus ?? o.verification_status ?? null,
         verificationReason: o.verificationReason ?? o.verification_reason ?? null,
         verifiedAt: o.verifiedAt ?? o.verified_at ?? null,
@@ -12551,7 +12570,7 @@ ${note}` : daysLine;
     const sqlite = storageExtra.getRawSqlite();
     const existing = sqlite.prepare(`
       SELECT assistant_id, outcome_type, follow_up_date, appointment_datetime,
-             reschedule_datetime, org_id
+             reschedule_datetime, org_id, updated_at
       FROM lead_outcomes WHERE id = ?
     `).get(id) as any;
     if (!existing) return res.status(404).json({ error: "Outcome not found" });
@@ -12567,11 +12586,23 @@ ${note}` : daysLine;
     // (transfer / fell_through) — is allowed for ANY signed-in user, so a missed
     // appointment can be picked up as a handoff. Active overdue appointments
     // are also editable by every signed-in C3 user so no missed lead gets stuck.
-    const isCompletion = req.body?.outcomeType === "transfer" || req.body?.outcomeType === "fell_through";
+    // A recorded transfer is not an open handoff. Reposting its type must not
+    // let somebody else edit it through the appointment-completion permission.
+    const isCompletion = existing.outcome_type !== "transfer"
+      && (req.body?.outcomeType === "transfer" || req.body?.outcomeType === "fell_through");
     if (!isAdmin && !isOwner && !isCompletion && !isSharedOverdueEdit) {
       return res.status(403).json({ error: "You can only edit your own outcomes or an overdue appointment" });
     }
+    // Older callers can still PATCH without a version. The information editor
+    // supplies the version it opened so a concurrent correction is never lost.
+    // This handler and storage write are synchronous: no request can interleave
+    // between this check and the update in the running server process.
+    if (req.body?.expectedUpdatedAt !== undefined
+      && (typeof req.body.expectedUpdatedAt !== "string" || req.body.expectedUpdatedAt !== existing.updated_at)) {
+      return res.status(409).json({ error: "This outcome changed while you were editing. Reopen it to review the latest information." });
+    }
     let body = { ...req.body };
+    delete body.expectedUpdatedAt;
     // Shared overdue edits include the details exposed by the appointment page,
     // but never ownership, organization, IDs, or deletion. Non-overdue handoff
     // completions keep their narrower legacy field set.
@@ -22763,6 +22794,10 @@ ${note}` : daysLine;
     requireAuth,
     db: () => storageExtra.getRawSqlite(),
     sessionFor: (req: any) => req.session_user ?? null,
+    displayOrgFor: (token: string) => {
+      const link = tvLink(token);
+      return link ? Number(link.org_id) || null : null;
+    },
     audit: ({ owner, before, after }) => audit({
       userId: owner.id,
       userName: owner.name,
@@ -22978,6 +23013,9 @@ ${note}` : daysLine;
       `SELECT user_id, body_color AS bodyColor, accent_color AS accentColor, livery
          FROM tv_car_preferences WHERE org_id=?`,
     ).all(orgId) as any[]).map(row => [Number(row.user_id), row]));
+    const carWrapVersions = new Map((sqlite.prepare(
+      `SELECT user_id, version FROM tv_car_wraps WHERE org_id=?`,
+    ).all(orgId) as any[]).map(row => [Number(row.user_id), String(row.version)]));
     const counts = new Map<string, number>();
     if (ids.length) {
       // Appointments are counted; TRANSFERS ARE CREDITED. A shotgun transfer is
@@ -23061,7 +23099,12 @@ ${note}` : daysLine;
     const people: PersonStats[] = clrs.map((c) => ({
       id: Number(c.id),
       name: String(c.name ?? ""),
-      car: normalizeTvCarAppearance(carPreferences.get(Number(c.id)), Number(c.id)),
+      car: normalizeTvCarAppearance({
+        ...carPreferences.get(Number(c.id)),
+        ...(carWrapVersions.has(Number(c.id)) ? {
+          wrapUrl: displayTvCarWrapUrl(req.params.token, Number(c.id), carWrapVersions.get(Number(c.id))!),
+        } : {}),
+      }, Number(c.id)),
       transfersToday: counts.get(`${c.id}:transfer:today`) ?? 0,
       transfersWeek: counts.get(`${c.id}:transfer:week`) ?? 0,
       appointmentsToday: counts.get(`${c.id}:appointment:today`) ?? 0,
