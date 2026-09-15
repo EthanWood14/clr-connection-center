@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.112.0",
+    headline: "Everyone's Dialpad texts count again, and the scorecard times how fast a CLR grabs their own LO's new lead.",
+    items: [
+      { text: "Dialpad texts were credited through a hand-made agent list that only ever had two people on it, so DP Texts and Messages showed Matt Lane and Chris Bermudez and nobody else — Skyler, Jacqueline, Justin, Linda and Adrienne all read zero despite sending hundreds. Texts are now matched to the sender by name, the same way calls always were, and the back catalogue has been re-credited.", audience: "manager" },
+      { text: "New Transfer Scorecard stat, Lead grab: the average time from a new lead landing on one of your assigned loan officers to you claiming it. Only leads taken inside the three-minute window count — one that ran out into Shotgun is not counted here. Lower is better.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.111.0",
     headline: "Dialpad texts land on the right day, and the scorecard shows how often each CLR answers a Shotgun offer.",
     items: [

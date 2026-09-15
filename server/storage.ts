@@ -11,6 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
 import { ensureVintageLeadBranch } from "./script-vintage-lead";
+import { agentKey as dialpadAgentKey } from "./dialpad-stats";
 import { auditDetails, detailsHasPlaintextSecret } from "./audit-details";
 import {
   users, loanOfficers, loAvailability, dailyAssignments,
@@ -3486,6 +3487,14 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   } catch (e: any) {
     console.error("[dialpad-sms] Pacific re-file failed:", e?.message ?? e);
   }
+  // Texts stored against nobody, because only two agents were ever linked by
+  // hand. Name matching names the rest; see resolveDialpadSmsUserId.
+  try {
+    const named = backfillDialpadSmsUsers();
+    if (named > 0) console.log(`[dialpad-sms] credited ${named} texts to the person who sent them`);
+  } catch (e: any) {
+    console.error("[dialpad-sms] user backfill failed:", e?.message ?? e);
+  }
 
   // Calls placed inside Bonzo, reported by the Shotgun extension against the
   // signed-in CLR. `counts` is decided at insert (shared/bonzo-calls.ts):
@@ -5419,14 +5428,59 @@ export function getUnmappedDialpadAgents(orgId: number, sinceDate: string): any[
   ).all(orgId, sinceDate) as any[];
 }
 
+/**
+ * Which C3 person a Dialpad texting agent is.
+ *
+ * The same rule the CALL sync uses (matchAgent in dialpad-stats.ts): an
+ * explicit link is somebody's recorded decision and always wins; otherwise the
+ * agent's display name is matched to a C3 person's name. Texts used to consult
+ * the link table ONLY, and exactly two links exist — so every text sent by
+ * anyone else was credited to nobody and vanished from the scorecard, while
+ * their calls (which do match by name) counted normally. That is why DP Texts
+ * showed only Matt Lane and Chris Bermudez (Ethan, 15 Sep 2026).
+ */
+export function resolveDialpadSmsUserId(orgId: number, agentKeyValue: string): number | null {
+  const linked = sqlite.prepare(
+    `SELECT user_id FROM dialpad_agent_links WHERE org_id=? AND agent_key=? AND user_id IS NOT NULL`,
+  ).get(orgId, agentKeyValue) as any;
+  if (linked?.user_id != null) return Number(linked.user_id);
+  // Name matching, over C3 people only — the feed also carries loan officers
+  // dialling for themselves and people who are not in C3 at all.
+  const byName = sqlite.prepare(
+    `SELECT id, name FROM users WHERE is_active=1 AND (portal IS NULL OR portal='c3')`,
+  ).all() as any[];
+  const hit = byName.find((u) => dialpadAgentKey(u.name) === agentKeyValue);
+  return hit ? Number(hit.id) : null;
+}
+
+/**
+ * Credit texts already stored against nobody, now that the rule above can
+ * name them. Runs at boot and whenever an agent link is saved, so a new hire's
+ * back catalogue lands on them rather than staying invisible. Only rows with
+ * no user are touched, so it can never move a text off the person it named.
+ */
+export function backfillDialpadSmsUsers(orgId?: number): number {
+  const pending = sqlite.prepare(
+    `SELECT DISTINCT org_id, agent_key FROM dialpad_sms_events WHERE user_id IS NULL${orgId ? " AND org_id=?" : ""}`,
+  ).all(...(orgId ? [orgId] : [])) as any[];
+  if (!pending.length) return 0;
+  const update = sqlite.prepare(`UPDATE dialpad_sms_events SET user_id=? WHERE org_id=? AND agent_key=? AND user_id IS NULL`);
+  let changed = 0;
+  sqlite.transaction(() => {
+    for (const row of pending) {
+      const userId = resolveDialpadSmsUserId(Number(row.org_id), String(row.agent_key));
+      if (!userId) continue;
+      changed += update.run(userId, row.org_id, row.agent_key).changes;
+    }
+  })();
+  return changed;
+}
+
 export function upsertDialpadSmsEvent(r: {
   orgId: number; externalId: string; agentKey: string; agentName: string;
   dialpadUserId: string; messageDate: string; occurredAt: string; status: string | null;
 }): { inserted: boolean; userId: number | null } {
-  const linked = sqlite.prepare(
-    `SELECT user_id FROM dialpad_agent_links WHERE org_id=? AND agent_key=? AND user_id IS NOT NULL`,
-  ).get(r.orgId, r.agentKey) as any;
-  const userId = linked?.user_id == null ? null : Number(linked.user_id);
+  const userId = resolveDialpadSmsUserId(r.orgId, r.agentKey);
   const result = sqlite.prepare(
     `INSERT INTO dialpad_sms_events
        (org_id, external_event_id, agent_key, agent_name, dialpad_user_id, user_id, message_date, status, occurred_at, received_at)

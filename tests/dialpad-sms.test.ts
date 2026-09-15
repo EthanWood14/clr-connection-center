@@ -36,6 +36,26 @@ test("a text is filed under its Pacific day, and old rows are re-filed once at b
   assert.match(storage, /UPDATE dialpad_sms_events SET message_date=\? WHERE id=\?/);
 });
 
+// "Why do they all show up under matt and chris?" — Ethan, 15 Sep 2026. Texts
+// were credited only through the hand-made link table, which held exactly two
+// agents, so everyone else's texts belonged to nobody and left the scorecard.
+// Calls never had this problem: they match on the name too.
+test("a text is credited by explicit link first, then by name — the same rule as calls", () => {
+  const storage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server", "storage.ts"), "utf8").replace(/\r\n/g, "\n");
+  const resolve = storage.slice(storage.indexOf("export function resolveDialpadSmsUserId"), storage.indexOf("export function backfillDialpadSmsUsers"));
+  assert.match(resolve, /FROM dialpad_agent_links WHERE org_id=\? AND agent_key=\? AND user_id IS NOT NULL/);
+  assert.match(resolve, /if \(linked\?\.user_id != null\) return Number\(linked\.user_id\);/, "a link is a recorded decision and wins");
+  assert.match(resolve, /is_active=1 AND \(portal IS NULL OR portal='c3'\)/, "C3 people only — not loan officers dialling for themselves");
+  assert.match(resolve, /dialpadAgentKey\(u\.name\) === agentKeyValue/);
+  const backfill = storage.slice(storage.indexOf("export function backfillDialpadSmsUsers"), storage.indexOf("export function upsertDialpadSmsEvent"));
+  assert.match(backfill, /WHERE user_id IS NULL/, "never moves a text off the person it already named");
+  assert.match(storage, /const userId = resolveDialpadSmsUserId\(r\.orgId, r\.agentKey\);/);
+  // It runs at boot, and again whenever somebody saves a link.
+  assert.match(storage, /credited \$\{named\} texts to the person who sent them/);
+  const routes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server", "routes.ts"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(routes, /storageExtra\.backfillDialpadSmsUsers\(orgId\)/);
+});
+
 test("rejects a bad Dialpad signature", () => {
   assert.throws(() => verifyDialpadJwt(jwt({ id: 1 }, "wrong"), "right"), /signature/i);
 });

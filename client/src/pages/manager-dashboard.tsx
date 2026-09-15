@@ -127,6 +127,7 @@ type RangeBlock = {
     callToTransferPct: number | null;
     shotgunOffers?: number; shotgunAccepted?: number; shotgunResponded?: number;
     shotgunAcceptPct?: number | null; shotgunRespondPct?: number | null;
+    loLeadClaims?: number; loLeadClaimSeconds?: number | null;
   }[];
   textTransfersTotal?: number;
   heatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
@@ -469,6 +470,15 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
       fmt: r => r.shotgunRespondPct == null ? "—" : `${r.shotgunRespondPct}%`,
       title: "Of the Shotgun offers shown to this CLR in the range, the share they answered — accepted or passed — before the 20 seconds ran out. Dash: no offers.",
       cellTitle: r => (r.shotgunOffers ?? 0) > 0 ? `${r.shotgunResponded ?? 0} answered of ${r.shotgunOffers} offers (${(r.shotgunOffers ?? 0) - (r.shotgunResponded ?? 0)} timed out)` : undefined },
+    // How fast they grab a new lead on their OWN loan officer. Faster is
+    // better, so this is the one column where a low number wins. Leads that
+    // timed out into Shotgun are not counted here — this is the direct claim.
+    { key: "loLeadClaim", label: "Lead grab", get: r => r.loLeadClaimSeconds ?? null, better: false,
+      fmt: r => r.loLeadClaimSeconds == null ? "—"
+        : r.loLeadClaimSeconds < 60 ? `${r.loLeadClaimSeconds}s`
+        : `${Math.floor(r.loLeadClaimSeconds / 60)}m ${String(r.loLeadClaimSeconds % 60).padStart(2, "0")}s`,
+      title: "Average time from a new lead landing on one of this CLR's assigned loan officers to them claiming it. Only leads they took inside the three-minute window count; ones that ran out into Shotgun do not. Lower is better. Dash: they claimed none.",
+      cellTitle: r => (r.loLeadClaims ?? 0) > 0 ? `${r.loLeadClaims} lead${r.loLeadClaims === 1 ? "" : "s"} claimed directly` : undefined },
     // Not a second transfer count: where each one was PUT. Same shape as
     // Write-up above — a share, higher is better, a dash when there is nothing
     // to score, because 0% is a verdict and an empty week has not earned one.

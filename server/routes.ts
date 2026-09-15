@@ -14378,6 +14378,36 @@ ${note}` : daysLine;
       } catch (e: any) {
         console.error("[manager-dashboard] shotgun offer stat failed:", e?.message ?? e);
       }
+      // How fast a CLR takes a new lead on one of THEIR assigned loan
+      // officers. Only leads they claimed inside the three-minute window
+      // count: a lead that ran out and went to Shotgun is somebody else's
+      // stopwatch, and a Shotgun claim is not this number. Ethan, 15 Sep
+      // 2026: "include average LO lead assignee time too (not including
+      // reassigned/shotgun leads)."
+      const loClaimByUser = new Map<number, { total: number; n: number }>();
+      try {
+        const claimRows = sqlite.prepare(`
+          SELECT claimed_by AS uid, first_seen_at, claimed_at FROM lo_new_leads
+           WHERE org_id = ? AND status = 'claimed' AND claimed_by IS NOT NULL
+             AND claimed_at IS NOT NULL AND shotgun_lead_id IS NULL
+             AND substr(claimed_at, 1, 10) BETWEEN ? AND ?
+        `).all(Number(currentOrgId() ?? 1), addIsoDays(startDate, -1), addIsoDays(endDate, 1)) as any[];
+        for (const r of claimRows) {
+          const landed = Date.parse(String(r.first_seen_at ?? ""));
+          const claimed = Date.parse(String(r.claimed_at ?? ""));
+          if (!Number.isFinite(landed) || !Number.isFinite(claimed) || claimed < landed) continue;
+          const day = todayInTz(claimed, BUSINESS_DAY_DEFAULT_TZ);
+          if (day < startDate || day > endDate) continue;
+          const uid = Number(r.uid);
+          if (!uid || excludedIds.has(uid)) continue;
+          const s = loClaimByUser.get(uid) ?? { total: 0, n: 0 };
+          s.total += (claimed - landed) / 1000;
+          s.n += 1;
+          loClaimByUser.set(uid, s);
+        }
+      } catch (e: any) {
+        console.error("[manager-dashboard] LO lead claim stat failed:", e?.message ?? e);
+      }
       // Texting-sourced transfers (Bulk Texter) per CLR for this range.
       const lbTextByUser = new Map<number, number>();
       try {
@@ -14755,6 +14785,11 @@ ${note}` : daysLine;
               ? Math.round((shotgunByUser.get(u.id)!.accepted / shotgunByUser.get(u.id)!.offers) * 100) : null,
             shotgunRespondPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
               ? Math.round((shotgunByUser.get(u.id)!.responded / shotgunByUser.get(u.id)!.offers) * 100) : null,
+            // Seconds from a new lead landing on their LO to them claiming it,
+            // averaged. Null when they claimed none in the range.
+            loLeadClaims: loClaimByUser.get(u.id)?.n ?? 0,
+            loLeadClaimSeconds: (loClaimByUser.get(u.id)?.n ?? 0) > 0
+              ? Math.round(loClaimByUser.get(u.id)!.total / loClaimByUser.get(u.id)!.n) : null,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,
@@ -20143,6 +20178,8 @@ ${note}` : daysLine;
     // Re-attribute the history we already hold so the mapping takes effect on
     // past days too, not only on whatever the next sync happens to return.
     try { await syncDialpadStats(orgId); } catch { /* the link is saved regardless */ }
+    // Texts too: a link that fixes the calls must fix the texts with it.
+    try { storageExtra.backfillDialpadSmsUsers(orgId); } catch { /* same */ }
     res.json({ ok: true });
   });
 
