@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.113.2",
+    headline: "Calling a live lead claims it first.",
+    items: [
+      { text: "Call on a new-lead alert now claims the lead before opening your phone app, so it does not go to another CLR while you dial. Shotgun offer phone buttons also confirm first. If somebody else already has it, the call does not open and C3 shows the error.", audience: "everyone" },
+      { text: "On roughly 15% of transfers, the Office TV follows the celebration with a full-team race: every CLR on the board has a moving car and their daily transfer count. Reduced-motion screens show a still version.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.113.1",
     headline: "Proof that a CLR taken off the Shotgun rotation is really never offered a lead.",
     items: [

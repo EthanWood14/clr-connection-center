@@ -32,6 +32,8 @@ import {
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
+import { FieldRace } from "@/components/tv/field-race";
+import { showsFieldRace } from "@shared/tv-field-race";
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
@@ -77,7 +79,7 @@ interface Feed {
 }
 
 type Moment =
-  | { type: "event"; key: string; event: TvEvent }
+  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[] }
   | { type: "milestone"; key: string; milestone: Milestone }
   | { type: "overtake"; key: string; overtake: Overtake };
 
@@ -518,6 +520,7 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
 function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
+  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} who={moment.event.who} reduced={reduced} />;
   // The race is its own scene rather than a hype screen: it is about two
   // people on the board, not one thing that happened.
   if (moment.type === "overtake") {
@@ -711,7 +714,13 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     if (!data) return;
     cursorRef.current = data.cursor;
     const next: Moment[] = [];
-    for (const ev of data.events) if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
+    for (const ev of data.events) {
+      if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
+      const raceKey = `${ev.id}:field-race`;
+      if (ev.kind === "transfer" && showsFieldRace(ev.id) && !played.current.has(raceKey)) {
+        next.push({ type: "event", key: raceKey, event: ev, fieldRace: data.scorecard.people });
+      }
+    }
     for (const m of data.milestones) if (!played.current.has(m.id)) next.push({ type: "milestone", key: m.id, milestone: m });
     // Someone climbing past someone else on the scorecard. Worked out here
     // rather than on the server because it is a change BETWEEN two polls, and
@@ -785,7 +794,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   // Seen live on the rescheduled scene. A hard cut cannot do either.
   useEffect(() => {
     if (!current) return;
-    const hold = current.type === "milestone" ? HOLD_MS.milestone
+    const hold = current.type === "event" && current.fieldRace ? 12_000 : current.type === "milestone" ? HOLD_MS.milestone
       : current.type === "overtake" ? HOLD_MS.overtake
       : HOLD_MS[current.event.kind];
     const done = setTimeout(() => setCurrent(null), hold);

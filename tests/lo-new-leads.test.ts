@@ -97,7 +97,8 @@ test("the feed says where each lead's claim stands, and the claim route refuses 
 
 test("both cards are tap-to-call, and the new-lead card claims and counts down", () => {
   const card = read("client/src/components/assigned-lo-lead-alert.tsx");
-  assert.match(card, /href=\{tel\}/);
+  assert.match(card, /claim\.mutate\(lead\.externalId, \{ onSuccess: \(\) => \{ window\.location\.href = tel; dismiss\(\);/);
+  assert.doesNotMatch(card, /href=\{tel\}/);
   assert.match(card, /data-testid="assigned-lo-lead-call"/);
   assert.match(card, /data-testid="assigned-lo-lead-claim"/);
   assert.match(card, /Goes to Shotgun in/);
@@ -105,6 +106,7 @@ test("both cards are tap-to-call, and the new-lead card claims and counts down",
   assert.match(card, /refetchIntervalInBackground: true/);
   const offer = read("client/src/components/shotgun-offer-alert.tsx");
   assert.match(offer, /data-testid="shotgun-offer-call"/);
-  assert.match(offer, /href=\{`tel:\$\{String\(offered\.phone\)\.replace\(\/\[\^\\d\+\]\/g, ""\)\}`\}/);
+  assert.match(offer, /confirm\.mutate\(offered\.id, \{ onSuccess: \(\) => \{ window\.location\.href = tel;/);
+  assert.doesNotMatch(offer, /<a href=\{`tel:/);
   assert.match(offer, /refetchIntervalInBackground: true/);
 });

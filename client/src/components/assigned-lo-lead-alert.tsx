@@ -102,9 +102,10 @@ export function AssignedLoLeadAlert() {
         <Button variant="ghost" size="icon" className="-mr-2 -mt-2 shrink-0" aria-label="Dismiss new lead alert" onClick={dismiss}><X className="h-4 w-4" /></Button>
       </div>
       {tel && (
-        <a href={tel} data-testid="assigned-lo-lead-call" className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-bold text-white hover:bg-emerald-700">
-          <Phone className="h-5 w-5" /> Call {lead.phone}
-        </a>
+        <Button type="button" disabled={claim.isPending || left <= 0} data-testid="assigned-lo-lead-call" className="mt-3 flex h-auto w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-bold text-white hover:bg-emerald-700"
+          onClick={() => claim.mutate(lead.externalId, { onSuccess: () => { window.location.href = tel; dismiss(); } })}>
+          <Phone className="h-5 w-5" /> {claim.isPending ? "Claiming…" : `Call ${lead.phone}`}
+        </Button>
       )}
       {/* The last thirty seconds are a warning, not a countdown: louder, so
           nobody loses a lead they meant to claim without being told. */}
