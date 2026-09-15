@@ -1122,7 +1122,7 @@ export function UpcomingPage({ appointments, days, todayCount, reduced }: {
 }
 
 // ── who is feeding the loan officers ────────────────────────────────────────
-export interface TvLoSplitRow { loId: number; name: string; helper: number; others: number; total: number }
+export interface TvLoSplitRow { loId: number; recipientKey?: string; name: string; helper: number; others: number; total: number }
 
 /**
  * Transfers per loan officer this month, split by who sent them.
@@ -1162,10 +1162,10 @@ export function LoSplitPage({ helperName, helperKnown, rows, totals, reduced }: 
       <div className="mb-5 flex items-end justify-between gap-8">
         <div className="min-w-0">
           <Eyebrow>Transfers received · this month</Eyebrow>
-          <h2 className={TITLE}>Who is feeding the LOs</h2>
+          <h2 className={TITLE}>Who is feeding the LOs &amp; LOAs</h2>
           <p className="mt-2 text-[clamp(1.05rem,1.5vw,1.55rem)] text-white/45">
             {helperKnown
-              ? `Gold is ${helperName}. Blue is everyone else.`
+              ? `Gold is ${helperName}, across all recipients. Blue is everyone else. Chris's transfers are shown by LOA.`
               : "Nobody is set as the helper, so this is everyone together."}
           </p>
         </div>
@@ -1179,7 +1179,7 @@ export function LoSplitPage({ helperName, helperKnown, rows, totals, reduced }: 
       <div ref={pan.ref} className={PAN_BOX}>
         <motion.ul variants={stagger} initial="hidden" animate="show" className="flex flex-col gap-2" style={pan.style}>
           {list.map((r) => (
-            <motion.li key={r.loId} variants={rise(reduced)} className="grid grid-cols-[1fr_13rem] items-center gap-8">
+            <motion.li key={r.recipientKey ?? r.loId} variants={rise(reduced)} className="grid grid-cols-[1fr_13rem] items-center gap-8">
               <div className="min-w-0">
                 <p className="truncate text-[clamp(1.15rem,1.7vw,1.8rem)] font-bold">{r.name}</p>
                 <div className="mt-1.5 flex h-3 w-full overflow-hidden rounded-full bg-white/10">
@@ -1209,7 +1209,7 @@ export function LoSplitPage({ helperName, helperKnown, rows, totals, reduced }: 
           {!list.length && <li className={EMPTY}>No transfers this month yet.</li>}
         </motion.ul>
       </div>
-      {pan.overflowing && <PanCount>{list.length} loan officers</PanCount>}
+      {pan.overflowing && <PanCount>{list.length} recipients</PanCount>}
 
       <motion.div
         initial={{ opacity: 0, y: reduced ? 0 : 18 }} animate={{ opacity: 1, y: 0 }}

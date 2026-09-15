@@ -29,6 +29,11 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.113.4",
+    headline: "The TV shows which LOA receives Chris's transfers.",
+    items: [{ text: "Who is feeding the LOs & LOAs now splits Chris Redoble's transfers by the recorded LOA, while retaining all other LOs and Elleine's share. Transfers without a recorded LOA stay visible in an explicit unassigned row; totals are unchanged.", audience: "everyone" }, { text: "The full-team race now uses one perspective track with raised cars, a moving camera, real transfer gaps and side-by-side ties, plus a full race-order panel.", audience: "everyone" }],
+  },
+  {
     version: "4.113.3",
     headline: "The TV can play a one-time team race on request.",
     items: [{ text: "A short-lived operator playback cue can show the full-team race without logging a transfer or changing any statistics.", audience: "manager" }],

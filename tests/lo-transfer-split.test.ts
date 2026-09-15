@@ -14,6 +14,18 @@ const read = (rel: string) => readFileSync(join(root, rel), "utf8");
 const routes = read("server/routes.ts");
 const page = read("client/src/pages/manager-dashboard.tsx");
 
+test("TV LOA rows stay separate and the helper's transfers to other LOs remain included", () => {
+  const windows = foldLoSplitRows([
+    {lo_id:1000,recipient_key:'loa:1',name:'John (LOA)',assistant_id:15,window:'month'},
+    {lo_id:1000,recipient_key:'loa:2',name:'Justin (LOA)',assistant_id:20,window:'month'},
+    {lo_id:1000,recipient_key:'lo:1000',name:'Chris — LOA not recorded',assistant_id:15,window:'month'},
+    {lo_id:8,recipient_key:'lo:8',name:'Other LO',assistant_id:15,window:'month'},
+  ],15);
+  assert.equal(windows.month.length,4);
+  assert.equal(windows.month.find(r=>r.loId===8)?.helper,1);
+  assert.deepEqual(totalsFor(windows.month),{helper:3,others:1,total:4});
+});
+
 // ── who the helper is ──────────────────────────────────────────────────────
 
 test("the helper is resolved from the org setting, not a hard-coded id", () => {

@@ -23354,9 +23354,16 @@ ${note}` : daysLine;
         ).all(orgId) as any[];
         const helperUserId = resolveHelperUserId(orgUsers, helperName);
         const rows = sqlite.prepare(`
-          SELECT o.lo_id, lo.full_name AS name, o.assistant_id, win.window
+          SELECT o.lo_id,
+            CASE WHEN lower(trim(lo.full_name)) IN ('christopher redoble','chris redoble')
+              THEN CASE WHEN loa.id IS NOT NULL THEN loa.full_name || ' (LOA)' ELSE 'Chris Redoble — LOA not recorded' END
+              ELSE lo.full_name END AS name,
+            CASE WHEN lower(trim(lo.full_name)) IN ('christopher redoble','chris redoble') AND loa.id IS NOT NULL
+              THEN 'loa:' || loa.id ELSE 'lo:' || o.lo_id END AS recipient_key,
+            o.assistant_id, win.window
           FROM lead_outcomes o
           JOIN loan_officers lo ON lo.id = o.lo_id
+          LEFT JOIN loan_officer_assistants loa ON loa.id=o.loa_id AND loa.lo_id=o.lo_id
           JOIN (SELECT 'today' AS window UNION ALL SELECT 'week' UNION ALL SELECT 'month' UNION ALL SELECT 'all') win
           WHERE o.outcome_type = 'transfer'
             AND o.org_id = @orgId

@@ -42,6 +42,7 @@ export const LO_SPLIT_WINDOW_LABELS: Record<LoSplitWindow, string> = {
 
 export type LoSplitRow = {
   loId: number;
+  recipientKey?: string;
   name: string;
   /** Transfers logged by the named helper. */
   helper: number;
@@ -104,6 +105,7 @@ export function helperNoticeFor(helperName: string, helperUserId: number | null)
 
 type RawRow = {
   lo_id: unknown;
+  recipient_key?: unknown;
   name: unknown;
   window: unknown;
   assistant_id: unknown;
@@ -119,7 +121,7 @@ type RawRow = {
  */
 export function foldLoSplitRows(rows: RawRow[], helperUserId: number | null): LoSplitWindows {
   const out: LoSplitWindows = { today: [], week: [], month: [], all: [] };
-  const byWindow = new Map<LoSplitWindow, Map<number, LoSplitRow>>();
+  const byWindow = new Map<LoSplitWindow, Map<string, LoSplitRow>>();
   for (const w of LO_SPLIT_WINDOWS) byWindow.set(w, new Map());
 
   for (const r of rows ?? []) {
@@ -128,14 +130,15 @@ export function foldLoSplitRows(rows: RawRow[], helperUserId: number | null): Lo
     if (!bucket) continue;
     const loId = Number(r.lo_id);
     if (!Number.isFinite(loId) || loId <= 0) continue;
-    const existing = bucket.get(loId) ?? {
-      loId, name: String(r.name ?? "") || `LO #${loId}`, helper: 0, others: 0, total: 0,
+    const key = String(r.recipient_key ?? `lo:${loId}`);
+    const existing = bucket.get(key) ?? {
+      loId, ...(r.recipient_key != null ? { recipientKey: key } : {}), name: String(r.name ?? "") || `LO #${loId}`, helper: 0, others: 0, total: 0,
     };
     const isHelper = helperUserId != null && Number(r.assistant_id) === helperUserId;
     if (isHelper) existing.helper += 1;
     else existing.others += 1;
     existing.total += 1;
-    bucket.set(loId, existing);
+    bucket.set(key, existing);
   }
 
   for (const w of LO_SPLIT_WINDOWS) {

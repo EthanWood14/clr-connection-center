@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { showsFieldRace } from "../shared/tv-field-race";
+import { showsFieldRace, fieldStandings } from "../shared/tv-field-race";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 
@@ -26,4 +26,12 @@ test("manual TV cues expire and never cross organizations", () => {
     db.exec("INSERT INTO audit_logs VALUES(3,1,'tv_race_play_now',datetime('now'))");
     assert.deepEqual(db.prepare(sql).get(1), { id: 3 });
   } finally { db.close(); }
+});
+
+test("track depth follows real gaps and ties run side by side", () => {
+  const rows=fieldStandings([{id:1,name:'A',transfersToday:8},{id:2,name:'B',transfersToday:8},{id:3,name:'C',transfersToday:7.5},{id:4,name:'D',transfersToday:3}]);
+  assert.equal(rows[0].depth,rows[1].depth);
+  assert.equal(rows[1].rank,1);
+  assert.equal(rows[2].gap,.5);
+  assert.ok(rows[2].depth>rows[0].depth && rows[2].depth<rows[3].depth);
 });
