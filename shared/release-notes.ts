@@ -29,6 +29,11 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.113.3",
+    headline: "The TV can play a one-time team race on request.",
+    items: [{ text: "A short-lived operator playback cue can show the full-team race without logging a transfer or changing any statistics.", audience: "manager" }],
+  },
+  {
     version: "4.113.2",
     headline: "Calling a live lead claims it first.",
     items: [

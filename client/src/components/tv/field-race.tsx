@@ -2,7 +2,7 @@ import type { RankRow } from "@shared/tv-overtake";
 import { formatTransferCount } from "@shared/transfer-credit";
 
 /** A full-field celebration: every lane moves, nobody drops off the board. */
-export function FieldRace({ people, who, reduced }: { people: RankRow[]; who: string; reduced: boolean }) {
+export function FieldRace({ people, who, reduced, preview = false }: { people: RankRow[]; who: string; reduced: boolean; preview?: boolean }) {
   const ranked = [...people].sort((a, b) => b.transfersToday - a.transfersToday || a.name.localeCompare(b.name));
   const columns = Math.max(1, Math.ceil(ranked.length / 7));
   return <section className="absolute inset-0 z-30 flex flex-col bg-slate-950 p-8 text-white" data-testid="tv-field-race">
@@ -11,7 +11,7 @@ export function FieldRace({ people, who, reduced }: { people: RankRow[]; who: st
       @keyframes field-road { to { background-position: -120px 0; } }
       @media (prefers-reduced-motion: reduce) { .field-moving { animation: none !important; } }
     `}</style>
-    <header className="mb-5 text-center"><p className="text-xl font-bold uppercase tracking-[.3em] text-amber-300">The whole team is moving</p><h2 className="text-5xl font-black">{who} logged a transfer!</h2><p className="mt-2 text-lg text-slate-300">Today's transfer standings · every CLR, every lane</p></header>
+    <header className="mb-5 text-center"><p className="text-xl font-bold uppercase tracking-[.3em] text-amber-300">The whole team is moving</p><h2 className="text-5xl font-black">{preview ? "Full-team race!" : `${who} logged a transfer!`}</h2><p className="mt-2 text-lg text-slate-300">Today's transfer standings · every CLR, every lane</p></header>
     <div className="grid min-h-0 flex-1 gap-3" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${Math.ceil(ranked.length / columns) || 1}, minmax(0, 1fr))`, gridAutoFlow: "column" }}>
       {ranked.map((person, i) => <div key={person.id} className="relative min-h-0 overflow-hidden rounded-xl border border-slate-600 bg-slate-900 px-3 py-2">
         <div className="relative z-10 flex items-center justify-between gap-2 font-bold"><span className="truncate">{ranked.filter(p => p.transfersToday > person.transfersToday).length + 1}. {person.name}</span><span className="text-amber-300">{formatTransferCount(person.transfersToday)}</span></div>

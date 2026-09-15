@@ -76,10 +76,11 @@ interface Feed {
   };
   events: TvEvent[]; recent: TvEvent[]; milestones: Milestone[]; tip: Tip | null;
   newLeads?: NewLead[];
+  racePlayback?: { id: number } | null;
 }
 
 type Moment =
-  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[] }
+  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[]; preview?: boolean }
   | { type: "milestone"; key: string; milestone: Milestone }
   | { type: "overtake"; key: string; overtake: Overtake };
 
@@ -520,7 +521,7 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
 function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
-  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} who={moment.event.who} reduced={reduced} />;
+  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} who={moment.event.who} reduced={reduced} preview={moment.preview} />;
   // The race is its own scene rather than a hype screen: it is about two
   // people on the board, not one thing that happened.
   if (moment.type === "overtake") {
@@ -714,6 +715,11 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     if (!data) return;
     cursorRef.current = data.cursor;
     const next: Moment[] = [];
+    const playbackKey = data.racePlayback ? `manual-race:${data.racePlayback.id}` : null;
+    if (playbackKey && !played.current.has(playbackKey)) next.push({
+      type: "event", key: playbackKey, preview: true, fieldRace: data.scorecard.people,
+      event: { id: playbackKey, kind: "transfer", at: data.now, borrower: "", who: "", lo: null, detail: null },
+    });
     for (const ev of data.events) {
       if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
       const raceKey = `${ev.id}:field-race`;

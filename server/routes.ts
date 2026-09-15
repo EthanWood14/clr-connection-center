@@ -23131,6 +23131,12 @@ ${note}` : daysLine;
       events,
       recent,
       milestones, tip,
+      // An operator-requested, short-lived display cue, never a transfer row.
+      // Scope it to this display's organization and expire it after two minutes.
+      racePlayback: sqlite.prepare(`SELECT id FROM audit_logs
+        WHERE org_id=? AND action='tv_race_play_now'
+          AND created_at >= datetime('now','-2 minutes')
+        ORDER BY id DESC LIMIT 1`).get(orgId) ?? null,
       // New leads ride the SAME cursor as the events above and follow the same
       // rule: no cursor is a TV that has just booted, and it is not shown what
       // it missed. They are deliberately not events — nothing here queues, the
