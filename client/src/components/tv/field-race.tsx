@@ -1,91 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RankRow } from "@shared/tv-overtake";
-import { fieldStandings, cornerPosition } from "@shared/tv-field-race";
+import { raceGrid } from "@shared/tv-race-grid";
 import { formatTransferCount } from "@shared/transfer-credit";
 
-/** Projected trackside scene; the pack advances together without inventing passes. */
+let sceneImport: Promise<typeof import("./race-scene")> | undefined;
+export function preloadFieldRace() {
+  return sceneImport ??= import("./race-scene").catch(error=>{sceneImport=undefined;throw error;});
+}
+
 export function FieldRace({ people, who, reduced, preview = false }: { people: RankRow[]; who: string; reduced: boolean; preview?: boolean }) {
-  const [progress, setProgress] = useState(0);
-  useEffect(() => {
-    if (reduced) return;
-    let frame = 0, start = 0, last = 0;
-    const tick = (now: number) => {
-      if (!start) start = now;
-      if (now-last>32) { setProgress(Math.min(1,(now-start)/11000)); last=now; }
-      if (now-start<11000) frame=requestAnimationFrame(tick);
-    };
-    frame=requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [reduced]);
-  const ranked = fieldStandings(people);
-  const maxGap = Math.max(2,...ranked.map(p=>p.gap));
-  const cars = ranked.map(p=>{
-    const ties=ranked.filter(r=>r.gap===p.gap);
-    const lane=ties.length>1 ? (ties.findIndex(r=>r.id===p.id)-(ties.length-1)/2)*Math.min(76,140/ties.length) : ((p.rank%3)-1)*60;
-    return {...p,...cornerPosition(.06+.5*(1-p.gap/maxGap)+progress*.29,lane)};
-  }).sort((a,b)=>a.y-b.y);
-  return <section className="absolute inset-0 z-30 overflow-hidden bg-[#07101e] text-white" data-testid="tv-field-race">
-    <style>{`
-      @keyframes fan-wave { to { transform:rotate(18deg); } }
-      .race-fan { animation:fan-wave .6s ease-in-out infinite alternate; transform-box:fill-box; transform-origin:bottom; }
-      @media(prefers-reduced-motion:reduce){ .race-fan { animation:none; } }
-    `}</style>
-    <svg className="absolute inset-0 h-full w-[79%]" viewBox="0 0 1100 760" preserveAspectRatio="xMidYMid slice" aria-label="The team racing out of a sweeping corner from the grandstand">
-      <defs>
-        <linearGradient id="race-sky" x2="0" y2="1"><stop stopColor="#293e64"/><stop offset="1" stopColor="#e69864"/></linearGradient>
-        <linearGradient id="race-road" x2="0" y2="1"><stop stopColor="#3d4552"/><stop offset="1" stopColor="#131a25"/></linearGradient>
-        <linearGradient id="race-glass" x2="0" y2="1"><stop stopColor="#b9edff"/><stop offset="1" stopColor="#14243c"/></linearGradient>
-        <pattern id="race-crowd" width="19" height="17" patternUnits="userSpaceOnUse"><circle cx="7" cy="6" r="3" fill="#dcbcad"/><path d="M3 16V10H11V16" fill="#479ba8"/><circle cx="17" cy="12" r="2" fill="#f1c459"/></pattern>
-      </defs>
-      <rect width="1100" height="760" fill="url(#race-sky)"/>
-      <path d="M0 140L150 90 220 130 340 60 500 135 610 80 790 145 1100 90V350H0Z" fill="#182a36" opacity=".7"/>
-      <path d="M0 165L1100 195V300L0 235Z" fill="#172332"/>
-      <path d="M0 170L1100 200V280L0 220Z" fill="url(#race-crowd)"/>
-      {[0,1,2,3].map(i=><path key={i} d={`M0 ${182+i*16}L1100 ${213+i*16}`} stroke="#647480" strokeWidth="3"/>)}
-      <path d="M0 152L1100 181" stroke="#111b2a" strokeWidth="12"/>
-      <rect y="285" width="1100" height="475" fill="#294635"/>
-      <g transform={`translate(${-progress*22} ${-progress*10}) scale(${1+progress*.045})`}>
-        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#d9ded9" strokeWidth="231"/>
-        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#d64746" strokeWidth="224" strokeDasharray="28 27"/>
-        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="url(#race-road)" strokeWidth="194"/>
-        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#c0c7cf" strokeWidth="2" strokeDasharray="35 34" opacity=".35"/>
-        {cars.map(p=><g key={p.id} transform={`translate(${p.x} ${p.y})`}>
-          <g transform={`rotate(${p.angle}) scale(${p.scale*.8})`}>
-            <path d="M-95 3H-42M-78 13H-45" stroke={p.color} strokeWidth="3" opacity=".5"/>
-            <ellipse cy="16" rx="52" ry="19" fill="#000" opacity=".5"/>
-            {[-29,29].map(x=><g key={x}><rect x={x-9} y="-24" width="18" height="14" rx="4" fill="#060b12"/><rect x={x-9} y="12" width="18" height="15" rx="4" fill="#060b12"/><path d={`M${x-5} 18h10`} stroke="#85929c" strokeWidth="2"/></g>)}
-            <path d="M-48 9L-42-10 27-12 53 0 51 16-37 23Z" fill={p.color} stroke="#e3f3ff" strokeWidth="1.5"/>
-            <path d="M-37 23L51 16 51 24-37 30Z" fill="#101b29"/>
-            <path d="M-17-10L-7-24 16-24 31-9 16 4-15 4Z" fill="url(#race-glass)" stroke={p.color} strokeWidth="3"/>
-            <path d="M-44-18V19M-49-18H-36" stroke="#101723" strokeWidth="6"/>
-            <path d="M42-7L48-4M44 9L51 8" stroke="#fff3bd" strokeWidth="4"/>
-            <text x="-25" y="15" fill="#07101b" fontSize="14" fontWeight="900">{p.rank}</text>
-          </g>
-          <g transform={`translate(0 ${-39*p.scale})`}>
-            <rect x="-61" y="-22" width="122" height="27" rx="5" fill="#07101eee" stroke={p.color}/>
-            <text textAnchor="middle" y="-4" fill="white" fontSize="13" fontWeight="800">{p.name.split(' ')[0]} · {formatTransferCount(p.transfersToday)}</text>
-          </g>
-        </g>)}
-      </g>
-      <path d="M-40 485Q450 380 1140 775" fill="none" stroke="#182333" strokeWidth="25"/>
-      <path d="M-40 478Q450 373 1140 768" fill="none" stroke="#d4dce2" strokeWidth="8"/>
-      {[30,160,305,470,660,855].map((x,i)=><g key={x} transform={`translate(${x} ${575+i*i*4})`} fill="#060c17">
-        <circle cy="-10" r="21"/><path d="M-30 75L-27 18Q0 0 28 20L36 95Z"/>
-        <g className={reduced?'':'race-fan'} style={{animationDelay:`${-i*.17}s`}}><path d="M-20 35L-50-20-43-28-8 18M19 28L45-30 53-23 31 48" stroke="#060c17" strokeWidth="13" fill="none"/>
-        {i%2===0&&<><path d="M48-25V-95" stroke="#c6d0dc" strokeWidth="3"/><path d="M49-96L104-80 49-59Z" fill={i%4===0?'#f7c948':'#39d7dd'}/></>}</g>
-      </g>)}
-    </svg>
-    <header className="absolute left-8 top-6 z-20 max-w-[70%]">
-      <p className="text-xs font-bold uppercase tracking-[.4em] text-cyan-200">C3 Grand Prix · Grandstand cam</p>
-      <h2 className="mt-2 text-4xl font-black italic tracking-tight drop-shadow-lg">{preview ? "OUT OF THE CORNER!" : `${who.toUpperCase()} ON THE CHARGE!`}</h2>
-      <p className="mt-2 text-sm text-white/80">Today's transfers set the running order · Ties run together</p>
+  const host=useRef<HTMLDivElement>(null);
+  const [status,setStatus]=useState<"loading"|"ready"|"unavailable">("loading");
+  const drivers=useMemo(()=>raceGrid(people),[people]);
+  const focusId=drivers.find(p=>p.name===who)?.id;
+  useEffect(()=>{
+    let cancelled=false,cleanup:(()=>void)|undefined;
+    setStatus("loading");
+    void preloadFieldRace().then(({mountRaceScene})=>{
+      if(cancelled||!host.current)return;
+      try {
+        cleanup=mountRaceScene(host.current,{drivers,reduced,focusId,onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
+        setStatus("ready");
+      }catch{if(!cancelled)setStatus("unavailable");}
+    }).catch(()=>{if(!cancelled)setStatus("unavailable");});
+    return()=>{cancelled=true;cleanup?.();};
+  },[drivers,reduced,focusId]);
+  const leader=drivers[0];
+  return <section className="absolute inset-0 z-30 overflow-hidden bg-[#111e29] text-white" data-testid="tv-field-race" data-scene-status={status}>
+    <div ref={host} className="absolute inset-y-0 left-0 right-[22%] overflow-hidden" style={{background:"linear-gradient(160deg,#617886,#183338 65%,#0f202c)"}} />
+    {status!=="ready"&&<div className="absolute inset-y-0 left-0 right-[22%] flex items-center justify-center"><div className="text-center"><p className="text-xs uppercase tracking-[.5em] text-cyan-200">C3 Grand Prix</p><p className="mt-3 text-3xl font-black italic">{status==='loading'?'TAKING YOU TRACKSIDE':'TODAY’S RUNNING ORDER'}</p><p className="mt-3 text-sm text-white/60">{status==='unavailable'?'3D is unavailable on this display. Live standings remain visible.':'Live team standings · Every transfer counts'}</p></div></div>}
+    <div className="pointer-events-none absolute inset-0" style={{background:"linear-gradient(180deg,rgba(3,10,18,.65),transparent 26%,transparent 70%,rgba(3,10,18,.78))"}}/>
+    <header className="absolute left-[3%] top-[4%] right-[25%]">
+      <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[.25em]"><span className="bg-red-600 px-2 py-1 tracking-widest">Live</span><span className="text-white/85">C3 Grand Prix</span><span className="h-3 w-px bg-white/40"/><span className="text-white/65">Turn 03 · Trackside</span></div>
+      <h2 className="mt-3 text-[clamp(24px,3vw,52px)] font-black italic leading-none tracking-tight">{preview?'THE CHASE IS ON':`${who.split(' ')[0].toUpperCase()} MOVES THE FIELD`}</h2>
     </header>
-    <aside className="absolute right-5 bottom-6 top-6 flex w-[23%] flex-col rounded-xl border border-white/20 bg-[#07101e]/95 p-4 shadow-2xl">
-      <h3 className="text-lg font-black italic uppercase">Live race order</h3><p className="mb-3 mt-1 text-xs text-slate-400">TRANSFERS / GAP TO FIRST</p>
-      <div className="flex min-h-0 flex-1 flex-col justify-evenly gap-1">{ranked.map(p=><div key={p.id} className="flex min-h-0 items-center gap-2 border-b border-white/10 py-1 text-sm">
-        <strong className="w-5 text-lg" style={{color:p.color}}>{p.rank}</strong><span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span><strong>{formatTransferCount(p.transfersToday)}</strong><span className="w-12 text-right text-xs text-cyan-200">{p.gap===0?'LEAD':`−${formatTransferCount(p.gap)}`}</span>
+    <aside className="absolute right-0 inset-y-0 flex w-[22%] flex-col border-l border-white/15 bg-[#08131f]/95 px-[1.4%] py-[3%]">
+      <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-black uppercase tracking-[.15em]">Running order</h3><span className="rounded-sm border border-white/25 px-1.5 py-0.5 text-[10px] text-white/60">TODAY</span></div>
+      <div className="mb-2 flex justify-end gap-5 text-[9px] uppercase tracking-widest text-white/45"><span>Transfers</span><span>Gap</span></div>
+      <div className="flex min-h-0 flex-1 flex-col justify-evenly gap-0.5">{drivers.map((p,i)=><div key={p.id} className="flex min-h-0 items-center gap-2 border-b border-white/[.07] py-1" style={{fontSize:drivers.length>20?'clamp(10px,1vw,17px)':'clamp(12px,1.15vw,21px)'}}>
+        <span className="w-5 font-black italic tabular-nums" style={{color:i===0?'#f8d581':'#89949d'}}>{p.rank}</span><span className="h-5 w-[3px] shrink-0" style={{background:p.color}}/><span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span><strong className="tabular-nums">{formatTransferCount(p.transfersToday)}</strong><span className="w-10 text-right text-[.75em] tabular-nums" style={{color:p.gap===0?'#f8d581':'#8597a5'}}>{p.gap===0?'LEAD':`+${formatTransferCount(p.gap)}`}</span>
       </div>)}</div>
-      <p className="mt-3 text-xs text-slate-400">Real standings. No simulated passes.</p>
+      <p className="mt-4 text-[10px] leading-relaxed text-white/40">Gaps are transfers behind first.<br/>Equal totals share a position.</p>
     </aside>
+    {leader&&<div className="absolute bottom-[5%] left-[3%] right-[25%] flex items-end justify-between gap-6">
+      <div className="flex items-center gap-4"><span className="text-6xl font-black italic text-[#f4d084]">P1</span><div><p className="text-[10px] uppercase tracking-[.3em] text-white/55">{drivers.filter(p=>p.rank===1).length>1?'Tied for the lead':'Setting the pace'}</p><p className="mt-1 text-2xl font-bold tracking-tight">{leader.name}</p></div></div>
+      <div className="text-right"><p className="text-4xl font-black tabular-nums">{formatTransferCount(leader.transfersToday)}</p><p className="mt-1 text-[9px] uppercase tracking-[.3em] text-white/55">Transfers today</p></div>
+    </div>}
   </section>;
 }

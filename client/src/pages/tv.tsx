@@ -32,7 +32,7 @@ import {
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
-import { FieldRace } from "@/components/tv/field-race";
+import { FieldRace, preloadFieldRace } from "@/components/tv/field-race";
 import { showsFieldRace } from "@shared/tv-field-race";
 import {
   PAN_BOX, usePan,
@@ -664,6 +664,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   const apiRoot = publicPath ? "/api/tv" : `/api/tv/${encodeURIComponent(token)}`;
   const reduced = !!useReducedMotion();
   const now = useNow();
+  useEffect(() => { void preloadFieldRace().catch(() => {}); }, []);
 
   const cursorRef = useRef<string | null>(null);
   const [tipSeed, setTipSeed] = useState(() => Math.floor(Date.now() / TIP_MS));
