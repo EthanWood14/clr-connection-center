@@ -28,6 +28,7 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.5", headline: "Watch the team race from the grandstand.", items: [{ text: "The TV race now brings cars around a sweeping corner toward a trackside spectator camera, with cheering fans, flags, raised car bodies and live standings. Transfer totals still determine the order.", audience: "everyone" }] },
   {
     version: "4.113.4",
     headline: "The TV shows which LOA receives Chris's transfers.",

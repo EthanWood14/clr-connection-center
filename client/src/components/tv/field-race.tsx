@@ -1,53 +1,91 @@
+import { useEffect, useState } from "react";
 import type { RankRow } from "@shared/tv-overtake";
-import { fieldStandings } from "@shared/tv-field-race";
+import { fieldStandings, cornerPosition } from "@shared/tv-field-race";
 import { formatTransferCount } from "@shared/transfer-credit";
 
-/** One CSS-3D circuit. Positions represent real totals, never invented overtakes. */
+/** Projected trackside scene; the pack advances together without inventing passes. */
 export function FieldRace({ people, who, reduced, preview = false }: { people: RankRow[]; who: string; reduced: boolean; preview?: boolean }) {
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    if (reduced) return;
+    let frame = 0, start = 0, last = 0;
+    const tick = (now: number) => {
+      if (!start) start = now;
+      if (now-last>32) { setProgress(Math.min(1,(now-start)/11000)); last=now; }
+      if (now-start<11000) frame=requestAnimationFrame(tick);
+    };
+    frame=requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [reduced]);
   const ranked = fieldStandings(people);
-  const lanes = Math.max(5, ...ranked.map(p=>ranked.filter(r=>r.gap===p.gap).length));
-  return <section className="absolute inset-0 z-30 overflow-hidden bg-[#070c16] text-white" data-testid="tv-field-race">
+  const maxGap = Math.max(2,...ranked.map(p=>p.gap));
+  const cars = ranked.map(p=>{
+    const ties=ranked.filter(r=>r.gap===p.gap);
+    const lane=ties.length>1 ? (ties.findIndex(r=>r.id===p.id)-(ties.length-1)/2)*Math.min(76,140/ties.length) : ((p.rank%3)-1)*60;
+    return {...p,...cornerPosition(.06+.5*(1-p.gap/maxGap)+progress*.29,lane)};
+  }).sort((a,b)=>a.y-b.y);
+  return <section className="absolute inset-0 z-30 overflow-hidden bg-[#07101e] text-white" data-testid="tv-field-race">
     <style>{`
-      @keyframes circuit-flow { to { background-position: 0 180px; } }
-      @keyframes circuit-camera { from { transform: rotateX(49deg) rotateZ(-3deg) translateY(-2%); } to { transform: rotateX(44deg) rotateZ(2deg) translateY(2%); } }
-      @keyframes circuit-suspension { to { transform: translateZ(3px); } }
-      .circuit-car,.circuit-car * { transform-style: preserve-3d; }
-      @media(prefers-reduced-motion:reduce){ .circuit-moving { animation:none!important; } }
+      @keyframes fan-wave { to { transform:rotate(18deg); } }
+      .race-fan { animation:fan-wave .6s ease-in-out infinite alternate; transform-box:fill-box; transform-origin:bottom; }
+      @media(prefers-reduced-motion:reduce){ .race-fan { animation:none; } }
     `}</style>
-    <div className="absolute inset-0" style={{background:'radial-gradient(ellipse at 35% 15%,#153f65 0%,#090f1b 48%,#03060b 100%)'}} />
-    <header className="absolute left-10 top-7 z-20 max-w-[65%]">
-      <p className="text-sm font-bold uppercase tracking-[.45em] text-cyan-300">C3 Grand Prix · Live standings</p>
-      <h2 className="mt-2 text-4xl font-black tracking-tight">{preview ? "THE RACE IS ON" : `${who.toUpperCase()} MOVES THE FIELD`}</h2>
-      <p className="mt-2 text-base text-slate-300">Cars ahead have more transfers. Side by side means tied.</p>
+    <svg className="absolute inset-0 h-full w-[79%]" viewBox="0 0 1100 760" preserveAspectRatio="xMidYMid slice" aria-label="The team racing out of a sweeping corner from the grandstand">
+      <defs>
+        <linearGradient id="race-sky" x2="0" y2="1"><stop stopColor="#293e64"/><stop offset="1" stopColor="#e69864"/></linearGradient>
+        <linearGradient id="race-road" x2="0" y2="1"><stop stopColor="#3d4552"/><stop offset="1" stopColor="#131a25"/></linearGradient>
+        <linearGradient id="race-glass" x2="0" y2="1"><stop stopColor="#b9edff"/><stop offset="1" stopColor="#14243c"/></linearGradient>
+        <pattern id="race-crowd" width="19" height="17" patternUnits="userSpaceOnUse"><circle cx="7" cy="6" r="3" fill="#dcbcad"/><path d="M3 16V10H11V16" fill="#479ba8"/><circle cx="17" cy="12" r="2" fill="#f1c459"/></pattern>
+      </defs>
+      <rect width="1100" height="760" fill="url(#race-sky)"/>
+      <path d="M0 140L150 90 220 130 340 60 500 135 610 80 790 145 1100 90V350H0Z" fill="#182a36" opacity=".7"/>
+      <path d="M0 165L1100 195V300L0 235Z" fill="#172332"/>
+      <path d="M0 170L1100 200V280L0 220Z" fill="url(#race-crowd)"/>
+      {[0,1,2,3].map(i=><path key={i} d={`M0 ${182+i*16}L1100 ${213+i*16}`} stroke="#647480" strokeWidth="3"/>)}
+      <path d="M0 152L1100 181" stroke="#111b2a" strokeWidth="12"/>
+      <rect y="285" width="1100" height="475" fill="#294635"/>
+      <g transform={`translate(${-progress*22} ${-progress*10}) scale(${1+progress*.045})`}>
+        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#d9ded9" strokeWidth="231"/>
+        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#d64746" strokeWidth="224" strokeDasharray="28 27"/>
+        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="url(#race-road)" strokeWidth="194"/>
+        <path d="M-300 245H90Q545 245 1000 595L1400 903" fill="none" stroke="#c0c7cf" strokeWidth="2" strokeDasharray="35 34" opacity=".35"/>
+        {cars.map(p=><g key={p.id} transform={`translate(${p.x} ${p.y})`}>
+          <g transform={`rotate(${p.angle}) scale(${p.scale*.8})`}>
+            <path d="M-95 3H-42M-78 13H-45" stroke={p.color} strokeWidth="3" opacity=".5"/>
+            <ellipse cy="16" rx="52" ry="19" fill="#000" opacity=".5"/>
+            {[-29,29].map(x=><g key={x}><rect x={x-9} y="-24" width="18" height="14" rx="4" fill="#060b12"/><rect x={x-9} y="12" width="18" height="15" rx="4" fill="#060b12"/><path d={`M${x-5} 18h10`} stroke="#85929c" strokeWidth="2"/></g>)}
+            <path d="M-48 9L-42-10 27-12 53 0 51 16-37 23Z" fill={p.color} stroke="#e3f3ff" strokeWidth="1.5"/>
+            <path d="M-37 23L51 16 51 24-37 30Z" fill="#101b29"/>
+            <path d="M-17-10L-7-24 16-24 31-9 16 4-15 4Z" fill="url(#race-glass)" stroke={p.color} strokeWidth="3"/>
+            <path d="M-44-18V19M-49-18H-36" stroke="#101723" strokeWidth="6"/>
+            <path d="M42-7L48-4M44 9L51 8" stroke="#fff3bd" strokeWidth="4"/>
+            <text x="-25" y="15" fill="#07101b" fontSize="14" fontWeight="900">{p.rank}</text>
+          </g>
+          <g transform={`translate(0 ${-39*p.scale})`}>
+            <rect x="-61" y="-22" width="122" height="27" rx="5" fill="#07101eee" stroke={p.color}/>
+            <text textAnchor="middle" y="-4" fill="white" fontSize="13" fontWeight="800">{p.name.split(' ')[0]} · {formatTransferCount(p.transfersToday)}</text>
+          </g>
+        </g>)}
+      </g>
+      <path d="M-40 485Q450 380 1140 775" fill="none" stroke="#182333" strokeWidth="25"/>
+      <path d="M-40 478Q450 373 1140 768" fill="none" stroke="#d4dce2" strokeWidth="8"/>
+      {[30,160,305,470,660,855].map((x,i)=><g key={x} transform={`translate(${x} ${575+i*i*4})`} fill="#060c17">
+        <circle cy="-10" r="21"/><path d="M-30 75L-27 18Q0 0 28 20L36 95Z"/>
+        <g className={reduced?'':'race-fan'} style={{animationDelay:`${-i*.17}s`}}><path d="M-20 35L-50-20-43-28-8 18M19 28L45-30 53-23 31 48" stroke="#060c17" strokeWidth="13" fill="none"/>
+        {i%2===0&&<><path d="M48-25V-95" stroke="#c6d0dc" strokeWidth="3"/><path d="M49-96L104-80 49-59Z" fill={i%4===0?'#f7c948':'#39d7dd'}/></>}</g>
+      </g>)}
+    </svg>
+    <header className="absolute left-8 top-6 z-20 max-w-[70%]">
+      <p className="text-xs font-bold uppercase tracking-[.4em] text-cyan-200">C3 Grand Prix · Grandstand cam</p>
+      <h2 className="mt-2 text-4xl font-black italic tracking-tight drop-shadow-lg">{preview ? "OUT OF THE CORNER!" : `${who.toUpperCase()} ON THE CHARGE!`}</h2>
+      <p className="mt-2 text-sm text-white/80">Today's transfers set the running order · Ties run together</p>
     </header>
-    <div className="absolute bottom-0 left-0 top-[15%] w-[74%]" style={{perspective:'1000px',perspectiveOrigin:'50% 25%'}}>
-      <div className="circuit-moving absolute inset-x-[8%] bottom-[-6%] top-[-5%]" style={{transformStyle:'preserve-3d',transform:'rotateX(46deg)',animation:reduced?'none':'circuit-camera 12s ease-in-out both'}}>
-        <div className="absolute -inset-x-6 inset-y-0 bg-emerald-950" />
-        <div className="circuit-moving absolute inset-0 border-x-[10px] border-cyan-200/70 shadow-[0_0_55px_#22d3ee40]" style={{backgroundColor:'#202b3b',backgroundImage:'repeating-linear-gradient(0deg,transparent 0px,transparent 87px,#ffffff12 88px,#ffffff12 90px)',animation:reduced?'none':'circuit-flow 1.4s linear infinite'}} />
-        {Array.from({length:lanes-1},(_,i)=><div key={i} className="circuit-moving absolute inset-y-0 w-[2px]" style={{left:`${(i+1)*100/lanes}%`,background:'repeating-linear-gradient(0deg,#e2e8f080 0 35px,transparent 35px 90px)',animation:reduced?'none':'circuit-flow 1.4s linear infinite'}}/>)}
-        <div className="absolute inset-x-0 top-[4%] h-4 opacity-70" style={{background:'repeating-conic-gradient(white 0% 25%,#111827 0% 50%) 0/20px 20px'}} />
-        {ranked.map(p=><div key={p.id} className="circuit-car absolute" style={{left:`${(p.index%lanes+.5)*100/lanes}%`,top:`${p.depth}%`,width:`${Math.min(80,500/lanes)}px`,height:100,transform:'translateX(-50%) translateZ(5px)'}}>
-          <div className="absolute -inset-2 rounded-full bg-black/60 blur-md" />
-          <div className="circuit-moving absolute inset-0" style={{animation:reduced?'none':`circuit-suspension .3s ease-in-out ${-(p.index%3)/10}s infinite alternate`}}>
-            {[8,65].flatMap(y=>[-8,88].map(x=><div key={`${x}-${y}`} className="absolute h-7 w-4 rounded bg-[#06080d] border border-slate-500" style={{left:`${x}%`,top:y,transform:'translateZ(7px)'}}/>))}
-            <div className="absolute inset-0 rounded-[16px] border-2 border-white/40" style={{background:p.color,transform:'translateZ(12px)',boxShadow:'0 7px 0 #0b1220,0 10px 12px #0009'}} />
-            <div className="absolute inset-x-[18%] top-[30%] h-[38%] rounded-lg border border-cyan-100 bg-gradient-to-b from-slate-700 to-cyan-950" style={{transform:'translateZ(23px)'}} />
-            <div className="absolute -inset-x-2 bottom-0 h-3 border border-white/50 bg-slate-800" style={{transform:'translateZ(24px)'}} />
-            <div className="absolute inset-x-0 top-2 text-center text-lg font-black text-slate-950" style={{transform:'translateZ(15px)'}}>{p.rank}</div>
-          </div>
-          <div className="absolute -left-12 -right-12 -top-10 text-center" style={{transform:'rotateX(-46deg) translateZ(45px)',transformOrigin:'center bottom'}}>
-            <span className="inline-block max-w-full truncate rounded-md border border-white/25 bg-slate-950/95 px-2 py-1 text-sm font-bold shadow-lg" style={{color:p.color}}>{p.name.split(' ')[0]} · {formatTransferCount(p.transfersToday)}</span>
-          </div>
-        </div>)}
-      </div>
-    </div>
-    <aside className="absolute right-6 bottom-8 top-8 flex w-[25%] flex-col rounded-2xl border border-white/15 bg-slate-950/90 p-5 shadow-2xl">
-      <h3 className="mb-2 text-xl font-black uppercase tracking-widest">Race order</h3>
-      <div className="mb-3 flex justify-between text-xs uppercase tracking-widest text-slate-400"><span>Driver / transfers</span><span>Gap to lead</span></div>
+    <aside className="absolute right-5 bottom-6 top-6 flex w-[23%] flex-col rounded-xl border border-white/20 bg-[#07101e]/95 p-4 shadow-2xl">
+      <h3 className="text-lg font-black italic uppercase">Live race order</h3><p className="mb-3 mt-1 text-xs text-slate-400">TRANSFERS / GAP TO FIRST</p>
       <div className="flex min-h-0 flex-1 flex-col justify-evenly gap-1">{ranked.map(p=><div key={p.id} className="flex min-h-0 items-center gap-2 border-b border-white/10 py-1 text-sm">
-        <strong className="w-6 text-lg" style={{color:p.color}}>{p.rank}</strong><span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span><strong>{formatTransferCount(p.transfersToday)}</strong><span className="w-16 text-right text-xs text-cyan-200">{p.gap===0?'LEADER':`−${formatTransferCount(p.gap)}`}</span>
+        <strong className="w-5 text-lg" style={{color:p.color}}>{p.rank}</strong><span className="min-w-0 flex-1 truncate font-semibold">{p.name}</span><strong>{formatTransferCount(p.transfersToday)}</strong><span className="w-12 text-right text-xs text-cyan-200">{p.gap===0?'LEAD':`−${formatTransferCount(p.gap)}`}</span>
       </div>)}</div>
-      <p className="mt-3 text-xs text-slate-400">Gaps measured in today's transfers. Ties share a position.</p>
+      <p className="mt-3 text-xs text-slate-400">Real standings. No simulated passes.</p>
     </aside>
   </section>;
 }
