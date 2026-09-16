@@ -1422,10 +1422,12 @@ test("the bottom strip is a band in the flow, not something floating over the de
   // Both halves of it used to be pinned ON TOP of whatever page was up \u2014 a
   // card at bottom-16 right-10 and a notice at bottom-14 sliding up over it.
   assert.match(strip, /data-testid="tv-strip"/);
-  assert.match(strip, /className="relative z-10 flex h-\[10vh\] items-stretch/);
+  // 20vh since the live race moved into the strip (owner, 16 Sep 2026); the
+  // rule it is here to protect is unchanged — the band is in the flow.
+  assert.match(strip, /className="relative z-10 flex h-\[20vh\] items-stretch/);
   // The deck is GIVEN a shorter box; it is not padded to clear an overlay.
-  assert.match(page, /<main className="relative z-10 h-\[calc\(100vh-6rem-10vh\)\]">/);
-  assert.doesNotMatch(page, /pb-\[10vh\]|padding-bottom/);
+  assert.match(page, /<main className="relative z-10 h-\[calc\(100vh-6rem-20vh\)\]">/);
+  assert.doesNotMatch(page, /pb-\[20vh\]|padding-bottom/);
   // Nothing under the deck is pinned over it any more. The single `absolute`
   // left down here is the fill inside a progress dot, inside its own pill.
   assert.doesNotMatch(belowDeck, /pointer-events-none/);
@@ -1531,7 +1533,7 @@ test("a lead arriving never changes the height of the strip", () => {
   assert.match(newLead, /\{notice \? \(/);
   assert.match(newLead, /\) : \(\s*<span className=\{STRIP_QUIET\}>/);
   assert.doesNotMatch(strip, /h-\[\$\{|h-\[calc/);
-  assert.equal((strip.match(/h-\[10vh\]/g) ?? []).length, 1, "one fixed height, not a computed one");
+  assert.equal((strip.match(/h-\[20vh\]/g) ?? []).length, 1, "one fixed height, not a computed one");
   // It still ARRIVES: the row re-mounts on the lead's id and rises in, lit
   // while the notice holds and fading to the strip's own grey afterwards.
   assert.match(newLead, /key=\{notice\.lead\.id\}/);

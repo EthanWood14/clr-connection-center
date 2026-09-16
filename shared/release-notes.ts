@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.115.0",
+    headline: "The race never stops: live in the corner all day, and the whole field on the hour.",
+    items: [
+      { text: "Office TV: the race now runs all day in the corner of the bottom strip, with the field in its current order. It sits in the strip rather than over a page, so nothing it shows covers something somebody was reading.", audience: "everyone" },
+      { text: "At the top of every hour, between 8 and 6, the whole day's race takes the wall for twelve seconds — the full field as it stands, not one person's transfer. It plays once an hour however many times the board reloads.", audience: "everyone" },
+      { text: "Being well clear now looks like it. Cars used to be spaced by the biggest gap on the board, so a leader four ahead sat where a leader one ahead did; every transfer of the gap is real track now, and the tail of the field still fits on the corner.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.114.1",
     headline: "The pace page on the TV is a readable trend line now, not ten bars of the same height.",
     items: [

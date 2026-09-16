@@ -34,6 +34,8 @@ import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
 import { FieldRace, preloadFieldRace } from "@/components/tv/field-race";
 import { appendTvMoments, createTvRacePreview, planTransferRaces, racePreviewStatus } from "@shared/tv-field-race";
+import { dueHourlyRaceKey } from "@shared/tv-hourly-race";
+import { CornerRace } from "@/components/tv/corner-race";
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
@@ -94,6 +96,12 @@ const POLL_MS = 10_000;
  * throws in here must never be able to stop a transfer from being celebrated.
  */
 const PAGES_POLL_MS = 30_000;
+/**
+ * The office's clock, for the hourly race. The screen on the wall runs in the
+ * building, but a display opened from anywhere else must still deal the race
+ * on the floor's hour rather than its own.
+ */
+const BOARD_TZ = "America/Los_Angeles";
 
 /**
  * "2h 14m", "6m", "just now" — how long since something last happened.
@@ -756,6 +764,12 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
         : { type: "event", key: ev.id, event: ev });
     }
     for (const m of data.milestones) if (!played.current.has(m.id)) next.push({ type: "milestone", key: m.id, milestone: m });
+    // The whole field, at the top of every hour (shared/tv-hourly-race.ts).
+    // Dealt like any other moment, so it cuts in over whatever page is up and
+    // the deck picks up behind it; keyed by the hour so a reload, a second
+    // poll in the same minute, or a dwell straddling the hour cannot repeat it.
+    const hourly = dueHourlyRaceKey(Date.now(), BOARD_TZ, played.current);
+    if (hourly && standings.length) next.push(createTvRacePreview(standings, hourly, data.now));
     prevStandings.current = standings;
     prevStandingsDay.current = data.today;
     if (next.length) setQueue((q) => appendTvMoments(q, next, played.current));
@@ -916,6 +930,12 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   }, [deck.length]);
 
   const people = data?.scorecard.people ?? [];
+  // The field the corner race drives round, as the full-screen race builds it.
+  const raceStandings = useMemo<RankRow[]>(
+    () => (data?.racePeople ?? data?.scorecard.people ?? [])
+      .map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday, car: p.car })),
+    [data?.racePeople, data?.scorecard.people],
+  );
   const team = data?.scorecard.team ?? { transfersToday: 0, transfersWeek: 0, appointmentsToday: 0, fellThroughToday: 0, missedToday: 0 };
   const teamGoal = useMemo(() => people.reduce((n, p) => n + p.goalTransfersWeekly, 0), [people]);
 
@@ -968,10 +988,12 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
 
       {/* ── the deck ── */}
       {/* The deck's box, shortened by the strip below it rather than padded
-          behind it: 100vh less the 6rem header less the strip's 10vh. Every
-          page inside measures its own pan against the height it is handed, so
-          a tall list simply pans that much further. */}
-      <main className="relative z-10 h-[calc(100vh-6rem-10vh)]">
+          behind it: 100vh less the 6rem header less the strip. Every page
+          inside measures its own pan against the height it is handed, so a
+          tall list simply pans that much further. The strip went from 10vh to
+          20vh when the live race moved into it (owner, 16 Sep 2026) — this
+          number is the reason the pages did not need touching for that. */}
+      <main className="relative z-10 h-[calc(100vh-6rem-20vh)]">
         {/* Not mode="wait". That holds the incoming page until the outgoing
             one reports its exit finished, and an exit that never finishes
             wedges the board — which has already happened twice on this screen.
@@ -1127,7 +1149,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
              in the page's own flow, ten percent of the screen, over nothing —
              see NewLeadZone above. ── */}
       <footer
-        className="relative z-10 flex h-[10vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] pl-44 pr-10"
+        className="relative z-10 flex h-[20vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] pl-44 pr-10 py-3"
         data-testid="tv-strip"
       >
         <NewLeadZone notice={leadNotice} up={leadUp} reduced={reduced} />
@@ -1148,6 +1170,11 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
             </span>
           ))}
         </div>
+        {/* The race, always on, at the end of the strip. In the row rather than
+            over a page — the deck's box is measured against this strip, so
+            nothing it shows was something somebody was reading. It gives up
+            its WebGL context while the full-screen race has the wall. */}
+        <CornerRace people={raceStandings} reduced={reduced} paused={!!current} />
       </footer>
 
       {current && <MomentOverlay moment={current} reduced={reduced} />}

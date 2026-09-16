@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { raceGrid, raceTrackPoint, type RaceDriver } from "../shared/tv-race-grid";
+import { RACE_TRACK_MAX_SPREAD, raceGrid, raceTrackPoint, raceTrackSpread, type RaceDriver } from "../shared/tv-race-grid";
 
 const close = (actual: number, expected: number, message?: string) =>
   assert.ok(Math.abs(actual - expected) < 1e-9, message ?? `${actual} should equal ${expected}`);
@@ -73,6 +73,42 @@ test("score gaps move cars backward without turning ties or name order into pass
       assert.ok(behind.distance > ahead.distance, "less credit must always place a car farther back");
       assert.ok(behind.distance - ahead.distance >= 4.8, "half-credit neighbors need readable separation");
     }
+  }
+});
+
+// "Make the gap more noticeable on the race when someone's up by a lot." —
+// Ethan, 16 Sep 2026. The spacing used to divide the gap by the BIGGEST gap,
+// so a leader four clear and a leader one clear stood in the same place.
+test("a big lead puts real track between the cars, not a normalised one", () => {
+  const lead = (margin: number) => {
+    const rows = raceGrid([driver(1, 10), driver(2, 10 - margin)]);
+    return rows[1].distance - rows[0].distance;
+  };
+  const narrow = lead(1), wide = lead(4), runaway = lead(12);
+  assert.ok(wide > narrow * 1.6, `four clear (${wide}) must read much further than one (${narrow})`);
+  assert.ok(runaway > wide * 1.4, `twelve clear (${runaway}) further again than four (${wide})`);
+  // And it is the ABSOLUTE gap: the same margin looks the same whoever else
+  // is on the board, which is exactly what the old relative spacing lost.
+  const withTail = raceGrid([driver(1, 10), driver(2, 9), driver(3, 0)]);
+  assert.ok(Math.abs((withTail[1].distance - withTail[0].distance) - narrow) < 1e-9);
+});
+
+test("the spread is bounded and strictly increasing, so the field always fits and never overlaps", () => {
+  assert.equal(raceTrackSpread(0), 0);
+  let last = -1;
+  // Every gap a day can actually produce moves a car further back.
+  for (const gap of [0, 0.5, 1, 2, 5, 10, 25, 60]) {
+    const spread = raceTrackSpread(gap);
+    assert.ok(spread > last, "more credit behind is always further back");
+    assert.ok(spread < RACE_TRACK_MAX_SPREAD, "but the tail still fits on one corner");
+    last = spread;
+  }
+  // Past anything real it flattens against the bound rather than running off
+  // the corner — never beyond it, and never backwards.
+  for (const gap of [200, 1000, 10_000]) {
+    const spread = raceTrackSpread(gap);
+    assert.ok(spread >= last && spread <= RACE_TRACK_MAX_SPREAD);
+    last = spread;
   }
 });
 
