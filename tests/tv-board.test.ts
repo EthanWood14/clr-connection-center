@@ -1458,7 +1458,10 @@ test("the strip is one row: the lead notice, a hairline, the deck's dots", () =>
   // and it reads from the left like everything else on the wall.
   assert.match(newLead, /className="flex min-w-0 flex-1 flex-col justify-center"/);
   assert.doesNotMatch(newLead, /text-right|justify-end/, "nothing is still aligned to a zone that has gone");
-  assert.match(strip, /className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress"/);
+  // The dots share the row with the live race now, so they SHRINK rather
+  // than shoving it off the screen — which is exactly what they did when the
+  // race first went in (owner, 16 Sep 2026).
+  assert.match(strip, /className="flex min-w-0 flex-1 shrink items-center justify-center gap-3 overflow-hidden" aria-hidden="true" data-testid="tv-progress"/);
   // The two type styles survive the removal, so the row is the same height and
   // sits on the same baselines it always did.
   assert.match(page, /const STRIP_LABEL = "text-\[clamp\(0\.7rem/);

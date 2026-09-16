@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.115.1",
+    headline: "The corner race says who is winning, and the camera flies through thirty angles instead of eight.",
+    items: [
+      { text: "Office TV: the live corner was being pushed off the right of the screen by the page dots, so the bottom of the wall was an empty band. It now has its own space and shows the top three beside the cars with the leader's margin, rather than cars going round with nothing to read.", audience: "everyone" },
+      { text: "The race camera still never cuts, but it now flies through more than thirty angles across the twelve seconds instead of eight, swinging around the cars rather than gliding down one line.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.115.0",
     headline: "The race never stops: live in the corner all day, and the whole field on the hour.",
     items: [

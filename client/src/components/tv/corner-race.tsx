@@ -75,30 +75,44 @@ export function CornerRace({ people, reduced, paused = false }: {
   }, [grid, reduced, run, paused, failed, people.length]);
 
   if (paused) return null;
+  const leader = drivers[0];
+  const second = drivers.find((d) => d.rank > 1);
+  const margin = leader && second ? leader.transfersToday - second.transfersToday : 0;
   return (
     <section
-      className="relative ml-auto flex w-[34vw] shrink-0 items-stretch overflow-hidden rounded-xl border border-white/15 bg-[#0d1b26]"
+      className="ml-auto flex w-[38vw] shrink-0 items-stretch gap-3 overflow-hidden rounded-xl border border-white/15 bg-[#0d1b26]"
       data-testid="tv-corner-race"
       data-corner-race-state={failed ? "fallback" : "live"}
       aria-label="Today's race, running live"
     >
-      {!failed && <div ref={host} className="absolute inset-0" />}
-      {failed && (
-        <ol className="flex w-full items-center justify-around gap-3 px-4">
-          {top.map((p, i) => (
-            <li key={p.id} className="flex min-w-0 items-baseline gap-2">
-              <span className="text-[1.6vh] font-black italic" style={{ color: i === 0 ? "#f8d581" : "#89949d" }}>P{p.rank}</span>
-              <span className="truncate text-[1.7vh] font-semibold text-white/80">{p.name}</span>
-              <span className="text-[1.8vh] font-black tabular-nums">{formatTransferCount(p.transfersToday)}</span>
-            </li>
-          ))}
-          {!top.length && <li className="text-[1.6vh] text-white/40">No transfers yet today.</li>}
-        </ol>
-      )}
-      {/* The label rides on top of the scene; the scene fills the box. */}
-      <span className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 bg-red-600 px-2 py-0.5 text-[1.1vh] font-black uppercase tracking-[.2em] text-white">
-        Live
-      </span>
+      {/* The cars. Half the box: on their own they are decoration, and a
+          decoration nobody can read is what makes a wall boring. */}
+      <div className="relative w-1/2 shrink-0 overflow-hidden">
+        {!failed && <div ref={host} className="absolute inset-0" />}
+        <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 bg-red-600 px-1.5 py-0.5 text-[1.05vh] font-black uppercase tracking-[.18em] text-white">
+          Live
+        </span>
+      </div>
+      {/* The other half says who is winning, which is the part anybody in the
+          room actually wants from a glance at the corner. */}
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-[0.4vh] py-1 pr-3">
+        <p className="text-[1.05vh] font-semibold uppercase tracking-[.22em] text-white/45">Today&apos;s race</p>
+        {top.map((p, i) => (
+          <div key={p.id} className="flex min-w-0 items-baseline gap-2" data-testid={`tv-corner-race-p${p.rank}`}>
+            <span className="w-[2.2vh] shrink-0 text-[1.7vh] font-black italic" style={{ color: i === 0 ? "#f8d581" : "#7b8894" }}>P{p.rank}</span>
+            <span className="h-[1.5vh] w-[3px] shrink-0 rounded-sm" style={{ background: p.color }} />
+            <span className="min-w-0 flex-1 truncate text-[1.75vh] font-semibold text-white/85">{p.name}</span>
+            <span className="text-[2vh] font-black tabular-nums">{formatTransferCount(p.transfersToday)}</span>
+          </div>
+        ))}
+        {!top.length && <p className="text-[1.6vh] text-white/40">No transfers yet today.</p>}
+        {leader && margin > 0 && (
+          <p className="truncate text-[1.15vh] text-white/45">
+            <span className="font-bold text-amber-300">{leader.name.split(" ")[0]}</span> leads by {formatTransferCount(margin)}
+          </p>
+        )}
+        {leader && margin === 0 && second && <p className="text-[1.15vh] text-white/45">Level at the front</p>}
+      </div>
     </section>
   );
 }

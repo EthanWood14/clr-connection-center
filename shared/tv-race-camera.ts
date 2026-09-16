@@ -19,14 +19,49 @@ const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
 
 // These are waypoints along ONE flight, not camera cuts. Velocity eases at each
 // waypoint while angular travel and the live target continue uninterrupted.
+//
+// Thirty-three of them, roughly one every third of a second (Ethan, 16 Sep
+// 2026: "it should be one continuous shot too, with like 30 different angles
+// it moves from"). Eight of these are the original anchors and carry the shape
+// of the flight — grandstand, up over the cars, the drone apex, the dive into
+// the infield, the grass-side finish — and the rest are the angles BETWEEN
+// them: the camera keeps swinging round the subject (azimuth runs -.30 to
+// +.36 and back past -.45) instead of gliding down one long straight line.
+// Still a single shot: nothing here is a cut, and the continuity test walks
+// every 0.02s of it looking for one.
 const FLIGHT = [
   { time: 0, radius: 69, height: 9.5, azimuth: -.3, fov: 54, roll: 0 },
+  { time: .4, radius: 68, height: 9.8, azimuth: -.34, fov: 55, roll: -.008 },
+  { time: .8, radius: 67, height: 10.2, azimuth: -.28, fov: 56, roll: -.015 },
+  { time: 1.2, radius: 66, height: 10.6, azimuth: -.24, fov: 57, roll: -.02 },
   { time: 1.6, radius: 65, height: 11, azimuth: -.2, fov: 58, roll: -.025 },
+  { time: 2, radius: 61, height: 15, azimuth: -.14, fov: 59, roll: -.03 },
+  { time: 2.4, radius: 57, height: 20, azimuth: -.08, fov: 60, roll: -.034 },
+  { time: 2.8, radius: 53, height: 26, azimuth: -.02, fov: 61, roll: -.036 },
+  { time: 3.1, radius: 50, height: 32, azimuth: .02, fov: 62.5, roll: -.036 },
   { time: 3.4, radius: 48, height: 38, azimuth: .06, fov: 64, roll: -.035 },
+  { time: 3.7, radius: 46, height: 39, azimuth: .11, fov: 65, roll: -.03 },
+  { time: 4, radius: 44, height: 39.6, azimuth: .16, fov: 66, roll: -.022 },
   { time: 4.2, radius: 43, height: 40, azimuth: .2, fov: 67, roll: -.015 },
+  { time: 4.6, radius: 41.5, height: 40.8, azimuth: .26, fov: 67, roll: -.005 },
+  { time: 5, radius: 40, height: 41.4, azimuth: .31, fov: 66.6, roll: .008 },
+  { time: 5.3, radius: 39, height: 41.8, azimuth: .34, fov: 66.3, roll: .018 },
   { time: 5.6, radius: 38, height: 42, azimuth: .36, fov: 66, roll: .025 },
+  { time: 6, radius: 36.5, height: 40.5, azimuth: .34, fov: 65.5, roll: .032 },
+  { time: 6.4, radius: 35, height: 38, azimuth: .31, fov: 64.8, roll: .035 },
   { time: 6.8, radius: 34, height: 36, azimuth: .28, fov: 64, roll: .035 },
+  { time: 7.2, radius: 32, height: 31, azimuth: .22, fov: 63.6, roll: .028 },
+  { time: 7.6, radius: 30, height: 26, azimuth: .14, fov: 63.2, roll: .018 },
+  { time: 8, radius: 28, height: 21, azimuth: .06, fov: 63, roll: .006 },
+  { time: 8.4, radius: 26, height: 16, azimuth: -.01, fov: 62.8, roll: -.004 },
+  { time: 8.8, radius: 24, height: 11, azimuth: -.06, fov: 62.5, roll: -.01 },
+  { time: 9.2, radius: 22, height: 5.5, azimuth: -.1, fov: 62.2, roll: -.012 },
   { time: 9.5, radius: 21, height: 2.2, azimuth: -.12, fov: 62, roll: -.012 },
+  { time: 9.9, radius: 20.2, height: 2.05, azimuth: -.18, fov: 61.4, roll: -.01 },
+  { time: 10.3, radius: 19.4, height: 1.95, azimuth: -.24, fov: 60.8, roll: -.007 },
+  { time: 10.7, radius: 18.6, height: 1.85, azimuth: -.3, fov: 60.2, roll: -.005 },
+  { time: 11.1, radius: 17.9, height: 1.75, azimuth: -.35, fov: 59.6, roll: -.003 },
+  { time: 11.5, radius: 17.2, height: 1.66, azimuth: -.4, fov: 59, roll: -.002 },
   { time: 12, radius: 16, height: 1.55, azimuth: -.45, fov: 58, roll: 0 },
 ] as const;
 

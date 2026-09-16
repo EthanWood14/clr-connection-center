@@ -1156,7 +1156,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
         <StripRule />
         {/* Progress dots: which page, and how long until the next. They close
             the row on the right, the way page numbers close a footer. */}
-        <div className="flex shrink-0 items-center justify-center gap-3" aria-hidden="true" data-testid="tv-progress">
+        <div className="flex min-w-0 flex-1 shrink items-center justify-center gap-3 overflow-hidden" aria-hidden="true" data-testid="tv-progress">
           {deck.map((d, i) => (
             <span key={i} className="relative h-2 w-10 overflow-hidden rounded-full bg-white/15">
               {i === slot && !current && (

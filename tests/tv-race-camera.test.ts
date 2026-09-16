@@ -99,6 +99,24 @@ test("phase labels describe the actual grandstand-to-drone-to-grass journey",()=
   assert.deepEqual(raceBroadcastShot(Infinity),raceBroadcastShot(0));
 });
 
+// "It should be one continuous shot too, with like 30 different angles it
+// moves from." — Ethan, 16 Sep 2026. The flight was eight waypoints, so most
+// of it was one long glide; it is thirty-plus now, and still not a cut.
+test("the flight is built from thirty-odd angles and keeps swinging round the subject",()=>{
+  const plans=planRaceTransition(null,Array.from({length:6},(_,i)=>driver(i+1,6-i))),radius=raceCameraRadius(plans);
+  const pose=(t:number)=>raceCameraPose(plans,t,leadAt(plans,t),16/9,radius);
+  // Sample every third of a second and count the distinct directions the
+  // camera is travelling in: a straight glide would register a handful.
+  const headings=new Set<string>();
+  for(let t=0;t<12;t+=1/3) {
+    const a=pose(t),b=pose(Math.min(12,t+1/3));
+    const dx=b.position.x-a.position.x,dy=b.position.y-a.position.y,dz=b.position.z-a.position.z;
+    const length=Math.hypot(dx,dy,dz)||1;
+    headings.add([dx/length,dy/length,dz/length].map(v=>v.toFixed(1)).join(","));
+  }
+  assert.ok(headings.size>=20,`one long glide, not a flight: ${headings.size} headings`);
+});
+
 test("camera position, target, FOV and banking stay continuous across every flight waypoint",()=>{
   for(const count of [3,24])for(const aspect of [.7,1.51,16/9]) {
     const plans=planRaceTransition(null,Array.from({length:count},(_,i)=>driver(i+1,count-i))),radius=raceCameraRadius(plans);
