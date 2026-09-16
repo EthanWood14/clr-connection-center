@@ -411,14 +411,46 @@ export function WeeklyPacePage({ weeks, average, reduced }: {
   reduced: boolean;
 }) {
   const shown = (weeks ?? []).filter((w) => w && w.perClrPerDay != null);
-  const peak = Math.max(1, ...shown.map((w) => w.perClrPerDay ?? 0));
   const best = shown.filter((w) => !w.partial).reduce<TvPaceWeek | null>(
     (top, w) => (!top || (w.perClrPerDay ?? 0) > (top.perClrPerDay ?? 0) ? w : top), null);
   const fmt = (n: number | null) => (n == null ? "—" : n.toFixed(2));
 
+  // A LINE against a zero baseline, not columns scaled to the tallest week.
+  // The first cut was ten bars sized against the peak, and since every week
+  // sits between 2.9 and 4.9 they came out near enough the same height — a
+  // flat wall that said nothing from across the room, with no axis to read
+  // any of them against. A line on a real scale shows the shape, and the
+  // gridlines say what each height IS.
+  const peak = Math.max(1, ...shown.map((w) => w.perClrPerDay ?? 0), average ?? 0);
+  // Headroom in HALVES, not whole numbers. Rounding 4.85 up to a ceiling of 6
+  // threw away a third of the height and flattened the line into the bottom
+  // two-thirds of the box; 5.5 puts the best week near the top where it
+  // belongs, and the gridlines stay on whole numbers either way.
+  const top = Math.max(1.5, Math.ceil(peak * 1.08 * 2) / 2);
+  const ticks: number[] = [];
+  for (let v = 0; v <= top; v += top > 6 ? 2 : 1) ticks.push(v);
+  // One coordinate space, scaled to whatever the screen is. Text inside it
+  // scales with the chart, which is what keeps this readable on a 1080p wall
+  // and in a preview pane alike. The box is deliberately WIDE — a tall
+  // viewBox letterboxes itself into the middle of a wall-shaped gap and ends
+  // up a postage stamp with a lot of black around it.
+  const W = 1000, H = 340, L = 64, R = 34, T = 44, B = 64;
+  const plotW = W - L - R, plotH = H - T - B;
+  // The first and last dots are held off the edges. Sitting exactly on them,
+  // their labels ran into the y-axis numbers on the left and off the picture
+  // on the right — "Sep 14" came out as "Sep 1".
+  const INSET = 46;
+  const x = (i: number) => (shown.length === 1 ? L + plotW / 2 : L + INSET + (i / (shown.length - 1)) * (plotW - INSET * 2));
+  const y = (v: number) => T + plotH - (Math.max(0, v) / top) * plotH;
+  const pts = shown.map((w, i) => ({ w, i, cx: x(i), cy: y(w.perClrPerDay ?? 0) }));
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join(" ");
+  const area = pts.length
+    ? `${line} L${pts[pts.length - 1].cx.toFixed(1)},${(T + plotH).toFixed(1)} L${pts[0].cx.toFixed(1)},${(T + plotH).toFixed(1)} Z`
+    : "";
+
   return (
     <div className={PAGE} data-testid="tv-page-weekly-pace">
-      <div className="mb-8 flex items-end justify-between gap-8">
+      <div className="mb-4 flex items-end justify-between gap-8">
         <div className="min-w-0">
           <Eyebrow>Transfers per CLR · per day worked</Eyebrow>
           <h2 className={TITLE}>Our pace, {shown.length} weeks</h2>
@@ -431,35 +463,66 @@ export function WeeklyPacePage({ weeks, average, reduced }: {
         )}
       </div>
 
-      <motion.ol
-        variants={stagger} initial="hidden" animate="show"
-        className="flex min-h-0 flex-1 items-end justify-between gap-[clamp(0.5rem,1vw,1.5rem)]"
-        data-testid="tv-pace-columns"
-      >
-        {shown.map((w) => {
-          const value = w.perClrPerDay ?? 0;
-          const height = Math.max(6, (value / peak) * 100);
-          return (
-            <motion.li key={w.weekStart} variants={rise(reduced)} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-3">
-              <span className={w.partial
-                ? "text-[clamp(1.1rem,2.1vw,2.2rem)] font-black leading-none text-amber-300"
-                : "text-[clamp(1.1rem,2.1vw,2.2rem)] font-black leading-none text-white"}>{fmt(w.perClrPerDay)}</span>
-              <motion.div
-                initial={{ height: reduced ? `${height}%` : 0 }}
-                animate={{ height: `${height}%` }}
-                transition={{ delay: 0.25, type: "spring", stiffness: 90, damping: 18 }}
-                className={`w-full rounded-t-2xl ${w.partial ? GOLD_BAR : COOL_BAR}`}
-                style={{ minHeight: "0.75rem" }}
-              />
-              <span className="text-[clamp(0.85rem,1.3vw,1.4rem)] font-semibold leading-none text-white/60">{w.label}</span>
-              <span className="text-[clamp(0.7rem,1.05vw,1.1rem)] leading-none text-white/35">
-                {w.partial ? "so far" : `${w.clrs} on`}
-              </span>
-            </motion.li>
-          );
-        })}
-        {!shown.length && <li className={EMPTY}>No weeks to show yet.</li>}
-      </motion.ol>
+      <div className="min-h-0 flex-1" data-testid="tv-pace-columns">
+        {shown.length > 0 ? (
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="h-full w-full" role="img"
+            aria-label={`Transfers per CLR per day worked, ${shown.length} weeks`}>
+            <defs>
+              <linearGradient id="paceFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity="0.38" />
+                <stop offset="100%" stopColor="rgb(56,189,248)" stopOpacity="0.02" />
+              </linearGradient>
+            </defs>
+
+            {/* The scale, so a height means a number rather than a mood. */}
+            {ticks.map((v) => (
+              <g key={v}>
+                <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="rgba(255,255,255,0.10)" strokeWidth={v === 0 ? 2.5 : 1.5} />
+                <text x={L - 16} y={y(v) + 9} textAnchor="end" fontSize="26" fill="rgba(255,255,255,0.38)">{v}</text>
+              </g>
+            ))}
+
+            {/* What normal currently is, so every week reads as above or below
+                it. NO caption on the line: wherever it went it landed on a
+                week's number, and the amber pill in the header already says
+                what the amber line is. */}
+            {average != null && (
+              <line x1={L} x2={W - R} y1={y(average)} y2={y(average)}
+                stroke="rgb(252,211,77)" strokeOpacity="0.7" strokeWidth="3" strokeDasharray="12 10" />
+            )}
+
+            <motion.path d={area} fill="url(#paceFill)"
+              initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5, duration: 0.6 }} />
+            <motion.path d={line} fill="none" stroke="rgb(56,189,248)" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"
+              initial={{ pathLength: reduced ? 1 : 0 }} animate={{ pathLength: 1 }} transition={{ delay: 0.15, duration: 1.1, ease: "easeOut" }} />
+
+            {pts.map((p) => {
+              // A label normally sits above its dot. Two exceptions, both of
+              // which looked like a mistake on the wall: a dot near the top
+              // pushes its number off the chart, and a dot in a run that is
+              // climbing steeply collides with its neighbour's. Both drop
+              // below the line instead.
+              const prev = pts[p.i - 1], next = pts[p.i + 1];
+              const crowded = (n?: typeof p) => !!n && Math.abs(n.cy - p.cy) < 26 && n.cy < p.cy;
+              const below = p.cy < T + 34 || crowded(prev) || crowded(next);
+              return (
+                <motion.g key={p.w.weekStart}
+                  initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5 + p.i * 0.05, duration: 0.3 }}>
+                  <circle cx={p.cx} cy={p.cy} r={p.w.partial ? 12 : 8}
+                    fill={p.w.partial ? "rgb(252,211,77)" : "rgb(125,211,252)"} stroke="rgb(2,6,23)" strokeWidth="4" />
+                  <text x={p.cx} y={below ? p.cy + 38 : p.cy - 22} textAnchor="middle" fontSize="28" fontWeight="800"
+                    fill={p.w.partial ? "rgb(252,211,77)" : "#fff"}>{fmt(p.w.perClrPerDay)}</text>
+                  <text x={p.cx} y={H - 32} textAnchor="middle" fontSize="23" fontWeight="600" fill="rgba(255,255,255,0.62)">{p.w.label}</text>
+                  <text x={p.cx} y={H - 9} textAnchor="middle" fontSize="19" fill="rgba(255,255,255,0.34)">
+                    {p.w.partial ? "so far" : `${p.w.clrs} on`}
+                  </text>
+                </motion.g>
+              );
+            })}
+          </svg>
+        ) : <p className={EMPTY}>No weeks to show yet.</p>}
+      </div>
 
       <motion.div
         initial={{ opacity: 0, y: reduced ? 0 : 18 }} animate={{ opacity: 1, y: 0 }}

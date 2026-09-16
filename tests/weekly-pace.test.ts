@@ -110,5 +110,19 @@ test("the wall gets the pace page, fed by its own section on the TV endpoint", (
   assert.match(pages, /data-testid="tv-page-weekly-pace"/);
   assert.match(pages, /data-testid="tv-pace-columns"/);
   assert.match(pages, /Days actually worked, not headcount\. Today counts as half a day\./);
-  assert.match(pages, /w\.partial \? GOLD_BAR : COOL_BAR/, "the week in progress is marked, not left looking like a collapse");
+  // A line on a ZERO baseline with a labelled scale. Ten bars sized against
+  // the tallest week all came out the same height — every week sits between
+  // 2.9 and 4.9 — so the first version said nothing from across the room.
+  const pace = pages.slice(pages.indexOf("export function WeeklyPacePage"), pages.indexOf("export function WriteUpPage"));
+  assert.ok(pace.length > 0, "the pace page must still be in the deck's page file");
+  assert.match(pace, /const y = \(v: number\) => T \+ plotH - \(Math\.max\(0, v\) \/ top\) \* plotH;/);
+  assert.match(pace, /for \(let v = 0; v <= top; v \+= top > 6 \? 2 : 1\) ticks\.push\(v\);/, "a labelled scale, so a height means a number");
+  assert.match(pace, /average != null && \(/, "and the 4-week average drawn across it");
+  assert.match(pace, /strokeDasharray="12 10"/);
+  assert.match(pace, /const INSET = 46;/, "the end dots are held off the edges or their labels clip");
+  assert.match(pace, /const below = p\.cy < T \+ 34 \|\| crowded\(prev\) \|\| crowded\(next\);/, "a crowded label drops under the line");
+  assert.doesNotMatch(pace, /\(value \/ peak\) \* 100/, "never scale the bars to the tallest week");
+  // The week in progress is still marked rather than left looking like a collapse.
+  assert.match(pace, /p\.w\.partial \? "rgb\(252,211,77\)" : "rgb\(125,211,252\)"/);
+  assert.match(pace, /p\.w\.partial \? "so far"/);
 });

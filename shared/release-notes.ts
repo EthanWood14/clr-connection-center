@@ -28,6 +28,23 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.114.1",
+    headline: "The pace page on the TV is a readable trend line now, not ten bars of the same height.",
+    items: [
+      { text: "Office TV: \"Our pace\" is drawn as a line on a real scale, with gridlines you can read a number off and the four-week average marked across it. The first version sized ten bars against the tallest week, and since every week lands between 2.9 and 4.9 they all came out looking the same height. Week names no longer run off the edge either.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.114.0",
+    headline: "The wall now shows our pace over ten weeks, and Shotgun stops punishing a missed offer.",
+    items: [
+      { text: "Office TV: a new page charts transfers per CLR per day worked for the last ten weeks, so the trend survives a roster that changes size. The week in progress is marked in gold and today counts as half a day, and the headline is the average of the last four finished weeks.", audience: "everyone" },
+      { text: "Missing a Shotgun offer no longer takes you out of the rotation. The lead moves straight to the next CLR, you are told it moved, and the next one still comes to you. Only closing C3 takes you out.", audience: "everyone" },
+      { text: "You can no longer take yourself out of the Shotgun rotation while C3 is open — the badge just says you are in it. Close C3 when you are done for the day, or ask a manager.", audience: "everyone" },
+      { text: "The Shotgun confirm window is ten seconds, down from twenty. The card is full-screen with a chime, and a lead spending twenty seconds on somebody who is not going to take it is twenty seconds nobody is calling it.", audience: "everyone" },
+    ],
+  },
   { version: "4.113.15", headline: "New-lead and Shotgun calls open Dialpad directly.", items: [
     { text: "Call buttons in new-lead alerts, Shotgun offers and claimed Shotgun leads now use Dialpad's launcher instead of your computer's generic phone handler. C3 stays open so you can finish the lead's result.", audience: "everyone" },
     { text: "The lead is secured before its number is sent to Dialpad. Failed claims never launch a call, existing verification checks stay in place, and an Open Dialpad retry link appears if the browser blocks the launch tab.", audience: "everyone" },
@@ -81,16 +98,6 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     items: [
       { text: "Call on a new-lead alert now claims the lead before opening your phone app, so it does not go to another CLR while you dial. Shotgun offer phone buttons also confirm first. If somebody else already has it, the call does not open and C3 shows the error.", audience: "everyone" },
       { text: "On roughly 15% of transfers, the Office TV follows the celebration with a full-team race: every CLR on the board has a moving car and their daily transfer count. Reduced-motion screens show a still version.", audience: "everyone" },
-    ],
-  },
-  {
-    version: "4.114.0",
-    headline: "The wall now shows our pace over ten weeks, and Shotgun stops punishing a missed offer.",
-    items: [
-      { text: "Office TV: a new page charts transfers per CLR per day worked for the last ten weeks, so the trend survives a roster that changes size. The week in progress is marked in gold and today counts as half a day, and the headline is the average of the last four finished weeks.", audience: "everyone" },
-      { text: "Missing a Shotgun offer no longer takes you out of the rotation. The lead moves straight to the next CLR, you are told it moved, and the next one still comes to you. Only closing C3 takes you out.", audience: "everyone" },
-      { text: "You can no longer take yourself out of the Shotgun rotation while C3 is open — the badge just says you are in it. Close C3 when you are done for the day, or ask a manager.", audience: "everyone" },
-      { text: "The Shotgun confirm window is ten seconds, down from twenty. The card is full-screen with a chime, and a lead spending twenty seconds on somebody who is not going to take it is twenty seconds nobody is calling it.", audience: "everyone" },
     ],
   },
   {
