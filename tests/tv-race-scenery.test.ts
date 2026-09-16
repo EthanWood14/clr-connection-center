@@ -115,7 +115,10 @@ test("the fly-through has a safe peripheral fan cue and grass confined inside th
   assert.match(scene,/infield\.position\.y=-\.20/);
   assert.match(scene,/const a=i\*2\.3999632297,r=27\*Math\.sqrt/);
   assert.match(scene,/fanFrame\.visible=fanOpacity>0/);
-  assert.match(scene,/const fanOpacity=options\.reduced\?0:/);
+  // The lens prop belongs to the transfer race's grandstand POV only: the
+  // corner's three-minute broadcast never shows it, because fading it out
+  // two seconds in read as the stand dissolving (owner, 16 Sep 2026).
+  assert.match(scene,/const fanOpacity=options\.reduced\|\|options\.spotlight\?0:/);
   assert.match(scene,/camera\.rotateZ\(options\.reduced\?0:shot\.roll\)/);
   assert.match(scene,/side:THREE\.FrontSide/);
   assert.match(scene,/back\.rotation\.y=Math\.PI/,'infield banners have their own readable face instead of mirrored lettering');

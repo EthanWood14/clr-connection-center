@@ -4,7 +4,7 @@ import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid"
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
 import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraStartAngle, raceCameraSubjects } from "@shared/tv-race-camera";
-import { cornerCameraPose } from "@shared/tv-corner-camera";
+import { cornerCameraPose, cornerFocusIndex } from "@shared/tv-corner-camera";
 import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
@@ -224,20 +224,17 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   // one plate says who you are watching, three say who they are racing
   // (owner, 16 Sep 2026 — "the name on more cars than the one in first").
   // Every car, all the time, is what made the panel unreadable.
+  // Three names at a time in the corner — the car being followed and the two
+  // nearest it — but the plates are built for EVERYONE, because who is being
+  // followed changes as the broadcast runs (owner, 16 Sep 2026).
   const spotlightNames=3;
-  const named=options.spotlight?(()=>{
-    const focus=racers.find(r=>r.driver.id===options.focusId)??racers[0];
-    if(!focus)return racers.slice(0,spotlightNames);
-    const others=racers.filter(r=>r!==focus)
-      .sort((a,b)=>Math.abs(a.driver.distance-focus.driver.distance)-Math.abs(b.driver.distance-focus.driver.distance));
-    return [focus,...others.slice(0,spotlightNames-1)];
-  })():racers;
+  const named=racers;
   const tags=named.map(r=>{
     const element=document.createElement("div");
     element.style.cssText="position:absolute;pointer-events:none;padding:5px 8px;border-left:3px solid;background:#101a25ed;color:white;font:700 clamp(11px,1vw,17px) system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 12px #0004;";
     element.style.borderColor=r.driver.color;
     element.textContent=r.driver.id===options.focusId?`▶ ${r.driver.name}`:r.driver.name;
-    if(r.driver.id===options.focusId){element.style.background='#064e4bed';element.style.borderColor='#7cf5ee';element.style.fontWeight='900';element.style.zIndex='2';}
+    if(!options.spotlight&&r.driver.id===options.focusId){element.style.background='#064e4bed';element.style.borderColor='#7cf5ee';element.style.fontWeight='900';element.style.zIndex='2';}
     element.title=r.driver.name;
     element.dataset.driverId=String(r.driver.id);
     const line=document.createElement("div");
@@ -274,17 +271,27 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const runFor=options.runSeconds??11.8, flightFor=options.cameraSeconds??12;
     const elapsed=options.reduced?4.6:Math.min(runFor,(now-start)/1000);
     const cameraTime=options.reduced?12:Math.min(12,elapsed*12/flightFor);
-    if(!options.reduced && now-previous<32){frame=requestAnimationFrame(draw);return;}
+    // A 32ms floor pinned the scene at ~31fps, and at that rate a fast camera
+    // move judders — which is the stutter on a transfer's race (owner, 16 Sep
+    // 2026). The full-screen race now draws every frame it is offered; the
+    // corner panel keeps the cheaper cadence because it runs all day.
+    const minFrameMs=options.spotlight?32:1;
+    if(!options.reduced && now-previous<minFrameMs){frame=requestAnimationFrame(draw);return;}
     previous=now;
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
     const lead=startAngle+motionTime*speed;
+    // Who the corner is watching right now. It moves down the running order
+    // every few shots rather than sitting on the leader for three minutes.
+    const spotlightId=options.spotlight
+      ? racers[cornerFocusIndex(elapsed,racers.length,options.focusId!=null?racers.findIndex(r=>r.driver.id===options.focusId):0)]?.driver.id
+      : options.focusId;
     let focusPose:{angle:number;lane:number}|undefined;
     for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
       const transition=transitions.get(driver.id)!;
       const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
-      if(options.spotlight&&driver.id===(options.focusId??racers[0]?.driver.id))focusPose={angle:lead-position.distance/42,lane:position.lane};
+      if(options.spotlight&&driver.id===spotlightId)focusPose={angle:lead-position.distance/42,lane:position.lane};
       const dynamics=sampleRaceDynamics({transition,elapsed,driverId:driver.id,speed,reduced:options.reduced});
       root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw+dynamics.yawOffset,Math.atan(.075));
       chassis.rotation.set(dynamics.pitch,0,dynamics.roll);chassis.position.y=dynamics.heave;
@@ -299,19 +306,45 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
     camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
     camera.rotateZ(options.reduced?0:shot.roll);
-    const fanOpacity=options.reduced?0:Math.max(0,Math.min(1,(1.8-elapsed)/.6));
+    // The seat backs and rail are a PROP ON THE LENS for the transfer race's
+    // opening grandstand POV, and they fade as it climbs out of the stand two
+    // seconds in. On the corner's three-minute broadcast that read as the
+    // grandstand dissolving and never coming back, so it is not used there
+    // (owner, 16 Sep 2026).
+    const fanOpacity=options.reduced||options.spotlight?0:Math.max(0,Math.min(1,(1.8-elapsed)/.6));
     fanFrame.visible=fanOpacity>0;fanMaterial.opacity=railMaterial.opacity=fanOpacity;
     // Wide TV shots retreat from the field; atmosphere belongs behind the
     // racers, not between the lens and their cars.
     const shotDistance=Math.hypot(shot.position.x-shot.target.x,shot.position.y-shot.target.y,shot.position.z-shot.target.z);
     raceFog.near=Math.max(105,shotDistance+60);raceFog.far=Math.max(230,raceFog.near+125);
-    const sceneryClip=raceSceneryClipPlane(shot.position,shot.target,racers.map(r=>r.root.position));
+    // Scenery clipping exists so a grandstand between the lens and the cars
+    // cannot hide the pass. It cuts EVERYTHING nearer than the farthest car,
+    // though, so on a fixed corner camera the stands and trees kept being
+    // sliced away and popping back as the pack moved — which is what looked
+    // broken on the wall. The corner's cameras are placed with a clear
+    // sightline on purpose (shared/tv-corner-camera.ts), so there it keeps
+    // the whole circuit and clips nothing.
+    const sceneryClip=options.spotlight
+      ? {normal:{x:0,y:1,z:0},constant:1e6}
+      : raceSceneryClipPlane(shot.position,shot.target,racers.map(r=>r.root.position));
     sceneryPlane.normal.set(sceneryClip.normal.x,sceneryClip.normal.y,sceneryClip.normal.z);sceneryPlane.constant=sceneryClip.constant;
     const shotLabel=options.reduced?raceBroadcastShot(12,true):shot.shot;
     if(shotLabel.id!==reportedShot){reportedShot=shotLabel.id;options.onShot?.(shotLabel);}
     const progressTick=options.reduced?120:Math.floor(elapsed*5);
     if(progressTick!==reported){reported=progressTick;options.onProgress?.(options.reduced?12:elapsed);}
     try {renderer.render(scene,camera);}catch{fail();return;}
+    // The three plates the corner is allowed to show this frame: whoever is
+    // being followed, and the two cars nearest them on track.
+    const spotlightPlates=new Set<number>();
+    if(options.spotlight&&spotlightId!=null){
+      const focus=racers.find(r=>r.driver.id===spotlightId);
+      if(focus){
+        spotlightPlates.add(focus.driver.id);
+        racers.filter(r=>r!==focus)
+          .sort((a,b)=>Math.abs(a.driver.distance-focus.driver.distance)-Math.abs(b.driver.distance-focus.driver.distance))
+          .slice(0,spotlightNames-1).forEach(r=>spotlightPlates.add(r.driver.id));
+      }
+    }
     const anchors=[];
     for(const {element,line,racer,width,height} of tags) {
       vector.copy(racer.root.position);vector.y+=2.2;vector.project(camera);
@@ -319,7 +352,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       // label: four seconds on, sixteen off, so the panel is cars almost all
       // of the time and still tells you who you are watching.
       const named_now=!options.spotlight||(elapsed%18)<7;
-      const visible=named_now&&vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
+      const onCamera=!options.spotlight||spotlightPlates.has(racer.driver.id);
+      const visible=named_now&&onCamera&&vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
       element.style.display=line.style.display=visible?'block':'none';
       if(visible)anchors.push({id:racer.driver.id,x:(vector.x*.5+.5)*host.clientWidth,y:(-vector.y*.5+.5)*host.clientHeight,width,height});
     }

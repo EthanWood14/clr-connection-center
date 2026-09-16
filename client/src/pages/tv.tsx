@@ -32,7 +32,7 @@ import {
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
-import { FieldRace, preloadFieldRace } from "@/components/tv/field-race";
+import { FieldRace, RACE_MOMENT_MS, preloadFieldRace } from "@/components/tv/field-race";
 import { appendTvMoments, createTvRacePreview, planTransferRaces, racePreviewStatus } from "@shared/tv-field-race";
 import { dueHourlyRaceKey } from "@shared/tv-hourly-race";
 import { CornerRace } from "@/components/tv/corner-race";
@@ -832,7 +832,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   // Seen live on the rescheduled scene. A hard cut cannot do either.
   useEffect(() => {
     if (!current) return;
-    const hold = (current.type === "event" || current.type === "overtake") && current.fieldRace ? 12_000 : current.type === "milestone" ? HOLD_MS.milestone
+    const hold = (current.type === "event" || current.type === "overtake") && current.fieldRace ? RACE_MOMENT_MS : current.type === "milestone" ? HOLD_MS.milestone
       : current.type === "overtake" ? HOLD_MS.overtake
       : HOLD_MS[current.event.kind];
     const done = setTimeout(() => setCurrent(null), hold);

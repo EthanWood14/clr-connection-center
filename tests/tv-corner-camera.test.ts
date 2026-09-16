@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
-  CORNER_CAMERA_SECONDS, CORNER_SHOTS, CORNER_SHOT_SECONDS, cornerCameraPose, cornerShotAt,
+  CORNER_CAMERA_SECONDS, CORNER_FOCUS_SHOTS, CORNER_SHOTS, CORNER_SHOT_SECONDS,
+  cornerCameraPose, cornerFocusIndex, cornerShotAt,
 } from "../shared/tv-corner-camera";
 import { raceTrackPoint } from "../shared/tv-race-grid";
 
@@ -82,4 +84,47 @@ test("every shot in the list produces a usable, finite pose all the way round a 
       assert.ok(dist(pose.position, pose.target) > 1, `${CORNER_SHOTS[i].id} is inside its own subject`);
     }
   }
+});
+
+// "Why do the grandstands like go away and it look so weird" — Ethan, 16 Sep
+// 2026. Two separate things were eating the world.
+test("the corner keeps the circuit standing: no lens prop, no scenery clipping", () => {
+  const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
+  // 1. The seat backs and rail are a prop on the LENS for the transfer race's
+  // opening grandstand POV; they fade out two seconds in, which on a
+  // three-minute broadcast looked like the stand dissolving.
+  assert.match(scene, /const fanOpacity=options\.reduced\|\|options\.spotlight\?0:/);
+  // 2. Scenery clipping cuts everything nearer than the farthest car, so a
+  // fixed camera kept slicing the stands away and popping them back.
+  assert.match(scene, /const sceneryClip=options\.spotlight/);
+  assert.match(scene, /\? \{normal:\{x:0,y:1,z:0\},constant:1e6\}/);
+  assert.match(scene, /: raceSceneryClipPlane\(shot\.position,shot\.target,racers\.map/);
+});
+
+test("fixed cameras sit in front of the stands, not inside them", () => {
+  // The grandstand ring is out at lane ~27; a camera parked there with no
+  // clipping ends up looking at the back of the geometry.
+  for (const shot of CORNER_SHOTS.filter(s => s.kind === "fixed")) {
+    assert.ok(Math.abs(shot.lane ?? 0) <= 20, `${shot.id} is parked in the scenery at lane ${shot.lane}`);
+  }
+});
+
+// "For the behind shots close up of the cars, don't have it for first place
+// always, mix it up." — Ethan, 16 Sep 2026.
+test("the corner works down the running order instead of sitting on the leader", () => {
+  assert.equal(CORNER_FOCUS_SHOTS, 5);
+  // Half a minute each, six different cars across a three-minute broadcast.
+  const seen = new Set<number>();
+  for (let t = 0; t < CORNER_CAMERA_SECONDS; t += 3) seen.add(cornerFocusIndex(t, 8));
+  assert.equal(seen.size, 6, `a three-minute run should follow six cars, not ${seen.size}`);
+  assert.equal(cornerFocusIndex(0, 8), 0);
+  assert.equal(cornerFocusIndex(29, 8), 0, "it holds one car for five shots");
+  assert.equal(cornerFocusIndex(30, 8), 1, "then moves to the next");
+  // A short field wraps rather than running off the end of the order.
+  assert.equal(cornerFocusIndex(90, 2), 1);
+  assert.equal(cornerFocusIndex(0, 0), 0, "and an empty board cannot crash the wall");
+  // Each run can start somewhere different, so the wall does not open on P1
+  // every three minutes.
+  assert.equal(cornerFocusIndex(0, 8, 3), 3);
+  assert.equal(cornerFocusIndex(30, 8, 3), 4);
 });

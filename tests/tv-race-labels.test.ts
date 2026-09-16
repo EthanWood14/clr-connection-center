@@ -152,8 +152,11 @@ test("every racer gets their full name, stable identity, and an owned connector 
   // plate is not enough to see who is racing whom, and a plate on every
   // car is what made the panel unreadable (owner, 16 Sep 2026).
   assert.match(scene, /const spotlightNames=3;/);
-  assert.match(scene, /const focus=racers\.find\(r=>r\.driver\.id===options\.focusId\)\?\?racers\[0\];/);
-  assert.match(scene, /return \[focus,\.\.\.others\.slice\(0,spotlightNames-1\)\];/);
+  assert.match(scene, /const named=racers;/, "plates are built for everyone, because the followed car changes");
+  assert.match(scene, /const spotlightPlates=new Set<number>\(\);/);
+  assert.match(scene, /const onCamera=!options\.spotlight\|\|spotlightPlates\.has\(racer\.driver\.id\);/,
+    "and in the corner only the followed car and its two nearest are shown");
+  assert.match(scene, /\.slice\(0,spotlightNames-1\)\.forEach\(r=>spotlightPlates\.add\(r\.driver\.id\)\);/);
   assert.match(scene, /const tags=named\.map\(/);
   assert.match(scene, /const named_now=!options\.spotlight\|\|\(elapsed%18\)<7;/,
     "and in that mode the names are an occasional caption, not permanent labels");

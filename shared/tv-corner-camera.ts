@@ -23,6 +23,12 @@ import { raceTrackPoint } from "./tv-race-grid";
  *
  * Pure: every pose is a function of the clock and where the car is, so the
  * whole three minutes can be walked in a test without a canvas.
+ *
+ * Fixed cameras stay INSIDE the grandstand ring (lane 20 and under). Parked
+ * out at the stands themselves, the lens ends up buried in that geometry —
+ * and the corner does not clip its scenery away the way the transfer race
+ * does, precisely so the stands stay standing (owner, 16 Sep 2026: "why do
+ * the grandstands like go away and it look so weird").
  */
 
 export const CORNER_SHOT_SECONDS = 6;
@@ -66,23 +72,44 @@ export const CORNER_SHOTS: CornerShot[] = [
   { id: "grass-still", label: "GRASS LEVEL", kind: "fixed", angle: 2.1, lane: -9, height: 1.15, fov: 46 },
   { id: "inside-shoulder", label: "INSIDE SHOULDER", kind: "follow", behind: 4, beside: -7, height: 2, lookAhead: 6, fov: 56 },
   { id: "top-down", label: "TOP DOWN", kind: "follow", behind: .4, height: 34, lookAhead: 0, fov: 46 },
-  { id: "banking-still", label: "BANKING", kind: "fixed", angle: 2.7, lane: 19, height: 4.2, fov: 44 },
+  { id: "banking-still", label: "BANKING", kind: "fixed", angle: 2.7, lane: 16, height: 4.2, fov: 44 },
   { id: "chase-tight", label: "TIGHT CHASE", kind: "follow", behind: 6.5, height: 2.4, lookAhead: 4, fov: 50 },
   { id: "wing", label: "WING MIRROR", kind: "follow", behind: 1.2, beside: 4.5, height: 1.5, lookAhead: 9, fov: 60 },
-  { id: "far-still", label: "FAR SIDE", kind: "fixed", angle: -1.1, lane: 24, height: 7, fov: 38 },
+  { id: "far-still", label: "FAR SIDE", kind: "fixed", angle: -1.1, lane: 19, height: 7, fov: 38 },
   { id: "high-chase", label: "HIGH CHASE", kind: "follow", behind: 17, height: 11, lookAhead: 7, fov: 54 },
   { id: "tunnel", label: "TRACK LEVEL", kind: "fixed", angle: -.4, lane: -6, height: .95, fov: 50 },
   { id: "overhead-lead", label: "OVERHEAD LEAD", kind: "follow", behind: -4, height: 17, lookAhead: -2, fov: 52 },
   { id: "sweep", label: "SWEEP", kind: "follow", behind: 22, beside: 8, height: 8.5, lookAhead: 10, fov: 58 },
-  { id: "pit-still", label: "PIT WALL", kind: "fixed", angle: .05, lane: 21, height: 3, fov: 46 },
+  { id: "pit-still", label: "PIT WALL", kind: "fixed", angle: .05, lane: 17, height: 3, fov: 46 },
   { id: "nose", label: "NOSE CAM", kind: "follow", behind: -2.4, height: 1.25, lookAhead: -6, fov: 64 },
   { id: "crest-still", label: "THE CREST", kind: "fixed", angle: 1.85, lane: 13, height: 6.5, fov: 42 },
   { id: "shoulder", label: "OVER THE SHOULDER", kind: "follow", behind: 2.6, beside: -3.2, height: 2.8, lookAhead: 11, fov: 58 },
   { id: "bird", label: "BIRD'S EYE", kind: "follow", behind: 6, height: 44, lookAhead: 4, fov: 48 },
   { id: "kerb-still", label: "KERBSIDE", kind: "fixed", angle: -2, lane: -11, height: 1.05, fov: 52 },
   { id: "long-chase", label: "LONG CHASE", kind: "follow", behind: 27, height: 4.5, lookAhead: 12, fov: 50 },
-  { id: "grandstand-still", label: "GRANDSTAND", kind: "fixed", angle: -2.6, lane: 27, height: 9.5, fov: 40 },
+  { id: "grandstand-still", label: "GRANDSTAND", kind: "fixed", angle: -2.6, lane: 20, height: 8, fov: 40 },
 ];
+
+/**
+ * How many shots the camera stays with one car before moving to the next.
+ *
+ * Five, so the driver changes every half-minute and a three-minute
+ * broadcast works through six of them. Following the leader the whole way
+ * was both dull and unfair to everyone else on the board (owner, 16 Sep
+ * 2026: "don't have it for first place always, mix it up").
+ */
+export const CORNER_FOCUS_SHOTS = 5;
+
+/**
+ * Which car the corner is following, as an index into the running order.
+ * `offset` lets each run start somewhere different, so the wall does not
+ * open on P1 every three minutes.
+ */
+export function cornerFocusIndex(elapsed: number, drivers: number, offset = 0) {
+  if (!Number.isFinite(drivers) || drivers <= 0) return 0;
+  const { index } = cornerShotAt(elapsed);
+  return (Math.floor(index / CORNER_FOCUS_SHOTS) + Math.max(0, Math.floor(offset))) % drivers;
+}
 
 /** Three minutes of it, and then the running order has moved on anyway. */
 export const CORNER_CAMERA_SECONDS = CORNER_SHOTS.length * CORNER_SHOT_SECONDS;
@@ -106,7 +133,6 @@ export type CornerCarPose = { angle: number; lane: number };
  */
 export function cornerCameraPose(elapsed: number, car: CornerCarPose) {
   const { shot, progress } = cornerShotAt(elapsed);
-  const carPoint = raceTrackPoint(car.angle, car.lane);
   // A little drift inside every shot, so even a fixed camera breathes and a
   // follow shot is not frozen relative to the car for six whole seconds.
   const drift = Math.sin(progress * Math.PI) * 1.6;

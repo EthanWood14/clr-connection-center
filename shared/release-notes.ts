@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.117.0",
+    headline: "A transfer's race is smooth and eighteen seconds long, and the grandstands stay put.",
+    items: [
+      { text: "The race you get for a transfer was capped at about thirty frames a second, which is what made the camera judder. It now draws every frame the screen offers, and it runs for eighteen seconds instead of twelve — the same flight, walked rather than rushed.", audience: "everyone" },
+      { text: "The grandstands no longer dissolve. Two things were eating them: a crowd prop on the lens that fades two seconds into every run, and the scenery clipping that hides anything between the camera and the cars. Both belong to the transfer race and are off in the corner, whose cameras are placed with a clear view on purpose.", audience: "everyone" },
+      { text: "The corner no longer follows the leader the whole way. It moves down the running order every half minute, so a three-minute broadcast features six different CLRs.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.116.0",
     headline: "The corner race is a three-minute broadcast: thirty camera positions, and three names on screen.",
     items: [

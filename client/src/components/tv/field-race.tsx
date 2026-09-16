@@ -6,6 +6,15 @@ import { formatTransferCount } from "@shared/transfer-credit";
 import { raceBroadcastShot, raceFocusCaption } from "@shared/tv-race-camera";
 
 let sceneImport: Promise<typeof import("./race-scene")> | undefined;
+/**
+ * How long a transfer's race holds the wall. Eighteen seconds, not twelve:
+ * the same flight walked more slowly reads as a broadcast rather than a
+ * rush past the cars (owner, 16 Sep 2026: "I want it smooth and longer").
+ * tv.tsx holds the moment for RACE_MOMENT_MS, which is this plus a beat.
+ */
+export const RACE_SCENE_SECONDS = 18;
+export const RACE_MOMENT_MS = (RACE_SCENE_SECONDS + .6) * 1000;
+
 export function preloadFieldRace() {
   return sceneImport ??= import("./race-scene").catch(error=>{sceneImport=undefined;throw error;});
 }
@@ -36,7 +45,7 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
     void preloadFieldRace().then(({mountRaceScene})=>{
       if(cancelled||!host.current)return;
       try {
-        cleanup=mountRaceScene(host.current,{drivers,before,reduced,focusId,onProgress:time=>{if(!cancelled)setElapsed(time);},onShot:next=>{if(!cancelled)setShot(next);},onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
+        cleanup=mountRaceScene(host.current,{drivers,before,reduced,focusId,runSeconds:RACE_SCENE_SECONDS,cameraSeconds:RACE_SCENE_SECONDS,onProgress:time=>{if(!cancelled)setElapsed(time);},onShot:next=>{if(!cancelled)setShot(next);},onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
         setStatus("ready");
       }catch{if(!cancelled)setStatus("unavailable");}
     }).catch(()=>{if(!cancelled)setStatus("unavailable");});
