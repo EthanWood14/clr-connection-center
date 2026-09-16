@@ -85,3 +85,18 @@ test("picture operations are self-scoped, upload decoded PNG bytes and retain un
   assert.match(page, /Upload or discard your picture before saving paint/);
   assert.doesNotMatch(page, /\/api\/users\/|assistantId:|userId:/);
 });
+
+test("pixel workshop is the default, preserves separate drafts and shares the real 3D model", () => {
+  assert.match(page, /useState<"skin" \| "paint">\("skin"\)/);
+  assert.match(page, /const CarSkinPreview = lazy/);
+  assert.match(page, /<CarSkinEditor[\s\S]*onBusyChange=\{setPreparingSkin\}/);
+  assert.match(page, /const editingSkin = skinDraft \?\? saved\.skin \?\? blankSkin/);
+  assert.match(page, /<CarSkinPreview appearance=\{\{ \.\.\.saved, skin: editingSkin \}\}/);
+  assert.match(page, /apiRequest\("PUT", "\/api\/me\/tv-car\/skin", \{ skin: next \}\)/);
+  assert.match(page, /apiRequest\("DELETE", "\/api\/me\/tv-car\/skin"\)/);
+  assert.match(page, /disabled=\{!skinDirty \|\| busy\}/);
+  assert.match(page, /skinSave\.isPending \|\| preparingSkin/);
+  assert.match(page, /<AlertDialogTitle>Return to paint and pictures/);
+  assert.match(page, /setDraft\(current => current \? \{ \.\.\.current, skin: data\.appearance\.skin \} : null\)/);
+  assert.match(page, /window\.addEventListener\("beforeunload", warn\)/);
+});

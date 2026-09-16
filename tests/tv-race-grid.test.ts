@@ -154,9 +154,11 @@ test("TV propagates org-scoped cosmetics into both manual and earned race scenes
   assert.match(routes, /FROM tv_car_wraps WHERE org_id=\?[\s\S]{0,50}\.all\(orgId\)/);
   assert.match(routes, /wrapUrl: displayTvCarWrapUrl\(req\.params\.token, Number\(c\.id\), carWrapVersions\.get\(Number\(c\.id\)\)!\)/);
   assert.match(tv, /const standings: RankRow\[\].*car: p\.car/);
-  assert.match(scene, /accent=material\(driver\.car\.accentColor/);
-  assert.match(scene, /driver\.car\.livery==="double-stripe"/);
-  assert.match(scene, /driver\.car\.livery==="stripe"\?\[0\]:\[\]/);
+  assert.match(scene, /createTvCarModel\(\{appearance:driver\.car/);
+  const model = readFileSync(new URL("../client/src/components/tv/car-model.ts", import.meta.url), "utf8");
+  assert.match(model, /accent = material\(appearance\.accentColor/);
+  assert.match(model, /appearance\.livery === "double-stripe"/);
+  assert.match(model, /appearance\.livery === "stripe" \? \[0\] : \[\]/);
 });
 
 test("track points follow the circular corner at the cardinal angles", () => {

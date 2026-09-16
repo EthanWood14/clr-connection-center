@@ -143,7 +143,7 @@ function harness(t: TestContext) {
   const db = new Database(":memory:");
   t.after(() => db.close());
   const source = readFileSync(new URL("../server/storage.ts", import.meta.url), "utf8");
-  for (const table of ["tv_car_preferences", "tv_car_wraps"]) {
+  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins"]) {
     const ddl = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\)\\\``));
     assert.ok(ddl, "production startup initializes the preference tables");
     db.exec(ddl[0].slice(0, -1));
@@ -161,6 +161,7 @@ function harness(t: TestContext) {
   registerTvCarRoutes({
     get(path: string, ...handlers: any[]) { routes.set(`GET ${path}`, handlers); },
     patch(path: string, ...handlers: any[]) { routes.set(`PATCH ${path}`, handlers); },
+    put(path: string, ...handlers: any[]) { routes.set(`PUT ${path}`, handlers); },
     post(path: string, ...handlers: any[]) { routes.set(`POST ${path}`, handlers); },
     delete(path: string, ...handlers: any[]) { routes.set(`DELETE ${path}`, handlers); },
   } as any, {
@@ -186,6 +187,7 @@ test("GET returns defaults and does not create a preference or audit row", (t) =
   assert.equal(h.count(), 0);
   assert.deepEqual(h.audits, []);
   assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "PATCH /api/me/tv-car",
+    "PUT /api/me/tv-car/skin", "DELETE /api/me/tv-car/skin",
     "POST /api/me/tv-car/wrap", "DELETE /api/me/tv-car/wrap", "GET /api/me/tv-car/wrap", "GET /api/tv/:token/cars/:userId/wrap"]);
 });
 

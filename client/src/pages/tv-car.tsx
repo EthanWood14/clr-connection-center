@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Check, CheckCircle2, Flag, ImagePlus, Loader2, Palette, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { useAuth, type AuthUser } from "@/lib/auth";
@@ -13,6 +13,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { defaultTvCarAppearance, isSafeTvCarWrapUrl, normalizeTvCarAppearance, validateTvCarAppearance, type TvCarAppearance } from "@shared/tv-car";
 import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
+import { createBlankCarSkin, type TvCarSkin } from "@shared/tv-car-skin";
+import { CarSkinEditor } from "@/components/tv/car-skin-editor";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+
+const CarSkinPreview = lazy(() => import("@/components/tv/car-skin-preview"));
 
 type CarResponse = { appearance: TvCarAppearance };
 const COLOR_PRESETS = [
@@ -122,6 +127,12 @@ function Garage({ user }: { user: AuthUser }) {
   // A draft stays separate from query data: background refreshes must not erase paint edits.
   const [draft, setDraft] = useState<TvCarAppearance | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [garageMode, setGarageMode] = useState<"skin" | "paint">("skin");
+  const [blankSkin] = useState(createBlankCarSkin);
+  const [skinDraft, setSkinDraft] = useState<TvCarSkin | null>(null);
+  const [skinNotice, setSkinNotice] = useState<string | null>(null);
+  const [preparingSkin, setPreparingSkin] = useState(false);
+  const [skinEditorEpoch, setSkinEditorEpoch] = useState(0);
   const [preparedWrap, setPreparedWrap] = useState<PreparedTvCarWrap | null>(null);
   const [preparingWrap, setPreparingWrap] = useState(false);
   const [wrapError, setWrapError] = useState<string | null>(null);
@@ -169,7 +180,27 @@ function Garage({ user }: { user: AuthUser }) {
       setWrapNotice(change.action === "upload" ? "Picture wrap saved. It will show on TV after the next refresh." : "Picture wrap removed. Your paint and stripes are unchanged.");
     },
   });
-  const busy = save.isPending || wrap.isPending || preparingWrap;
+  const skinSave = useMutation<CarResponse, Error, TvCarSkin | null>({
+    mutationFn: next => next ? apiRequest("PUT", "/api/me/tv-car/skin", { skin: next }) : apiRequest("DELETE", "/api/me/tv-car/skin"),
+    onMutate: async () => { setSkinNotice(null); await queryClient.cancelQueries({ queryKey, exact: true }); },
+    onSuccess: (data, next) => {
+      queryClient.setQueryData(queryKey, data);
+      setDraft(current => current ? { ...current, skin: data.appearance.skin } : null);
+      setSkinDraft(null);
+      setSkinEditorEpoch(epoch => epoch + 1);
+      setSkinNotice(next ? "Skin saved. Your TV car will wear it after the next refresh." : "Pixel skin removed. Your saved paint and picture wrap are back.");
+    },
+  });
+  const busy = save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin;
+  const editingSkin = skinDraft ?? saved.skin ?? blankSkin;
+  const skinDirty = skinDraft !== null && JSON.stringify(skinDraft) !== JSON.stringify(saved.skin ?? blankSkin);
+  const hasUnsaved = dirty || skinDirty || !!preparedWrap;
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsaved]);
 
   async function choosePicture(file: File | undefined) {
     if (!file) return;
@@ -206,16 +237,48 @@ function Garage({ user }: { user: AuthUser }) {
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-6" data-testid="tv-car-garage">
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 md:p-6" data-testid="tv-car-garage">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="mb-1 text-xs font-semibold uppercase tracking-[.2em] text-muted-foreground">Advanced Settings / Personal</p>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">My TV Car</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Your colors, stripes, and custom picture wrap.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Build a pixel skin, paint your car, or add a picture wrap.</p>
         </div>
         <Badge variant="outline" className="gap-1.5 px-3 py-1.5"><Flag className="h-3.5 w-3.5" /> C3 Grand Prix</Badge>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[1.05fr_1fr]">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Garage workspace">
+        <Button type="button" variant={garageMode === "skin" ? "default" : "outline"} aria-pressed={garageMode === "skin"} onClick={() => setGarageMode("skin")}>Pixel skin studio{skinDirty ? " •" : ""}</Button>
+        <Button type="button" variant={garageMode === "paint" ? "default" : "outline"} aria-pressed={garageMode === "paint"} onClick={() => setGarageMode("paint")}>Paint & pictures{dirty || preparedWrap ? " •" : ""}</Button>
+      </div>
+
+      {garageMode === "skin" && <section className="grid items-start gap-5 xl:grid-cols-[minmax(300px,.78fr)_minmax(0,1.22fr)]" aria-label="Pixel skin studio">
+        <div className="space-y-4 xl:sticky xl:top-5">
+          <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 text-slate-100">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3"><span className="text-xs font-semibold uppercase tracking-widest">Your car · Live 3D</span><Badge variant="outline" className="border-white/20 text-slate-200">{skinDirty ? "Unsaved skin" : saved.skin ? "Saved skin" : "Start painting"}</Badge></div>
+            <Suspense fallback={<div className="flex h-80 items-center justify-center gap-2 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Opening the garage…</div>}><CarSkinPreview appearance={{ ...saved, skin: editingSkin }} name={user.name} /></Suspense>
+            <div className="space-y-2 border-t border-white/10 px-4 py-4"><p className="font-semibold">{user.name}</p><p className="text-xs leading-relaxed text-slate-400">Drag to rotate. This is the same car used on the TV track. Each painted panel has its own place on the model.</p></div>
+          </div>
+          <div className="rounded-xl border bg-muted/25 p-4 text-xs leading-relaxed text-muted-foreground">
+            <p>Like a pixel skin editor: choose a panel, pick a color, then paint. Transparent pixels show your saved body color. Your helmet keeps its accent color.</p>
+            <p className="mt-2">Saving a skin hides—but does not delete—your picture wrap and racing stripes. Remove the skin to bring them back.</p>
+            {dirty && <p className="mt-2 font-medium text-amber-700 dark:text-amber-300">You also have unsaved paint. Save it in Paint & pictures to use it underneath your skin.</p>}
+          </div>
+        </div>
+        <div className="min-w-0 space-y-4">
+          <CarSkinEditor key={skinEditorEpoch} skin={editingSkin} onChange={next => { setSkinDraft(next); setSkinNotice(null); skinSave.reset(); }} disabled={busy} onBusyChange={setPreparingSkin} bodyColor={saved.bodyColor} accentColor={saved.accentColor} />
+          {skinSave.isError && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Your skin was not saved</AlertTitle><AlertDescription>{skinSave.error.message} Your draft is still here.</AlertDescription></Alert>}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
+            <p role="status" aria-live="polite" className="max-w-sm text-xs text-muted-foreground">{skinNotice ?? (skinDirty ? "Preview only — save your skin to put it on the TV." : "Pixel skins are cosmetic. Your stats stay unchanged.")}</p>
+            <div className="flex flex-wrap gap-2">
+              {skinDirty && <Button type="button" variant="ghost" disabled={busy} onClick={() => { setSkinDraft(null); setSkinNotice(null); skinSave.reset(); setSkinEditorEpoch(epoch => epoch + 1); }}>Discard skin edits</Button>}
+              <Button type="button" onClick={() => skinSave.mutate(editingSkin)} disabled={!skinDirty || busy} data-testid="save-tv-car-skin">{skinSave.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save skin</Button>
+            </div>
+          </div>
+          {saved.skin && <AlertDialog><AlertDialogTrigger asChild><Button type="button" variant="outline" disabled={busy} data-testid="remove-tv-car-skin"><Trash2 className="mr-2 h-4 w-4" />Remove pixel skin</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Return to paint and pictures?</AlertDialogTitle><AlertDialogDescription>This removes your saved pixel skin and any unsaved skin edits. Export it first if you want a copy. Your body color, stripes, and saved picture wrap stay intact.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep skin</AlertDialogCancel><AlertDialogAction onClick={() => skinSave.mutate(null)}>Remove skin</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
+        </div>
+      </section>}
+
+      {garageMode === "paint" && <div className="grid items-start gap-6 lg:grid-cols-[1.05fr_1fr]">
         <section className="overflow-hidden rounded-2xl border border-slate-700 bg-[#101b2b] text-slate-100 shadow-lg lg:sticky lg:top-6" aria-label="Car preview">
           <div className="flex items-center justify-between gap-2 border-b border-white/10 px-5 py-4">
             <span className="text-xs font-semibold uppercase tracking-[.18em] text-slate-300">Garage preview</span>
@@ -229,7 +292,7 @@ function Garage({ user }: { user: AuthUser }) {
             <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: preview.bodyColor }} />
             <div className="min-w-0"><p className="truncate font-semibold">{user.name}</p><p className="mt-0.5 text-xs text-slate-400">{LIVERIES.find(item => item.value === appearance.livery)?.label} · TV race appearance</p></div>
           </div>
-          <p className="px-5 pb-5 text-xs leading-relaxed text-slate-400">Your picture covers the body panels; your paint stays on the wings and your stripes stay on top. The TV car uses the same picture on its 3D panels.</p>
+          <p className="px-5 pb-5 text-xs leading-relaxed text-slate-400">{saved.skin ? "A pixel skin is currently active on TV. This panel previews your saved paint and pictures underneath it; remove the skin in Pixel skin studio to reveal them." : "Your picture covers the body panels; your paint stays on the wings and your stripes stay on top. The TV car uses the same picture on its 3D panels."}</p>
         </section>
 
         <form className="space-y-5" onSubmit={event => { event.preventDefault(); if (dirty && valid && !busy && !preparedWrap) save.mutate(appearance); }}>
@@ -291,7 +354,7 @@ function Garage({ user }: { user: AuthUser }) {
             </Button>
           </div>
         </form>
-      </div>
+      </div>}
       <p className="flex items-start gap-2 rounded-xl border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground"><Flag className="mt-0.5 h-4 w-4 shrink-0" /> This is a cosmetic change only. Your transfers, race position, speed, and ranking stay exactly the same. Resetting colors also needs Save my car.</p>
     </div>
   );

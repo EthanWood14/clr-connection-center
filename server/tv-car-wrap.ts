@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import type { Response } from "express";
 import { TV_CAR_WRAP_MAX_BYTES, TV_CAR_WRAP_MAX_EDGE } from "../shared/tv-car";
+import { isTvCarParticipant } from "../shared/tv-race-participation";
 
 export const TV_CAR_WRAP_ORG_MAX_BYTES = 32 * 1024 * 1024;
 export const TV_CAR_WRAP_TOTAL_MAX_BYTES = 128 * 1024 * 1024;
@@ -130,13 +131,13 @@ export function sendTvCarWrap(db: any, res: Response, orgId: number, userId: num
     res.status(404).json({ error: "Wrap not found." });
     return;
   }
-  const row = db.prepare(`SELECT b.data FROM tv_car_wraps w
+  const row = db.prepare(`SELECT b.data, u.id, u.role, u.is_clr, u.portal FROM tv_car_wraps w
     JOIN lapfiles.tv_car_wrap_blobs b ON b.org_id=w.org_id AND b.user_id=w.user_id AND b.version=w.version
     JOIN users u ON u.id=w.user_id AND u.org_id=w.org_id
     WHERE w.org_id=? AND w.user_id=? AND w.version=? AND u.is_active=1
-      AND (u.portal IS NULL OR u.portal='c3') AND (u.role='assistant' OR (u.role='admin' AND u.is_clr=1))`)
+      AND (u.portal IS NULL OR u.portal='c3')`)
     .get(orgId, userId, version);
-  if (!row?.data) { res.status(404).json({ error: "Wrap not found." }); return; }
+  if (!row?.data || !isTvCarParticipant(row)) { res.status(404).json({ error: "Wrap not found." }); return; }
   res.set({
     "Content-Type": "image/png", "Content-Disposition": 'inline; filename="tv-car-wrap.png"',
     "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin",

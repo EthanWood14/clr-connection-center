@@ -87,7 +87,7 @@ function database(t: TestContext) {
   t.after(() => db.close());
   db.exec("ATTACH DATABASE ':memory:' AS lapfiles");
   const source = read("server/storage.ts");
-  for (const table of ["tv_car_preferences", "tv_car_wraps", "lapfiles.tv_car_wrap_blobs"]) {
+  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "lapfiles.tv_car_wrap_blobs"]) {
     const match = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table.replace(".", "\\.")} \\([\\s\\S]*?\\)\\\``));
     assert.ok(match, `production DDL for ${table}`);
     db.exec(match[0].slice(0, -1)); db.exec(match[0].slice(0, -1));
@@ -134,6 +134,20 @@ test("Ethan's race-only account can upload his own wrap without access to anothe
   assert.equal(uploaded.status, 201);
   const body = await uploaded.json() as any;
   assert.equal(isSafeTvCarWrapUrl(body.appearance.wrapUrl), true);
+  const ownImage = await h.request(body.appearance.wrapUrl, "GET", undefined, 1);
+  assert.equal(ownImage.status, 200, "the owner-only guest policy also permits reading Ethan's saved photo");
+  assert.deepEqual(Buffer.from(await ownImage.arrayBuffer()), png());
+  const version = body.appearance.wrapUrl.split("?v=")[1];
+  const displayPath = `/api/tv/abcdefghijklmnop/cars/1/wrap?v=${version}`;
+  const displayImage = await h.request(displayPath, "GET", undefined, 0);
+  assert.equal(displayImage.status, 200); await displayImage.arrayBuffer();
+  assert.equal((await h.request(displayPath.replace("abcdefghijklmnop", "qrstuvwxyzabcdef"), "GET", undefined, 0)).status, 404);
+  for (const update of ["is_active=0", "role='viewer'", "portal='lap'", "portal='lop'"]) {
+    h.db.exec(`UPDATE users SET ${update} WHERE id=1`);
+    const blocked = await h.request(displayPath, "GET", undefined, 0);
+    assert.equal(blocked.status, 404); await blocked.json();
+    h.db.exec("UPDATE users SET is_active=1,role='admin',portal=NULL WHERE id=1");
+  }
   assert.equal((await h.request(body.appearance.wrapUrl, "GET", undefined, 7)).status, 404);
   assert.equal((await h.request(body.appearance.wrapUrl, "GET", undefined, 1, 2)).status, 403);
   assert.deepEqual(h.db.prepare("SELECT role,is_clr FROM users WHERE id=1").get(), { role: "admin", is_clr: 0 });

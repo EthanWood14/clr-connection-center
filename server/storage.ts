@@ -2740,6 +2740,15 @@ function runNewMigrations() {
     updated_at TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id)
   )`);
+  // A bounded pixel design is metadata, not an uploaded image. Photo-wrap bytes
+  // remain in the sidecar and are not deleted when this optional skin is saved.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_skins (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    skin_json TEXT NOT NULL CHECK (length(skin_json) <= 8192),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+  )`);
 
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss

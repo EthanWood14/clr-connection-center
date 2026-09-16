@@ -122,7 +122,7 @@ import { approvedTimeOffUserIds, assignmentClrsForDate, resolveMonthlyClrAssignm
 import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 import { registerTransferDetailRoutes } from "./transfer-detail-routes";
 import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
-import { registerTvCarRoutes } from "./tv-car-routes";
+import { registerTvCarRoutes, readTvCarSkinsForOrg } from "./tv-car-routes";
 import { normalizeTvCarAppearance } from "@shared/tv-car";
 import { displayTvCarWrapUrl } from "./tv-car-wrap";
 import { withTvRaceGuests, tvRaceCreditsForEvents } from "./tv-race-roster";
@@ -23019,6 +23019,7 @@ ${note}` : daysLine;
     const carWrapVersions = new Map((sqlite.prepare(
       `SELECT user_id, version FROM tv_car_wraps WHERE org_id=?`,
     ).all(orgId) as any[]).map(row => [Number(row.user_id), String(row.version)]));
+    const carSkins = readTvCarSkinsForOrg(sqlite, orgId);
     const counts = new Map<string, number>();
     if (ids.length) {
       // Appointments are counted; TRANSFERS ARE CREDITED. A shotgun transfer is
@@ -23104,6 +23105,7 @@ ${note}` : daysLine;
       name: String(c.name ?? ""),
       car: normalizeTvCarAppearance({
         ...carPreferences.get(Number(c.id)),
+        ...(carSkins.has(Number(c.id)) ? { skin: carSkins.get(Number(c.id)) } : {}),
         ...(carWrapVersions.has(Number(c.id)) ? {
           wrapUrl: displayTvCarWrapUrl(req.params.token, Number(c.id), carWrapVersions.get(Number(c.id))!),
         } : {}),

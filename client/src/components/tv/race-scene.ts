@@ -1,11 +1,10 @@
 import * as THREE from "three";
-import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
-import { isSafeTvCarWrapUrl } from "@shared/tv-car";
 import { RACE_CAMERA_FOV, raceCameraPose, raceCameraRadius, raceCameraSubjects } from "@shared/tv-race-camera";
+import { createTvCarModel } from "./car-model";
 
 type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void; onProgress?: (elapsed: number) => void };
 
@@ -38,16 +37,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   };
   try {
   const material = (color: string | number, roughness = .55, metalness = .1) => keep(new THREE.MeshStandardMaterial({ color, roughness, metalness }));
-  const black = material("#111720", .65), rubber = material("#111315", .95), steel = material("#647079", .32, .7);
-  const white = material("#edf0e6", .5), red = material("#e54b3e", .5), dark = material("#19232a", .65);
+  const steel = material("#647079", .32, .7);
+  const white = material("#edf0e6", .5), red = material("#e54b3e", .5);
   const unitBox = keep(new THREE.BoxGeometry(1,1,1));
   const box = (parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material) => {
     const mesh = new THREE.Mesh(unitBox, mat); mesh.scale.set(w,h,d); mesh.position.set(x,y,z);
     mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
-  };
-  const rounded = (parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, radius=.15) => {
-    const mesh=new THREE.Mesh(keep(new RoundedBoxGeometry(w,h,d,2,radius)),mat);
-    mesh.position.set(x,y,z); mesh.castShadow=true; mesh.receiveShadow=true; parent.add(mesh); return mesh;
   };
   const pmrem = new THREE.PMREMGenerator(renderer);
   const room = new RoomEnvironment();
@@ -158,76 +153,17 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     hill.position.set(Math.cos(a)*175,2,Math.sin(a)*175);scene.add(hill);
   }
 
-  const wheelGeometry=keep(new THREE.CylinderGeometry(.43,.43,.34,16));
-  const rimGeometry=keep(new THREE.CylinderGeometry(.25,.25,.36,10));
-  const helmetGeo=keep(new THREE.SphereGeometry(.24,12,8));
-  const glass=keep(new THREE.MeshPhysicalMaterial({color:"#234353",roughness:.17,metalness:.5,clearcoat:1}));
   let redrawWraps=()=>{};
-  const wrapLoader=new THREE.ImageLoader();
   const grid=raceGrid(options.drivers);
   const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
   const subjects=raceCameraSubjects(Array.from(transitions.values()),options.focusId);
   const framingRadius=raceCameraRadius(subjects);
   const racers=grid.map(driver=>{
-    const root=new THREE.Group();scene.add(root);
+    const model=keep(createTvCarModel({appearance:driver.car,rank:driver.rank,focus:driver.id===options.focusId,
+      maxAnisotropy:renderer.capabilities.getMaxAnisotropy(),onTextureReady:()=>redrawWraps()}));
+    const {root,wheels,boost}=model;scene.add(root);
     const tied=grid.filter(p=>p.gap===driver.gap).length;
     root.scale.setScalar(Math.min(1,16/Math.max(1,tied)/2.7));
-    const paint=material(driver.color,.25,.48), accent=material(driver.car.accentColor,.34,.2);
-    // Keep paint on the wings and the chosen livery on top. Only the body
-    // panels wear the picture, so removing it restores the same colors.
-    const bodyPaint=isSafeTvCarWrapUrl(driver.car.wrapUrl)?material(driver.color,.38,.18):paint;
-    if(isSafeTvCarWrapUrl(driver.car.wrapUrl)) {
-      wrapLoader.load(driver.car.wrapUrl,picture=>{
-        if(disposed)return;
-        const canvas=document.createElement("canvas");canvas.width=picture.width;canvas.height=picture.height;
-        const context=canvas.getContext("2d");if(!context)return;
-        // Flatten transparent logos over this driver's paint, not black or an
-        // invisible panel. The upload itself remains reusable with any color.
-        context.fillStyle=driver.color;context.fillRect(0,0,canvas.width,canvas.height);
-        context.drawImage(picture,0,0);
-        const texture=keep(new THREE.CanvasTexture(canvas));
-        texture.colorSpace=THREE.SRGBColorSpace;
-        texture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());
-        bodyPaint.map=texture;bodyPaint.color.set("#ffffff");bodyPaint.needsUpdate=true;
-        redrawWraps();
-      },undefined,()=>{/* A missing/revoked picture leaves the normal paint visible. */});
-    }
-    rounded(root,1.5,.4,3.65,0,.6,0,bodyPaint,.16);
-    rounded(root,.58,.24,1.7,0,.5,2.05,bodyPaint,.1);
-    rounded(root,2.0,.24,1.9,0,.48,-.55,bodyPaint,.13);
-    box(root,2.15,.09,4.4,0,.27,.05,black);
-    rounded(root,.92,.4,1.4,0,.92,-.25,glass,.2);
-    const helmet=new THREE.Mesh(helmetGeo,accent);helmet.position.set(0,1.16,-.13);root.add(helmet);
-    // Open wheel formula body, front wing, double rear wing and halo.
-    box(root,2.45,.12,.56,0,.42,2.67,black);box(root,2.5,.06,.24,0,.57,2.45,paint);
-    box(root,2.25,.15,.62,0,1.1,-2.05,paint);box(root,2.25,.09,.42,0,1.34,-2.12,black);
-    for(const x of [-.88,.88])box(root,.09,.65,.24,x,.84,-2.05,black);
-    for(const x of [-.38,.38])box(root,.08,.34,.75,x,1.11,-.22,black);
-    box(root,.8,.09,.12,0,1.29,.16,black);
-    const stripeOffsets=driver.car.livery==="double-stripe"?[-.16,.16]:driver.car.livery==="stripe"?[0]:[];
-    for(const x of stripeOffsets) {
-      const width=driver.car.livery==="double-stripe"?.12:.2;
-      box(root,width,.015,1.55,x,.812,1,accent);
-      box(root,width,.015,1.05,x,.628,2.3,accent);
-    }
-    const wheels:THREE.Group[]=[];
-    for(const x of [-1.03,1.03])for(const z of [-1.42,1.6]) {
-      const pivot=new THREE.Group();pivot.position.set(x,.45,z);root.add(pivot);
-      const tire=new THREE.Mesh(wheelGeometry,rubber);tire.rotation.z=Math.PI/2;tire.castShadow=true;pivot.add(tire);
-      const rim=new THREE.Mesh(rimGeometry,steel);rim.rotation.z=Math.PI/2;pivot.add(rim);wheels.push(pivot);
-      box(root,Math.abs(x),.055,.055,x/2,.5,z,black);
-    }
-    const number=banner(String(driver.rank),.65,.25,"#14232a");number.rotation.x=-Math.PI/2;number.position.set(0,.845,1.26);root.add(number);
-    const isFocus=driver.id===options.focusId;
-    if(isFocus) {
-      const halo=new THREE.Mesh(keep(new THREE.RingGeometry(2.65,2.82,48)),keep(new THREE.MeshBasicMaterial({color:'#7cf5ee',transparent:true,opacity:.85,side:THREE.DoubleSide,depthWrite:false})));
-      halo.rotation.x=-Math.PI/2;halo.position.y=.1;root.add(halo);
-    }
-    const boost=new THREE.Group();root.add(boost);
-    if(isFocus) {
-      const glow=keep(new THREE.MeshBasicMaterial({color:'#86fff1',transparent:true,opacity:.65,depthWrite:false}));
-      for(const x of [-1.25,1.25])box(boost,.08,.06,5.2,x,.25,-4.7,glow);
-    }
     return {driver,root,wheels,boost};
   });
 

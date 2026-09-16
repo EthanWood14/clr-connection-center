@@ -95,14 +95,16 @@ test("decode failures keep image errors usable and still release the temporary U
 
 test("actual TV race body panels show authenticated wraps with paint fallback and owned textures", () => {
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
-  assert.match(scene, /isSafeTvCarWrapUrl\(driver\.car\.wrapUrl\)/);
-  assert.match(scene, /wrapLoader\.load\(driver\.car\.wrapUrl,picture=>\{\s*if\(disposed\)return/);
-  assert.match(scene, /context\.fillStyle=driver\.color/);
-  assert.match(scene, /const texture=keep\(new THREE\.CanvasTexture\(canvas\)\)/);
-  assert.match(scene, /bodyPaint\.map=texture/);
-  assert.equal((scene.match(/rounded\(root,[^\n]*bodyPaint/g) ?? []).length, 3, "all three body panels get the wrap");
-  assert.match(scene, /const stripeOffsets=driver\.car\.livery/);
-  assert.match(scene, /missing\/revoked picture leaves the normal paint visible/);
+  const model = readFileSync(new URL("../client/src/components/tv/car-model.ts", import.meta.url), "utf8");
+  assert.match(scene, /createTvCarModel\(\{appearance:driver\.car/);
+  assert.match(model, /isSafeTvCarWrapUrl\(appearance\.wrapUrl\)/);
+  assert.match(model, /wrapLoader\.load\(appearance\.wrapUrl, picture => \{\s*if \(disposed\) return/);
+  assert.match(model, /context\.fillStyle = appearance\.bodyColor/);
+  assert.match(model, /const texture = keep\(new THREE\.CanvasTexture\(canvas\)\)/);
+  assert.match(model, /bodyPaint\.map = texture/);
+  assert.equal((model.match(/rounded\("body-[^\n]*bodyPaint/g) ?? []).length, 3, "all three body panels get the wrap");
+  assert.match(model, /const stripeOffsets = appearance\.skin \? \[\] : appearance\.livery/);
+  assert.match(model, /missing\/revoked picture leaves normal paint visible/);
   assert.match(scene, /redrawWraps=\(\)=>\{if\(!disposed\)\{try\{renderer\.render\(scene,camera\)/);
   assert.doesNotMatch(scene.slice(scene.indexOf("redrawWraps=()=>{if")), /requestAnimationFrame\(redrawWraps/);
 });

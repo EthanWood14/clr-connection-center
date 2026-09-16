@@ -1,9 +1,13 @@
+import { validateTvCarSkin, type TvCarSkin } from "./tv-car-skin";
+
 export type TvCarAppearance = {
   bodyColor: string;
   accentColor: string;
   livery: "stripe" | "double-stripe" | "solid";
   /** Read-only, server-issued authenticated image URL. Never supplied by color saves. */
   wrapUrl?: string;
+  /** Authored pixel panels take visual precedence without deleting a saved photo. */
+  skin?: TvCarSkin;
 };
 
 export const TV_CAR_WRAP_MAX_BYTES = 1024 * 1024;
@@ -36,11 +40,13 @@ export function normalizeTvCarAppearance(raw: unknown, userId: number): TvCarApp
   const fallback = defaultTvCarAppearance(userId);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fallback;
   const value = raw as Record<string, unknown>;
+  const skin = validateTvCarSkin(value.skin);
   return {
     bodyColor: isColor(value.bodyColor) ? value.bodyColor.toLowerCase() : fallback.bodyColor,
     accentColor: isColor(value.accentColor) ? value.accentColor.toLowerCase() : fallback.accentColor,
     livery: isLivery(value.livery) ? value.livery : fallback.livery,
     ...(isSafeTvCarWrapUrl(value.wrapUrl) ? { wrapUrl: value.wrapUrl } : {}),
+    ...(skin ? { skin } : {}),
   };
 }
 

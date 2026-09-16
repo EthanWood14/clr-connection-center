@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.11", headline: "Build your own pixel car skin in the WCL garage.", items: [
+    { text: "Open Advanced Settings → Personal → My TV Car for the new Pixel skin studio. Paint the top, sides, nose, rear, and wings with a 16-color palette, pencil, fill, eraser, mirror painting, and undo/redo. Rotate a live 3D preview of the same car used on the TV track.", audience: "everyone" },
+    { text: "Start from racing stripes, checkerboard, or flames, then make the design your own. Import/export WCL car-skin PNG templates or editable skin files. Saving puts the skin on your TV car without changing transfers, speed, rankings, or your saved picture wrap.", audience: "everyone" },
+  ] },
   { version: "4.113.10", headline: "A clear, close-up TV race after every transfer — with Ethan on the track.", items: [
     { text: "The Office TV now has a Play race button. Run a preview of the current field on demand without logging a transfer, changing scores, or interrupting a real celebration.", audience: "everyone" },
     { text: "Every new transfer now gets a full-team TV race. The camera follows the scoring car and the rivals it is catching through a visible side-by-side pass, with a highlighted car, position change and live move captions. Tied totals finish alongside, and multiple transfers advance the race one result at a time.", audience: "everyone" },
