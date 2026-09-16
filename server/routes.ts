@@ -81,7 +81,7 @@ import { normalizeOutboundSms, verifyDialpadJwt } from "./dialpad-sms";
 import { foldLapNoteBatch, type LapNoteBatchEntry } from "./lap-note-batch";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
-import { type ScorecardDigestKind, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
+import { type ScorecardDigestKind, SCORECARD_INTRADAY_CRON, scorecardSnapshotLabel, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, appointmentNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
@@ -16905,8 +16905,8 @@ ${note}` : daysLine;
   // Manager-only manual trigger, so the digest can be proven end-to-end without
   // waiting for 10am.
   // ── Transfer Scorecard digests ──────────────────────────────────────────────
-  // Four scheduled snapshots to every manager: mid-day and end-of-day covering
-  // that day, mid-week and end-of-week covering week-to-date. Same numbers and
+  // Six weekday snapshots to every manager from 8 AM through 6 PM Pacific,
+  // plus mid-week and end-of-week covering week-to-date. Same numbers and
   // the same ranking as the dashboard scorecard, so the email and the screen
   // can never disagree about who is on top.
 
@@ -16943,26 +16943,46 @@ ${note}` : daysLine;
     });
   }
 
+  function scorecardManagerEmails(orgId: number): string[] {
+    // The legacy email_settings row belongs to WCL (org 1), not every tenant.
+    // Use each other organization's own configured recipients, never WCL's.
+    if (orgId === 1) return attendanceManagerEmails(orgId);
+    const emails = new Set(attendanceManagerUsers(orgId)
+      .map((manager: any) => String(manager.email ?? "").trim().toLowerCase())
+      .filter((email: string) => email.includes("@")));
+    const settings = storageExtra.getRawSqlite()
+      .prepare("SELECT manager_emails FROM organizations WHERE id = ?").get(orgId) as any;
+    try {
+      const configured = JSON.parse(settings?.manager_emails || "[]");
+      if (Array.isArray(configured)) for (const value of configured) {
+        const email = String(value ?? "").trim().toLowerCase();
+        if (email.includes("@")) emails.add(email);
+      }
+    } catch { /* malformed settings cannot suppress the role-derived managers */ }
+    return Array.from(emails);
+  }
+
   async function sendScorecardDigest(orgId: number, kind: ScorecardDigestKind): Promise<"sent" | "skipped"> {
     // Plain PT calendar date, NOT businessToday — the end-of-day send fires at
     // 19:00, the exact minute the business day rolls forward, and businessToday
     // would report tomorrow and mail an empty scorecard.
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ });
+    const now = new Date();
+    const today = now.toLocaleDateString("en-CA", { timeZone: BUSINESS_DAY_DEFAULT_TZ });
     const w = scorecardWindow(kind, today);
+    const windowLabel = kind === "intraday" ? scorecardSnapshotLabel(now) : w.label;
     const rows = buildScorecardDigestRows(orgId, w.from, w.to);
-    // Nothing happened — a table of zeros teaches nobody anything.
-    if (!rows.some((r) => r.calls || r.transfers || r.appointments || r.fellThrough)) return "skipped";
-    const managers = attendanceManagerUsers(orgId)
-      .map((m: any) => String(m.email ?? "").trim())
-      .filter((e: string) => e.includes("@"));
+    // The requested checkpoints still go out at 8 AM before activity begins;
+    // zero is a valid snapshot, not a missing report. Empty orgs stay quiet.
+    if (!rows.length || (kind !== "intraday" && !rows.some((r) => r.calls || r.transfers || r.appointments || r.fellThrough))) return "skipped";
+    const managers = scorecardManagerEmails(orgId);
     if (!managers.length) return "skipped";
     const dateLabel = w.from === w.to ? w.from : `${w.from} → ${w.to}`;
     const totalTransfers = rows.reduce((s, r) => s + r.transfers, 0);
-    const subject = `Transfer Scorecard — ${w.label} · ${dateLabel} (${formatTransferCount(totalTransfers)} transfers)`;
+    const subject = `Transfer Scorecard — ${windowLabel} · ${dateLabel} (${formatTransferCount(totalTransfers)} transfers)`;
     const html = buildEmail({
       subject,
       preheader: `${formatTransferCount(totalTransfers)} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
-      body: buildScorecardDigestHtml(w.label, dateLabel, rows),
+      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows),
     });
     await sendEmail({ to: managers, subject, html });
     console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${formatTransferCount(totalTransfers)} transfers ${w.from}..${w.to}`);
@@ -16988,18 +17008,17 @@ ${note}` : daysLine;
       }
     }, { timezone: "America/Los_Angeles" });
   }
-  scheduleScorecardDigest("0 12 * * 1-5", "midday");   // noon, that day so far
-  scheduleScorecardDigest("0 19 * * 1-5", "eod");      // 7pm, the closed day
+  scheduleScorecardDigest(SCORECARD_INTRADAY_CRON, "intraday"); // 8, 10, noon, 2, 4, 6 PT
   scheduleScorecardDigest("30 12 * * 3", "midweek");   // Wed 12:30, Mon→today (offset from the midday send)
   scheduleScorecardDigest("10 19 * * 5", "eow");       // Fri 7:10pm, the closed week
 
   // Manager-only manual trigger so each variant can be proven without waiting
-  // for its slot: {"kind":"midday"|"eod"|"midweek"|"eow"}.
+  // for its slot. Legacy midday/eod kinds remain available to existing callers.
   app.post("/api/scorecard-digest/send-now", requireAuth, async (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const kind = String(req.body?.kind ?? "");
-    if (!["midday", "eod", "midweek", "eow"].includes(kind)) {
-      return res.status(400).json({ error: "kind must be midday, eod, midweek, or eow" });
+    if (!["intraday", "midday", "eod", "midweek", "eow"].includes(kind)) {
+      return res.status(400).json({ error: "kind must be intraday, midday, eod, midweek, or eow" });
     }
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     try {

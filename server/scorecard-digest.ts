@@ -1,5 +1,5 @@
-// The emailed Transfer Scorecard: four scheduled snapshots — mid-day and end
-// of day covering that day, mid-week and end of week covering week-to-date.
+// The emailed Transfer Scorecard: six weekday snapshots from 8 AM through
+// 6 PM Pacific, plus the separate mid-week/end-of-week summaries.
 //
 // Pure functions only (window math, ranking, rendering); the caller supplies
 // the rows. Ranking mirrors the dashboard scorecard exactly: transfers, then
@@ -8,7 +8,17 @@
 import { addIsoDays } from "./business-day";
 import { formatTransferCount } from "@shared/transfer-credit";
 
-export type ScorecardDigestKind = "midday" | "eod" | "midweek" | "eow";
+export type ScorecardDigestKind = "intraday" | "midday" | "eod" | "midweek" | "eow";
+
+export const SCORECARD_INTRADAY_CRON = "0 8,10,12,14,16,18 * * 1-5";
+
+/** Explicit PT timestamp keeps each cumulative snapshot distinct, including DST. */
+export function scorecardSnapshotLabel(now: Date): string {
+  const time = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(now);
+  return `${time} PT · Today so far`;
+}
 
 export type ScorecardRow = {
   name: string;
@@ -35,6 +45,7 @@ export function scorecardWindow(kind: ScorecardDigestKind, todayPT: string): {
   from: string; to: string; label: string;
 } {
   switch (kind) {
+    case "intraday": return { from: todayPT, to: todayPT, label: "Today so far" };
     case "midday":  return { from: todayPT, to: todayPT, label: "Mid-Day" };
     case "eod":     return { from: todayPT, to: todayPT, label: "End of Day" };
     case "midweek": return { from: mondayOf(todayPT), to: todayPT, label: "Mid-Week · Week to Date" };

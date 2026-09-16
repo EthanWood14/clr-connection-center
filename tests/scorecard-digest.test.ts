@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { transformSync } from "esbuild";
 
 import {
-  mondayOf, scorecardWindow, rankScorecardRows, buildScorecardDigestHtml,
-  type ScorecardRow,
+  mondayOf, scorecardWindow, scorecardSnapshotLabel, SCORECARD_INTRADAY_CRON, rankScorecardRows, buildScorecardDigestHtml,
+  type ScorecardRow, type ScorecardDigestKind,
 } from "../server/scorecard-digest";
+import { formatTransferCount } from "../shared/transfer-credit";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
@@ -17,10 +19,23 @@ const row = (name: string, calls: number, transfers: number, appointments: numbe
 
 test("day windows cover the day, week windows run Monday to date", () => {
   // 2026-08-14 is a Friday.
+  assert.deepEqual(scorecardWindow("intraday", "2026-08-14"), { from: "2026-08-14", to: "2026-08-14", label: "Today so far" });
   assert.deepEqual(scorecardWindow("midday", "2026-08-14"), { from: "2026-08-14", to: "2026-08-14", label: "Mid-Day" });
   assert.deepEqual(scorecardWindow("eod", "2026-08-14"), { from: "2026-08-14", to: "2026-08-14", label: "End of Day" });
   assert.equal(scorecardWindow("midweek", "2026-08-12").from, "2026-08-10", "Wednesday reaches back to Monday");
   assert.equal(scorecardWindow("eow", "2026-08-14").from, "2026-08-10", "Friday covers the whole week");
+});
+
+test("snapshot labels use the actual Pacific clock in winter, summer and DST transition days", () => {
+  const cases = [
+    ["2026-01-15T16:00:00Z", "8:00 AM PT · Today so far"],
+    ["2026-01-16T02:00:00Z", "6:00 PM PT · Today so far"],
+    ["2026-07-15T15:00:00Z", "8:00 AM PT · Today so far"],
+    ["2026-07-16T01:00:00Z", "6:00 PM PT · Today so far"],
+    ["2026-03-08T15:00:00Z", "8:00 AM PT · Today so far"],
+    ["2026-11-01T16:00:00Z", "8:00 AM PT · Today so far"],
+  ];
+  for (const [instant, expected] of cases) assert.equal(scorecardSnapshotLabel(new Date(instant)), expected);
 });
 
 test("Monday resolution survives Sundays and month boundaries", () => {
@@ -63,27 +78,173 @@ test("names are escaped on the way into the email", () => {
   assert.match(html, /&lt;img src=x&gt;/);
 });
 
-test("all four sends are scheduled in Pacific time on the right days", () => {
-  assert.match(routes, /scheduleScorecardDigest\("0 12 \* \* 1-5", "midday"\)/);
-  assert.match(routes, /scheduleScorecardDigest\("0 19 \* \* 1-5", "eod"\)/);
-  assert.match(routes, /scheduleScorecardDigest\("30 12 \* \* 3", "midweek"\)/);
-  assert.match(routes, /scheduleScorecardDigest\("10 19 \* \* 5", "eow"\)/);
-  const fn = routes.slice(routes.indexOf("function scheduleScorecardDigest"), routes.indexOf(`scheduleScorecardDigest("0 12`));
+test("exactly six weekday snapshots replace daily noon/eod schedules while weekly sends remain", () => {
+  assert.equal(SCORECARD_INTRADAY_CRON, "0 8,10,12,14,16,18 * * 1-5");
+  const [minute, hours, dayOfMonth, month, weekdays] = SCORECARD_INTRADAY_CRON.split(" ");
+  assert.deepEqual(hours.split(",").map(Number), [8, 10, 12, 14, 16, 18]);
+  assert.deepEqual([minute, dayOfMonth, month, weekdays], ["0", "*", "*", "1-5"]);
+  const schedules = [...routes.matchAll(/^\s*scheduleScorecardDigest\(([^\n]+?),\s*"([^"]+)"\);/gm)]
+    .map(match => [match[1].trim(), match[2]]);
+  assert.deepEqual(schedules, [
+    ["SCORECARD_INTRADAY_CRON", "intraday"],
+    ['"30 12 * * 3"', "midweek"],
+    ['"10 19 * * 5"', "eow"],
+  ], "no extra noon or 19:00 daily send remains scheduled");
+  const fn = routes.slice(routes.indexOf("function scheduleScorecardDigest"), routes.indexOf("scheduleScorecardDigest(SCORECARD_INTRADAY_CRON"));
   assert.match(fn, /timezone: "America\/Los_Angeles"/, "container time is UTC; unpinned crons fire seven hours early");
 });
 
-test("the end-of-day send uses the calendar date, not the rolled business day", () => {
-  // The 19:00 send fires the exact minute businessToday rolls to tomorrow —
-  // using it would mail an empty scorecard for a day that hasn't happened.
+test("snapshot date and label share one captured clock and calendar date, not rolled business day", () => {
   const fn = routes.slice(routes.indexOf("async function sendScorecardDigest"), routes.indexOf("function scheduleScorecardDigest"));
+  assert.match(fn, /const now = new Date\(\)/);
   assert.match(fn, /toLocaleDateString\("en-CA", \{ timeZone: BUSINESS_DAY_DEFAULT_TZ \}\)/);
   assert.ok(!/businessTodayInTz/.test(fn), "businessToday would report tomorrow at 19:00");
-  assert.match(fn, /return "skipped"/, "an all-zero window sends nothing");
-  assert.match(fn, /attendanceManagerUsers\(orgId\)/, "recipients are role-derived managers");
+  assert.match(fn, /scorecardSnapshotLabel\(now\)/);
+  assert.match(fn, /scorecardManagerEmails\(orgId\)/, "use the configured, org-safe scorecard recipients, including Scott");
+  assert.doesNotMatch(fn, /attendanceManagerUsers\(orgId\)/, "do not bypass configured manager email recipients");
 });
 
 test("the manual trigger is manager-gated and validates the kind", () => {
   const route = routes.slice(routes.indexOf(`app.post("/api/scorecard-digest/send-now"`), routes.indexOf(`app.post("/api/checkin/digest/send-now"`));
   assert.match(route, /requireManagerOrAdmin\(req, res\)/);
-  assert.match(route, /kind must be midday, eod, midweek, or eow/);
+  const kinds = route.match(/if\s*\(!\[([^\]]+)\]\.includes\(kind\)\)/)?.[1].match(/"([^"]+)"/g)?.map(value => value.slice(1, -1));
+  assert.deepEqual(kinds, ["intraday", "midday", "eod", "midweek", "eow"], "intraday is accepted and every legacy manual kind remains supported");
+  assert.match(route, /res\.status\(400\)/);
+  assert.match(route, /sendScorecardDigest\(orgId, kind as ScorecardDigestKind\)/);
+});
+
+// Execute only this small function with in-memory dependencies. Importing the
+// routes module itself would start unrelated app/DB work and is intentionally
+// avoided; these tests cannot send mail or open a database.
+function sendHarness(rows: ScorecardRow[], instant: string, recipients = ["manager@example.test", "scott@example.test"]) {
+  const source = routes.slice(routes.indexOf("async function sendScorecardDigest"), routes.indexOf("function scheduleScorecardDigest"));
+  const code = transformSync(source, { loader: "ts", target: "es2022" }).code;
+  const mail: { to: string[]; subject: string; html: string }[] = [];
+  const windows: { orgId: number; from: string; to: string }[] = [];
+  const recipientOrgs: number[] = [];
+  let clockReads = 0;
+  class SnapshotDate extends Date {
+    constructor(value?: string | number | Date) {
+      if (value === undefined) clockReads++;
+      super(value === undefined ? instant : value instanceof Date ? value.getTime() : value);
+    }
+  }
+  const dependencies = {
+    Date: SnapshotDate,
+    BUSINESS_DAY_DEFAULT_TZ: "America/Los_Angeles",
+    scorecardWindow, scorecardSnapshotLabel, formatTransferCount, buildScorecardDigestHtml,
+    buildScorecardDigestRows: (orgId: number, from: string, to: string) => { windows.push({ orgId, from, to }); return rows; },
+    scorecardManagerEmails: (orgId: number) => { recipientOrgs.push(orgId); return recipients; },
+    buildEmail: ({ body }: { body: string }) => body,
+    sendEmail: async (message: typeof mail[number]) => { mail.push(message); },
+    console: { log: () => {} },
+  };
+  const send = new Function(...Object.keys(dependencies), `${code}\nreturn sendScorecardDigest;`)(...Object.values(dependencies)) as
+    (orgId: number, kind: ScorecardDigestKind) => Promise<"sent" | "skipped">;
+  return { send, mail, windows, recipientOrgs, clockReads: () => clockReads };
+}
+
+test("intraday sends a useful zero-activity roster with its actual Pacific snapshot label", async () => {
+  for (const [instant, date, label] of [
+    ["2026-01-16T02:00:00Z", "2026-01-15", "6:00 PM PT · Today so far"],
+    ["2026-07-15T15:00:00Z", "2026-07-15", "8:00 AM PT · Today so far"],
+  ]) {
+    const harness = sendHarness([row("Quiet CLR", 0, 0, 0)], instant);
+    assert.equal(await harness.send(37, "intraday"), "sent");
+    assert.equal(harness.clockReads(), 1, "date and snapshot title use the same instant");
+    assert.deepEqual(harness.windows, [{ orgId: 37, from: date, to: date }]);
+    assert.deepEqual(harness.recipientOrgs, [37]);
+    assert.equal(harness.mail.length, 1);
+    assert.deepEqual(harness.mail[0].to, ["manager@example.test", "scott@example.test"]);
+    assert.ok(harness.mail[0].subject.includes(label));
+    assert.ok(harness.mail[0].subject.includes(date));
+    assert.ok(harness.mail[0].html.includes(label));
+    assert.match(harness.mail[0].html, /Quiet CLR/);
+    assert.match(harness.mail[0].html, />Team</);
+  }
+});
+
+test("empty rosters never send, and legacy manual/weekly digests still skip zero activity", async () => {
+  const kinds: ScorecardDigestKind[] = ["intraday", "midday", "eod", "midweek", "eow"];
+  for (const kind of kinds) {
+    const empty = sendHarness([], "2026-07-15T15:00:00Z");
+    assert.equal(await empty.send(37, kind), "skipped");
+    assert.equal(empty.mail.length, 0);
+    if (kind !== "intraday") {
+      const zero = sendHarness([row("Quiet CLR", 0, 0, 0)], "2026-07-15T15:00:00Z");
+      assert.equal(await zero.send(37, kind), "skipped");
+      assert.equal(zero.mail.length, 0);
+    }
+  }
+});
+
+test("no digest sends without recipients, and legacy activity sends remain compatible", async () => {
+  const noRecipients = sendHarness([row("Active CLR", 12, .5, 1)], "2026-07-15T15:00:00Z", []);
+  assert.equal(await noRecipients.send(37, "intraday"), "skipped");
+  assert.equal(noRecipients.mail.length, 0);
+  for (const kind of ["midday", "eod", "midweek", "eow"] as const) {
+    const harness = sendHarness([row("Active CLR", 12, .5, 1)], "2026-07-16T01:00:00Z");
+    assert.equal(await harness.send(37, kind), "sent");
+    assert.equal(harness.mail.length, 1);
+    assert.ok(harness.mail[0].subject.includes(scorecardWindow(kind, "2026-07-15").label));
+  }
+});
+
+function recipientHarness(configured: unknown, roles: { email?: unknown }[]) {
+  const source = routes.slice(routes.indexOf("function scorecardManagerEmails"), routes.indexOf("async function sendScorecardDigest"));
+  const code = transformSync(source, { loader: "ts", target: "es2022" }).code;
+  const attendanceOrgs: number[] = [], roleOrgs: number[] = [], queries: { sql: string; orgId: number }[] = [];
+  const dependencies = {
+    attendanceManagerEmails: (orgId: number) => {
+      attendanceOrgs.push(orgId);
+      return ["wcl-manager@example.test", "scott@example.test"];
+    },
+    attendanceManagerUsers: (orgId: number) => { roleOrgs.push(orgId); return roles; },
+    storageExtra: {
+      getRawSqlite: () => ({
+        prepare: (sql: string) => ({
+          get: (orgId: number) => {
+            queries.push({ sql, orgId });
+            assert.match(sql, /^SELECT manager_emails FROM organizations WHERE id = \?$/i, "configured recipients must be read from that org only");
+            return configured === undefined ? undefined : { manager_emails: configured };
+          },
+        }),
+      }),
+    },
+  };
+  const resolve = new Function(...Object.keys(dependencies), `${code}\nreturn scorecardManagerEmails;`)(...Object.values(dependencies)) as (orgId: number) => string[];
+  return { resolve, attendanceOrgs, roleOrgs, queries };
+}
+
+test("WCL scorecard recipients include configured Scott through the attendance recipient helper", () => {
+  const harness = recipientHarness('[]', []);
+  assert.deepEqual(harness.resolve(1), ["wcl-manager@example.test", "scott@example.test"]);
+  assert.deepEqual(harness.attendanceOrgs, [1]);
+  assert.deepEqual(harness.roleOrgs, []);
+  assert.deepEqual(harness.queries, []);
+});
+
+test("other organizations merge only their own recipients with case-insensitive deduplication", () => {
+  const harness = recipientHarness(JSON.stringify([
+    " MANAGER@TENANT.EXAMPLE ", "Configured@tenant.example", "configured@TENANT.example", "", null, "not-an-email",
+  ]), [
+    { email: " Manager@Tenant.Example " }, { email: "manager@tenant.example" }, { email: "Second@tenant.example" },
+    { email: null }, {}, { email: "invalid" },
+  ]);
+  assert.deepEqual(harness.resolve(2), ["manager@tenant.example", "second@tenant.example", "configured@tenant.example"]);
+  assert.deepEqual(harness.attendanceOrgs, [], "never load WCL's global configured recipients for another tenant");
+  assert.deepEqual(harness.roleOrgs, [2]);
+  assert.deepEqual(harness.queries.map(query => query.orgId), [2]);
+});
+
+test("malformed or empty tenant recipient settings cannot suppress managers or import WCL addresses", () => {
+  for (const configured of [undefined, null, "", "[]", "not-json", '{"email":"foreign@example.test"}', '"foreign@example.test"']) {
+    const harness = recipientHarness(configured, [{ email: " Manager@Tenant.Example " }]);
+    assert.deepEqual(harness.resolve(2), ["manager@tenant.example"]);
+    assert.deepEqual(harness.attendanceOrgs, []);
+    assert.deepEqual(harness.queries.map(query => query.orgId), [2]);
+  }
+  const empty = recipientHarness("[]", []);
+  assert.deepEqual(empty.resolve(2), []);
+  assert.deepEqual(empty.attendanceOrgs, [], "an empty tenant stays empty; there is no fallback to WCL");
 });

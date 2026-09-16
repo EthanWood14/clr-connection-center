@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.14", headline: "A fresh Transfer Scorecard every two hours.", items: [
+    { text: "Managers receive a today-so-far Transfer Scorecard at 8 AM, 10 AM, noon, 2 PM, 4 PM and 6 PM Pacific, Monday through Friday. Each snapshot is time-stamped, including the first report before activity begins.", audience: "manager" },
+    { text: "Configured manager-email recipients are included alongside active managers. The separate mid-week and end-of-week summaries continue unchanged.", audience: "manager" },
+  ] },
   { version: "4.113.13", headline: "From the grandstands to the infield: fly through the TV race.", items: [
     { text: "The race camera starts from a fan's grandstand view, sweeps over the cars into a drone shot, then drops down into the infield grass. The movement is continuous, with gentle banking and a clear view of the real overtake.", audience: "everyone" },
     { text: "A detailed grass foreground and opening grandstand frame bring the camera closer to the action. Car skins, names, exact transfer totals and ties are unchanged; reduced motion keeps a steady view.", audience: "everyone" },
