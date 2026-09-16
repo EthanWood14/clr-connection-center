@@ -9,18 +9,28 @@ import {
 import { raceTrackPoint } from "../shared/tv-race-grid";
 
 /**
- * "I want it to be 3 minutes, with shots behind the cars, right on top of the
- * cars, at corners not moving, etc." — Ethan, 16 Sep 2026.
+ * "Have all the camera have a trailing view, and have enough views to run for
+ * 3 minutes without refreshing or going back to the beginning." — Ethan, 16
+ * Sep 2026. The bolted-down corner cameras that used to be in this list are
+ * gone: every shot follows the car now, and there are enough of them that a
+ * three-minute stretch never reaches the end of the reel.
  */
 
 const car = { angle: 0.4, lane: 0 };
 const dist = (a: { x: number; y: number; z: number }, b: typeof a) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
-test("thirty shots of six seconds is three minutes", () => {
-  assert.equal(CORNER_SHOTS.length, 30);
+test("the reel is longer than anyone watches: three minutes never reaches the end of it", () => {
+  assert.equal(CORNER_SHOTS.length, 45);
   assert.equal(CORNER_SHOT_SECONDS, 6);
-  assert.equal(CORNER_CAMERA_SECONDS, 180);
-  assert.equal(new Set(CORNER_SHOTS.map(s => s.id)).size, 30, "every shot is its own angle, not a repeat");
+  assert.equal(CORNER_CAMERA_SECONDS, 270, "four and a half minutes");
+  assert.ok(CORNER_CAMERA_SECONDS > 180, "three minutes of wall time cannot loop it");
+  assert.equal(new Set(CORNER_SHOTS.map(s => s.id)).size, 45, "every shot is its own angle, not a repeat");
+  // Three minutes in, the camera is still on shots it has not used yet, which
+  // is the whole of the ask.
+  const firstThreeMinutes = new Set<string>();
+  for (let t = 0; t < 180; t += 1) firstThreeMinutes.add(cornerShotAt(t).shot.id);
+  assert.equal(firstThreeMinutes.size, 30);
+  assert.ok(!firstThreeMinutes.has(cornerShotAt(180).shot.id), "and the next one is new as well");
 });
 
 test("the shot list is walked in order and then starts again", () => {
@@ -28,7 +38,8 @@ test("the shot list is walked in order and then starts again", () => {
   assert.equal(cornerShotAt(5.9).shot.id, CORNER_SHOTS[0].id);
   assert.equal(cornerShotAt(6).shot.id, CORNER_SHOTS[1].id);
   assert.equal(cornerShotAt(179).shot.id, CORNER_SHOTS[29].id);
-  assert.equal(cornerShotAt(180).shot.id, CORNER_SHOTS[0].id, "three minutes, then round again");
+  assert.equal(cornerShotAt(269).shot.id, CORNER_SHOTS[44].id);
+  assert.equal(cornerShotAt(270).shot.id, CORNER_SHOTS[0].id, "the whole reel, then round again");
   assert.equal(cornerShotAt(-4).shot.id, CORNER_SHOTS[0].id);
   assert.ok(cornerShotAt(9).progress > .49 && cornerShotAt(9).progress < .51);
 });
@@ -58,18 +69,19 @@ test("an overhead shot is genuinely above the car, looking down at it", () => {
   assert.ok(pose.target.y < pose.position.y, "pointing down at the car");
 });
 
-test("a fixed shot does not move while the car sweeps through it", () => {
-  const still = CORNER_SHOTS.filter(s => s.kind === "fixed");
-  assert.ok(still.length >= 8, `the corner needs plenty of static cameras: ${still.length}`);
-  const index = CORNER_SHOTS.findIndex(s => s.id === "apex-still");
-  const start = index * CORNER_SHOT_SECONDS;
-  const a = cornerCameraPose(start + .2, { angle: 0, lane: 0 });
-  const b = cornerCameraPose(start + 5.5, { angle: 2.4, lane: 6 });
-  assert.equal(a.position.x, b.position.x, "the camera is bolted to the circuit");
-  assert.equal(a.position.y, b.position.y);
-  assert.equal(a.position.z, b.position.z);
-  // It still turns to watch: the car moved, so the look-target must have.
-  assert.ok(dist(a.target, b.target) > 10, "it pans to follow rather than staring at nothing");
+test("every shot trails: not one of them is bolted to the circuit any more", () => {
+  const radius = (point: { x: number; z: number }) => Math.hypot(point.x, point.z);
+  for (let i = 0; i < CORNER_SHOTS.length; i++) {
+    const shot = CORNER_SHOTS[i];
+    assert.ok(shot.behind > 0, `${shot.id} is not behind the car`);
+    // Move the car most of a lap and the camera must have gone with it.
+    const start = i * CORNER_SHOT_SECONDS + 1;
+    const near = cornerCameraPose(start, { angle: 0, lane: 0 });
+    const later = cornerCameraPose(start + .6, { angle: 1.4, lane: 0 });
+    assert.ok(dist(near.position, later.position) > 8, `${shot.id} stayed put while the car drove away`);
+    // And it stays on the road rather than cutting across the infield.
+    assert.ok(Math.abs(radius(later.position) - (42 + (shot.beside ?? 0))) < 2.5, `${shot.id} left the racing line`);
+  }
 });
 
 test("every shot in the list produces a usable, finite pose all the way round a lap", () => {
@@ -101,11 +113,41 @@ test("the corner keeps the circuit standing: no lens prop, no scenery clipping",
   assert.match(scene, /: raceSceneryClipPlane\(shot\.position,shot\.target,racers\.map/);
 });
 
-test("fixed cameras sit in front of the stands, not inside them", () => {
-  // The grandstand ring is out at lane ~27; a camera parked there with no
-  // clipping ends up looking at the back of the geometry.
-  for (const shot of CORNER_SHOTS.filter(s => s.kind === "fixed")) {
-    assert.ok(Math.abs(shot.lane ?? 0) <= 20, `${shot.id} is parked in the scenery at lane ${shot.lane}`);
+test("no shot wanders into the scenery", () => {
+  // The grandstand ring is out at lane ~27 and the infield grass ends near
+  // -14; a lens outside either is looking at the back of the geometry.
+  for (const shot of CORNER_SHOTS) {
+    assert.ok(Math.abs(shot.beside ?? 0) <= 13, `${shot.id} is parked in the scenery at ${shot.beside}`);
+  }
+});
+
+// "When someone is in first, have the trail camera look backwards." — Ethan,
+// 16 Sep 2026. There is nothing up the road ahead of the leader, so the shot
+// turns round and shows the people chasing them instead.
+test("the leader gets the same shot, reversed", () => {
+  const bearing = (point: { x: number; z: number }) => Math.atan2(point.z, point.x);
+  const car = { angle: 1, lane: 0 };
+  const carBearing = bearing({ x: Math.cos(1) * 42, z: Math.sin(1) * 42 });
+  const at = CORNER_SHOTS.findIndex(shot => shot.id === "chase") * CORNER_SHOT_SECONDS + 2;
+  const normal = cornerCameraPose(at, car, false);
+  const reversed = cornerCameraPose(at, car, true);
+  assert.ok(bearing(normal.position) < carBearing, "the ordinary shot sits behind the car");
+  assert.ok(bearing(reversed.position) > carBearing, "the leader is followed from up the road");
+  // Same distance from the car either way: it is one shot, turned round.
+  const point = { x: Math.cos(1) * 42, z: Math.sin(1) * 42 };
+  const gap = (pose: { x: number; z: number }) => Math.hypot(pose.x - point.x, pose.z - point.z);
+  assert.ok(Math.abs(gap(normal.position) - gap(reversed.position)) < .5);
+  // And it is AIMED backwards, down the road the chasing cars are on.
+  assert.ok(bearing(reversed.target) < bearing(reversed.position), "the lens looks back past the leader");
+  assert.ok(bearing(normal.target) > bearing(normal.position), "where the ordinary shot looks forwards");
+  assert.match(reversed.shot.label, /REVERSE/, "and the caption says so");
+  for (let i = 0; i < CORNER_SHOTS.length; i++) {
+    const pose = cornerCameraPose(i * CORNER_SHOT_SECONDS + 3, { angle: -2, lane: 3 }, true);
+    for (const value of [pose.position.x, pose.position.y, pose.position.z, pose.target.x, pose.target.y, pose.target.z]) {
+      assert.ok(Number.isFinite(value), `${CORNER_SHOTS[i].id} broke when reversed`);
+    }
+    assert.ok(pose.position.y > 0, `${CORNER_SHOTS[i].id} went under the track when reversed`);
+    assert.ok(dist(pose.position, pose.target) > 1, `${CORNER_SHOTS[i].id} is inside its own subject when reversed`);
   }
 });
 
@@ -115,8 +157,8 @@ test("the corner works down the running order instead of sitting on the leader",
   assert.equal(CORNER_FOCUS_SHOTS, 5);
   // Half a minute each, six different cars across a three-minute broadcast.
   const seen = new Set<number>();
-  for (let t = 0; t < CORNER_CAMERA_SECONDS; t += 3) seen.add(cornerFocusIndex(t, 8));
-  assert.equal(seen.size, 6, `a three-minute run should follow six cars, not ${seen.size}`);
+  for (let t = 0; t < 180; t += 3) seen.add(cornerFocusIndex(t, 8));
+  assert.equal(seen.size, 6, `three minutes should follow six cars, not ${seen.size}`);
   assert.equal(cornerFocusIndex(0, 8), 0);
   assert.equal(cornerFocusIndex(29, 8), 0, "it holds one car for five shots");
   assert.equal(cornerFocusIndex(30, 8), 1, "then moves to the next");

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { raceGrid } from "@shared/tv-race-grid";
+import { raceGrid, type RaceDriver } from "@shared/tv-race-grid";
 import { formatTransferCount } from "@shared/transfer-credit";
 import type { RankRow } from "@shared/tv-overtake";
 import { CORNER_CAMERA_SECONDS } from "@shared/tv-corner-camera";
@@ -20,18 +20,22 @@ import { preloadFieldRace } from "./field-race";
  *  1. It never floats over a page. It sits IN the strip, which the deck's box
  *     is measured against, so nothing it covers is something somebody was
  *     reading. (Same rule as NewLeadZone, for the same reason.)
- *  2. One WebGL context at a time on this screen. The full-screen race takes
- *     the wall for its twelve seconds and this one unmounts while it does —
- *     two live contexts on a kiosk is how you lose both of them.
+ *  2. It is built ONCE. The camera never goes back to its first shot and a
+ *     transfer moves the cars where they stand rather than rebuilding the
+ *     scene, because a wall that visibly restarts reads as broken.
  *  3. If the scene cannot start, or the driver drops the context, it falls
  *     back to the top three as text and stops trying. A black rectangle on
  *     the wall all day is worse than no rectangle.
  */
 /**
- * How long the corner runs before it starts over: three minutes, which is
- * exactly the thirty six-second shots in shared/tv-corner-camera.ts.
+ * How long the camera's reel is before it would come round again: four and a
+ * half minutes, the forty-five six-second shots in shared/tv-corner-camera.ts.
+ * The SCENE has no length — it runs until the page does.
  */
 export const CORNER_RACE_SECONDS = CORNER_CAMERA_SECONDS;
+
+/** What mountRaceScene hands back: tear it down, or move it on in place. */
+type RaceSceneHandle = (() => void) & { update: (next: RaceDriver[]) => boolean };
 
 export function CornerRace({ people, reduced, paused = false }: {
   people: RankRow[];
@@ -41,12 +45,16 @@ export function CornerRace({ people, reduced, paused = false }: {
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
-  // A new run every cycle, so the cars are always moving rather than sitting
-  // at the line the first race left them on.
-  const [run, setRun] = useState(0);
+  // Bumped ONLY when the roster itself changes shape. Nothing else rebuilds
+  // the scene any more: not the clock, not a transfer, not a poll.
+  const [mount, setMount] = useState(0);
+  const scene = useRef<RaceSceneHandle | null>(null);
   const drivers = useMemo(() => raceGrid(people), [people]);
-  // The standings as a value, so a poll that changes nothing does not restart
-  // a race mid-corner.
+  const latest = useRef(drivers);
+  latest.current = drivers;
+  // Who is out there, versus what they are on. A new name needs a new scene;
+  // a new transfer does not.
+  const roster = useMemo(() => drivers.map((d) => d.id).join("|"), [drivers]);
   const grid = useMemo(
     () => drivers.map((d) => `${d.id}:${d.transfersToday}`).join("|"),
     [drivers],
@@ -63,25 +71,24 @@ export function CornerRace({ people, reduced, paused = false }: {
     if (failed || !people.length) return;
     let cancelled = false;
     let cleanup: (() => void) | undefined;
-    let timer = 0;
     void preloadFieldRace().then(({ mountRaceScene }) => {
       if (cancelled || !host.current) return;
       try {
         cleanup = mountRaceScene(host.current, {
-          drivers, before: null, reduced,
-          // Two minutes of one continuous shot, the whole flight walked slowly
-          // through its thirty-odd angles, then a reset. Restarting every
-          // twelve seconds is what made the corner nag at the room (Ethan,
-          // 16 Sep 2026: "it needs 30 camera angles over 2 minutes before it
-          // resets"). The cars lap at their own speed throughout.
-          runSeconds: CORNER_RACE_SECONDS,
+          drivers: latest.current, before: null, reduced,
+          // It never ends. The camera has a four-and-a-half-minute reel of
+          // trailing shots to work through (shared/tv-corner-camera.ts) and
+          // the cars lap underneath it all day, so nobody in the room ever
+          // sees the picture start over (Ethan, 16 Sep 2026: "enough views to
+          // run for 3 minutes without refreshing or going back to the
+          // beginning").
+          runSeconds: Infinity,
           // One car, close up, with its name shown now and then rather than a
           // nameplate on every car at once — twelve labels on a panel this
-          // size was unreadable (Ethan, 16 Sep 2026). Each two-minute shot
-          // follows the next driver down the order, so over a morning the
-          // corner works its way through the whole floor.
+          // size was unreadable (Ethan, 16 Sep 2026). The camera works down
+          // the running order every half-minute, so over a morning the corner
+          // gets to the whole floor.
           spotlight: true,
-          focusId: drivers[run % drivers.length]?.id,
           // Written straight to the node rather than through state: it ticks
           // five times a second for twelve seconds and nothing renders off
           // it. It is how anyone can tell from the page itself whether the
@@ -90,18 +97,23 @@ export function CornerRace({ people, reduced, paused = false }: {
           onFailure: () => { if (!cancelled) setFailed(true); },
         });
       } catch { if (!cancelled) setFailed(true); return; }
-      // Start the next shot the moment this one ends: a WebGL canvas that has
-      // stopped drawing is not guaranteed to keep showing its last frame.
-      timer = window.setTimeout(() => { if (!cancelled) setRun((n) => n + 1); },
-        reduced ? 10 * 60_000 : CORNER_RACE_SECONDS * 1000 + 400);
+      scene.current = cleanup as RaceSceneHandle;
     }).catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; window.clearTimeout(timer); cleanup?.(); };
-    // `grid` is the dependency, not `drivers`: same standings, same race.
+    return () => { cancelled = true; scene.current = null; cleanup?.(); };
+    // `roster` is the dependency, not `drivers` and not `grid`: a rebuild is
+    // for a new NAME on the board. A changed score is handled below without
+    // touching the canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // `grid` covers the standings; `people.length` was a second, noisier way
-    // of saying the same thing and restarted the shot whenever the feed fell
-    // back to a roster one name shorter.
-  }, [grid, reduced, run, failed]);
+  }, [roster, reduced, mount, failed]);
+
+  // A transfer lands: move the cars to their new places on the road they are
+  // already driving. Only a roster that gained or lost somebody falls through
+  // to a rebuild, and that IS a new race rather than a flicker.
+  useEffect(() => {
+    if (!scene.current) return;
+    if (!scene.current.update(latest.current)) setMount((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid]);
 
   // `paused` no longer unmounts the scene; it only dims the panel while the
   // full-screen race owns the wall.

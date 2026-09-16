@@ -14,12 +14,13 @@ import { defaultTvCarAppearance, isSafeTvCarWrapUrl, normalizeTvCarAppearance, v
 import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
 import { createBlankCarSkin, type TvCarSkin } from "@shared/tv-car-skin";
+import { formatTvCarRemaining, TV_CAR_TICK_MS, type TvCarBudget } from "@shared/tv-car-budget";
 import { CarSkinEditor } from "@/components/tv/car-skin-editor";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 const CarSkinPreview = lazy(() => import("@/components/tv/car-skin-preview"));
 
-type CarResponse = { appearance: TvCarAppearance };
+type CarResponse = { appearance: TvCarAppearance; budget?: TvCarBudget };
 const COLOR_PRESETS = [
   { name: "Papaya", color: "#ef6a35" },
   { name: "Sky", color: "#49b8ec" },
@@ -133,6 +134,10 @@ function Garage({ user }: { user: AuthUser }) {
   const [skinNotice, setSkinNotice] = useState<string | null>(null);
   const [preparingSkin, setPreparingSkin] = useState(false);
   const [skinEditorEpoch, setSkinEditorEpoch] = useState(0);
+  // Fifteen minutes a day in here, then it locks (shared/tv-car-budget.ts).
+  // The server is the authority; this is the copy the page draws from, and
+  // every save hands back a fresh one so the lock lands the moment it is due.
+  const [budget, setBudget] = useState<TvCarBudget | null>(null);
   const [preparedWrap, setPreparedWrap] = useState<PreparedTvCarWrap | null>(null);
   const [preparingWrap, setPreparingWrap] = useState(false);
   const [wrapError, setWrapError] = useState<string | null>(null);
@@ -146,12 +151,14 @@ function Garage({ user }: { user: AuthUser }) {
   const preview = normalizeTvCarAppearance(appearance, user.id);
   const dirty = draft !== null && !sameAppearance(draft, saved);
   const valid = validateTvCarAppearance({ bodyColor: appearance.bodyColor, accentColor: appearance.accentColor, livery: appearance.livery }) !== null;
+  const takeBudget = (result: CarResponse | undefined) => { if (result?.budget) setBudget(result.budget); };
   const save = useMutation<CarResponse, Error, TvCarAppearance>({
     mutationFn: next => apiRequest("PATCH", "/api/me/tv-car", {
       bodyColor: next.bodyColor, accentColor: next.accentColor, livery: next.livery,
     }),
     onMutate: () => queryClient.cancelQueries({ queryKey, exact: true }),
     onSuccess: data => {
+      takeBudget(data);
       queryClient.setQueryData(queryKey, data);
       setDraft(null);
       setSavedNotice(true);
@@ -172,6 +179,7 @@ function Garage({ user }: { user: AuthUser }) {
       await queryClient.cancelQueries({ queryKey, exact: true });
     },
     onSuccess: (data, change) => {
+      takeBudget(data);
       queryClient.setQueryData(queryKey, data);
       // Uploading a picture is independent of unsaved paint. Keep those color
       // edits while adopting the server's new (or removed) image reference.
@@ -184,6 +192,7 @@ function Garage({ user }: { user: AuthUser }) {
     mutationFn: next => next ? apiRequest("PUT", "/api/me/tv-car/skin", { skin: next }) : apiRequest("DELETE", "/api/me/tv-car/skin"),
     onMutate: async () => { setSkinNotice(null); await queryClient.cancelQueries({ queryKey, exact: true }); },
     onSuccess: (data, next) => {
+      takeBudget(data);
       queryClient.setQueryData(queryKey, data);
       setDraft(current => current ? { ...current, skin: data.appearance.skin } : null);
       setSkinDraft(null);
@@ -191,7 +200,24 @@ function Garage({ user }: { user: AuthUser }) {
       setSkinNotice(next ? "Skin saved. Your TV car will wear it after the next refresh." : "Pixel skin removed. Your saved paint and picture wrap are back.");
     },
   });
-  const busy = save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin;
+  const liveBudget = budget ?? car.data?.budget ?? null;
+  const locked = liveBudget?.locked ?? false;
+  // A tick only while the tab is actually in front: time spent on a call with
+  // the garage open behind the dialer is not time spent in the garage.
+  useEffect(() => {
+    if (locked) return;
+    let stopped = false;
+    const tick = () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      void apiRequest("POST", "/api/me/tv-car/time")
+        .then((result: any) => { if (!stopped && result?.budget) setBudget(result.budget); })
+        .catch(() => {});
+    };
+    tick();
+    const timer = window.setInterval(tick, TV_CAR_TICK_MS);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [locked]);
+  const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin;
   const editingSkin = skinDraft ?? saved.skin ?? blankSkin;
   const skinDirty = skinDraft !== null && JSON.stringify(skinDraft) !== JSON.stringify(saved.skin ?? blankSkin);
   const hasUnsaved = dirty || skinDirty || !!preparedWrap;
@@ -243,8 +269,26 @@ function Garage({ user }: { user: AuthUser }) {
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">My TV Car</h1>
           <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Build a pixel skin, paint your car, or add a picture wrap.</p>
         </div>
-        <Badge variant="outline" className="gap-1.5 px-3 py-1.5"><Flag className="h-3.5 w-3.5" /> C3 Grand Prix</Badge>
+        <div className="flex flex-col items-end gap-2">
+          <Badge variant="outline" className="gap-1.5 px-3 py-1.5"><Flag className="h-3.5 w-3.5" /> C3 Grand Prix</Badge>
+          {liveBudget && !locked && (
+            <Badge variant="secondary" className="gap-1.5 px-3 py-1.5" data-testid="tv-car-time-left">
+              Garage time: {formatTvCarRemaining(liveBudget.remaining)}
+            </Badge>
+          )}
+        </div>
       </div>
+
+      {locked && (
+        <Alert data-testid="tv-car-locked">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Your garage is closed for today</AlertTitle>
+          <AlertDescription>
+            Everyone gets 15 minutes a day in here. Yours is used up, so your car is locked until tomorrow —
+            it keeps whatever you last saved and still races on the wall. Come back in the morning to change it.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Garage workspace">
         <Button type="button" variant={garageMode === "skin" ? "default" : "outline"} aria-pressed={garageMode === "skin"} onClick={() => setGarageMode("skin")}>Pixel skin studio{skinDirty ? " •" : ""}</Button>

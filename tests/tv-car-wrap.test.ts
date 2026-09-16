@@ -87,7 +87,7 @@ function database(t: TestContext) {
   t.after(() => db.close());
   db.exec("ATTACH DATABASE ':memory:' AS lapfiles");
   const source = read("server/storage.ts");
-  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "lapfiles.tv_car_wrap_blobs"]) {
+  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "tv_car_garage_time", "lapfiles.tv_car_wrap_blobs"]) {
     const match = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table.replace(".", "\\.")} \\([\\s\\S]*?\\)\\\``));
     assert.ok(match, `production DDL for ${table}`);
     db.exec(match[0].slice(0, -1)); db.exec(match[0].slice(0, -1));

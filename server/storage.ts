@@ -2749,6 +2749,17 @@ function runNewMigrations() {
     updated_at TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id)
   )`);
+  // Fifteen minutes of garage a day, each (shared/tv-car-budget.ts). One row
+  // per person per Pacific day; `last_tick_at` is what the next tick is
+  // measured against, so the browser never gets to say how much it spent.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_garage_time (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    seconds INTEGER NOT NULL DEFAULT 0,
+    last_tick_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id, day)
+  )`);
 
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss

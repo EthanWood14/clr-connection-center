@@ -69,14 +69,46 @@ test("the live corner race sits IN the strip, never over a page, and yields the 
   assert.match(tv, /<CornerRace people=\{raceStandings\} reduced=\{reduced\} paused=\{!!current\} \/>/);
   const corner = read("client/src/components/tv/corner-race.tsx");
   // The scene is NOT torn down when a moment cuts in: that restarted the
-  // three-minute shot from zero every few minutes and made the corner read
-  // as a short loop. The full-screen race covers it anyway.
+  // shot from zero every few minutes and made the corner read as a short
+  // loop. The full-screen race covers it anyway.
   assert.match(corner, /if \(failed \|\| !people\.length\) return;/);
-  assert.match(corner, /\}, \[grid, reduced, run, failed\]\);/, "and a quiet poll must not restart it either");
   assert.match(corner, /paused \? " opacity-0" : ""/, "it dims under the full-screen race rather than unmounting");
-  assert.match(corner, /setRun\(\(n\) => n \+ 1\)/, "it runs again rather than freezing at the line");
   assert.match(corner, /onFailure: \(\) => \{ if \(!cancelled\) setFailed\(true\); \}/);
   assert.match(corner, /data-corner-race-state=\{failed \? "fallback" : "live"\}/, "a dead scene falls back to text, not a black box");
+});
+
+// "Have the race refresh without refreshing everything on the screen" +
+// "enough views to run for 3 minutes without refreshing or going back to the
+// beginning." — Ethan, 16 Sep 2026.
+test("a transfer moves the cars in place; only a new NAME rebuilds the corner", () => {
+  const corner = read("client/src/components/tv/corner-race.tsx");
+  // It runs until the page does. No run counter, no restart timer, no length.
+  assert.match(corner, /runSeconds: Infinity,/);
+  assert.doesNotMatch(corner, /setRun|window\.setTimeout/, "nothing schedules a restart any more");
+  // The rebuild dependency is the roster, not the scores.
+  assert.match(corner, /const roster = useMemo\(\(\) => drivers\.map\(\(d\) => d\.id\)\.join\("\|"\), \[drivers\]\);/);
+  assert.match(corner, /\}, \[roster, reduced, mount, failed\]\);/);
+  // A changed score goes through the live handle instead, and only a handle
+  // that says it cannot absorb the change falls back to a rebuild.
+  assert.match(corner, /if \(!scene\.current\.update\(latest\.current\)\) setMount\(\(n\) => n \+ 1\);/);
+  assert.match(corner, /\}, \[grid\]\);/);
+  const scene = read("client/src/components/tv/race-scene.ts");
+  assert.match(scene, /return Object\.assign\(cleanup,\{update\}\);/);
+  // Same ids in, same cars: a rebuild is refused rather than done quietly.
+  assert.match(scene, /if\(nextIds\.size!==ids\.size\|\|Array\.from\(nextIds\)\.some\(id=>!ids\.has\(id\)\)\)return false;/);
+  // The cars drive to the new order from where they are, timed from the
+  // change rather than from the start of a scene that began hours ago.
+  assert.match(scene, /currentDrivers=next;transitionStart=lastElapsed;/);
+  assert.match(scene, /const transitionTime=options\.reduced\?12:Math\.max\(0,elapsed-transitionStart\);/);
+  assert.match(scene, /const position=interpolateRaceTransition\(transition,transitionTime\);/);
+});
+
+// "When someone is in first, have the trail camera look backwards."
+test("the corner knows who is actually leading right now, not who led at mount", () => {
+  const scene = read("client/src/components/tv/race-scene.ts");
+  assert.match(scene, /let leaderId:number\|undefined,leaderDistance=Infinity;/);
+  assert.match(scene, /if\(position\.distance<leaderDistance\)\{leaderDistance=position\.distance;leaderId=driver\.id;\}/);
+  assert.match(scene, /cornerCameraPose\(elapsed,focusPose,spotlightId===leaderId\)/);
 });
 
 // "The name tags are too confusing, it should be a close up on one car and
@@ -84,12 +116,12 @@ test("the live corner race sits IN the strip, never over a page, and yields the 
 test("the corner holds one car close up and names it only now and then", () => {
   const corner = read("client/src/components/tv/corner-race.tsx");
   assert.match(corner, /spotlight: true,/);
-  assert.match(corner, /focusId: drivers\[run % drivers\.length\]\?\.id,/, "each shot follows the next driver down the order");
-  // No cameraSeconds: the corner is not a stretched version of the transfer
-  // race's single flight any more, it has its own thirty-shot list.
-  assert.match(corner, /runSeconds: CORNER_RACE_SECONDS,/);
+  // No focusId: a pinned focus put a permanent halo on one car, and the
+  // camera works down the running order on its own clock anyway.
+  assert.doesNotMatch(corner, /focusId:/);
+  // No cameraSeconds either: the corner is not a stretched version of the
+  // transfer race single flight, it has its own shot list.
   assert.doesNotMatch(corner, /cameraSeconds/);
-  // Three minutes, which IS the shot list: thirty shots of six seconds.
   assert.match(corner, /export const CORNER_RACE_SECONDS = CORNER_CAMERA_SECONDS;/);
   const scene = read("client/src/components/tv/race-scene.ts");
   // Spotlight frames ONE car: the rival-widening that makes a transfer's race

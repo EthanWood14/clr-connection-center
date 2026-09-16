@@ -20,7 +20,7 @@ async function harness(t: TestContext) {
   t.after(() => db.close());
   db.exec("ATTACH DATABASE ':memory:' AS lapfiles");
   const source = read("server/storage.ts");
-  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "lapfiles.tv_car_wrap_blobs"]) {
+  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "tv_car_garage_time", "lapfiles.tv_car_wrap_blobs"]) {
     const ddl = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table.replace(".", "\\.")} \\([\\s\\S]*?\\)\\\``));
     assert.ok(ddl, `production DDL exists for ${table}`);
     db.exec(ddl[0].slice(0, -1));
@@ -72,7 +72,8 @@ test("skin metadata schema is additive, idempotent, small and separate from phot
 
 test("GET is read-only; PUT normalizes and persists one self-owned design, then updates it", async t => {
   const h = await harness(t);
-  assert.deepEqual(await h.request("/api/me/tv-car"), { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
+  const opened = await h.request("/api/me/tv-car") as any;
+  assert.deepEqual({ status: opened.status, body: { appearance: opened.body.appearance } }, { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
   assert.equal(h.count(), 0); assert.deepEqual(h.audits, []);
   const first = await h.request("/api/me/tv-car/skin", "PUT", { skin: skin() });
   assert.equal(first.status, 200);

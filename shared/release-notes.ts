@@ -29,6 +29,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.118.0",
+    headline: "The corner race never restarts, the skyline is a city, and the garage closes after 15 minutes a day.",
+    items: [
+      { text: "Office TV: the race in the corner no longer starts over. It used to rebuild itself every few minutes, which is what made the wall blink. A transfer now moves the cars to their new places on the road they are already on, and only a new name on the board builds a fresh race.", audience: "everyone" },
+      { text: "Office TV: forty-five camera angles instead of thirty, all of them trailing the car. Four and a half minutes of them, so three minutes of watching never gets back to where it started.", audience: "everyone" },
+      { text: "Office TV: whoever is in front gets the camera turned round. There is nothing up the road ahead of the leader, so the shot swings in front of them and looks back at everybody chasing.", audience: "everyone" },
+      { text: "Office TV: the horizon is a city at dusk now, towers and lit windows, instead of a ring of green hills.", audience: "everyone" },
+      { text: "Office TV: the cars look like cars. Lacquered paint that catches the light, an engine cover and fin behind the driver, mirrors, wing endplates, a diffuser and an exhaust, and wheels you can actually see turning.", audience: "everyone" },
+      { text: "My TV Car: everyone now gets 15 minutes a day in the garage. The page shows how much you have left and locks when it runs out, until the next morning. Your saved car keeps racing either way, and you can always look at it. Time only counts while the tab is actually in front of you.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.117.0",
     headline: "A transfer's race is smooth and eighteen seconds long, and the grandstands stay put.",
     items: [

@@ -94,8 +94,8 @@ test("the renderer clips only opted-in decorations and updates from every actual
   const optIns = scene.split(/\r?\n/).filter(line => line.includes("sceneryMaterial("));
   assert.equal(optIns.length, 8);
   for (const line of optIns) {
-    assert.match(line.trim(), /^const (?:steel|wallWhite|standMat|crowdCount|heads|lampMat|hill|bannerMaterial)\b/,
-      "only poles, separate walls, stands, people, lights, hills and banners opt in");
+    assert.match(line.trim(), /^const (?:steel|wallWhite|standMat|crowdCount|heads|lampMat|cityMat|bannerMaterial)\b/,
+      "only poles, separate walls, stands, people, lights, the city and banners opt in");
   }
   assert.match(scene, /const white\s*=\s*material\(/);
   assert.match(scene, /red\s*=\s*material\(/);
@@ -123,3 +123,53 @@ test("the fly-through has a safe peripheral fan cue and grass confined inside th
   assert.match(scene,/side:THREE\.FrontSide/);
   assert.match(scene,/back\.rotation\.y=Math\.PI/,'infield banners have their own readable face instead of mirrored lettering');
 });
+
+// "Can you make the background look more real, like in NYC or something?" —
+// Ethan, 16 Sep 2026. The ring of green cones is gone.
+test("the horizon is a city, drawn once and lit from a baked window map", () => {
+  const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.doesNotMatch(scene, /ConeGeometry\(22/, "the hills are gone");
+  // Sixty-four towers in ONE draw call. A skyline of separate meshes on a
+  // kiosk is how the wall starts dropping frames.
+  assert.match(scene, /const city=keep\(new THREE\.InstancedMesh\(unitBox,cityMat,64\)\);/);
+  assert.match(scene, /city\.castShadow=city\.receiveShadow=false;/, "the skyline never enters the shadow pass");
+  // Lit windows are a baked canvas, not a network request: a TV that loses
+  // its connection still has a city behind the cars.
+  assert.match(scene, /const cityCanvas=document\.createElement\("canvas"\)/);
+  assert.match(scene, /emissiveMap:cityMap/);
+  assert.doesNotMatch(scene, /https?:\/\//, "nothing on the wall is fetched from anywhere");
+  // Deterministic: the same city on every screen in the building.
+  assert.match(scene, /let citySeed=4271;/);
+  assert.match(scene, /let towerSeed=8461;/);
+  assert.doesNotMatch(scene.slice(scene.indexOf("cityCanvas"), scene.indexOf("scene.add(city)")), /Math\.random/);
+  // Two landmarks with setbacks and a spire, so it is a skyline rather than a
+  // fence of equal blocks.
+  assert.match(scene, /const spire=new THREE\.Mesh\(keep\(new THREE\.ConeGeometry\(2\.6\*size,28\*size,8\)\),steel\);/);
+  // And the haze has to reach far enough to show it: at the old 230 the city
+  // sat past the fog and came out as flat grey.
+  assert.match(scene, /raceFog\.far=Math\.max\(340,raceFog\.near\+185\);/);
+});
+
+// "Also make the car look better." — Ethan, 16 Sep 2026.
+test("the car has a lacquered finish, real bodywork detail and wheels that read as turning", () => {
+  const model = readFileSync(new URL("../client/src/components/tv/car-model.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  // Clearcoat over the body colour: it is what picks up the sky and the stands
+  // as the car turns, and it is most of why the old one read as plastic.
+  assert.match(model, /const gloss = \(color: string, roughness = \.26\) => keep\(new THREE\.MeshPhysicalMaterial\(\{ color, roughness, metalness: \.42, clearcoat: 1/);
+  assert.match(model, /const paint = gloss\(appearance\.bodyColor\)/);
+  assert.match(model, /const bodyPaint = pictureVisible \? gloss\(appearance\.bodyColor, \.38\) : paint;/);
+  // Silhouette: an engine cover and fin behind the driver rather than a slab.
+  for (const part of ["engine-cover", "shark-fin", "mirror", "front-endplate", "rear-endplate", "diffuser", "exhaust", "visor"]) {
+    assert.ok(model.includes(`"${part}"`), `the car is missing its ${part}`);
+  }
+  // A smooth cylinder looks stationary however fast it spins. The spokes are
+  // inside the wheel PIVOT, so they turn with it.
+  assert.match(model, /const spoke = new THREE\.Mesh\(unitBox, black\); spoke\.name = "wheel-spoke";/);
+  assert.match(model, /spoke\.rotation\.x = turn; pivot\.add\(spoke\);/);
+  assert.match(model, /CylinderGeometry\(\.43, \.43, \.34, 24\)/, "rounder tires");
+  // None of it may touch the parts the track and the skin garage rely on.
+  assert.equal((model.match(/rounded\("body-[^\n]*bodyPaint/g) ?? []).length, 3, "the three skinned body panels are unchanged");
+  assert.match(model, /if \(child !== boost && child\.name !== "focus-halo" && !wheelMounts\.includes\(child as THREE\.Group\)\) chassis\.add\(child\);/,
+    "new decoration rides the sprung chassis, not the track anchor");
+});
+

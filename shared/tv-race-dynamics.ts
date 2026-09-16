@@ -33,7 +33,9 @@ export function sampleRaceDynamics({ transition, elapsed, driverId, speed, reduc
   transition: RaceTransition; elapsed: number; driverId: number; speed: number; reduced?: boolean;
 }): RaceDynamics {
   if (reduced) return { ...ZERO };
-  const time = clamp(finite(elapsed), 0, 3600);
+  // A day, not an hour: the wall's corner race is one scene that runs from
+  // open to close, and a clamp it reaches would freeze every wheel on it.
+  const time = clamp(finite(elapsed), 0, 86400);
   const angularSpeed = clamp(finite(speed), 0, 3);
   const plan: RaceTransition = {
     ...transition,

@@ -44,7 +44,9 @@ test("unsaved paint edits are separate from refetched data and scoped to the sig
 test("saving sends only cosmetic fields and protects drafts during a pending save", () => {
   assert.match(page, /apiRequest\("PATCH", "\/api\/me\/tv-car", \{\s*bodyColor: next\.bodyColor, accentColor: next\.accentColor, livery: next\.livery,\s*\}\)/);
   assert.match(page, /queryClient\.cancelQueries\(\{ queryKey, exact: true \}\)/);
-  assert.match(page, /const busy = save\.isPending \|\| wrap\.isPending \|\| preparingWrap/);
+  // `locked` rides in front of every in-flight flag, so one word disables the
+  // whole garage — the fieldset, the save buttons and the skin editor alike.
+  assert.match(page, /const busy = locked \|\| save\.isPending \|\| wrap\.isPending \|\| preparingWrap/);
   assert.match(page, /<fieldset disabled=\{busy\}/);
   assert.match(page, /disabled=\{!dirty \|\| !valid \|\| busy \|\| !!preparedWrap\}/);
   assert.match(page, /Your draft is still here; try saving again/);
@@ -99,4 +101,24 @@ test("pixel workshop is the default, preserves separate drafts and shares the re
   assert.match(page, /<AlertDialogTitle>Return to paint and pictures/);
   assert.match(page, /setDraft\(current => current \? \{ \.\.\.current, skin: data\.appearance\.skin \} : null\)/);
   assert.match(page, /window\.addEventListener\("beforeunload", warn\)/);
+});
+
+// "Only allow someone to change their car for max of 15 mins a day on that tab
+// and then lock it out." — Ethan, 16 Sep 2026.
+test("the garage spends a daily time budget and locks itself when it runs out", () => {
+  // The tab reports in; it never says how much it spent. The server measures
+  // the gap against its own stored clock, so a page cannot buy itself time.
+  assert.match(page, /apiRequest\("POST", "\/api\/me\/tv-car\/time"\)/);
+  assert.match(page, /window\.setInterval\(tick, TV_CAR_TICK_MS\)/);
+  assert.match(page, /document\.visibilityState !== "visible"/, "a backgrounded tab is not garage time");
+  assert.match(page, /if \(locked\) return;/, "and a locked garage stops ticking at all");
+  assert.match(page, /const locked = liveBudget\?\.locked \?\? false;/);
+  // Every save hands a fresh budget back, so the lock lands on the save that
+  // spends the last second rather than at the next tick.
+  assert.match(page, /const takeBudget = \(result: CarResponse \| undefined\) => \{ if \(result\?\.budget\) setBudget\(result\.budget\); \};/);
+  assert.equal((page.match(/takeBudget\(data\);/g) ?? []).length, 3, "paint, wrap and skin saves all carry it");
+  assert.match(page, /data-testid="tv-car-locked"/);
+  assert.match(page, /data-testid="tv-car-time-left"/);
+  assert.match(page, /Your garage is closed for today/);
+  assert.match(page, /locked until tomorrow/);
 });

@@ -25,8 +25,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   host.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#61717e");
-  const raceFog=new THREE.Fog("#687985", 105, 230);scene.fog=raceFog;
+  scene.background = new THREE.Color("#6f7c8d");
+  const raceFog=new THREE.Fog("#7a8494", 135, 340);scene.fog=raceFog;
   const camera = new THREE.PerspectiveCamera(RACE_CAMERA_FOV, 1, .3, 400);
   const resources = new Set<{ dispose: () => void }>();
   const keep = <T extends { dispose: () => void }>(resource: T) => { resources.add(resource); return resource; };
@@ -193,15 +193,57 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const r=91, x=Math.cos(a)*r,z=Math.sin(a)*r;
     box(scene,.45,22,.45,x,11,z,steel);box(scene,7,.7,1,x,22,z,lampMat);
   }
-  for(let i=0;i<22;i++) {
-    const a=i*Math.PI*2/22;
-    const hill=new THREE.Mesh(keep(new THREE.ConeGeometry(22+(i%4)*8,18+(i%5)*6,6)),sceneryMaterial(material(i%2?"#526663":"#4a5c5c",1)));
-    hill.position.set(Math.cos(a)*175,2,Math.sin(a)*175);scene.add(hill);
+  // A real skyline behind the circuit instead of a ring of green cones
+  // (owner, 16 Sep 2026: "can you make the background look more real, like in
+  // NYC or something?"). One instanced box is the whole city, so sixty-four
+  // towers cost a single draw call, and the windows are a baked canvas — no
+  // network request on a kiosk, and the same picture on every TV.
+  const cityCanvas=document.createElement("canvas");cityCanvas.width=64;cityCanvas.height=128;
+  const cityContext=cityCanvas.getContext("2d")!;
+  cityContext.fillStyle="#131b25";cityContext.fillRect(0,0,64,128);
+  let citySeed=4271;
+  for(let row=0;row<32;row++) for(let column=0;column<8;column++) {
+    citySeed=(Math.imul(citySeed,1664525)+1013904223)>>>0;
+    const lit=citySeed%100;
+    cityContext.fillStyle=lit<36?`rgb(${230-lit},${192-lit},${120+lit})`:lit<54?"#2c394a":"#19222d";
+    cityContext.fillRect(column*8+2,row*4+1,4,2);
+  }
+  const cityMap=keep(new THREE.CanvasTexture(cityCanvas));
+  cityMap.colorSpace=THREE.SRGBColorSpace;cityMap.wrapS=cityMap.wrapT=THREE.RepeatWrapping;cityMap.repeat.set(3,7);
+  const cityMat=sceneryMaterial(keep(new THREE.MeshStandardMaterial({map:cityMap,color:"#93a0b0",roughness:.88,metalness:.14,emissive:"#121d2a",emissiveMap:cityMap,emissiveIntensity:.6})));
+  const city=keep(new THREE.InstancedMesh(unitBox,cityMat,64));
+  city.castShadow=city.receiveShadow=false;
+  const cityMatrix=new THREE.Matrix4(),cityScale=new THREE.Vector3();
+  let towerSeed=8461;
+  for(let i=0;i<64;i++) {
+    towerSeed=(Math.imul(towerSeed,1664525)+1013904223)>>>0;
+    const jitter=(towerSeed%1000)/1000,a=(i+jitter*.75)*Math.PI*2/64;
+    const radius=152+(towerSeed>>>10)%74,height=26+jitter*jitter*126,width=13+(towerSeed>>>4)%13;
+    cityMatrix.makeRotationY(-a);cityMatrix.scale(cityScale.set(width,height,width*.82));
+    cityMatrix.setPosition(Math.cos(a)*radius,height/2-1,Math.sin(a)*radius);
+    city.setMatrixAt(i,cityMatrix);
+  }
+  scene.add(city);
+  // Two setbacks-and-a-spire landmarks, so the skyline reads as a city rather
+  // than a fence of equal blocks.
+  const tower=(w:number,h:number,d:number,x:number,y:number,z:number)=>{
+    const block=box(scene,w,h,d,x,y,z,cityMat);block.castShadow=block.receiveShadow=false;return block;
+  };
+  for(const [angle,size] of [[-1.15,1],[2.2,.76]] as const) {
+    const x=Math.cos(angle)*188,z=Math.sin(angle)*188;
+    tower(27*size,104*size,23*size,x,52*size-1,z);
+    tower(18*size,38*size,16*size,x,123*size-1,z);
+    tower(9.5*size,23*size,8.5*size,x,153*size-1,z);
+    const spire=new THREE.Mesh(keep(new THREE.ConeGeometry(2.6*size,28*size,8)),steel);
+    spire.position.set(x,178*size-1,z);scene.add(spire);
   }
 
   let redrawWraps=()=>{};
   const grid=raceGrid(options.drivers);
-  const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
+  let transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
+  // What the cars are driving to, and when they were told to. Both move when
+  // the standings change under a running scene; see `update` below.
+  let currentDrivers=options.drivers,transitionStart=0,lastElapsed=0;
   const allPlans=Array.from(transitions.values());
   // Spotlight keeps ONE car in shot. raceCameraSubjects deliberately widens
   // to the rivals of a pass, which is right for a transfer's race and wrong
@@ -244,6 +286,24 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     return {element,line,racer:r,width:element.offsetWidth,height:element.offsetHeight};
   });
 
+  // The standings can change without the picture starting over. A new
+  // transfer used to tear the whole scene down and build it again — a black
+  // flash on the wall and the camera back at its first shot (owner, 16 Sep
+  // 2026: "have the race refresh without refreshing everything on the
+  // screen"). Same cars, same WebGL context, same reel: only the plan they
+  // are driving to is replaced, and they drive to it from where they are.
+  // A roster that has actually gained or lost somebody still needs a rebuild,
+  // which is what `false` asks the caller for.
+  const update=(next:RaceDriver[])=>{
+    if(disposed)return false;
+    const ids=new Set(racers.map(r=>r.driver.id));
+    const nextIds=new Set(next.map(d=>d.id));
+    if(nextIds.size!==ids.size||Array.from(nextIds).some(id=>!ids.has(id)))return false;
+    transitions=new Map(planRaceTransition(currentDrivers,next,options.focusId).map(t=>[t.id,t]));
+    currentDrivers=next;transitionStart=lastElapsed;
+    return true;
+  };
+
   let start:number|undefined, previous=0, reported=-1, reportedShot="", draw:(now:number)=>void;
   const vector=new THREE.Vector3();
   const resize=()=>{
@@ -278,6 +338,10 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const minFrameMs=options.spotlight?32:1;
     if(!options.reduced && now-previous<minFrameMs){frame=requestAnimationFrame(draw);return;}
     previous=now;
+    lastElapsed=elapsed;
+    // Transitions are timed from the last standings change, not from the start
+    // of the scene, so a transfer that lands twenty minutes in still animates.
+    const transitionTime=options.reduced?12:Math.max(0,elapsed-transitionStart);
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
     const lead=startAngle+motionTime*speed;
@@ -287,12 +351,18 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       ? racers[cornerFocusIndex(elapsed,racers.length,options.focusId!=null?racers.findIndex(r=>r.driver.id===options.focusId):0)]?.driver.id
       : options.focusId;
     let focusPose:{angle:number;lane:number}|undefined;
+    // Who is actually in front RIGHT NOW, read off the interpolated positions
+    // rather than the rank the scene was built with: the standings can move
+    // under a running scene.
+    let leaderId:number|undefined,leaderDistance=Infinity;
     for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
-      const transition=transitions.get(driver.id)!;
-      const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
+      const transition=transitions.get(driver.id);
+      if(!transition)continue;
+      const position=interpolateRaceTransition(transition,transitionTime);
+      if(position.distance<leaderDistance){leaderDistance=position.distance;leaderId=driver.id;}
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
       if(options.spotlight&&driver.id===spotlightId)focusPose={angle:lead-position.distance/42,lane:position.lane};
-      const dynamics=sampleRaceDynamics({transition,elapsed,driverId:driver.id,speed,reduced:options.reduced});
+      const dynamics=sampleRaceDynamics({transition,elapsed:transitionTime,driverId:driver.id,speed,reduced:options.reduced});
       root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw+dynamics.yawOffset,Math.atan(.075));
       chassis.rotation.set(dynamics.pitch,0,dynamics.roll);chassis.position.y=dynamics.heave;
       for(const steering of frontSteering)steering.rotation.y=dynamics.steering;
@@ -300,7 +370,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       for(const wheel of wheels)wheel.rotation.x=dynamics.wheelAngle;
     }
     const shot=options.spotlight&&focusPose
-      ? cornerCameraPose(elapsed,focusPose)
+      ? cornerCameraPose(elapsed,focusPose,spotlightId===leaderId)
       : raceCameraPose(subjects,cameraTime,lead,camera.aspect,framingRadius,options.reduced);
     if(camera.fov!==shot.fov){camera.fov=shot.fov;camera.updateProjectionMatrix();}
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
@@ -316,7 +386,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     // Wide TV shots retreat from the field; atmosphere belongs behind the
     // racers, not between the lens and their cars.
     const shotDistance=Math.hypot(shot.position.x-shot.target.x,shot.position.y-shot.target.y,shot.position.z-shot.target.z);
-    raceFog.near=Math.max(105,shotDistance+60);raceFog.far=Math.max(230,raceFog.near+125);
+    raceFog.near=Math.max(135,shotDistance+60);raceFog.far=Math.max(340,raceFog.near+185);
     // Scenery clipping exists so a grandstand between the lens and the cars
     // cannot hide the pass. It cuts EVERYTHING nearer than the farthest car,
     // though, so on a fixed corner camera the stands and trees kept being
@@ -370,6 +440,6 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   // starting another animation loop or changing its fixed race pose.
   redrawWraps=()=>{if(!disposed){try{renderer.render(scene,camera);}catch{fail();}}};
   frame=requestAnimationFrame(draw);
-  return cleanup;
+  return Object.assign(cleanup,{update});
   } catch(error) { cleanup();throw error; }
 }

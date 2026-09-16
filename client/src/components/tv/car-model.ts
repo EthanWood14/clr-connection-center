@@ -68,7 +68,11 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
   };
   try {
     const material = (color: string, roughness = .55, metalness = .1) => keep(new THREE.MeshStandardMaterial({ color, roughness, metalness }));
-    const paint = material(appearance.bodyColor, .25, .48), accent = material(appearance.accentColor, .34, .2);
+    // Race paint is lacquered, not plastic. A clearcoat over the body colour
+    // is most of what makes the car read as a real one under track lights —
+    // it picks up the sky, the stands and the lamps as it turns.
+    const gloss = (color: string, roughness = .26) => keep(new THREE.MeshPhysicalMaterial({ color, roughness, metalness: .42, clearcoat: 1, clearcoatRoughness: .07 }));
+    const paint = gloss(appearance.bodyColor), accent = material(appearance.accentColor, .34, .2);
     const black = material("#111720", .65), rubber = material("#111315", .95), steel = material("#647079", .32, .7);
     const glass = keep(new THREE.MeshPhysicalMaterial({ color: "#234353", roughness: .17, metalness: .5, clearcoat: 1 }));
     const unitBox = keep(new THREE.BoxGeometry(1, 1, 1));
@@ -91,7 +95,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     // A skin replaces the visible picture, never the saved picture itself.
     // Without a skin, transparent image pixels still flatten over body paint.
     const pictureVisible = !appearance.skin && isSafeTvCarWrapUrl(appearance.wrapUrl);
-    const bodyPaint = pictureVisible ? material(appearance.bodyColor, .38, .18) : paint;
+    const bodyPaint = pictureVisible ? gloss(appearance.bodyColor, .38) : paint;
     if (pictureVisible && isSafeTvCarWrapUrl(appearance.wrapUrl)) {
       const wrapLoader = new THREE.ImageLoader();
       wrapLoader.load(appearance.wrapUrl, picture => {
@@ -133,6 +137,25 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     for (const x of [-.88, .88]) box(root, .09, .65, .24, x, .84, -2.05, black);
     for (const x of [-.38, .38]) box(root, .08, .34, .75, x, 1.11, -.22, black);
     box(root, .8, .09, .12, 0, 1.29, .16, black);
+    // Detail that only shows up in a close-up, which is nearly every shot the
+    // corner takes now (owner, 16 Sep 2026: "also make the car look better").
+    // All of it is decoration: nothing here touches the wheels, the track
+    // anchor or the skin panels.
+    rounded("engine-cover", .62, .5, 1.25, 0, .96, -1.06, bodyPaint, .22);
+    box(root, .07, .36, 1.45, 0, 1.28, -1.45, bodyPaint).name = "shark-fin";
+    for (const x of [-.58, .58]) {
+      box(root, .2, .1, .08, x, 1, .42, black).name = "mirror";
+      box(root, .3, .04, .04, x * .74, .99, .42, steel).name = "mirror-stalk";
+    }
+    for (const x of [-1.2, 1.2]) box(root, .05, .34, .62, x, .5, 2.67, accent).name = "front-endplate";
+    for (const x of [-1.12, 1.12]) box(root, .05, .52, .68, x, 1.14, -2.06, accent).name = "rear-endplate";
+    box(root, 1.85, .26, .62, 0, .26, -1.95, black).name = "diffuser";
+    for (const x of [-.55, 0, .55]) box(root, .05, .3, .58, x, .3, -1.95, steel).name = "strake";
+    const exhaust = new THREE.Mesh(keep(new THREE.CylinderGeometry(.09, .12, .3, 10)), steel);
+    exhaust.name = "exhaust"; exhaust.rotation.x = Math.PI / 2; exhaust.position.set(0, .74, -1.78);
+    exhaust.castShadow = true; root.add(exhaust);
+    box(root, .18, .07, .05, 0, .62, -2.02, accent).name = "rain-light";
+    box(root, .22, .08, .06, 0, 1.19, .03, black).name = "visor";
     const stripeOffsets = appearance.skin ? [] : appearance.livery === "double-stripe" ? [-.16, .16] : appearance.livery === "stripe" ? [0] : [];
     for (const x of stripeOffsets) {
       const width = appearance.livery === "double-stripe" ? .12 : .2;
@@ -140,14 +163,21 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       box(root, width, .015, 1.05, x, .628, 2.3, accent).name = "livery-stripe";
     }
     const wheels: THREE.Group[] = [], wheelMounts: THREE.Group[] = [], frontSteering: THREE.Group[] = [];
-    const wheelGeometry = keep(new THREE.CylinderGeometry(.43, .43, .34, 16)), rimGeometry = keep(new THREE.CylinderGeometry(.25, .25, .36, 10));
+    // Rounder tires, a coloured rim, and two cross-spokes whose ends show past
+    // the rim — without something asymmetric on the wheel, a spinning cylinder
+    // looks like a stationary one however fast it is actually turning.
+    const wheelGeometry = keep(new THREE.CylinderGeometry(.43, .43, .34, 24)), rimGeometry = keep(new THREE.CylinderGeometry(.27, .27, .36, 18));
     for (const x of [-1.03, 1.03]) for (const z of [-1.42, 1.6]) {
       const mount = new THREE.Group(); mount.name = z > 0 ? "front-wheel-steering" : "rear-wheel-mount";
       mount.position.set(x, .45, z); root.add(mount); wheelMounts.push(mount);
       if (z > 0) frontSteering.push(mount);
       const pivot = new THREE.Group(); pivot.name = "wheel-spin"; mount.add(pivot);
       const tire = new THREE.Mesh(wheelGeometry, rubber); tire.rotation.z = Math.PI / 2; tire.castShadow = true; pivot.add(tire);
-      const rim = new THREE.Mesh(rimGeometry, steel); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
+      const rim = new THREE.Mesh(rimGeometry, accent); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
+      for (const turn of [0, Math.PI / 2]) {
+        const spoke = new THREE.Mesh(unitBox, black); spoke.name = "wheel-spoke";
+        spoke.scale.set(.4, .54, .055); spoke.rotation.x = turn; pivot.add(spoke);
+      }
       box(root, Math.abs(x), .055, .055, x / 2, .5, z, black);
     }
     if (options.rank != null && typeof document !== "undefined") {

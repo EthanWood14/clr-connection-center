@@ -7,6 +7,7 @@ import {
   TV_CAR_COLORS,
 } from "../shared/tv-car";
 import { canCustomizeTvCar, registerTvCarRoutes } from "../server/tv-car-routes";
+import { tvCarBudgetDay } from "../shared/tv-car-budget";
 import { isTvCarParticipant, isTvRaceGuest } from "../shared/tv-race-participation";
 import { withTvRaceGuests, tvRaceCreditsForEvents } from "../server/tv-race-roster";
 
@@ -143,7 +144,7 @@ function harness(t: TestContext) {
   const db = new Database(":memory:");
   t.after(() => db.close());
   const source = readFileSync(new URL("../server/storage.ts", import.meta.url), "utf8");
-  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins"]) {
+  for (const table of ["tv_car_preferences", "tv_car_wraps", "tv_car_skins", "tv_car_garage_time"]) {
     const ddl = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\)\\\``));
     assert.ok(ddl, "production startup initializes the preference tables");
     db.exec(ddl[0].slice(0, -1));
@@ -183,10 +184,14 @@ function harness(t: TestContext) {
 
 test("GET returns defaults and does not create a preference or audit row", (t) => {
   const h = harness(t);
-  assert.deepEqual(h.call("GET"), { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
+  const opened = h.call("GET") as any;
+  // Every car response also says how much garage time is left today
+  // (shared/tv-car-budget.ts). Looking is free: a GET spends nothing.
+  assert.deepEqual(opened.body.budget, { used: 0, remaining: 900, locked: false, day: tvCarBudgetDay(Date.now()) });
+  assert.deepEqual({ status: opened.status, body: { appearance: opened.body.appearance } }, { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
   assert.equal(h.count(), 0);
   assert.deepEqual(h.audits, []);
-  assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "PATCH /api/me/tv-car",
+  assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "POST /api/me/tv-car/time", "PATCH /api/me/tv-car",
     "PUT /api/me/tv-car/skin", "DELETE /api/me/tv-car/skin",
     "POST /api/me/tv-car/wrap", "DELETE /api/me/tv-car/wrap", "GET /api/me/tv-car/wrap", "GET /api/tv/:token/cars/:userId/wrap"]);
 });
@@ -206,7 +211,9 @@ test("Ethan can save only his own cosmetic car preferences without a CLR-role ch
 
 test("PATCH persists only this CLR's appearance, rereads it, and audits safe before/after fields", (t) => {
   const h = harness(t);
-  assert.deepEqual(h.call("PATCH", custom), { status: 200, body: { appearance: normalized } });
+  const patched = h.call("PATCH", custom) as any;
+  assert.equal(patched.body.budget.locked, false);
+  assert.deepEqual({ status: patched.status, body: { appearance: patched.body.appearance } }, { status: 200, body: { appearance: normalized } });
   assert.deepEqual(h.call("GET").body.appearance, normalized);
   assert.equal(h.count(), 1);
   assert.deepEqual(h.audits[0], { owner, before: defaultTvCarAppearance(7), after: normalized });
