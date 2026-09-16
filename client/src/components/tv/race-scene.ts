@@ -3,10 +3,12 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
-import { RACE_CAMERA_FOV, raceCameraPose, raceCameraRadius, raceCameraSubjects } from "@shared/tv-race-camera";
+import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraSubjects } from "@shared/tv-race-camera";
 import { createTvCarModel } from "./car-model";
+import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
+import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void; onProgress?: (elapsed: number) => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -14,6 +16,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.localClippingEnabled = true;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = .95;
   renderer.domElement.style.cssText = "width:100%;height:100%;display:block";
@@ -22,7 +25,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#61717e");
-  scene.fog = new THREE.Fog("#687985", 105, 230);
+  const raceFog=new THREE.Fog("#687985", 105, 230);scene.fog=raceFog;
   const camera = new THREE.PerspectiveCamera(RACE_CAMERA_FOV, 1, .3, 400);
   const resources = new Set<{ dispose: () => void }>();
   const keep = <T extends { dispose: () => void }>(resource: T) => { resources.add(resource); return resource; };
@@ -36,8 +39,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     scene.clear();renderer.dispose();renderer.forceContextLoss();renderer.domElement.remove();
   };
   try {
+  // A broadcast camera has a clear sightline. Clip only foreground scenery;
+  // cars, the racing surface, and score-derived positions remain untouched.
+  const sceneryPlane=new THREE.Plane();
+  const sceneryMaterial=<T extends THREE.Material>(mat:T)=>{mat.clippingPlanes=[sceneryPlane];mat.clipShadows=true;return mat;};
   const material = (color: string | number, roughness = .55, metalness = .1) => keep(new THREE.MeshStandardMaterial({ color, roughness, metalness }));
-  const steel = material("#647079", .32, .7);
+  const steel = sceneryMaterial(material("#647079", .32, .7));
   const white = material("#edf0e6", .5), red = material("#e54b3e", .5);
   const unitBox = keep(new THREE.BoxGeometry(1,1,1));
   const box = (parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material) => {
@@ -102,9 +109,10 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   // Rubbered-in racing line, thin edge markings, and exit braking boards.
   const skid=keep(new THREE.MeshStandardMaterial({color:"#080b0e",transparent:true,opacity:.16,roughness:1}));
   ribbon(40.2,40.7,skid,-2.2,2.2,.035); ribbon(42.4,42.9,skid,-2.2,2.2,.035);
+  const wallWhite=sceneryMaterial(material("#edf0e6",.5)),wallRed=sceneryMaterial(material("#e54b3e",.5));
   for(let i=0;i<64;i++) {
     const a=i*Math.PI/32;
-    const wall=box(scene,2.9,.8,.75,Math.cos(a)*57,2.25,Math.sin(a)*57,i%4===0?red:white);
+    const wall=box(scene,2.9,.8,.75,Math.cos(a)*57,2.25,Math.sin(a)*57,i%4===0?wallRed:wallWhite);
     wall.rotation.y=-a+Math.PI/2;
   }
 
@@ -113,7 +121,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const c=canvas.getContext("2d")!;c.fillStyle=color;c.fillRect(0,0,1024,128);
     c.fillStyle="#f5f6ef";c.font="italic 900 75px Arial";c.textAlign="center";c.textBaseline="middle";c.fillText(text,512,68,990);
     const map=keep(new THREE.CanvasTexture(canvas));map.colorSpace=THREE.SRGBColorSpace;
-    return new THREE.Mesh(keep(new THREE.PlaneGeometry(width,height)),keep(new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide})));
+    return new THREE.Mesh(keep(new THREE.PlaneGeometry(width,height)),sceneryMaterial(keep(new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide}))));
   }
   for(let i=0;i<9;i++) {
     const a=-1.6+i*.28;
@@ -121,9 +129,9 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     sign.position.set(Math.cos(a)*57.5,2.3,Math.sin(a)*57.5);sign.rotation.y=Math.PI/2-a;scene.add(sign);
   }
   // A real stepped grandstand outside the far bend, with instanced crowd geometry.
-  const standMat=material("#52656f",.85), roofMat=material("#1d303c",.55);
-  const crowdCount=13*48, crowd=new THREE.InstancedMesh(keep(new THREE.BoxGeometry(.45,.65,.42)),material("#dce2dd"),crowdCount);
-  const heads=new THREE.InstancedMesh(keep(new THREE.SphereGeometry(.18,6,5)),material("#d6b7a0"),crowdCount);
+  const standMat=sceneryMaterial(material("#52656f",.85)), roofMat=sceneryMaterial(material("#1d303c",.55));
+  const crowdCount=13*48, crowd=new THREE.InstancedMesh(keep(new THREE.BoxGeometry(.45,.65,.42)),sceneryMaterial(material("#dce2dd")),crowdCount);
+  const heads=new THREE.InstancedMesh(keep(new THREE.SphereGeometry(.18,6,5)),sceneryMaterial(material("#d6b7a0")),crowdCount);
   const matrix=new THREE.Matrix4(), color=new THREE.Color();
   let person=0;
   for(let row=0;row<13;row++) {
@@ -142,14 +150,14 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const a=-2.13+i*.265;box(scene,.3,15,.3,Math.cos(a)*81,7.5,Math.sin(a)*81,steel);
   }
   // Slim stadium lights and hills establish scale without obscuring the racing.
-  const lampMat=keep(new THREE.MeshBasicMaterial({color:"#e8f8ff"}));
+  const lampMat=sceneryMaterial(keep(new THREE.MeshBasicMaterial({color:"#e8f8ff"})));
   for(const a of [-2.4,-1.8,-.8,.1,1.8,2.7]) {
     const r=91, x=Math.cos(a)*r,z=Math.sin(a)*r;
     box(scene,.45,22,.45,x,11,z,steel);box(scene,7,.7,1,x,22,z,lampMat);
   }
   for(let i=0;i<22;i++) {
     const a=i*Math.PI*2/22;
-    const hill=new THREE.Mesh(keep(new THREE.ConeGeometry(22+(i%4)*8,18+(i%5)*6,6)),material(i%2?"#526663":"#4a5c5c",1));
+    const hill=new THREE.Mesh(keep(new THREE.ConeGeometry(22+(i%4)*8,18+(i%5)*6,6)),sceneryMaterial(material(i%2?"#526663":"#4a5c5c",1)));
     hill.position.set(Math.cos(a)*175,2,Math.sin(a)*175);scene.add(hill);
   }
 
@@ -161,10 +169,10 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const racers=grid.map(driver=>{
     const model=keep(createTvCarModel({appearance:driver.car,rank:driver.rank,focus:driver.id===options.focusId,
       maxAnisotropy:renderer.capabilities.getMaxAnisotropy(),onTextureReady:()=>redrawWraps()}));
-    const {root,wheels,boost}=model;scene.add(root);
+    const {root,wheels,boost,chassis,frontSteering}=model;scene.add(root);
     const tied=grid.filter(p=>p.gap===driver.gap).length;
     root.scale.setScalar(Math.min(1,16/Math.max(1,tied)/2.7));
-    return {driver,root,wheels,boost};
+    return {driver,root,wheels,boost,chassis,frontSteering};
   });
 
   // Every driver is named. Screen-space placement keeps nearby nameplates readable.
@@ -183,7 +191,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     return {element,line,racer:r,width:element.offsetWidth,height:element.offsetHeight};
   });
 
-  let start:number|undefined, previous=0, reported=-1, draw:(now:number)=>void;
+  let start:number|undefined, previous=0, reported=-1, reportedShot="", draw:(now:number)=>void;
   const vector=new THREE.Vector3();
   const resize=()=>{
     const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);
@@ -210,17 +218,29 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
     const lead=.06+motionTime*speed;
-    for(const {driver,root,wheels,boost} of racers) {
+    for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
       const transition=transitions.get(driver.id)!;
       const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
-      root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw,Math.atan(.075));
+      const dynamics=sampleRaceDynamics({transition,elapsed,driverId:driver.id,speed,reduced:options.reduced});
+      root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw+dynamics.yawOffset,Math.atan(.075));
+      chassis.rotation.set(dynamics.pitch,0,dynamics.roll);chassis.position.y=dynamics.heave;
+      for(const steering of frontSteering)steering.rotation.y=dynamics.steering;
       boost.visible=!options.reduced&&transition.scored&&position.progress>.15&&position.progress<.85;
-      for(const wheel of wheels)wheel.rotation.x=-motionTime*19*(options.reduced?1:RACE_SPEED_MULTIPLIER);
+      for(const wheel of wheels)wheel.rotation.x=dynamics.wheelAngle;
     }
     const shot=raceCameraPose(subjects,options.reduced?12:elapsed,lead,camera.aspect,framingRadius);
+    if(camera.fov!==shot.fov){camera.fov=shot.fov;camera.updateProjectionMatrix();}
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
     camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
+    // Wide TV shots retreat from the field; atmosphere belongs behind the
+    // racers, not between the lens and their cars.
+    const shotDistance=Math.hypot(shot.position.x-shot.target.x,shot.position.y-shot.target.y,shot.position.z-shot.target.z);
+    raceFog.near=Math.max(105,shotDistance+60);raceFog.far=Math.max(230,raceFog.near+125);
+    const sceneryClip=raceSceneryClipPlane(shot.position,shot.target,racers.map(r=>r.root.position));
+    sceneryPlane.normal.set(sceneryClip.normal.x,sceneryClip.normal.y,sceneryClip.normal.z);sceneryPlane.constant=sceneryClip.constant;
+    const shotLabel=options.reduced?raceBroadcastShot(12,true):shot.shot;
+    if(shotLabel.id!==reportedShot){reportedShot=shotLabel.id;options.onShot?.(shotLabel);}
     const progressTick=options.reduced?120:Math.floor(elapsed*5);
     if(progressTick!==reported){reported=progressTick;options.onProgress?.(options.reduced?12:elapsed);}
     try {renderer.render(scene,camera);}catch{fail();return;}

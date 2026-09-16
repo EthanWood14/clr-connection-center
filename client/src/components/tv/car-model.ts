@@ -45,7 +45,7 @@ export function applyCarPanelUvs(geometry: THREE.BufferGeometry, size: Dimension
   return result;
 }
 
-export type TvCarModel = { root: THREE.Group; wheels: THREE.Group[]; boost: THREE.Group; updateSkin: (appearance: TvCarAppearance) => boolean; dispose: () => void };
+export type TvCarModel = { root: THREE.Group; chassis: THREE.Group; frontSteering: THREE.Group[]; wheels: THREE.Group[]; boost: THREE.Group; updateSkin: (appearance: TvCarAppearance) => boolean; dispose: () => void };
 type CarModelOptions = {
   appearance: TvCarAppearance;
   rank?: number;
@@ -139,10 +139,13 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       box(root, width, .015, 1.55, x, .812, 1, accent).name = "livery-stripe";
       box(root, width, .015, 1.05, x, .628, 2.3, accent).name = "livery-stripe";
     }
-    const wheels: THREE.Group[] = [];
+    const wheels: THREE.Group[] = [], wheelMounts: THREE.Group[] = [], frontSteering: THREE.Group[] = [];
     const wheelGeometry = keep(new THREE.CylinderGeometry(.43, .43, .34, 16)), rimGeometry = keep(new THREE.CylinderGeometry(.25, .25, .36, 10));
     for (const x of [-1.03, 1.03]) for (const z of [-1.42, 1.6]) {
-      const pivot = new THREE.Group(); pivot.position.set(x, .45, z); root.add(pivot);
+      const mount = new THREE.Group(); mount.name = z > 0 ? "front-wheel-steering" : "rear-wheel-mount";
+      mount.position.set(x, .45, z); root.add(mount); wheelMounts.push(mount);
+      if (z > 0) frontSteering.push(mount);
+      const pivot = new THREE.Group(); pivot.name = "wheel-spin"; mount.add(pivot);
       const tire = new THREE.Mesh(wheelGeometry, rubber); tire.rotation.z = Math.PI / 2; tire.castShadow = true; pivot.add(tire);
       const rim = new THREE.Mesh(rimGeometry, steel); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
       box(root, Math.abs(x), .055, .055, x / 2, .5, z, black);
@@ -160,13 +163,20 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     }
     if (focus) {
       const halo = new THREE.Mesh(keep(new THREE.RingGeometry(2.65, 2.82, 48)), keep(new THREE.MeshBasicMaterial({ color: "#7cf5ee", transparent: true, opacity: .85, side: THREE.DoubleSide, depthWrite: false })));
-      halo.rotation.x = -Math.PI / 2; halo.position.y = .1; root.add(halo);
+      halo.name = "focus-halo"; halo.rotation.x = -Math.PI / 2; halo.position.y = .1; root.add(halo);
     }
     const boost = new THREE.Group(); root.add(boost);
     if (focus) {
       const glow = keep(new THREE.MeshBasicMaterial({ color: "#86fff1", transparent: true, opacity: .65, depthWrite: false }));
       for (const x of [-1.25, 1.25]) box(boost, .08, .06, 5.2, x, .25, -4.7, glow);
     }
+    // Articulate the sprung body without moving the track anchor or tire contact
+    // points. Identity transforms keep the garage's static model unchanged.
+    const chassis = new THREE.Group(); chassis.name = "car-chassis";
+    for (const child of [...root.children]) {
+      if (child !== boost && child.name !== "focus-halo" && !wheelMounts.includes(child as THREE.Group)) chassis.add(child);
+    }
+    root.add(chassis);
     const updateSkin = (next: TvCarAppearance): boolean => {
       if (disposed || !appearance.skin || !next.skin) return false;
       // Painting changes pixels, not geometry. Reuse the GPU allocations for
@@ -179,6 +189,6 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       }
       return true;
     };
-    return { root, wheels, boost, updateSkin, dispose };
+    return { root, chassis, frontSteering, wheels, boost, updateSkin, dispose };
   } catch (error) { dispose(); throw error; }
 }

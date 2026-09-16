@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.12", headline: "Back at trackside: the TV race gets broadcast camera work.", items: [
+    { text: "The TV race is filmed from lower trackside angles again, with an establishing view, a closer uninterrupted battle shot, and an exit follow-through. Compact broadcast graphics leave more room for the cars and show the pass status as it actually happens.", audience: "everyone" },
+    { text: "Cars visibly steer into the corner and passing lane, with restrained suspension and body movement. Names, custom skins, real transfer totals, ties, and earned overtakes are preserved; reduced-motion displays keep a still view.", audience: "everyone" },
+  ] },
   { version: "4.113.11", headline: "Build your own pixel car skin in the WCL garage.", items: [
     { text: "Open Advanced Settings → Personal → My TV Car for the new Pixel skin studio. Paint the top, sides, nose, rear, and wings with a 16-color palette, pencil, fill, eraser, mirror painting, and undo/redo. Rotate a live 3D preview of the same car used on the TV track.", audience: "everyone" },
     { text: "Start from racing stripes, checkerboard, or flames, then make the design your own. Import/export WCL car-skin PNG templates or editable skin files. Saving puts the skin on your TV car without changing transfers, speed, rankings, or your saved picture wrap.", audience: "everyone" },

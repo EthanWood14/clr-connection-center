@@ -90,7 +90,7 @@ test("cars without a skin retain their normal paint and stripe choices", () => {
       const body = model.root.getObjectByName("body-center") as THREE.Mesh;
       assert.ok(!Array.isArray(body.material));
       assert.equal((body.material as THREE.MeshStandardMaterial).color.getHexString(), "12ab34");
-      assert.equal(model.root.children.filter(child => child.name === "livery-stripe").length, stripeCount);
+      assert.equal(model.root.getObjectsByProperty("name", "livery-stripe").length, stripeCount);
       assert.equal(model.root.getObjectByName("skin-wing"), undefined);
     } finally { model.dispose(); }
   }
@@ -134,8 +134,8 @@ test("TV and garage use the exact same model and preview never auto-spins", () =
   const race = source("../client/src/components/tv/race-scene.ts");
   const preview = source("../client/src/components/tv/car-skin-preview.tsx");
   assert.match(race, /createTvCarModel\(\{appearance:driver\.car/);
-  assert.match(race, /const \{root,wheels,boost\}=model/);
-  assert.match(race, /wheel\.rotation\.x=-motionTime\*19/);
+  assert.match(race, /const \{root,wheels,boost,chassis,frontSteering\}=model/);
+  assert.match(race, /wheel\.rotation\.x=dynamics\.wheelAngle/);
   assert.match(preview, /import \{ createTvCarModel, type TvCarModel \} from "\.\/car-model"/);
   assert.doesNotMatch(preview, /import\("three"\)/, "do not retain Three's entire dynamic namespace");
   assert.match(source("../client/src/pages/tv-car.tsx"), /lazy\(\(\) => import\("@\/components\/tv\/car-skin-preview"\)\)/);

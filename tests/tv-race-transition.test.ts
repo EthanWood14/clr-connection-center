@@ -1,12 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { raceGrid } from "../shared/tv-race-grid";
-import { planRaceTransition, interpolateRaceTransition, type RaceTransition } from "../shared/tv-race-transition";
+import { planRaceTransition, interpolateRaceTransition, raceTransitionStartRank, type RaceTransition } from "../shared/tv-race-transition";
 import type { RankRow } from "../shared/tv-overtake";
 
 const driver = (id: number, transfersToday: number, name = `Driver ${id}`): RankRow => ({ id, name, transfersToday });
 const find = (plans: RaceTransition[], id: number) => plans.find(row => row.id === id)!;
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} should equal ${expected}`);
+
+test("broadcast starting rank uses corrected baselines rather than claiming an unearned extra pass", () => {
+  const plans=planRaceTransition([driver(1,10),driver(2,5),driver(3,4)],[driver(1,0),driver(2,5),driver(3,6)],3);
+  assert.equal(raceTransitionStartRank(find(plans,3),plans),2);
+  assert.deepEqual(find(plans,3).passedIds,[2]);
+  assert.equal(raceTransitionStartRank(find(plans,1),plans),undefined);
+  assert.equal(raceTransitionStartRank(undefined,plans),undefined);
+  const ties=planRaceTransition([driver(1,5),driver(2,5),driver(3,4)],[driver(1,6),driver(2,5),driver(3,4)],1);
+  assert.equal(raceTransitionStartRank(find(ties,1),ties),1);
+});
 
 function assertStatic(plans: RaceTransition[]) {
   for (const row of plans) {

@@ -165,3 +165,21 @@ test("corner positions advance toward the spectator and lane offsets preserve pr
   assert.deepEqual(cornerPosition(-1),cornerPosition(0));
   assert.deepEqual(cornerPosition(2),cornerPosition(1));
 });
+
+test("broadcast graphics follow the actual camera and crossing instead of announcing a completed pass immediately", () => {
+  const wrapper=readFileSync(new URL("../client/src/components/tv/field-race.tsx", import.meta.url),"utf8");
+  assert.match(wrapper,/onShot:next=>\{if\(!cancelled\)setShot\(next\);\}/);
+  assert.match(wrapper,/data-broadcast-shot=\{shot\.id\}/);
+  assert.match(wrapper,/data-testid="tv-race-shot-label">\{shot\.label\}/);
+  assert.match(wrapper,/data-testid="tv-race-action-caption">\{caption\}/);
+  assert.match(wrapper,/raceTransitionStartRank\(maneuver,maneuvers\)/);
+  assert.doesNotMatch(wrapper,/MAKES THE PASS|Onboard focus|Turn 03/);
+  assert.match(wrapper,/After this transfer/);
+  assert.match(wrapper,/Current standings · No stats changed/);
+  assert.match(wrapper,/rivalNames\.slice\(0,2\)\.join\(' · '\)/,
+    "first-transfer packs cannot fill the lower third with twenty rival names");
+  assert.match(wrapper,/rivalNames\.length-2/);
+  assert.match(wrapper,/line-clamp-2[^\n]*\{rivalSummary\}/);
+  assert.match(wrapper,/drivers\.map\(\(p,i\)=>/,
+    "the compact battle caption does not remove anyone from running order");
+});

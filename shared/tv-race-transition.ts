@@ -30,6 +30,11 @@ export interface RaceTransitionPose {
 export const RACE_TRANSITION_START = 2;
 export const RACE_TRANSITION_END = 7;
 
+/** Use the corrected visual baseline, never uncorrected historical totals. */
+export function raceTransitionStartRank(driver: RaceTransition | undefined, plans: RaceTransition[]): number | undefined {
+  return driver?.scored ? 1 + plans.filter(other => other.startDistance < driver.startDistance - 1e-6).length : undefined;
+}
+
 function uniqueRows(rows: RankRow[]): RankRow[] {
   const seen = new Set<number>();
   return rows.filter(row => {

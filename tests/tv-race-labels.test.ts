@@ -155,7 +155,9 @@ test("every racer gets their full name, stable identity, and an owned connector 
 test("the scene speeds up travel and wheels while preserving a static reduced-motion pose", () => {
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
   assert.match(scene, /const speed\s*=\s*options\.reduced\s*\?\s*RACE_BASE_ANGULAR_SPEED\s*:\s*RACE_BASE_ANGULAR_SPEED\s*\*\s*RACE_SPEED_MULTIPLIER/);
-  assert.match(scene, /wheel\.rotation\.x\s*=[^;]*\(options\.reduced\s*\?\s*1\s*:\s*RACE_SPEED_MULTIPLIER\)/);
+  assert.match(scene, /sampleRaceDynamics\(\{transition,elapsed,driverId:driver\.id,speed,reduced:options\.reduced\}\)/,
+    "wheel travel uses the same boosted track speed and static reduced-motion mode");
+  assert.match(scene, /wheel\.rotation\.x\s*=\s*dynamics\.wheelAngle/);
   assert.match(scene, /const motionTime\s*=\s*options\.reduced\s*\?\s*[\d.]+\s*:\s*elapsed/);
   assert.match(scene, /const shot=raceCameraPose\(subjects,options\.reduced\?12:elapsed,lead,camera\.aspect,framingRadius\)/,
     "the camera follows full angular travel and the scorer's actual rivals instead of losing the pass");
