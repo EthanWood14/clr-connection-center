@@ -94,7 +94,7 @@ test("the renderer clips only opted-in decorations and updates from every actual
   const optIns = scene.split(/\r?\n/).filter(line => line.includes("sceneryMaterial("));
   assert.equal(optIns.length, 8);
   for (const line of optIns) {
-    assert.match(line.trim(), /^(?:const (?:steel|wallWhite|standMat|crowdCount|heads|lampMat|hill)\b|return new THREE\.Mesh\(keep\(new THREE\.PlaneGeometry)/,
+    assert.match(line.trim(), /^const (?:steel|wallWhite|standMat|crowdCount|heads|lampMat|hill|bannerMaterial)\b/,
       "only poles, separate walls, stands, people, lights, hills and banners opt in");
   }
   assert.match(scene, /const white\s*=\s*material\(/);
@@ -107,4 +107,16 @@ test("the renderer clips only opted-in decorations and updates from every actual
   const update = scene.indexOf("const sceneryClip=");
   assert.ok(update > scene.indexOf("root.position.set(point.x,point.y,point.z)"), "use this frame's positions, not the prior frame");
   assert.ok(update < scene.indexOf("renderer.render(scene,camera)", update), "the plane updates before rendering the shot");
+});
+
+test("the fly-through has a safe peripheral fan cue and grass confined inside the road",()=>{
+  const scene=readFileSync(new URL("../client/src/components/tv/race-scene.ts",import.meta.url),"utf8");
+  assert.match(scene,/CircleGeometry\(27\.5,96\)/);
+  assert.match(scene,/infield\.position\.y=-\.20/);
+  assert.match(scene,/const a=i\*2\.3999632297,r=27\*Math\.sqrt/);
+  assert.match(scene,/fanFrame\.visible=fanOpacity>0/);
+  assert.match(scene,/const fanOpacity=options\.reduced\?0:/);
+  assert.match(scene,/camera\.rotateZ\(options\.reduced\?0:shot\.roll\)/);
+  assert.match(scene,/side:THREE\.FrontSide/);
+  assert.match(scene,/back\.rotation\.y=Math\.PI/,'infield banners have their own readable face instead of mirrored lettering');
 });

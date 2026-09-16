@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.13", headline: "From the grandstands to the infield: fly through the TV race.", items: [
+    { text: "The race camera starts from a fan's grandstand view, sweeps over the cars into a drone shot, then drops down into the infield grass. The movement is continuous, with gentle banking and a clear view of the real overtake.", audience: "everyone" },
+    { text: "A detailed grass foreground and opening grandstand frame bring the camera closer to the action. Car skins, names, exact transfer totals and ties are unchanged; reduced motion keeps a steady view.", audience: "everyone" },
+  ] },
   { version: "4.113.12", headline: "Back at trackside: the TV race gets broadcast camera work.", items: [
     { text: "The TV race is filmed from lower trackside angles again, with an establishing view, a closer uninterrupted battle shot, and an exit follow-through. Compact broadcast graphics leave more room for the cars and show the pass status as it actually happens.", audience: "everyone" },
     { text: "Cars visibly steer into the corner and passing lane, with restrained suspension and body movement. Names, custom skins, real transfer totals, ties, and earned overtakes are preserved; reduced-motion displays keep a still view.", audience: "everyone" },

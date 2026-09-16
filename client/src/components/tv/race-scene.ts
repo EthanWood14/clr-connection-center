@@ -3,7 +3,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
-import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraSubjects } from "@shared/tv-race-camera";
+import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraStartAngle, raceCameraSubjects } from "@shared/tv-race-camera";
 import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
@@ -86,6 +86,40 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const ground=new THREE.Mesh(keep(new THREE.PlaneGeometry(600,600)),grass);
   ground.rotation.x=-Math.PI/2; ground.position.y=-.22; ground.receiveShadow=true; scene.add(ground);
 
+  // A low infield camera needs a real grass foreground rather than an empty
+  // green plane. This flat disc never touches the banked road (radius 31+).
+  const grassCanvas=document.createElement("canvas");grassCanvas.width=grassCanvas.height=256;
+  const grassContext=grassCanvas.getContext("2d")!,grassPixels=grassContext.createImageData(256,256);
+  let grassSeed=9817;
+  for(let i=0;i<256*256;i++){
+    grassSeed=(Math.imul(grassSeed,1664525)+1013904223)>>>0;
+    const stripe=Math.floor((i%256)/32)%2?7:0,noise=grassSeed%17;
+    grassPixels.data.set([31+noise+stripe,65+noise+stripe,26+noise,255],i*4);
+  }
+  grassContext.putImageData(grassPixels,0,0);
+  const grassMap=keep(new THREE.CanvasTexture(grassCanvas));grassMap.colorSpace=THREE.SRGBColorSpace;grassMap.anisotropy=4;
+  const infield=new THREE.Mesh(keep(new THREE.CircleGeometry(27.5,96)),keep(new THREE.MeshStandardMaterial({map:grassMap,roughness:1})));
+  infield.rotation.x=-Math.PI/2;infield.position.y=-.20;infield.receiveShadow=true;scene.add(infield);
+  const tuftGeometry=keep(new THREE.BufferGeometry());
+  tuftGeometry.setAttribute('position',new THREE.Float32BufferAttribute([-.055,0,0,.055,0,0,.025,.32,0,0,0,-.055,0,0,.055,0,.24,-.02],3));tuftGeometry.computeVertexNormals();
+  const tufts=keep(new THREE.InstancedMesh(tuftGeometry,keep(new THREE.MeshStandardMaterial({color:'#628749',roughness:1,side:THREE.DoubleSide})),420));
+  const tuftMatrix=new THREE.Matrix4();
+  for(let i=0;i<420;i++){
+    const a=i*2.3999632297,r=27*Math.sqrt((i+.5)/420);
+    tuftMatrix.makeRotationY(a);tuftMatrix.setPosition(Math.cos(a)*r,-.19,Math.sin(a)*r);tufts.setMatrixAt(i,tuftMatrix);
+  }
+  scene.add(tufts);
+
+  // Peripheral seat/rail fragments establish the fan's viewpoint without
+  // putting a crowd member over the cars. They leave as the camera takes off.
+  const fanFrame=new THREE.Group();camera.add(fanFrame);scene.add(camera);
+  const fanMaterial=keep(new THREE.MeshBasicMaterial({color:'#14222e',transparent:true,opacity:1,depthWrite:false,fog:false}));
+  const railMaterial=keep(new THREE.MeshBasicMaterial({color:'#607681',transparent:true,opacity:1,depthWrite:false,fog:false}));
+  for(const side of [-1,1]){
+    const seat=box(fanFrame,.45,.23,.09,side*.99,-.64,-1.5,fanMaterial);seat.castShadow=seat.receiveShadow=false;
+    const rail=box(fanFrame,.50,.028,.035,side*1.03,-.46,-1.5,railMaterial);rail.castShadow=rail.receiveShadow=false;
+  }
+
   const ribbon=(inner:number,outer:number,mat:THREE.Material,start=-Math.PI,end=Math.PI,extraY=0)=>{
     const count=Math.max(2,Math.ceil((end-start)*38)), vertices:number[]=[], uvs:number[]=[], indices:number[]=[];
     for(let i=0;i<=count;i++) {
@@ -121,7 +155,10 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const c=canvas.getContext("2d")!;c.fillStyle=color;c.fillRect(0,0,1024,128);
     c.fillStyle="#f5f6ef";c.font="italic 900 75px Arial";c.textAlign="center";c.textBaseline="middle";c.fillText(text,512,68,990);
     const map=keep(new THREE.CanvasTexture(canvas));map.colorSpace=THREE.SRGBColorSpace;
-    return new THREE.Mesh(keep(new THREE.PlaneGeometry(width,height)),sceneryMaterial(keep(new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide}))));
+    const bannerMaterial=sceneryMaterial(keep(new THREE.MeshBasicMaterial({map,side:THREE.FrontSide})));
+    const bannerGeometry=keep(new THREE.PlaneGeometry(width,height)),group=new THREE.Group();
+    const front=new THREE.Mesh(bannerGeometry,bannerMaterial),back=new THREE.Mesh(bannerGeometry,bannerMaterial);
+    front.position.z=.005;back.position.z=-.005;back.rotation.y=Math.PI;group.add(front,back);return group;
   }
   for(let i=0;i<9;i++) {
     const a=-1.6+i*.28;
@@ -166,6 +203,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
   const subjects=raceCameraSubjects(Array.from(transitions.values()),options.focusId);
   const framingRadius=raceCameraRadius(subjects);
+  const startAngle=raceCameraStartAngle(subjects);
   const racers=grid.map(driver=>{
     const model=keep(createTvCarModel({appearance:driver.car,rank:driver.rank,focus:driver.id===options.focusId,
       maxAnisotropy:renderer.capabilities.getMaxAnisotropy(),onTextureReady:()=>redrawWraps()}));
@@ -217,7 +255,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     previous=now;
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
-    const lead=.06+motionTime*speed;
+    const lead=startAngle+motionTime*speed;
     for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
       const transition=transitions.get(driver.id)!;
       const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
@@ -229,10 +267,13 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       boost.visible=!options.reduced&&transition.scored&&position.progress>.15&&position.progress<.85;
       for(const wheel of wheels)wheel.rotation.x=dynamics.wheelAngle;
     }
-    const shot=raceCameraPose(subjects,options.reduced?12:elapsed,lead,camera.aspect,framingRadius);
+    const shot=raceCameraPose(subjects,options.reduced?12:elapsed,lead,camera.aspect,framingRadius,options.reduced);
     if(camera.fov!==shot.fov){camera.fov=shot.fov;camera.updateProjectionMatrix();}
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
     camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
+    camera.rotateZ(options.reduced?0:shot.roll);
+    const fanOpacity=options.reduced?0:Math.max(0,Math.min(1,(1.8-elapsed)/.6));
+    fanFrame.visible=fanOpacity>0;fanMaterial.opacity=railMaterial.opacity=fanOpacity;
     // Wide TV shots retreat from the field; atmosphere belongs behind the
     // racers, not between the lens and their cars.
     const shotDistance=Math.hypot(shot.position.x-shot.target.x,shot.position.y-shot.target.y,shot.position.z-shot.target.z);
