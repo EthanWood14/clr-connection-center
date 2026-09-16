@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.115.3",
+    headline: "The corner race follows one car up close instead of labelling all of them.",
+    items: [
+      { text: "Office TV: the live corner was putting a nameplate on every car at once, which on a panel that size was unreadable. It now holds one car close up and flashes just that name for a few seconds now and then. Each two-minute shot follows the next CLR down the order, so it works through the whole floor over a morning.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.115.2",
     headline: "The corner race is one two-minute shot now, not the same twelve seconds over and over.",
     items: [

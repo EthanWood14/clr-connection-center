@@ -66,6 +66,13 @@ export function CornerRace({ people, reduced, paused = false }: {
           // resets"). The cars lap at their own speed throughout.
           runSeconds: CORNER_RACE_SECONDS,
           cameraSeconds: CORNER_RACE_SECONDS,
+          // One car, close up, with its name shown now and then rather than a
+          // nameplate on every car at once — twelve labels on a panel this
+          // size was unreadable (Ethan, 16 Sep 2026). Each two-minute shot
+          // follows the next driver down the order, so over a morning the
+          // corner works its way through the whole floor.
+          spotlight: true,
+          focusId: drivers[run % drivers.length]?.id,
           // Written straight to the node rather than through state: it ticks
           // five times a second for twelve seconds and nothing renders off
           // it. It is how anyone can tell from the page itself whether the

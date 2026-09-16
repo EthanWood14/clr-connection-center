@@ -145,7 +145,14 @@ test("variable name widths and label heights remain separated in a typical TV cl
 
 test("every racer gets their full name, stable identity, and an owned connector element", () => {
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
-  assert.match(scene, /const tags\s*=\s*racers\.map\(/, "nameplates are not limited to the leader or scorer");
+  // The full-screen race names everybody; the wall's corner panel names only
+  // the car it is following, because a dozen plates on a small panel is
+  // unreadable (owner, 16 Sep 2026). Both come off the same list.
+  assert.match(scene, /const named=options\.spotlight\?racers\.filter\(r=>r\.driver\.id===options\.focusId\):racers;/,
+    "nameplates are limited to one car ONLY in spotlight mode");
+  assert.match(scene, /const tags=named\.map\(/);
+  assert.match(scene, /const named_now=!options\.spotlight\|\|\(elapsed%20\)<4;/,
+    "and in that mode the name is an occasional caption, not a permanent label");
   assert.match(scene, /element\.textContent\s*=\s*r\.driver\.id===options\.focusId\?`▶ \$\{r\.driver\.name\}`:r\.driver\.name\s*;/, "the focus marker retains every driver's full name");
   assert.match(scene, /element\.dataset\.driverId\s*=\s*String\(r\.driver\.id\)/);
   assert.match(scene, /tagElements\.push\(line,\s*element\)/, "both DOM nodes belong to scene cleanup");

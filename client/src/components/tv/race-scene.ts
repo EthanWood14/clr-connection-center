@@ -8,7 +8,7 @@ import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; /** Corner mode: hold ONE car, and put its name up only now and then. A dozen nameplates at once is unreadable on a small panel. */ spotlight?: boolean; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -201,7 +201,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   let redrawWraps=()=>{};
   const grid=raceGrid(options.drivers);
   const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
-  const subjects=raceCameraSubjects(Array.from(transitions.values()),options.focusId);
+  const allPlans=Array.from(transitions.values());
+  // Spotlight keeps ONE car in shot. raceCameraSubjects deliberately widens
+  // to the rivals of a pass, which is right for a transfer's race and wrong
+  // for a corner panel: there it just pulls the lens back off everybody.
+  const spotlit=options.spotlight?allPlans.filter(p=>p.id===options.focusId):[];
+  const subjects=spotlit.length?spotlit:raceCameraSubjects(allPlans,options.focusId);
   const framingRadius=raceCameraRadius(subjects);
   const startAngle=raceCameraStartAngle(subjects);
   const racers=grid.map(driver=>{
@@ -214,7 +219,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   });
 
   // Every driver is named. Screen-space placement keeps nearby nameplates readable.
-  const tags=racers.map(r=>{
+  const named=options.spotlight?racers.filter(r=>r.driver.id===options.focusId):racers;
+  const tags=named.map(r=>{
     const element=document.createElement("div");
     element.style.cssText="position:absolute;pointer-events:none;padding:5px 8px;border-left:3px solid;background:#101a25ed;color:white;font:700 clamp(11px,1vw,17px) system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 12px #0004;";
     element.style.borderColor=r.driver.color;
@@ -293,7 +299,11 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const anchors=[];
     for(const {element,line,racer,width,height} of tags) {
       vector.copy(racer.root.position);vector.y+=2.2;vector.project(camera);
-      const visible=vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
+      // In the corner the name is an occasional caption, not a permanent
+      // label: four seconds on, sixteen off, so the panel is cars almost all
+      // of the time and still tells you who you are watching.
+      const named_now=!options.spotlight||(elapsed%20)<4;
+      const visible=named_now&&vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
       element.style.display=line.style.display=visible?'block':'none';
       if(visible)anchors.push({id:racer.driver.id,x:(vector.x*.5+.5)*host.clientWidth,y:(-vector.y*.5+.5)*host.clientHeight,width,height});
     }

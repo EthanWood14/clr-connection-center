@@ -73,3 +73,18 @@ test("the live corner race sits IN the strip, never over a page, and yields the 
   assert.match(corner, /onFailure: \(\) => \{ if \(!cancelled\) setFailed\(true\); \}/);
   assert.match(corner, /data-corner-race-state=\{failed \? "fallback" : "live"\}/, "a dead scene falls back to text, not a black box");
 });
+
+// "The name tags are too confusing, it should be a close up on one car and
+// show a name sometimes." — Ethan, 16 Sep 2026.
+test("the corner holds one car close up and names it only now and then", () => {
+  const corner = read("client/src/components/tv/corner-race.tsx");
+  assert.match(corner, /spotlight: true,/);
+  assert.match(corner, /focusId: drivers\[run % drivers\.length\]\?\.id,/, "each shot follows the next driver down the order");
+  assert.match(corner, /runSeconds: CORNER_RACE_SECONDS,\s*\n\s*cameraSeconds: CORNER_RACE_SECONDS,/);
+  assert.match(corner, /export const CORNER_RACE_SECONDS = 120;/);
+  const scene = read("client/src/components/tv/race-scene.ts");
+  // Spotlight frames ONE car: the rival-widening that makes a transfer's race
+  // readable would pull the lens off everybody on a panel this size.
+  assert.match(scene, /const spotlit=options\.spotlight\?allPlans\.filter\(p=>p\.id===options\.focusId\):\[\];/);
+  assert.match(scene, /const subjects=spotlit\.length\?spotlit:raceCameraSubjects\(allPlans,options\.focusId\);/);
+});
